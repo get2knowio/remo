@@ -20,6 +20,20 @@
     mode: '0440'
     validate: 'visudo -cf %s'
 
+- name: Create devcontainer mount directories
+  ansible.builtin.file:
+    path: "/home/{{ g2k_user }}/{{ item }}"
+    state: directory
+    owner: "{{ g2k_user }}"
+    group: "{{ g2k_user }}"
+    mode: '0755'
+  loop:
+    - .codex
+    - .config/opencode
+    - .config/gh
+    - .coderabbit
+    - .local/bin
+
 - name: Verify g2k user exists
   ansible.builtin.command: id {{ g2k_user }}
   register: user_setup_user_info
