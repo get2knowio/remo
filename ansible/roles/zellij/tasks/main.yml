@@ -1,0 +1,128 @@
+---
+# Zellij installation for Ubuntu
+# Installs via apt if version is adequate, otherwise downloads binary release
+
+- name: Check if zellij is already installed
+  ansible.builtin.command: which zellij
+  register: zellij_which_result
+  changed_when: false
+  failed_when: false
+
+- name: Get installed zellij version
+  ansible.builtin.command: zellij --version
+  register: zellij_current_version
+  changed_when: false
+  failed_when: false
+  when: zellij_which_result.rc == 0
+
+- name: Set zellij installed version fact
+  ansible.builtin.set_fact:
+    zellij_installed_version: >-
+      {{ (zellij_current_version.stdout | default('zellij 0.0.0')).split(' ')[1] | default('0.0.0') }}
+  when: zellij_which_result.rc == 0
+
+- name: Set zellij not installed fact
+  ansible.builtin.set_fact:
+    zellij_installed_version: "0.0.0"
+  when: zellij_which_result.rc != 0
+
+- name: Install zellij via apt
+  when: zellij_install_method in ['auto', 'apt']
+  block:
+    - name: Check apt version of zellij
+      ansible.builtin.command: apt-cache policy zellij
+      register: zellij_apt_policy
+      changed_when: false
+      failed_when: false
+
+    - name: Parse apt zellij version
+      ansible.builtin.set_fact:
+        zellij_apt_version: >-
+          {{ zellij_apt_policy.stdout | regex_search('Candidate: ([0-9]+\.[0-9]+\.[0-9]+)', '\1') | first | default('0.0.0') }}
+      when: zellij_apt_policy.rc == 0 and 'Candidate:' in zellij_apt_policy.stdout
+
+    - name: Set apt version to 0 if not available
+      ansible.builtin.set_fact:
+        zellij_apt_version: "0.0.0"
+      when: zellij_apt_version is not defined or zellij_apt_version == ''
+
+    - name: Install zellij from apt if version is adequate
+      ansible.builtin.apt:
+        name: zellij
+        state: present
+        update_cache: true
+      when:
+        - zellij_apt_version is version(zellij_min_version, '>=')
+        - zellij_installed_version is version(zellij_apt_version, '<')
+      register: zellij_apt_install
+
+- name: Install zellij from binary release
+  when: >-
+    (zellij_install_method == 'binary') or
+    (zellij_install_method == 'auto' and (zellij_apt_version | default('0.0.0')) is version(zellij_min_version, '<'))
+  block:
+    - name: Get system architecture
+      ansible.builtin.command: uname -m
+      register: zellij_system_arch
+      changed_when: false
+
+    - name: Set architecture mapping
+      ansible.builtin.set_fact:
+        zellij_arch: "{{ 'x86_64' if zellij_system_arch.stdout == 'x86_64' else 'aarch64' }}"
+
+    - name: Get latest zellij release version from GitHub
+      ansible.builtin.uri:
+        url: https://api.github.com/repos/zellij-org/zellij/releases/latest
+        return_content: true
+      register: zellij_latest_release
+      when: zellij_version == 'latest'
+
+    - name: Set zellij download version
+      ansible.builtin.set_fact:
+        zellij_download_version: >-
+          {{ zellij_latest_release.json.tag_name | regex_replace('^v', '') if zellij_version == 'latest' else zellij_version }}
+
+    - name: Check if we need to install/upgrade
+      ansible.builtin.set_fact:
+        zellij_needs_install: "{{ zellij_installed_version is version(zellij_download_version, '<') }}"
+
+    - name: Download zellij binary
+      when: zellij_needs_install
+      block:
+        - name: Create temporary directory for download
+          ansible.builtin.tempfile:
+            state: directory
+          register: zellij_temp_dir
+
+        - name: Download zellij tarball
+          ansible.builtin.get_url:
+            url: "https://github.com/zellij-org/zellij/releases/download/v{{ zellij_download_version }}/zellij-{{ zellij_arch }}-unknown-linux-musl.tar.gz"
+            dest: "{{ zellij_temp_dir.path }}/zellij.tar.gz"
+            mode: '0644'
+
+        - name: Extract zellij binary
+          ansible.builtin.unarchive:
+            src: "{{ zellij_temp_dir.path }}/zellij.tar.gz"
+            dest: "{{ zellij_temp_dir.path }}"
+            remote_src: true
+
+        - name: Install zellij to /usr/local/bin
+          ansible.builtin.copy:
+            src: "{{ zellij_temp_dir.path }}/zellij"
+            dest: "{{ zellij_binary_path }}"
+            mode: '0755'
+            remote_src: true
+
+        - name: Clean up temporary directory
+          ansible.builtin.file:
+            path: "{{ zellij_temp_dir.path }}"
+            state: absent
+
+- name: Verify zellij installation
+  ansible.builtin.command: zellij --version
+  register: zellij_final_version
+  changed_when: false
+
+- name: Display zellij version
+  ansible.builtin.debug:
+    msg: "{{ zellij_final_version.stdout }}"

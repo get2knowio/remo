@@ -38,6 +38,7 @@
     - role: nodejs
     - role: devcontainers
     - role: github_cli
+    - role: zellij
 
   post_tasks:
     - name: Display completion message
@@ -57,6 +58,11 @@
           - Git
           - @devcontainers/cli
           - GitHub CLI (gh)
+          - Zellij terminal multiplexer
+
+          Zellij Configuration:
+          - Auto-starts on SSH login (session: {{ zellij_session_name | default('main') }})
+          - devshell helper script at ~/bin/devshell
 
           Firewall:
           - SSH (port 22) - allowed

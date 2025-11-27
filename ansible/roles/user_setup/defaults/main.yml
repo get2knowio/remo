@@ -1,2 +1,8 @@
 ---
 g2k_user: "g2k"
+
+# Development workspace directory (used by devshell script)
+dev_workspace_dir: "/home/{{ g2k_user }}/project"
+
+# Zellij session name for SSH auto-attach
+zellij_session_name: "main"

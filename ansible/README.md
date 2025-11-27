@@ -13,6 +13,7 @@ This Ansible project provisions and configures a minimal Hetzner Cloud server fo
 - **Git**: Version control system
 - **@devcontainers/cli**: Dev Containers CLI tool
 - **GitHub CLI**: `gh` command-line tool
+- **Zellij**: Terminal multiplexer with auto-start on SSH login
 
 ## Prerequisites
 
@@ -107,7 +108,8 @@ ansible/
     ├── user_setup/          # g2k user creation
     ├── nodejs/              # Node.js LTS installation
     ├── devcontainers/       # @devcontainers/cli installation
-    └── github_cli/          # GitHub CLI installation
+    ├── github_cli/          # GitHub CLI installation
+    └── zellij/              # Zellij terminal multiplexer
 ```
 
 ## Server Specifications
@@ -142,6 +144,7 @@ After configuration, the server will have:
 | Git | Ubuntu repository |
 | @devcontainers/cli | npm global |
 | GitHub CLI (gh) | GitHub packages |
+| Zellij | apt or GitHub releases |
 
 ## User: g2k
 
@@ -150,6 +153,40 @@ The `g2k` user is created with:
 - Shell: `/bin/bash`
 - Groups: `docker`
 - Sudo: `g2k ALL=(ALL) NOPASSWD:ALL`
+
+## Zellij Workflow
+
+The server is configured with [Zellij](https://zellij.dev/), a terminal multiplexer that enables:
+
+- **Persistent Sessions**: SSH into the server and automatically land in a zellij session named `main`
+- **Detach & Reattach**: Disconnect from SSH while processes continue running, then reattach later
+- **Session Management**: Run multiple terminals within a single SSH connection
+
+### Auto-Start Behavior
+
+When you SSH into the server as the `g2k` user:
+1. Zellij automatically starts (or attaches to existing session `main`)
+2. Detach with `Ctrl+o, d` to return to the host shell
+3. The session persists even after SSH disconnection
+
+The auto-start only triggers when:
+- The shell is interactive
+- The session is via SSH (`$SSH_TTY` or `$SSH_CONNECTION` is set)
+- Not already inside a zellij session
+
+### devshell Helper Script
+
+A helper script is installed at `~/bin/devshell` that:
+1. Changes to the project workspace directory (`$dev_workspace_dir`)
+2. Starts the devcontainer with `devcontainer up`
+3. Opens a zsh shell inside the devcontainer
+
+Usage:
+```bash
+devshell
+```
+
+The workspace directory can be customized via the `dev_workspace_dir` variable in `group_vars/all.yml`.
 
 ## Connecting to the Server
 

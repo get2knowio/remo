@@ -26,6 +26,7 @@
     - role: nodejs
     - role: devcontainers
     - role: github_cli
+    - role: zellij
 
   post_tasks:
     - name: Display completion message
@@ -41,6 +42,11 @@
           - Git
           - @devcontainers/cli
           - GitHub CLI (gh)
+          - Zellij terminal multiplexer
+
+          Zellij Configuration:
+          - Auto-starts on SSH login (session: {{ zellij_session_name | default('main') }})
+          - devshell helper script at ~/bin/devshell
 
           You can now SSH to the server as the g2k user:
           ssh g2k@{{ ansible_host }}
