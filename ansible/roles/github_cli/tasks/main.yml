@@ -1,0 +1,41 @@
+---
+# GitHub CLI installation following official documentation:
+# https://github.com/cli/cli/blob/trunk/docs/install_linux.md#debian
+
+- name: Create keyrings directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Download GitHub CLI GPG key
+  ansible.builtin.get_url:
+    url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+    dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
+    mode: '0644'
+
+- name: Get system architecture
+  ansible.builtin.command: dpkg --print-architecture
+  register: github_cli_dpkg_arch
+  changed_when: false
+
+- name: Add GitHub CLI repository
+  ansible.builtin.apt_repository:
+    repo: "deb [arch={{ github_cli_dpkg_arch.stdout }} signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main"
+    filename: github-cli
+    state: present
+
+- name: Update apt cache and install GitHub CLI
+  ansible.builtin.apt:
+    name: gh
+    state: present
+    update_cache: true
+
+- name: Verify GitHub CLI installation
+  ansible.builtin.command: gh --version
+  register: github_cli_gh_version
+  changed_when: false
+
+- name: Display GitHub CLI version
+  ansible.builtin.debug:
+    msg: "{{ github_cli_gh_version.stdout }}"

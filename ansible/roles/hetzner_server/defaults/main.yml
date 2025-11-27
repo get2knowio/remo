@@ -1,0 +1,9 @@
+---
+hetzner_api_token: ""
+hetzner_server_name: "remote-coding-server"
+hetzner_server_type: "cx22"
+hetzner_image: "ubuntu-24.04"
+hetzner_location: "fsn1"
+hetzner_ssh_key_name: "remote-coding-key"
+hetzner_server_ssh_public_key_path: "~/.ssh/id_rsa.pub"
+hetzner_server_ssh_private_key_path: "~/.ssh/id_rsa"

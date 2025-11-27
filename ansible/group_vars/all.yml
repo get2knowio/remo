@@ -1,0 +1,18 @@
+---
+# Hetzner Cloud Configuration
+hetzner_api_token: "{{ lookup('env', 'HETZNER_API_TOKEN') }}"
+hetzner_server_name: "remote-coding-server"
+hetzner_server_type: "cx22"  # Smallest shared vCPU (2 vCPU, 4GB RAM) - cheapest option
+hetzner_image: "ubuntu-24.04"
+hetzner_location: "fsn1"  # Falkenstein datacenter
+hetzner_ssh_key_name: "remote-coding-key"
+
+# DuckDNS Configuration
+duckdns_token: "{{ lookup('env', 'DUCKDNS_TOKEN') }}"
+duckdns_domain: "{{ lookup('env', 'DUCKDNS_DOMAIN') }}"
+
+# User Configuration
+g2k_user: "g2k"
+
+# Node.js Configuration
+nodejs_version: "20"  # LTS version

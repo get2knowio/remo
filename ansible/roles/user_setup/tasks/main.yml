@@ -1,0 +1,30 @@
+---
+- name: Create g2k user
+  ansible.builtin.user:
+    name: "{{ g2k_user }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Add g2k user to docker group
+  ansible.builtin.user:
+    name: "{{ g2k_user }}"
+    groups: docker
+    append: true
+
+- name: Configure passwordless sudo for g2k user
+  ansible.builtin.lineinfile:
+    path: /etc/sudoers.d/{{ g2k_user }}
+    line: "{{ g2k_user }} ALL=(ALL) NOPASSWD:ALL"
+    create: true
+    mode: '0440'
+    validate: 'visudo -cf %s'
+
+- name: Verify g2k user exists
+  ansible.builtin.command: id {{ g2k_user }}
+  register: user_setup_user_info
+  changed_when: false
+
+- name: Display user information
+  ansible.builtin.debug:
+    msg: "User created: {{ user_setup_user_info.stdout }}"

@@ -1,0 +1,85 @@
+---
+- name: Ensure hcloud Python library is installed
+  delegate_to: localhost
+  become: false
+  ansible.builtin.pip:
+    name: hcloud
+    state: present
+
+- name: Create SSH key in Hetzner Cloud
+  delegate_to: localhost
+  become: false
+  hetzner.hcloud.ssh_key:
+    api_token: "{{ hetzner_api_token }}"
+    name: "{{ hetzner_ssh_key_name }}"
+    public_key: "{{ lookup('file', hetzner_server_ssh_public_key_path | default('~/.ssh/id_rsa.pub')) }}"
+    state: present
+  register: hetzner_server_ssh_key
+
+- name: Create firewall with SSL-only rules
+  delegate_to: localhost
+  become: false
+  hetzner.hcloud.firewall:
+    api_token: "{{ hetzner_api_token }}"
+    name: "{{ hetzner_server_name }}-firewall"
+    rules:
+      - description: "Allow SSH"
+        direction: in
+        protocol: tcp
+        port: "22"
+        source_ips:
+          - 0.0.0.0/0
+          - ::/0
+      - description: "Allow HTTPS"
+        direction: in
+        protocol: tcp
+        port: "443"
+        source_ips:
+          - 0.0.0.0/0
+          - ::/0
+    state: present
+  register: hetzner_server_firewall
+
+- name: Create Hetzner Cloud server
+  delegate_to: localhost
+  become: false
+  hetzner.hcloud.server:
+    api_token: "{{ hetzner_api_token }}"
+    name: "{{ hetzner_server_name }}"
+    server_type: "{{ hetzner_server_type }}"
+    image: "{{ hetzner_image }}"
+    location: "{{ hetzner_location }}"
+    ssh_keys:
+      - "{{ hetzner_ssh_key_name }}"
+    firewalls:
+      - "{{ hetzner_server_name }}-firewall"
+    state: present
+  register: hetzner_server_result
+
+- name: Set server IP fact
+  ansible.builtin.set_fact:
+    hetzner_server_ip: "{{ hetzner_server_result.hcloud_server.ipv4_address }}"
+
+- name: Display server information
+  ansible.builtin.debug:
+    msg: "Server created with IP: {{ hetzner_server_ip }}"
+
+- name: Wait for SSH to become available
+  delegate_to: localhost
+  become: false
+  ansible.builtin.wait_for:
+    host: "{{ hetzner_server_ip }}"
+    port: 22
+    delay: 10
+    timeout: 300
+    state: started
+
+- name: Add new server to inventory
+  delegate_to: localhost
+  become: false
+  ansible.builtin.add_host:
+    name: hetzner_server
+    ansible_host: "{{ hetzner_server_ip }}"
+    ansible_user: root
+    ansible_ssh_private_key_file: "{{ hetzner_server_ssh_private_key_path | default('~/.ssh/id_rsa') }}"
+    groups: provisioned

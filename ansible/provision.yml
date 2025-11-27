@@ -1,0 +1,25 @@
+---
+# Provision playbook - Creates Hetzner server and registers with DuckDNS
+# Run this first to create the server infrastructure
+
+- name: Provision Hetzner Cloud Server
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Include Hetzner server role
+      ansible.builtin.include_role:
+        name: hetzner_server
+
+    - name: Include DuckDNS role
+      ansible.builtin.include_role:
+        name: duckdns
+
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Server provisioning complete!
+          Server IP: {{ hetzner_server_ip }}
+          DuckDNS Domain: {{ duckdns_domain }}.duckdns.org
+
+          Next step: Run the configure playbook to set up the server
+          ansible-playbook configure.yml -e "hetzner_server_ip={{ hetzner_server_ip }}"

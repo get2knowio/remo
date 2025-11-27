@@ -1,0 +1,67 @@
+---
+# Main playbook - Complete server provisioning and configuration
+# This combines both provision.yml and configure.yml into a single workflow
+
+- name: Provision Hetzner Cloud Server
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Include Hetzner server role
+      ansible.builtin.include_role:
+        name: hetzner_server
+
+    - name: Include DuckDNS role
+      ansible.builtin.include_role:
+        name: duckdns
+
+- name: Configure Hetzner Cloud Server
+  hosts: provisioned
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Wait for apt to be ready
+      ansible.builtin.wait_for:
+        path: /var/lib/dpkg/lock-frontend
+        state: absent
+        timeout: 300
+      failed_when: false
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  roles:
+    - role: docker
+    - role: user_setup
+    - role: nodejs
+    - role: devcontainers
+    - role: github_cli
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Server provisioning and configuration complete!
+
+          Server Information:
+          - IP Address: {{ ansible_host }}
+          - DuckDNS Domain: {{ duckdns_domain }}.duckdns.org
+
+          Installed:
+          - Docker (with docker-compose plugin)
+          - User 'g2k' with sudo NOPASSWD access
+          - User 'g2k' added to docker group
+          - Node.js LTS (v{{ nodejs_version }})
+          - Git
+          - @devcontainers/cli
+          - GitHub CLI (gh)
+
+          Firewall:
+          - SSH (port 22) - allowed
+          - HTTPS (port 443) - allowed
+          - All other ports - blocked
+
+          You can now SSH to the server as the g2k user:
+          ssh g2k@{{ ansible_host }}

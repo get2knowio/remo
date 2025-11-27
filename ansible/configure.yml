@@ -1,0 +1,46 @@
+---
+# Configure playbook - Installs all software on the provisioned server
+# Run this after provision.yml has created the server
+
+- name: Configure Hetzner Cloud Server
+  hosts: hetzner_server
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Wait for apt to be ready
+      ansible.builtin.wait_for:
+        path: /var/lib/dpkg/lock-frontend
+        state: absent
+        timeout: 300
+      failed_when: false
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  roles:
+    - role: docker
+    - role: user_setup
+    - role: nodejs
+    - role: devcontainers
+    - role: github_cli
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Server configuration complete!
+
+          Installed:
+          - Docker (with docker-compose plugin)
+          - User 'g2k' with sudo NOPASSWD access
+          - User 'g2k' added to docker group
+          - Node.js LTS (v{{ nodejs_version }})
+          - Git
+          - @devcontainers/cli
+          - GitHub CLI (gh)
+
+          You can now SSH to the server as the g2k user:
+          ssh g2k@{{ ansible_host }}

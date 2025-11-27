@@ -1,0 +1,33 @@
+# Ansible cache and artifacts
+.ansible/
+*.retry
+*.pyc
+__pycache__/
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Secrets (should never be committed)
+*.vault
+secrets.yml
+vault.yml
+
+# Local configuration
+*.local.yml
+
+# SSH keys
+*.pem
+id_rsa
+id_rsa.pub
+
+# Python virtual environment
+venv/
+.venv/
+env/
+
+# IDE files
+.idea/
+.vscode/
+*.sublime-*

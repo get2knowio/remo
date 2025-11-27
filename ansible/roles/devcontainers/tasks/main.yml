@@ -1,0 +1,15 @@
+---
+- name: Install @devcontainers/cli globally
+  community.general.npm:
+    name: "@devcontainers/cli"
+    global: true
+    state: present
+
+- name: Verify devcontainer CLI installation
+  ansible.builtin.command: devcontainer --version
+  register: devcontainers_version
+  changed_when: false
+
+- name: Display devcontainer CLI version
+  ansible.builtin.debug:
+    msg: "devcontainer CLI: {{ devcontainers_version.stdout }}"

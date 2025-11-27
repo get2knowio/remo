@@ -1,0 +1,8 @@
+---
+# Ansible-lint configuration
+# Skip rules that are too strict for this project
+
+skip_list:
+  # Variables like hetzner_api_token, g2k_user are global configuration vars
+  # shared across the project, not role-specific
+  - var-naming[no-role-prefix]

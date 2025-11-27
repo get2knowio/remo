@@ -1,0 +1,20 @@
+---
+- name: Update DuckDNS with server IP
+  delegate_to: localhost
+  become: false
+  ansible.builtin.uri:
+    url: "https://www.duckdns.org/update?domains={{ duckdns_domain }}&token={{ duckdns_token }}&ip={{ hetzner_server_ip }}"
+    method: GET
+    return_content: true
+  register: duckdns_response
+
+- name: Verify DuckDNS update was successful
+  ansible.builtin.assert:
+    that:
+      - "'OK' in duckdns_response.content"
+    fail_msg: "DuckDNS update failed: {{ duckdns_response.content }}"
+    success_msg: "DuckDNS domain {{ duckdns_domain }}.duckdns.org updated to {{ hetzner_server_ip }}"
+
+- name: Display DuckDNS information
+  ansible.builtin.debug:
+    msg: "DuckDNS domain: {{ duckdns_domain }}.duckdns.org -> {{ hetzner_server_ip }}"
