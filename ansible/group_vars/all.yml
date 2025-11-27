@@ -14,5 +14,11 @@ duckdns_domain: "{{ lookup('env', 'DUCKDNS_DOMAIN') }}"
 # User Configuration
 g2k_user: "g2k"
 
+# Development workspace directory (used by devshell script)
+dev_workspace_dir: "/home/{{ g2k_user }}/project"
+
+# Zellij Configuration
+zellij_session_name: "main"  # Session name for SSH auto-attach
+
 # Node.js Configuration
 nodejs_version: "20"  # LTS version
