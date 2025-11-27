@@ -176,7 +176,7 @@ The auto-start only triggers when:
 
 ### devshell Helper Script
 
-A helper script is installed at `~/bin/devshell` that:
+A helper script is installed at `~/.local/bin/devshell` that:
 1. Changes to the project workspace directory (`$dev_workspace_dir`)
 2. Starts the devcontainer with `devcontainer up`
 3. Opens a zsh shell inside the devcontainer

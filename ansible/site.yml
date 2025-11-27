@@ -62,7 +62,7 @@
 
           Zellij Configuration:
           - Auto-starts on SSH login (session: {{ zellij_session_name }})
-          - devshell helper script at ~/bin/devshell
+          - devshell helper script at ~/.local/bin/devshell
 
           Firewall:
           - SSH (port 22) - allowed

@@ -46,7 +46,7 @@
 
           Zellij Configuration:
           - Auto-starts on SSH login (session: {{ zellij_session_name }})
-          - devshell helper script at ~/bin/devshell
+          - devshell helper script at ~/.local/bin/devshell
 
           You can now SSH to the server as the g2k user:
           ssh g2k@{{ ansible_host }}

@@ -33,7 +33,6 @@
     - .config/gh
     - .coderabbit
     - .local/bin
-    - bin
 
 - name: Create development workspace directory
   ansible.builtin.file:
@@ -43,14 +42,14 @@
     group: "{{ g2k_user }}"
     mode: '0755'
 
-- name: Ensure ~/bin is in PATH via .bashrc
+- name: Ensure ~/.local/bin is in PATH via .bashrc
   ansible.builtin.blockinfile:
     path: "/home/{{ g2k_user }}/.bashrc"
     marker: "# {mark} ANSIBLE MANAGED BLOCK - PATH"
     block: |
-      # Add ~/bin to PATH if it exists
-      if [ -d "$HOME/bin" ] ; then
-          PATH="$HOME/bin:$PATH"
+      # Add ~/.local/bin to PATH if it exists
+      if [ -d "$HOME/.local/bin" ] ; then
+          PATH="$HOME/.local/bin:$PATH"
       fi
     create: true
     owner: "{{ g2k_user }}"
@@ -80,7 +79,7 @@
 - name: Install devshell helper script
   ansible.builtin.template:
     src: devshell.sh.j2
-    dest: "/home/{{ g2k_user }}/bin/devshell"
+    dest: "/home/{{ g2k_user }}/.local/bin/devshell"
     owner: "{{ g2k_user }}"
     group: "{{ g2k_user }}"
     mode: '0755'
