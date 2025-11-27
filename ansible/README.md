@@ -13,6 +13,7 @@ This Ansible project provisions and configures a minimal Hetzner Cloud server fo
 - **Git**: Version control system
 - **@devcontainers/cli**: Dev Containers CLI tool
 - **GitHub CLI**: `gh` command-line tool
+- **Zellij**: Terminal multiplexer with auto-start on SSH login
 
 ## Prerequisites
 
@@ -38,7 +39,36 @@ This Ansible project provisions and configures a minimal Hetzner Cloud server fo
 
 ## Configuration
 
-Set the following environment variables before running the playbooks:
+### Option 1: Using .env file (Recommended)
+
+Create a `.env` file in the repository root by copying the example:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your actual values:
+
+```bash
+# Required
+HETZNER_API_TOKEN=your-hetzner-api-token
+DUCKDNS_TOKEN=your-duckdns-token
+DUCKDNS_DOMAIN=your-subdomain  # Just the subdomain part (e.g., "myserver" for myserver.duckdns.org)
+
+# Optional
+SSH_PRIVATE_KEY_PATH=~/.ssh/id_rsa
+SSH_PUBLIC_KEY_PATH=~/.ssh/id_rsa.pub
+```
+
+Then use the wrapper script to run playbooks (it automatically sources the `.env` file):
+
+```bash
+./run.sh site.yml
+```
+
+### Option 2: Environment Variables
+
+Alternatively, set environment variables directly:
 
 ```bash
 # Required
@@ -51,7 +81,14 @@ export SSH_PRIVATE_KEY_PATH="~/.ssh/id_rsa"  # Default: ~/.ssh/id_rsa
 export SSH_PUBLIC_KEY_PATH="~/.ssh/id_rsa.pub"  # Default: ~/.ssh/id_rsa.pub
 ```
 
-Alternatively, you can modify `group_vars/all.yml` with your configuration.
+Then run playbooks directly from the ansible directory:
+
+```bash
+cd ansible
+ansible-playbook site.yml
+```
+
+You can also modify `group_vars/all.yml` with your configuration.
 
 ## Usage
 
@@ -60,6 +97,10 @@ Alternatively, you can modify `group_vars/all.yml` with your configuration.
 Run the complete setup with a single command:
 
 ```bash
+# Using .env file (from repository root)
+./run.sh site.yml
+
+# Or manually (from ansible directory)
 ansible-playbook site.yml
 ```
 
@@ -67,12 +108,12 @@ ansible-playbook site.yml
 
 1. **Provision the server** (creates Hetzner server and updates DuckDNS):
    ```bash
-   ansible-playbook provision.yml
+   ./run.sh provision.yml
    ```
 
 2. **Configure the server** (installs all software):
    ```bash
-   ansible-playbook configure.yml -e "hetzner_server_ip=<server-ip>"
+   ./run.sh configure.yml -e "hetzner_server_ip=<server-ip>"
    ```
 
 ### Individual Roles
@@ -81,33 +122,37 @@ You can also run individual roles:
 
 ```bash
 # Only configure Docker
-ansible-playbook configure.yml --tags docker -e "hetzner_server_ip=<server-ip>"
+./run.sh configure.yml --tags docker -e "hetzner_server_ip=<server-ip>"
 
 # Only set up the g2k user
-ansible-playbook configure.yml --tags user_setup -e "hetzner_server_ip=<server-ip>"
+./run.sh configure.yml --tags user_setup -e "hetzner_server_ip=<server-ip>"
 ```
 
 ## Project Structure
 
 ```
-ansible/
-├── ansible.cfg              # Ansible configuration
-├── requirements.yml         # Ansible Galaxy requirements
-├── site.yml                 # Main playbook (full workflow)
-├── provision.yml            # Server provisioning playbook
-├── configure.yml            # Server configuration playbook
-├── inventory/
-│   └── hosts.yml            # Dynamic inventory
-├── group_vars/
-│   └── all.yml              # Global variables
-└── roles/
-    ├── hetzner_server/      # Hetzner Cloud provisioning
-    ├── duckdns/             # DuckDNS registration
-    ├── docker/              # Docker installation
-    ├── user_setup/          # g2k user creation
-    ├── nodejs/              # Node.js LTS installation
-    ├── devcontainers/       # @devcontainers/cli installation
-    └── github_cli/          # GitHub CLI installation
+remote-coding/
+├── .env.example             # Environment variables template
+├── .env                     # Your environment variables (git-ignored)
+├── run.sh                   # Wrapper script to run with .env
+└── ansible/
+    ├── ansible.cfg              # Ansible configuration
+    ├── requirements.yml         # Ansible Galaxy requirements
+    ├── site.yml                 # Main playbook (full workflow)
+    ├── provision.yml            # Server provisioning playbook
+    ├── configure.yml            # Server configuration playbook
+    ├── inventory/
+    │   └── hosts.yml            # Dynamic inventory
+    ├── group_vars/
+    │   └── all.yml              # Global variables
+    └── roles/
+        ├── hetzner_server/      # Hetzner Cloud provisioning
+        ├── duckdns/             # DuckDNS registration
+        ├── docker/              # Docker installation
+        ├── user_setup/          # g2k user creation
+        ├── nodejs/              # Node.js LTS installation
+        ├── devcontainers/       # @devcontainers/cli installation
+        └── github_cli/          # GitHub CLI installation
 ```
 
 ## Server Specifications
@@ -142,6 +187,7 @@ After configuration, the server will have:
 | Git | Ubuntu repository |
 | @devcontainers/cli | npm global |
 | GitHub CLI (gh) | GitHub packages |
+| Zellij | apt or GitHub releases |
 
 ## User: g2k
 
@@ -150,6 +196,40 @@ The `g2k` user is created with:
 - Shell: `/bin/bash`
 - Groups: `docker`
 - Sudo: `g2k ALL=(ALL) NOPASSWD:ALL`
+
+## Zellij Workflow
+
+The server is configured with [Zellij](https://zellij.dev/), a terminal multiplexer that enables:
+
+- **Persistent Sessions**: SSH into the server and automatically land in a zellij session named `main`
+- **Detach & Reattach**: Disconnect from SSH while processes continue running, then reattach later
+- **Session Management**: Run multiple terminals within a single SSH connection
+
+### Auto-Start Behavior
+
+When you SSH into the server as the `g2k` user:
+1. Zellij automatically starts (or attaches to existing session `main`)
+2. Detach with `Ctrl+o, d` to return to the host shell
+3. The session persists even after SSH disconnection
+
+The auto-start only triggers when:
+- The shell is interactive
+- The session is via SSH (`$SSH_TTY` or `$SSH_CONNECTION` is set)
+- Not already inside a zellij session
+
+### devshell Helper Script
+
+A helper script is installed at `~/.local/bin/devshell` that:
+1. Changes to the project workspace directory (`$dev_workspace_dir`)
+2. Starts the devcontainer with `devcontainer up`
+3. Opens a zsh shell inside the devcontainer
+
+Usage:
+```bash
+devshell
+```
+
+The workspace directory can be customized via the `dev_workspace_dir` variable in `group_vars/all.yml`.
 
 ## Connecting to the Server
 

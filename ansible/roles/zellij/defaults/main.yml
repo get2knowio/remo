@@ -1,0 +1,13 @@
+---
+# Zellij version to install (use 'latest' for most recent release)
+zellij_version: "latest"
+
+# Minimum required zellij version (apt version must be at least this)
+zellij_min_version: "0.40.0"
+
+# Installation method: 'auto' will try apt first, fall back to binary
+# Options: 'auto', 'apt', 'binary'
+zellij_install_method: "auto"
+
+# Binary download location
+zellij_binary_path: "/usr/local/bin/zellij"

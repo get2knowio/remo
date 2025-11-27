@@ -1,0 +1,16 @@
+#!/bin/bash
+# devshell - Launch a devcontainer shell for the project
+# Managed by Ansible - do not edit manually
+
+set -e
+
+DEV_WORKSPACE_DIR="{{ dev_workspace_dir }}"
+
+# Change to project directory
+cd "$DEV_WORKSPACE_DIR"
+
+# Start the devcontainer if not already running
+devcontainer up --workspace-folder "$DEV_WORKSPACE_DIR"
+
+# Execute a shell inside the devcontainer
+devcontainer exec --workspace-folder "$DEV_WORKSPACE_DIR" zsh
