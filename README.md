@@ -5,19 +5,18 @@ An Ansible project for provisioning and configuring a minimal Hetzner Cloud serv
 ## Quick Start
 
 ```bash
-cd ansible
-
 # Install dependencies
+cd ansible
 pip install ansible hcloud
 ansible-galaxy collection install -r requirements.yml
+cd ..
 
-# Set environment variables
-export HETZNER_API_TOKEN="your-token"
-export DUCKDNS_TOKEN="your-token"
-export DUCKDNS_DOMAIN="your-subdomain"
+# Set up environment variables
+cp .env.example .env
+# Edit .env with your actual values
 
 # Run full provisioning
-ansible-playbook site.yml
+./run.sh site.yml
 ```
 
 See [ansible/README.md](ansible/README.md) for detailed documentation.
