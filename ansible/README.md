@@ -4,7 +4,7 @@ This Ansible project provisions and configures a minimal Hetzner Cloud server fo
 
 ## Features
 
-- **Hetzner Cloud Server**: Provisions the smallest/cheapest shared vCPU server (cx22)
+- **Hetzner Cloud Server**: Provisions the smallest/cheapest shared vCPU server (cx23)
 - **SSL-Only Firewall**: Only allows SSH (22) and HTTPS (443) traffic
 - **DuckDNS Integration**: Automatically registers the server IP with DuckDNS
 - **Docker**: Installed from official Docker repository
@@ -112,12 +112,12 @@ ansible/
 
 ## Server Specifications
 
-- **Type**: cx22 (smallest shared vCPU)
+- **Type**: cx23 (smallest shared vCPU)
   - 2 vCPU (shared)
   - 4 GB RAM
   - 40 GB SSD
 - **Image**: Ubuntu 24.04 LTS
-- **Location**: Falkenstein (fsn1) - can be changed in variables
+- **Location**: Helsinki (hel1) - can be changed in variables
 
 ## Firewall Rules
 
@@ -138,7 +138,7 @@ After configuration, the server will have:
 |----------|--------|
 | Docker CE | Official Docker repository |
 | Docker Compose | Docker plugin |
-| Node.js 20 LTS | NodeSource repository |
+| Node.js 24 LTS | NodeSource repository |
 | Git | Ubuntu repository |
 | @devcontainers/cli | npm global |
 | GitHub CLI (gh) | GitHub packages |
