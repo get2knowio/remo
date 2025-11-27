@@ -13,16 +13,6 @@ duckdns_domain: "{{ lookup('env', 'DUCKDNS_DOMAIN') }}"
 
 # User Configuration
 g2k_user: "g2k"
-g2k_password: "{{ lookup('env', 'G2K_PASSWORD') | default('changeme', true) }}"
 
 # Node.js Configuration
 nodejs_version: "20"  # LTS version
-
-# Firewall Configuration (SSL-only)
-firewall_rules:
-  - name: "Allow SSH"
-    port: "22"
-    protocol: "tcp"
-  - name: "Allow HTTPS"
-    port: "443"
-    protocol: "tcp"
