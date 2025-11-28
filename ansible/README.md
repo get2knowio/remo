@@ -1,294 +1,189 @@
-# Remote Coding Server - Ansible Project
+# Remote Coding Server
 
-This Ansible project provisions and configures a minimal Hetzner Cloud server for remote development.
+Spin up a fully-configured cloud development server in minutes. One command gives you a persistent, secure remote coding environment with VS Code Dev Containers support.
 
-## Features
+## Why Remote Coding?
 
-- **Hetzner Cloud Server**: Provisions the smallest/cheapest shared vCPU server (cx23)
-- **SSL-Only Firewall**: Only allows SSH (22) and HTTPS (443) traffic
-- **DuckDNS Integration**: Automatically registers the server IP with DuckDNS
-- **Docker**: Installed from official Docker repository
-- **User Setup**: Creates `g2k` user with passwordless sudo and docker group membership
-- **Node.js LTS**: Installed from NodeSource repository
-- **Git**: Version control system
-- **@devcontainers/cli**: Dev Containers CLI tool
-- **GitHub CLI**: `gh` command-line tool
-- **Zellij**: Terminal multiplexer with auto-start on SSH login
+- **Code from anywhere** - SSH into your server from any machine
+- **Persistent sessions** - Disconnect and reconnect without losing work (Zellij terminal multiplexer)
+- **Dev Containers ready** - Full Docker and devcontainer CLI support out of the box
+- **Cost-effective** - Pay only for what you use (~€4/month for Hetzner's smallest server)
+- **Data persistence** - Your home directory survives server teardown/rebuild
 
-## Prerequisites
+## What You Get
 
-1. **Ansible** (2.15+)
-2. **Python 3.8+** with pip
-3. **SSH Key Pair** (~/.ssh/id_rsa and ~/.ssh/id_rsa.pub)
-4. **Hetzner Cloud Account** with API token
-5. **DuckDNS Account** with domain and token
+| Component | Description |
+|-----------|-------------|
+| **Hetzner Cloud Server** | 2 vCPU, 4 GB RAM, 40 GB SSD (Ubuntu 24.04) |
+| **Persistent Volume** | `/home/g2k` survives server teardown |
+| **Docker + Compose** | Official Docker CE with compose plugin |
+| **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
+| **Node.js 24 LTS** | From NodeSource repository |
+| **GitHub CLI** | `gh` for GitHub workflow integration |
+| **Zellij** | Terminal multiplexer with auto-attach on SSH |
+| **Strict Firewall** | Only SSH (22) and HTTPS (443) allowed |
+| **DuckDNS Domain** | Automatic DNS registration |
 
-## Installation
-
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/get2knowio/remote-coding.git
-   cd remote-coding/ansible
-   ```
-
-2. Install Ansible dependencies:
-   ```bash
-   pip install ansible hcloud
-   ansible-galaxy collection install -r requirements.yml
-   ```
-
-## Configuration
-
-### Option 1: Using .env file (Recommended)
-
-Create a `.env` file in the repository root by copying the example:
+## The Workflow
 
 ```bash
-cp .env.example .env
+# 1. Provision your server (one command)
+./run.sh site.yml
+
+# 2. SSH in and start coding
+ssh g2k@your-subdomain.duckdns.org
+
+# 3. You're automatically in a Zellij session
+#    Clone a repo and launch a devcontainer:
+git clone https://github.com/your/project.git
+cd project
+devcontainer up --workspace-folder .
+devcontainer exec --workspace-folder . zsh
+
+# 4. Disconnect anytime - your session persists
+#    Ctrl+o, d to detach from Zellij
+#    Close SSH - reconnect later and pick up where you left off
+
+# 5. Tear down when done (data persists on volume)
+./run.sh teardown.yml
 ```
 
-Edit `.env` with your actual values:
+## Zellij: Persistent Terminal Sessions
+
+When you SSH into the server, you automatically land in a [Zellij](https://zellij.dev/) session:
+
+- **Auto-attach**: SSH → immediately in your `main` session
+- **Detach**: `Ctrl+o, d` returns to host shell
+- **Persist**: Close SSH, processes keep running
+- **Reconnect**: SSH back in, right where you left off
+
+### devshell Helper
+
+A convenience script at `~/.local/bin/devshell`:
+
+```bash
+devshell  # cd to workspace, start devcontainer, open shell inside
+```
+
+---
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.8+ with pip
+- SSH key pair (`~/.ssh/id_rsa`)
+- [Hetzner Cloud](https://www.hetzner.com/cloud) account + API token
+- [DuckDNS](https://www.duckdns.org/) account + token + subdomain
+
+### Setup
+
+```bash
+# Clone and install dependencies
+git clone https://github.com/get2knowio/remote-coding.git
+cd remote-coding
+pip install ansible hcloud
+ansible-galaxy collection install -r ansible/requirements.yml
+
+# Configure credentials
+cp .env.example .env
+# Edit .env with your tokens
+
+# Provision!
+./run.sh site.yml
+```
+
+### Configuration
+
+Create a `.env` file in the repository root:
 
 ```bash
 # Required
 HETZNER_API_TOKEN=your-hetzner-api-token
 DUCKDNS_TOKEN=your-duckdns-token
-DUCKDNS_DOMAIN=your-subdomain  # Just the subdomain part (e.g., "myserver" for myserver.duckdns.org)
+DUCKDNS_DOMAIN=your-subdomain  # e.g., "myserver" for myserver.duckdns.org
 
 # Optional
 SSH_PRIVATE_KEY_PATH=~/.ssh/id_rsa
 SSH_PUBLIC_KEY_PATH=~/.ssh/id_rsa.pub
 ```
 
-Then use the wrapper script to run playbooks (it automatically sources the `.env` file):
+---
+
+## Usage Reference
+
+### Playbooks
+
+| Command | Description |
+|---------|-------------|
+| `./run.sh site.yml` | Full provisioning + configuration |
+| `./run.sh provision.yml` | Create server + update DNS only |
+| `./run.sh configure.yml -e "hetzner_server_ip=<ip>"` | Configure existing server |
+| `./run.sh teardown.yml` | Destroy server (keeps volume) |
+| `./run.sh teardown.yml -e remove_volume=true` | Destroy server + volume |
+
+### Connecting
 
 ```bash
-./run.sh site.yml
+ssh g2k@<your-subdomain>.duckdns.org
+# or
+ssh g2k@<server-ip>
 ```
 
-### Option 2: Environment Variables
-
-Alternatively, set environment variables directly:
+### Running Individual Roles
 
 ```bash
-# Required
-export HETZNER_API_TOKEN="your-hetzner-api-token"
-export DUCKDNS_TOKEN="your-duckdns-token"
-export DUCKDNS_DOMAIN="your-subdomain"  # Just the subdomain part (e.g., "myserver" for myserver.duckdns.org)
-
-# Optional
-export SSH_PRIVATE_KEY_PATH="~/.ssh/id_rsa"  # Default: ~/.ssh/id_rsa
-export SSH_PUBLIC_KEY_PATH="~/.ssh/id_rsa.pub"  # Default: ~/.ssh/id_rsa.pub
+./run.sh configure.yml --tags docker -e "hetzner_server_ip=<ip>"
+./run.sh configure.yml --tags user_setup -e "hetzner_server_ip=<ip>"
 ```
 
-Then run playbooks directly from the ansible directory:
-
-```bash
-cd ansible
-ansible-playbook site.yml
-```
-
-You can also modify `group_vars/all.yml` with your configuration.
-
-## Usage
-
-### Full Provisioning and Configuration
-
-Run the complete setup with a single command:
-
-```bash
-# Using .env file (from repository root)
-./run.sh site.yml
-
-# Or manually (from ansible directory)
-ansible-playbook site.yml
-```
-
-### Step-by-Step Provisioning
-
-1. **Provision the server** (creates Hetzner server and updates DuckDNS):
-   ```bash
-   ./run.sh provision.yml
-   ```
-
-2. **Configure the server** (installs all software):
-   ```bash
-   ./run.sh configure.yml -e "hetzner_server_ip=<server-ip>"
-   ```
-
-### Individual Roles
-
-You can also run individual roles:
-
-```bash
-# Only configure Docker
-./run.sh configure.yml --tags docker -e "hetzner_server_ip=<server-ip>"
-
-# Only set up the g2k user
-./run.sh configure.yml --tags user_setup -e "hetzner_server_ip=<server-ip>"
-```
+---
 
 ## Project Structure
 
 ```
 remote-coding/
 ├── .env.example             # Environment variables template
-├── .env                     # Your environment variables (git-ignored)
-├── run.sh                   # Wrapper script to run with .env
+├── .env                     # Your credentials (git-ignored)
+├── run.sh                   # Wrapper script
 └── ansible/
-    ├── ansible.cfg              # Ansible configuration
-    ├── requirements.yml         # Ansible Galaxy requirements
-    ├── site.yml                 # Main playbook (full workflow)
-    ├── provision.yml            # Server provisioning playbook
-    ├── configure.yml            # Server configuration playbook
-    ├── teardown.yml             # Server teardown playbook
-    ├── inventory/
-    │   └── hosts.yml            # Dynamic inventory
-    ├── group_vars/
-    │   └── all.yml              # Global variables
+    ├── site.yml             # Main playbook
+    ├── provision.yml        # Server creation
+    ├── configure.yml        # Software installation
+    ├── teardown.yml         # Cleanup
+    ├── group_vars/all.yml   # Global variables
     └── roles/
-        ├── hetzner_server/      # Hetzner Cloud provisioning
-        ├── duckdns/             # DuckDNS registration
-        ├── docker/              # Docker installation
-        ├── user_setup/          # g2k user creation
-        ├── nodejs/              # Node.js LTS installation
-        ├── devcontainers/       # @devcontainers/cli installation
-        └── github_cli/          # GitHub CLI installation
+        ├── hetzner_server/  # Cloud provisioning
+        ├── duckdns/         # DNS registration
+        ├── docker/          # Docker CE
+        ├── user_setup/      # g2k user + sudo
+        ├── nodejs/          # Node.js LTS
+        ├── devcontainers/   # @devcontainers/cli
+        ├── github_cli/      # gh CLI
+        └── zellij/          # Terminal multiplexer
 ```
 
-## Server Specifications
-
-- **Type**: cx23 (smallest shared vCPU)
-  - 2 vCPU (shared)
-  - 4 GB RAM
-  - 40 GB SSD
-- **Image**: Ubuntu 24.04 LTS
-- **Location**: Helsinki (hel1) - can be changed in variables
-
-## Firewall Rules
-
-The server is provisioned with a strict firewall:
-
-| Port | Protocol | Description |
-|------|----------|-------------|
-| 22   | TCP      | SSH         |
-| 443  | TCP      | HTTPS       |
-
-All other incoming traffic is blocked.
-
-## Installed Software
-
-After configuration, the server will have:
-
-| Software | Source |
-|----------|--------|
-| Docker CE | Official Docker repository |
-| Docker Compose | Docker plugin |
-| Node.js 24 LTS | NodeSource repository |
-| Git | Ubuntu repository |
-| @devcontainers/cli | npm global |
-| GitHub CLI (gh) | GitHub packages |
-| Zellij | apt or GitHub releases |
-
-## User: g2k
+## User Account
 
 The `g2k` user is created with:
-- Home directory: `/home/g2k`
-- Shell: `/bin/bash`
-- Groups: `docker`
-- Sudo: `g2k ALL=(ALL) NOPASSWD:ALL`
-
-## Zellij Workflow
-
-The server is configured with [Zellij](https://zellij.dev/), a terminal multiplexer that enables:
-
-- **Persistent Sessions**: SSH into the server and automatically land in a zellij session named `main`
-- **Detach & Reattach**: Disconnect from SSH while processes continue running, then reattach later
-- **Session Management**: Run multiple terminals within a single SSH connection
-
-### Auto-Start Behavior
-
-When you SSH into the server as the `g2k` user:
-1. Zellij automatically starts (or attaches to existing session `main`)
-2. Detach with `Ctrl+o, d` to return to the host shell
-3. The session persists even after SSH disconnection
-
-The auto-start only triggers when:
-- The shell is interactive
-- The session is via SSH (`$SSH_TTY` or `$SSH_CONNECTION` is set)
-- Not already inside a zellij session
-
-### devshell Helper Script
-
-A helper script is installed at `~/.local/bin/devshell` that:
-1. Changes to the project workspace directory (`$dev_workspace_dir`)
-2. Starts the devcontainer with `devcontainer up`
-3. Opens a zsh shell inside the devcontainer
-
-Usage:
-```bash
-devshell
-```
-
-The workspace directory can be customized via the `dev_workspace_dir` variable in `group_vars/all.yml`.
-
-## Connecting to the Server
-
-After provisioning:
-
-```bash
-# As root (initial access)
-ssh root@<server-ip>
-
-# As g2k user
-ssh g2k@<server-ip>
-
-# Using DuckDNS domain
-ssh g2k@<your-subdomain>.duckdns.org
-```
-
-## Cleanup / Teardown
-
-To tear down the server and associated resources:
-
-```bash
-# Destroy server only (keeps the volume for data persistence)
-./run.sh teardown.yml
-
-# Destroy server AND volume (removes all data)
-./run.sh teardown.yml -e remove_volume=true
-
-# Skip confirmation prompt (for automation)
-./run.sh teardown.yml -e auto_confirm=true
-./run.sh teardown.yml -e remove_volume=true -e auto_confirm=true
-```
-
-The teardown playbook will:
-- Delete the Hetzner Cloud server
-- Delete the associated firewall
-- Optionally delete the persistent volume (when `remove_volume=true`)
-
-**Note**: By default, the volume is preserved so your data in `/home/g2k` persists. When you run `site.yml` again, the new server will mount the same volume with all your data intact.
+- Passwordless sudo (`NOPASSWD:ALL`)
+- Docker group membership
+- SSH key from your local machine
 
 ## Troubleshooting
 
-### SSH Connection Issues
-
-Ensure your SSH key is properly configured:
+**SSH connection fails?**
 ```bash
 ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa
 ```
 
-### Ansible Collection Not Found
-
-Install required collections:
+**Ansible collection not found?**
 ```bash
-ansible-galaxy collection install -r requirements.yml
+ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
-### Hetzner API Errors
-
-Verify your API token has the correct permissions in the Hetzner Cloud Console.
+**Hetzner API errors?**
+Verify your API token has read/write permissions in the Hetzner Cloud Console.
 
 ## License
 
