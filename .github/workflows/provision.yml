@@ -25,7 +25,7 @@ jobs:
 
       - name: Install Ansible and dependencies
         run: |
-          pip install ansible requests
+          pip install ansible requests python-dateutil
           ansible-galaxy collection install -r ansible/requirements.yml
 
       - name: Set up SSH key
