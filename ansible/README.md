@@ -1,190 +1,171 @@
-# Remote Coding Server
+# Ansible Playbooks
 
-Spin up a fully-configured cloud development server in minutes. One command gives you a persistent, secure remote coding environment with VS Code Dev Containers support.
+This directory contains the Ansible automation for provisioning and configuring the remote coding server.
 
-## Why Remote Coding?
+## Playbooks
 
-- **Code from anywhere** - SSH into your server from any machine
-- **Persistent sessions** - Disconnect and reconnect without losing work (Zellij terminal multiplexer)
-- **Dev Containers ready** - Full Docker and devcontainer CLI support out of the box
-- **Cost-effective** - Pay only for what you use (~€4/month for Hetzner's smallest server)
-- **Data persistence** - Your home directory survives server teardown/rebuild
+| Playbook | Description |
+|----------|-------------|
+| `site.yml` | Complete workflow: provision server + configure all software |
+| `provision.yml` | Create Hetzner server and register with DuckDNS |
+| `configure.yml` | Install software on an existing server |
+| `teardown.yml` | Destroy server and optionally the volume |
 
-## What You Get
+## Roles
 
-| Component | Description |
-|-----------|-------------|
-| **Hetzner Cloud Server** | 2 vCPU, 4 GB RAM, 40 GB SSD (Ubuntu 24.04) |
-| **Persistent Volume** | `/home/g2k` survives server teardown |
-| **Docker + Compose** | Official Docker CE with compose plugin |
-| **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
-| **Node.js 24 LTS** | From NodeSource repository |
-| **GitHub CLI** | `gh` for GitHub workflow integration |
-| **Zellij** | Terminal multiplexer with auto-attach on SSH |
-| **Strict Firewall** | Only SSH (22) and HTTPS (443) allowed |
-| **DuckDNS Domain** | Automatic DNS registration |
+| Role | Description |
+|------|-------------|
+| `hetzner_server` | Creates Hetzner Cloud server, firewall, volume, and SSH key |
+| `duckdns` | Updates DuckDNS with the server's IP address |
+| `docker` | Installs Docker CE and docker-compose plugin |
+| `user_setup` | Creates `g2k` user with sudo and docker access |
+| `nodejs` | Installs Node.js LTS from NodeSource |
+| `devcontainers` | Installs @devcontainers/cli globally |
+| `github_cli` | Installs GitHub CLI (`gh`) |
+| `zellij` | Installs and configures Zellij terminal multiplexer |
 
-## The Workflow
+## Running Playbooks
 
-```bash
-# 1. Provision your server (one command)
-./run.sh site.yml
+### Using the wrapper script (recommended)
 
-# 2. SSH in and start coding
-ssh g2k@your-subdomain.duckdns.org
-
-# 3. You're automatically in a Zellij session
-#    Clone a repo and launch a devcontainer:
-git clone https://github.com/your/project.git
-cd project
-devcontainer up --workspace-folder .
-devcontainer exec --workspace-folder . zsh
-
-# 4. Disconnect anytime - your session persists
-#    Ctrl+o, d to detach from Zellij
-#    Close SSH - reconnect later and pick up where you left off
-
-# 5. Tear down when done (data persists on volume)
-./run.sh teardown.yml
-```
-
-## Zellij: Persistent Terminal Sessions
-
-When you SSH into the server, you automatically land in a [Zellij](https://zellij.dev/) session:
-
-- **Auto-attach**: SSH → immediately in your `main` session
-- **Detach**: `Ctrl+o, d` returns to host shell
-- **Persist**: Close SSH, processes keep running
-- **Reconnect**: SSH back in, right where you left off
-
-### devshell Helper
-
-A convenience script at `~/.local/bin/devshell`:
+From the repository root:
 
 ```bash
-devshell  # cd to workspace, start devcontainer, open shell inside
+./run.sh site.yml                    # Full provision + configure
+./run.sh provision.yml               # Just create server
+./run.sh configure.yml               # Configure existing server
+./run.sh teardown.yml                # Destroy server (keep volume)
+./run.sh teardown.yml -e remove_volume=true  # Destroy everything
 ```
 
----
+### Running directly
 
-## Quick Start
-
-### Prerequisites
-
-- Python 3.8+ with pip
-- SSH key pair (`~/.ssh/id_rsa`)
-- [Hetzner Cloud](https://www.hetzner.com/cloud) account + API token
-- [DuckDNS](https://www.duckdns.org/) account + token + subdomain
-
-### Setup
+From this directory:
 
 ```bash
-# Clone and install dependencies
-git clone https://github.com/get2knowio/remote-coding.git
-cd remote-coding
-pip install ansible hcloud
-ansible-galaxy collection install -r ansible/requirements.yml
-
-# Configure credentials
-cp .env.example .env
-# Edit .env with your tokens
-
-# Provision!
-./run.sh site.yml
+ansible-playbook site.yml
+ansible-playbook provision.yml
+ansible-playbook configure.yml -e "hetzner_server_ip=<ip>"
+ansible-playbook teardown.yml
 ```
 
-### Configuration
+## Configuration
 
-Create a `.env` file in the repository root:
+### Environment Variables
 
-```bash
-# Required
-HETZNER_API_TOKEN=your-hetzner-api-token
-DUCKDNS_TOKEN=your-duckdns-token
-DUCKDNS_DOMAIN=your-subdomain  # e.g., "myserver" for myserver.duckdns.org
+Set these in `.env` at the repository root, or export them:
 
-# Optional
-SSH_PRIVATE_KEY_PATH=~/.ssh/id_rsa
-SSH_PUBLIC_KEY_PATH=~/.ssh/id_rsa.pub
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `HETZNER_API_TOKEN` | Yes | Hetzner Cloud API token |
+| `DUCKDNS_TOKEN` | Yes | DuckDNS authentication token |
+| `DUCKDNS_DOMAIN` | Yes | Subdomain (without `.duckdns.org`) |
+| `SSH_PRIVATE_KEY_PATH` | No | Path to SSH private key (default: `~/.ssh/id_rsa`) |
+| `SSH_PUBLIC_KEY_PATH` | No | Path to SSH public key (default: `~/.ssh/id_rsa.pub`) |
+
+### Global Variables
+
+Edit `group_vars/all.yml` to customize:
+
+```yaml
+# Server configuration
+hetzner_server_name: remote-coding
+hetzner_server_type: cx22
+hetzner_server_image: ubuntu-24.04
+hetzner_server_location: hel1
+
+# Node.js version
+nodejs_version: "24"
+
+# Zellij session name
+zellij_session_name: main
+
+# Workspace directory for devshell helper
+dev_workspace_dir: ~/workspace
 ```
-
----
-
-## Usage Reference
-
-### Playbooks
-
-| Command | Description |
-|---------|-------------|
-| `./run.sh site.yml` | Full provisioning + configuration |
-| `./run.sh provision.yml` | Create server + update DNS only |
-| `./run.sh configure.yml -e "hetzner_server_ip=<ip>"` | Configure existing server |
-| `./run.sh teardown.yml` | Destroy server (keeps volume) |
-| `./run.sh teardown.yml -e remove_volume=true` | Destroy server + volume |
-
-### Connecting
-
-```bash
-ssh g2k@<your-subdomain>.duckdns.org
-# or
-ssh g2k@<server-ip>
-```
-
-### Running Individual Roles
-
-```bash
-./run.sh configure.yml --tags docker -e "hetzner_server_ip=<ip>"
-./run.sh configure.yml --tags user_setup -e "hetzner_server_ip=<ip>"
-```
-
----
 
 ## Project Structure
 
 ```
-remote-coding/
-├── .env.example             # Environment variables template
-├── .env                     # Your credentials (git-ignored)
-├── run.sh                   # Wrapper script
-└── ansible/
-    ├── site.yml             # Main playbook
-    ├── provision.yml        # Server creation
-    ├── configure.yml        # Software installation
-    ├── teardown.yml         # Cleanup
-    ├── group_vars/all.yml   # Global variables
-    └── roles/
-        ├── hetzner_server/  # Cloud provisioning
-        ├── duckdns/         # DNS registration
-        ├── docker/          # Docker CE
-        ├── user_setup/      # g2k user + sudo
-        ├── nodejs/          # Node.js LTS
-        ├── devcontainers/   # @devcontainers/cli
-        ├── github_cli/      # gh CLI
-        └── zellij/          # Terminal multiplexer
+ansible/
+├── ansible.cfg          # Ansible configuration
+├── requirements.yml     # Galaxy collection dependencies
+├── site.yml             # Main playbook
+├── provision.yml        # Server creation only
+├── configure.yml        # Software installation only
+├── teardown.yml         # Cleanup playbook
+├── inventory/
+│   └── hosts.yml        # Dynamic inventory
+├── group_vars/
+│   └── all.yml          # Global variables
+└── roles/
+    ├── hetzner_server/
+    │   ├── defaults/main.yml
+    │   └── tasks/main.yml
+    ├── duckdns/
+    │   ├── defaults/main.yml
+    │   └── tasks/main.yml
+    ├── docker/
+    │   ├── handlers/main.yml
+    │   └── tasks/main.yml
+    ├── user_setup/
+    │   ├── defaults/main.yml
+    │   ├── tasks/main.yml
+    │   └── templates/devshell.sh.j2
+    ├── nodejs/
+    │   ├── defaults/main.yml
+    │   └── tasks/main.yml
+    ├── devcontainers/
+    │   └── tasks/main.yml
+    ├── github_cli/
+    │   └── tasks/main.yml
+    └── zellij/
+        ├── defaults/main.yml
+        ├── tasks/main.yml
+        └── templates/config.kdl.j2
 ```
 
-## User Account
+## Adding New Roles
 
-The `g2k` user is created with:
-- Passwordless sudo (`NOPASSWD:ALL`)
-- Docker group membership
-- SSH key from your local machine
+1. Create role structure:
+   ```bash
+   mkdir -p roles/myrole/{tasks,defaults,handlers,templates}
+   ```
 
-## Troubleshooting
+2. Add tasks in `roles/myrole/tasks/main.yml`
 
-**SSH connection fails?**
-```bash
-ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa
-```
+3. Add the role to `configure.yml` (or `site.yml`):
+   ```yaml
+   roles:
+     - role: myrole
+   ```
 
-**Ansible collection not found?**
-```bash
-ansible-galaxy collection install -r ansible/requirements.yml
-```
+4. Optionally add a tag for selective execution:
+   ```yaml
+   roles:
+     - role: myrole
+       tags: [myrole]
+   ```
 
-**Hetzner API errors?**
-Verify your API token has read/write permissions in the Hetzner Cloud Console.
+## Server Specifications
 
-## License
+Default Hetzner server (configurable in `group_vars/all.yml`):
 
-MIT License - see LICENSE file for details.
+| Spec | Value |
+|------|-------|
+| Type | cx22 (smallest shared vCPU) |
+| CPU | 2 vCPU (shared) |
+| RAM | 4 GB |
+| Disk | 40 GB SSD |
+| Image | Ubuntu 24.04 LTS |
+| Location | Helsinki (hel1) |
+
+## Firewall Rules
+
+The `hetzner_server` role creates a firewall allowing only:
+
+| Port | Protocol | Description |
+|------|----------|-------------|
+| 22 | TCP | SSH |
+
+All other inbound traffic is blocked.
