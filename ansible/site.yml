@@ -39,6 +39,11 @@
         upgrade: dist
         autoremove: true
 
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
   roles:
     - role: docker
     - role: user_setup
@@ -82,3 +87,13 @@
 
           You can now SSH to the server as the g2k user:
           ssh g2k@{{ duckdns_domain }}.duckdns.org
+
+    - name: Reboot server if required by package updates
+      ansible.builtin.reboot:
+        msg: "Rebooting to apply system updates"
+        reboot_timeout: 300
+      when: reboot_required_file.stat.exists
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg: "{{ 'Server was rebooted to apply system updates.' if reboot_required_file.stat.exists else 'No reboot was required.' }}"
