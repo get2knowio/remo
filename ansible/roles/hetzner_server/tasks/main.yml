@@ -103,7 +103,7 @@
   ansible.builtin.debug:
     msg: "Server created with IP: {{ hetzner_server_ip }}"
 
-- name: Wait for SSH to become available
+- name: Wait for SSH port to become available
   delegate_to: localhost
   become: false
   ansible.builtin.wait_for:
@@ -112,6 +112,38 @@
     delay: 10
     timeout: 300
     state: started
+
+- name: Wait for cloud-init to complete
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    cmd: >
+      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=10 -o BatchMode=yes
+      -i {{ hetzner_server_ssh_private_key_path | default('~/.ssh/id_rsa') }}
+      root@{{ hetzner_server_ip }}
+      'cloud-init status --wait || true'
+  register: cloud_init_result
+  changed_when: false
+  retries: 6
+  delay: 10
+  until: cloud_init_result.rc == 0
+
+- name: Verify SSH connection is stable
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    cmd: >
+      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=10 -o BatchMode=yes
+      -i {{ hetzner_server_ssh_private_key_path | default('~/.ssh/id_rsa') }}
+      root@{{ hetzner_server_ip }}
+      'echo SSH connection successful'
+  register: ssh_test_result
+  changed_when: false
+  retries: 3
+  delay: 5
+  until: ssh_test_result.rc == 0
 
 - name: Add new server to inventory
   delegate_to: localhost
