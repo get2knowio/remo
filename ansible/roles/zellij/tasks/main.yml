@@ -126,3 +126,19 @@
 - name: Display zellij version
   ansible.builtin.debug:
     msg: "{{ zellij_final_version.stdout }}"
+
+- name: Create zellij config directory for user
+  ansible.builtin.file:
+    path: "/home/{{ g2k_user }}/.config/zellij"
+    state: directory
+    owner: "{{ g2k_user }}"
+    group: "{{ g2k_user }}"
+    mode: '0755'
+
+- name: Deploy zellij config for outer session
+  ansible.builtin.template:
+    src: config.kdl.j2
+    dest: "/home/{{ g2k_user }}/.config/zellij/config.kdl"
+    owner: "{{ g2k_user }}"
+    group: "{{ g2k_user }}"
+    mode: '0644'

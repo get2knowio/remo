@@ -77,7 +77,17 @@ if [ ! -d ".devcontainer" ] && [ ! -f ".devcontainer.json" ]; then
     echo "Starting devcontainer anyway (will use default configuration)..."
 fi
 
-# Start the devcontainer if not already running
+# If we're inside a zellij session, open a new tab named after the project
+if [ -n "$ZELLIJ" ]; then
+    # Create a new tab with the project name and run the devcontainer there
+    zellij action new-tab --name "$REPO_NAME"
+    # The new tab starts in $HOME, so we need to cd and run devcontainer
+    zellij action write-chars "cd '$WORKSPACE_DIR' && devcontainer up --workspace-folder '$WORKSPACE_DIR' && devcontainer exec --workspace-folder '$WORKSPACE_DIR' /bin/bash -c 'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'"
+    zellij action write 10  # Send Enter key
+    exit 0
+fi
+
+# Start the devcontainer if not already running (fallback for non-zellij sessions)
 echo "Starting devcontainer for $REPO_NAME..."
 devcontainer up --workspace-folder "$WORKSPACE_DIR"
 

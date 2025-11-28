@@ -1,0 +1,20 @@
+keybinds clear-defaults {
+  // --- Outer Zellij handles tab management only ---
+
+  normal {
+    bind "Ctrl-t" { new-tab; }
+    bind "Ctrl-Tab" { next-tab; }
+    bind "Ctrl-Shift-Tab" { previous-tab; }
+
+    // You probably want close-tab as well:
+    bind "Ctrl-w" { close-tab; }
+
+    // Optional: detach zellij
+    bind "Ctrl-d" { detach; }
+  }
+
+  // Allow basic UI control
+  locked {
+    bind "Ctrl-t" { switch-to-mode "normal"; }
+  }
+}
