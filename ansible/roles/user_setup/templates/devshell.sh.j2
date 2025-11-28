@@ -77,17 +77,12 @@ if [ ! -d ".devcontainer" ] && [ ! -f ".devcontainer.json" ]; then
     echo "Starting devcontainer anyway (will use default configuration)..."
 fi
 
-# If we're inside a zellij session, open a new tab named after the project
+# If inside zellij, rename the current tab to the project name
 if [ -n "$ZELLIJ" ]; then
-    # Create a new tab with the project name
-    zellij action new-tab --name "$REPO_NAME" --cwd "$WORKSPACE_DIR"
-    # Run the devcontainer command in-place, replacing the default shell
-    # Using zellij run with --in-place avoids the "Waiting to run" prompt
-    zellij run --in-place --cwd "$WORKSPACE_DIR" -- bash -c "devcontainer up --workspace-folder '$WORKSPACE_DIR' && devcontainer exec --workspace-folder '$WORKSPACE_DIR' /bin/bash -c 'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'; exec bash"
-    exit 0
+    zellij action rename-tab "$REPO_NAME"
 fi
 
-# Start the devcontainer if not already running (fallback for non-zellij sessions)
+# Start the devcontainer if not already running
 echo "Starting devcontainer for $REPO_NAME..."
 devcontainer up --workspace-folder "$WORKSPACE_DIR"
 
