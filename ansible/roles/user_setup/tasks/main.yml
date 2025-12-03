@@ -142,25 +142,7 @@
     group: "{{ g2k_user }}"
     mode: '0644'
 
-- name: Configure zellij auto-start on SSH login
-  ansible.builtin.blockinfile:
-    path: "/home/{{ g2k_user }}/.bashrc"
-    marker: "# {mark} ANSIBLE MANAGED BLOCK - ZELLIJ"
-    block: |
-      # Auto-start zellij on SSH login
-      # Only trigger when:
-      #   - Shell is interactive
-      #   - Session is SSH (SSH_TTY or SSH_CONNECTION is set)
-      #   - Not already inside a zellij session
-      if [[ $- == *i* ]] && [[ -n "$SSH_TTY" || -n "$SSH_CONNECTION" ]] && [[ -z "$ZELLIJ" ]]; then
-          zellij attach --create {{ zellij_session_name }}
-          exit
-      fi
-    create: true
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
-    mode: '0644'
-    insertafter: EOF
+
 
 - name: Ensure .bash_profile sources .bashrc for login shells
   ansible.builtin.blockinfile:

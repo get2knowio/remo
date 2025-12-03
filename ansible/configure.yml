@@ -55,7 +55,7 @@
           - Zellij terminal multiplexer
 
           Zellij Configuration:
-          - Auto-starts on SSH login (session: {{ zellij_session_name }})
+          - Start manually with: zellij attach --create {{ zellij_session_name }}
           - devshell helper script at ~/.local/bin/devshell
 
           You can now SSH to the server as the g2k user:

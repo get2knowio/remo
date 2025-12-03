@@ -20,7 +20,7 @@ Spin up a fully-configured cloud development server in minutes. One command give
 | **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
 | **Node.js 24 LTS** | From NodeSource repository |
 | **GitHub CLI** | `gh` for GitHub workflow integration |
-| **Zellij** | Terminal multiplexer with auto-attach on SSH |
+| **Zellij** | Terminal multiplexer for persistent sessions |
 | **Strict Firewall** | SSH-only access (port 22) |
 | **DuckDNS Domain** | Automatic DNS registration |
 
@@ -33,29 +33,31 @@ Spin up a fully-configured cloud development server in minutes. One command give
 # 2. SSH in and start coding
 ssh g2k@your-subdomain.duckdns.org
 
-# 3. You're automatically in a Zellij session
-#    Clone a repo and launch a devcontainer:
+# 3. Start a Zellij session for persistence (optional)
+zellij attach --create main
+
+# 4. Clone a repo and launch a devcontainer:
 git clone https://github.com/your/project.git
 cd project
 devcontainer up --workspace-folder .
 devcontainer exec --workspace-folder . zsh
 
-# 4. Disconnect anytime - your session persists
+# 5. Disconnect anytime - your session persists (if using Zellij)
 #    Ctrl+o, d to detach from Zellij
 #    Close SSH - reconnect later and pick up where you left off
 
-# 5. Tear down when done (data persists on volume)
+# 6. Tear down when done (data persists on volume)
 ./run.sh teardown.yml
 ```
 
 ## Zellij: Persistent Terminal Sessions
 
-When you SSH into the server, you automatically land in a [Zellij](https://zellij.dev/) session:
+[Zellij](https://zellij.dev/) is available for persistent terminal sessions:
 
-- **Auto-attach**: SSH → immediately in your `main` session
+- **Start/Attach**: Run `zellij attach --create main` to start or attach to a session
 - **Detach**: `Ctrl+o, d` returns to host shell
 - **Persist**: Close SSH, processes keep running
-- **Reconnect**: SSH back in, right where you left off
+- **Reconnect**: SSH back in, run `zellij attach --create main` to resume
 
 ### Nested Zellij for Devcontainers
 
