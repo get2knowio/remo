@@ -23,11 +23,17 @@
 
   pre_tasks:
     - name: Wait for apt to be ready
-      ansible.builtin.wait_for:
-        path: /var/lib/dpkg/lock-frontend
-        state: absent
-        timeout: 300
-      failed_when: false
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+          sleep 5
+        done
+      args:
+        executable: /bin/bash
+      register: apt_lock_result
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: apt_lock_result.rc == 0
 
     - name: Update apt cache
       ansible.builtin.apt:
