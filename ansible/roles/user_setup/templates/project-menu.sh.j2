@@ -21,7 +21,7 @@ cleanup_exited_sessions() {
         local exited_sessions
         exited_sessions=$(zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep 'EXITED' | awk '{print $1}' || true)
         for session in $exited_sessions; do
-            [ -n "$session" ] && zellij delete-session "$session" 2>/dev/null || true
+            [ -n "$session" ] && zellij delete-session "$session" &>/dev/null || true
         done
     fi
 }
