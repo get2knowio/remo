@@ -46,6 +46,7 @@
 
   roles:
     - role: docker
+    - role: fzf
     - role: user_setup
     - role: nodejs
     - role: devcontainers
@@ -69,13 +70,16 @@
           - User 'g2k' added to docker group
           - Node.js LTS (v{{ nodejs_version }})
           - Git
+          - fzf (fuzzy finder for TUI menu)
           - @devcontainers/cli
           - GitHub CLI (gh)
           - Zellij terminal multiplexer
 
-          Zellij Configuration:
-          - Auto-starts on SSH login (session: {{ zellij_session_name }})
-          - devshell helper script at ~/.local/bin/devshell
+          Login Experience:
+          - Project menu auto-starts on SSH login
+          - Select projects with arrow keys
+          - Devcontainer projects auto-start their container
+          - Non-devcontainer projects use zellij sessions
 
           Firewall:
           - SSH (port 22) - allowed

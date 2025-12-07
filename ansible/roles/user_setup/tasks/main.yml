@@ -142,19 +142,50 @@
     group: "{{ g2k_user }}"
     mode: '0644'
 
-- name: Configure zellij auto-start on SSH login
+- name: Configure project-menu auto-start on SSH login
   ansible.builtin.blockinfile:
     path: "/home/{{ g2k_user }}/.bashrc"
-    marker: "# {mark} ANSIBLE MANAGED BLOCK - ZELLIJ"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - PROJECT MENU"
     block: |
-      # Auto-start zellij on SSH login
+      # Auto-start project-menu on SSH login
       # Only trigger when:
       #   - Shell is interactive
       #   - Session is SSH (SSH_TTY or SSH_CONNECTION is set)
       #   - Not already inside a zellij session
-      if [[ $- == *i* ]] && [[ -n "$SSH_TTY" || -n "$SSH_CONNECTION" ]] && [[ -z "$ZELLIJ" ]]; then
-          zellij attach --create {{ zellij_session_name }}
+      #   - Not already inside a devcontainer
+      if [[ $- == *i* ]] && [[ -n "$SSH_TTY" || -n "$SSH_CONNECTION" ]] && [[ -z "$ZELLIJ" ]] && [[ -z "$REMOTE_CONTAINERS" ]]; then
+          project-menu
           exit
+      fi
+    create: true
+    owner: "{{ g2k_user }}"
+    group: "{{ g2k_user }}"
+    mode: '0644'
+    insertafter: EOF
+
+- name: Configure devcontainer auto-start inside zellij sessions
+  ansible.builtin.blockinfile:
+    path: "/home/{{ g2k_user }}/.bashrc"
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - DEVCONTAINER AUTO-START"
+    block: |
+      # Auto-start devcontainer when inside a zellij session for a devcontainer project
+      # Only trigger when:
+      #   - Shell is interactive
+      #   - Inside zellij (ZELLIJ_SESSION_NAME is set)
+      #   - Not already inside a devcontainer
+      if [[ $- == *i* ]] && [[ -n "$ZELLIJ_SESSION_NAME" ]] && [[ -z "$REMOTE_CONTAINERS" ]]; then
+          _project_dir="{{ dev_workspace_dir }}/$ZELLIJ_SESSION_NAME"
+          if [[ -d "$_project_dir/.devcontainer" ]] || [[ -f "$_project_dir/.devcontainer.json" ]]; then
+              cd "$_project_dir"
+              echo "Starting devcontainer for $ZELLIJ_SESSION_NAME..."
+              devcontainer up --workspace-folder "$_project_dir"
+              echo ""
+              echo "Entering devcontainer (exit to return to host shell)..."
+              echo ""
+              exec devcontainer exec --workspace-folder "$_project_dir" /bin/bash -c \
+                  'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
+          fi
+          unset _project_dir
       fi
     create: true
     owner: "{{ g2k_user }}"
@@ -180,6 +211,14 @@
   ansible.builtin.template:
     src: devshell.sh.j2
     dest: "/home/{{ g2k_user }}/.local/bin/devshell"
+    owner: "{{ g2k_user }}"
+    group: "{{ g2k_user }}"
+    mode: '0755'
+
+- name: Install project-menu script
+  ansible.builtin.template:
+    src: project-menu.sh.j2
+    dest: "/home/{{ g2k_user }}/.local/bin/project-menu"
     owner: "{{ g2k_user }}"
     group: "{{ g2k_user }}"
     mode: '0755'

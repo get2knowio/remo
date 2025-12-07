@@ -1,0 +1,17 @@
+---
+# fzf installation - fuzzy finder for TUI menus
+
+- name: Install fzf
+  ansible.builtin.apt:
+    name: fzf
+    state: present
+    update_cache: true
+
+- name: Verify fzf installation
+  ansible.builtin.command: fzf --version
+  register: fzf_version
+  changed_when: false
+
+- name: Display fzf version
+  ansible.builtin.debug:
+    msg: "{{ fzf_version.stdout }}"

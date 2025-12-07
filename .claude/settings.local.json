@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(tree:*)",
+      "Bash(chmod:*)",
+      "Bash(command -v:*)",
+      "Bash(sudo apt-get update:*)",
+      "Bash(sudo apt-get install:*)",
+      "Bash(zellij list-sessions:*)",
+      "Bash(bash -c 'source project-menu.sh; build_menu_options')",
+      "Bash(bash -c 'source /home/g2k/projects/remote-coding/project-menu.sh; build_menu_options')",
+      "Bash(cat:*)",
+      "Bash(ansible-playbook:*)",
+      "Bash(python3:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
