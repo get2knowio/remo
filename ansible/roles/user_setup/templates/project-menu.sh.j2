@@ -6,11 +6,23 @@ set -e
 
 PROJECTS_DIR="{{ dev_workspace_dir }}"
 
-# Get list of active zellij sessions
+# Get list of active zellij sessions (excludes EXITED sessions)
 get_active_sessions() {
     if command -v zellij &> /dev/null; then
-        # Strip ANSI color codes and get session names
-        zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk '{print $1}' || true
+        # Strip ANSI color codes, exclude EXITED sessions, and get session names
+        zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -v 'EXITED' | awk '{print $1}' || true
+    fi
+}
+
+# Clean up exited zellij sessions
+cleanup_exited_sessions() {
+    if command -v zellij &> /dev/null; then
+        # Get list of exited sessions and delete them
+        local exited_sessions
+        exited_sessions=$(zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep 'EXITED' | awk '{print $1}' || true)
+        for session in $exited_sessions; do
+            [ -n "$session" ] && zellij delete-session "$session" 2>/dev/null || true
+        done
     fi
 }
 
@@ -26,6 +38,9 @@ build_menu_options() {
     local active_sessions
     local project_dirs
     local options=()
+
+    # Clean up any exited sessions first
+    cleanup_exited_sessions
 
     # Get active sessions as array
     mapfile -t active_sessions < <(get_active_sessions)
@@ -143,6 +158,11 @@ launch_session() {
     fi
 
     echo "Launching $project_name..."
+
+    # Clean up any exited session with this name before attaching
+    if zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -q "^$project_name.*EXITED"; then
+        zellij delete-session "$project_name" 2>/dev/null || true
+    fi
 
     # Always use zellij for every project
     # The session starts in the project directory
