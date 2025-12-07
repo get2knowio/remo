@@ -168,7 +168,18 @@ launch_session() {
     # The session starts in the project directory
     # If it has a devcontainer, the shell inside will handle starting it
     cd "$project_dir"
-    zellij attach --create "$project_name"
+    
+    # Try to attach, and if it fails due to corrupted session layout, clean up and retry
+    if ! zellij attach --create "$project_name" 2>&1; then
+        echo "Session may be corrupted, cleaning up and retrying..."
+        # Kill any orphaned zellij processes for this session
+        zellij kill-session "$project_name" 2>/dev/null || true
+        zellij delete-session "$project_name" 2>/dev/null || true
+        # Remove corrupted session cache files
+        rm -rf "$HOME/.cache/zellij"/*/session_info/"$project_name" 2>/dev/null || true
+        # Retry creating a fresh session
+        zellij attach --create "$project_name"
+    fi
 }
 
 # Main menu loop
