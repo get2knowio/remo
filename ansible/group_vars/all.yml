@@ -9,7 +9,7 @@ hetzner_ssh_key_name: "remote-coding-key"
 
 # Volume settings for persistent home directory
 hetzner_volume_name: "{{ hetzner_server_name }}-home"
-hetzner_volume_size: 10  # GB (minimum 10)
+hetzner_volume_size: 20  # GB (minimum 10)
 
 # DuckDNS Configuration
 duckdns_token: "{{ lookup('env', 'DUCKDNS_TOKEN') }}"
