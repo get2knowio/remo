@@ -54,6 +54,12 @@
     - g2k_volume_device | length > 0
     - volume_device_stat.stat.exists | default(false)
 
+- name: Install figlet for ASCII banners
+  ansible.builtin.apt:
+    name: figlet
+    state: present
+    update_cache: true
+
 - name: Create g2k user
   ansible.builtin.user:
     name: "{{ g2k_user }}"
