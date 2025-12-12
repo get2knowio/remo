@@ -242,10 +242,23 @@
               echo ""
               echo "Entering devcontainer (exit to return to host shell)..."
               echo ""
-              exec devcontainer exec --workspace-folder "$_project_dir" /bin/bash -c \
+              
+              # Run devcontainer shell (not exec, so we can stop container after)
+              devcontainer exec --workspace-folder "$_project_dir" /bin/bash -c \
                   'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
+              
+              # After exiting devcontainer, stop the container to free resources
+              echo ""
+              echo "Stopping devcontainer..."
+              _container_id=$(docker ps -q --filter "label=devcontainer.local_folder=$_project_dir")
+              if [[ -n "$_container_id" ]]; then
+                  docker stop "$_container_id" >/dev/null 2>&1 || true
+              fi
+              
+              # Exit the zellij session to return to project menu
+              exit 0
           fi
-          unset _project_dir _hash_dir _hash_file _rebuild_flag _current_hash _stored_hash
+          unset _project_dir _hash_dir _hash_file _rebuild_flag _current_hash _stored_hash _container_id
       fi
     create: true
     owner: "{{ g2k_user }}"
