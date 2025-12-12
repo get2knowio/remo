@@ -203,15 +203,49 @@
           _project_dir="{{ dev_workspace_dir }}/$ZELLIJ_SESSION_NAME"
           if [[ -d "$_project_dir/.devcontainer" ]] || [[ -f "$_project_dir/.devcontainer.json" ]]; then
               cd "$_project_dir"
+              
+              # Check if devcontainer config has changed and needs rebuild
+              _hash_dir="$HOME/.cache/devcontainer-hashes"
+              _hash_file="$_hash_dir/$ZELLIJ_SESSION_NAME"
+              _rebuild_flag=""
+              
+              # Compute hash of devcontainer config files
+              _current_hash=$(cat "$_project_dir/.devcontainer/devcontainer.json" \
+                  "$_project_dir/.devcontainer.json" \
+                  "$_project_dir/.devcontainer/Dockerfile" \
+                  "$_project_dir/.devcontainer/docker-compose.yml" \
+                  2>/dev/null | sha256sum | cut -d' ' -f1)
+              
+              # Compare with stored hash
+              mkdir -p "$_hash_dir"
+              if [[ -f "$_hash_file" ]]; then
+                  _stored_hash=$(cat "$_hash_file")
+                  if [[ "$_current_hash" != "$_stored_hash" ]]; then
+                      echo "Devcontainer config changed, rebuilding..."
+                      _rebuild_flag="--remove-existing-container"
+                  fi
+              fi
+              
+              # Also check for manual rebuild request
+              if [[ -f "$_project_dir/.devcontainer-rebuild" ]]; then
+                  echo "Manual rebuild requested..."
+                  _rebuild_flag="--remove-existing-container"
+                  rm -f "$_project_dir/.devcontainer-rebuild"
+              fi
+              
               echo "Starting devcontainer for $ZELLIJ_SESSION_NAME..."
-              devcontainer up --workspace-folder "$_project_dir"
+              devcontainer up --workspace-folder "$_project_dir" $_rebuild_flag
+              
+              # Store current hash after successful start
+              echo "$_current_hash" > "$_hash_file"
+              
               echo ""
               echo "Entering devcontainer (exit to return to host shell)..."
               echo ""
               exec devcontainer exec --workspace-folder "$_project_dir" /bin/bash -c \
                   'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
           fi
-          unset _project_dir
+          unset _project_dir _hash_dir _hash_file _rebuild_flag _current_hash _stored_hash
       fi
     create: true
     owner: "{{ g2k_user }}"

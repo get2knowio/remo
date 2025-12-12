@@ -82,6 +82,27 @@ A convenience script at `~/.local/bin/devshell`:
 devshell  # cd to workspace, start devcontainer, open shell inside
 ```
 
+### Automatic Devcontainer Rebuilds
+
+The system automatically detects when your devcontainer configuration has changed and rebuilds the container when needed. This happens when:
+
+- `.devcontainer/devcontainer.json` is modified
+- `.devcontainer/Dockerfile` is modified  
+- `.devcontainer/docker-compose.yml` is modified
+- `.devcontainer.json` (root level) is modified
+
+Configuration hashes are stored in `~/.cache/devcontainer-hashes/` and compared on each session start.
+
+**Force a manual rebuild:**
+```bash
+# Create a rebuild flag file in your project
+touch ~/projects/my-project/.devcontainer-rebuild
+
+# Next time you select the project, it will rebuild
+```
+
+This is useful when you need to pick up base image updates or other changes not tracked by the config files.
+
 ---
 
 ## Quick Start
