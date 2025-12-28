@@ -1,0 +1,160 @@
+# Ansible Role Interface Contract: incus_bootstrap
+# This file documents the public interface of the incus_bootstrap role
+# Version: 1.0.0
+
+role_name: incus_bootstrap
+description: >
+  Bootstrap a local Linux host to run Incus containers.
+  Installs Incus, configures services, manages user permissions,
+  and initializes storage pool and network.
+
+supported_platforms:
+  - name: OpenSUSE Tumbleweed
+    ansible_os_family: Suse
+    package_manager: zypper
+    status: primary
+  - name: Ubuntu
+    ansible_os_family: Debian
+    min_version: "24.04"
+    package_manager: apt
+    status: secondary
+
+# Role Variables (defaults/main.yml)
+variables:
+  # Storage Configuration
+  incus_storage_pool_name:
+    type: string
+    default: "default"
+    description: Name of the storage pool to create
+    validation: "alphanumeric, hyphens, underscores only"
+
+  incus_storage_pool_driver:
+    type: string
+    default: "dir"
+    description: Storage backend driver
+    allowed_values:
+      - dir      # Directory-based (simplest, works on any filesystem)
+      - zfs     # ZFS pool (requires ZFS)
+      - btrfs   # Btrfs subvolumes (requires Btrfs)
+      - lvm     # LVM volumes (requires LVM)
+
+  # Network Configuration
+  incus_network_name:
+    type: string
+    default: "incusbr0"
+    description: Name of the NAT bridge network
+    validation: "alphanumeric, hyphens, underscores only"
+
+  incus_network_ipv4:
+    type: string
+    default: "auto"
+    description: IPv4 address/CIDR for bridge, or 'auto' for automatic assignment
+    examples:
+      - "auto"
+      - "10.10.10.1/24"
+      - "192.168.100.1/24"
+
+  incus_network_ipv6:
+    type: string
+    default: "none"
+    description: IPv6 address/CIDR for bridge, or 'none' to disable
+    examples:
+      - "none"
+      - "auto"
+      - "fd42::/64"
+
+  # User Configuration
+  incus_user:
+    type: string
+    default: "{{ ansible_user_id }}"
+    description: User to add to incus-admin group
+    note: "Defaults to the user running Ansible"
+
+  # Behavioral Flags
+  incus_skip_init:
+    type: boolean
+    default: false
+    description: Skip Incus initialization (storage pool and network creation)
+
+  incus_enable_user_socket:
+    type: boolean
+    default: true
+    description: Enable incus-user.socket for unprivileged container delegation
+
+# Dependencies
+dependencies:
+  ansible_collections:
+    - name: community.general
+      version: ">=8.0.0"
+      reason: "Provides zypper module for OpenSUSE"
+    - name: ansible.posix
+      version: ">=1.5.0"
+      reason: "May be needed for certain filesystem operations"
+
+# Handlers provided
+handlers:
+  - name: restart incusd
+    description: Restarts the Incus daemon (use with caution - affects running containers)
+    trigger: "notify: restart incusd"
+
+# Tags supported
+tags:
+  - incus_install     # Package installation only
+  - incus_service     # Service configuration only
+  - incus_init        # Storage and network initialization only
+  - incus_user        # User group configuration only
+
+# Pre-conditions (checked before execution)
+preconditions:
+  - condition: "Supported OS family (Suse or Debian)"
+    check: "ansible_os_family in ['Suse', 'Debian']"
+    failure: "FAIL with unsupported OS message"
+
+  - condition: "Sudo privileges available"
+    check: "become: true succeeds"
+    failure: "FAIL with privilege error"
+
+# Post-conditions (verified after execution)
+postconditions:
+  - condition: "Incus package installed"
+    verification: "incus version returns successfully"
+
+  - condition: "Incus socket active"
+    verification: "systemctl is-active incus.socket"
+
+  - condition: "Storage pool exists (unless skipped)"
+    verification: "incus storage list shows at least one pool"
+
+  - condition: "Network exists (unless skipped)"
+    verification: "incus network list shows managed network"
+
+  - condition: "User in incus-admin group"
+    verification: "groups {{ incus_user }} includes incus-admin"
+
+# Example Playbook Usage
+example_playbook: |
+  ---
+  - name: Bootstrap Incus on localhost
+    hosts: localhost
+    gather_facts: true
+    become: true
+
+    roles:
+      - role: incus_bootstrap
+        vars:
+          incus_storage_pool_driver: dir
+          incus_network_ipv4: auto
+
+# Example CLI invocation
+example_cli: |
+  # Default bootstrap (run from remo root)
+  ./run.sh incus_bootstrap.yml
+
+  # With custom storage pool name
+  ./run.sh incus_bootstrap.yml -e incus_storage_pool_name=my-pool
+
+  # Skip initialization (install only)
+  ./run.sh incus_bootstrap.yml -e incus_skip_init=true
+
+  # Different user
+  ./run.sh incus_bootstrap.yml -e incus_user=developer
