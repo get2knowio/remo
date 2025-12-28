@@ -1,0 +1,262 @@
+# Playbook Interface Contract: Incus Container Provisioning
+# This file documents the public interface of the container provisioning playbook
+# Version: 1.0.0
+
+---
+# incus_container.yml - Container Provisioning
+playbook_name: incus_container.yml
+location: ansible/incus_container.yml
+description: >
+  Create and provision an Incus container with SSH access.
+  Mirrors the Hetzner provision.yml workflow.
+
+invocation:
+  standard: "./run.sh incus_container.yml -e container_name=dev"
+  with_vars: "./run.sh incus_container.yml -e container_name=dev -e container_image=images:ubuntu/22.04/cloud"
+
+hosts: localhost
+connection: local
+
+privileges:
+  become: false
+  reason: "Incus commands use user socket (incus-admin group membership)"
+
+behavior:
+  gather_facts: true
+  reason: "Detect user home for SSH key paths"
+
+# Required variables
+required_variables:
+  - name: container_name
+    type: string
+    description: "Unique name for the container"
+    example: "dev"
+
+# Optional variables with defaults
+optional_variables:
+  - name: container_image
+    type: string
+    default: "images:ubuntu/24.04/cloud"
+    description: "Container image (must be cloud-enabled)"
+  - name: container_ssh_user
+    type: string
+    default: "ubuntu"
+    description: "SSH user for container access"
+  - name: container_ssh_key_path
+    type: string
+    default: "~/.ssh/id_rsa.pub"
+    description: "Public key to inject for SSH"
+  - name: container_ssh_private_key
+    type: string
+    default: "~/.ssh/id_rsa"
+    description: "Private key for SSH connections"
+  - name: container_mounts
+    type: list
+    default: "[]"
+    description: "Host directory mounts [{source, target, device_name}]"
+
+# Output facts
+output_facts:
+  - name: incus_container_ip
+    type: string
+    description: "IPv4 address of the provisioned container"
+  - name: incus_container_created
+    type: boolean
+    description: "Whether container was created in this run"
+
+exit_codes:
+  0: "Success - container provisioned and SSH accessible"
+  2: "Failure - container creation or SSH connection failed"
+
+output:
+  verbosity: summary
+  description: "Task names displayed; container IP shown at completion"
+
+messages:
+  success: |
+    Container provisioned successfully!
+
+    Container: {{ container_name }}
+    IP Address: {{ incus_container_ip }}
+    SSH User: {{ container_ssh_user }}
+
+    Connect with:
+      ssh -i {{ container_ssh_private_key }} {{ container_ssh_user }}@{{ incus_container_ip }}
+
+    Next step: Run the configure playbook
+      ./run.sh incus_container_configure.yml -e container_name={{ container_name }}
+
+idempotency:
+  safe_to_rerun: true
+  preserves:
+    - existing containers (skips creation)
+    - existing data in mounts
+    - existing container configuration
+  modifies_only:
+    - starts container if stopped
+    - refreshes IP fact if changed
+
+---
+# incus_container_configure.yml - Container Configuration
+playbook_name: incus_container_configure.yml
+location: ansible/incus_container_configure.yml
+description: >
+  Configure an Incus container using existing Ansible roles.
+  Mirrors the Hetzner configure.yml workflow.
+
+invocation:
+  standard: "./run.sh incus_container_configure.yml -e container_name=dev"
+  with_roles: "./run.sh incus_container_configure.yml -e container_name=dev -e configure_roles='[docker,nodejs]'"
+
+hosts: "{{ container_name }}"
+connection: ssh
+
+privileges:
+  become: true
+  become_method: sudo
+  reason: "Package installation and service management require root"
+
+behavior:
+  gather_facts: true
+  reason: "OS detection for role conditionals"
+
+pre_tasks:
+  - name: "Verify container is in inventory"
+    description: "Fails if container_name not in inventory or not reachable"
+  - name: "Wait for apt to be ready"
+    description: "Wait for package manager lock (matches Hetzner pattern)"
+
+# Required variables
+required_variables:
+  - name: container_name
+    type: string
+    description: "Name of container to configure (must exist in inventory)"
+
+# Optional variables
+optional_variables:
+  - name: configure_roles
+    type: list
+    default: "[docker, user_setup, nodejs, fzf, zellij]"
+    description: "Roles to apply to container"
+
+applied_roles:
+  - docker
+  - user_setup
+  - nodejs
+  - fzf
+  - zellij
+
+exit_codes:
+  0: "Success - all roles applied"
+  2: "Failure - one or more roles failed"
+  4: "Unreachable - cannot connect to container"
+
+output:
+  verbosity: summary
+  description: "Role execution progress; summary at completion"
+
+messages:
+  success: |
+    Container configuration complete!
+
+    Installed:
+    - Docker (with docker-compose plugin)
+    - User configuration
+    - Node.js LTS
+    - fzf (fuzzy finder)
+    - Zellij terminal multiplexer
+
+    You can now SSH to the container:
+      ssh ubuntu@{{ incus_container_ip }}
+
+idempotency:
+  safe_to_rerun: true
+  preserves:
+    - user data
+    - docker containers/images
+    - installed packages (version checks)
+  modifies_only:
+    - missing packages (installs)
+    - missing configurations (creates)
+
+---
+# incus_container_teardown.yml - Container Destruction
+playbook_name: incus_container_teardown.yml
+location: ansible/incus_container_teardown.yml
+description: >
+  Destroy an Incus container with optional data preservation.
+  Mirrors the Hetzner teardown.yml workflow.
+
+invocation:
+  standard: "./run.sh incus_container_teardown.yml -e container_name=dev"
+  destroy_data: "./run.sh incus_container_teardown.yml -e container_name=dev -e preserve_data=false"
+  force: "./run.sh incus_container_teardown.yml -e container_name=dev -e force=true"
+  skip_confirm: "./run.sh incus_container_teardown.yml -e container_name=dev -e auto_confirm=true"
+
+hosts: localhost
+connection: local
+
+privileges:
+  become: false
+  reason: "Incus commands use user socket"
+
+# Required variables
+required_variables:
+  - name: container_name
+    type: string
+    description: "Name of container to destroy"
+
+# Optional variables
+optional_variables:
+  - name: preserve_data
+    type: boolean
+    default: true
+    description: "Keep host mount directories after destruction"
+  - name: force
+    type: boolean
+    default: false
+    description: "Force delete running container (otherwise stops first)"
+  - name: auto_confirm
+    type: boolean
+    default: false
+    description: "Skip confirmation prompt"
+
+exit_codes:
+  0: "Success - container destroyed"
+  2: "Failure - destruction failed"
+  99: "Aborted - user cancelled confirmation"
+
+output:
+  verbosity: summary
+  description: "Destruction progress with data preservation status"
+
+messages:
+  warning: |
+    WARNING: This will destroy container '{{ container_name }}'
+    {% if not preserve_data %}
+    ALL DATA IN MOUNT DIRECTORIES WILL BE DELETED!
+    {% else %}
+    Mount directories will be PRESERVED.
+    {% endif %}
+
+  success_preserved: |
+    Container '{{ container_name }}' destroyed.
+
+    Preserved data directories:
+    {% for mount in preserved_mounts %}
+    - {{ mount }}
+    {% endfor %}
+
+    To reprovision with same data:
+      ./run.sh incus_container.yml -e container_name={{ container_name }}
+
+  success_destroyed: |
+    Container '{{ container_name }}' and all associated data destroyed.
+
+idempotency:
+  safe_to_rerun: true
+  behavior:
+    - container_exists: destroys container
+    - container_absent: no-op (success)
+    - data_preserved: directories remain
+    - data_not_preserved: directories removed
