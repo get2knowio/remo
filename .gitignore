@@ -36,3 +36,4 @@ env/
 *.sublime-*
 
 .env
+.claude/settings.local.json
