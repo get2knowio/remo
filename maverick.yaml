@@ -1,0 +1,26 @@
+github:
+  owner: get2knowio
+  repo: remo
+  default_branch: main
+validation:
+  format_cmd:
+  - yamllint
+  - .
+  lint_cmd:
+  - ansible-lint
+  test_cmd:
+  - ansible-playbook
+  - --syntax-check
+  - site.yml
+  timeout_seconds: 300
+  max_errors: 50
+model:
+  model_id: claude-opus-4-5-20251101
+  max_tokens: 64000
+  temperature: 0.0
+notifications:
+  enabled: false
+parallel:
+  max_agents: 3
+  max_tasks: 5
+verbosity: warning
