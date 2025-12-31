@@ -24,7 +24,10 @@
       "WebFetch(domain:wiki.archlinux.org)",
       "WebFetch(domain:software.opensuse.org)",
       "Bash(.specify/scripts/bash/update-agent-context.sh:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git push)"
     ],
     "deny": [],
     "ask": []

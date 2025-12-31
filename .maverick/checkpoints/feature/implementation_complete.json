@@ -1,0 +1,19 @@
+{
+  "checkpoint_id": "implementation_complete",
+  "workflow_name": "feature",
+  "inputs_hash": "f1d6826a9d77083c",
+  "step_results": [
+    {
+      "name": "init",
+      "output": {
+        "branch_name": "001-bootstrap-incus-host",
+        "base_branch": "main",
+        "is_clean": false,
+        "synced_with_base": true,
+        "task_file_path": "specs/001-bootstrap-incus-host/tasks.md",
+        "error": null
+      }
+    }
+  ],
+  "saved_at": "2025-12-30T01:20:09.295700+00:00"
+}
