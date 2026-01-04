@@ -75,9 +75,9 @@ This is an Ansible infrastructure project with the following structure:
 
 ### Implementation for User Story 2
 
-- [ ] T012 [US2] Add idempotency check for storage pool existence before initialization in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T013 [US2] Add conditional for user group membership check in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T014 [US2] Ensure all tasks use state: present pattern (not state: latest) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T012 [US2] Add idempotency check for storage pool existence before initialization in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T013 [US2] Add conditional for user group membership check in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T014 [US2] Ensure all tasks use state: present pattern (not state: latest) in ansible/roles/incus_bootstrap/tasks/main.yml
 
 > **Note**: Network idempotency is handled by T012's storage pool check - `incus admin init --minimal` creates both storage and network atomically, so skipping init preserves both.
 

@@ -194,11 +194,21 @@
 # ============================================================================
 # User group membership configuration will follow here
 
+- name: Check if user is already a member of incus-admin group
+  ansible.builtin.command: id -nG {{ incus_user }}
+  register: user_groups_output
+  changed_when: false
+  failed_when: false
+  tags:
+    - permissions
+    - incus_users
+
 - name: Add user to incus-admin group for non-root container management
   ansible.builtin.user:
     name: "{{ incus_user }}"
     groups: "{{ incus_admin_group }}"
     append: yes
+  when: incus_admin_group not in user_groups_output.stdout.split()
   tags:
     - permissions
     - incus_users
