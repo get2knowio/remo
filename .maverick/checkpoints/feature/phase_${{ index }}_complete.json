@@ -1,0 +1,41 @@
+{
+  "checkpoint_id": "phase_${{ index }}_complete",
+  "workflow_name": "feature",
+  "inputs_hash": "f1d6826a9d77083c",
+  "step_results": [
+    {
+      "name": "init",
+      "output": {
+        "branch_name": "001-bootstrap-incus-host",
+        "base_branch": "main",
+        "is_clean": true,
+        "synced_with_base": true,
+        "task_file_path": "specs/001-bootstrap-incus-host/tasks.md",
+        "error": null
+      }
+    },
+    {
+      "name": "init_dry_run",
+      "output": null
+    },
+    {
+      "name": "get_phases",
+      "output": [
+        "Format: `[ID] [P?] [Story] Description`",
+        "Path Conventions",
+        "Phase 1: Setup (Shared Infrastructure)",
+        "Phase 2: Foundational (Blocking Prerequisites)",
+        "Phase 3: User Story 1 - First-Time Incus Setup (Priority: P1) MVP",
+        "Phase 4: User Story 2 - Idempotent Re-Runs (Priority: P2)",
+        "Phase 5: User Story 3 - Integration with Remo Bootstrap (Priority: P2)",
+        "Phase 6: User Story 4 - Multi-Distribution Support Preparation (Priority: P3)",
+        "Phase 7: Polish & Cross-Cutting Concerns",
+        "Dependencies & Execution Order",
+        "Parallel Example: Setup Phase",
+        "Implementation Strategy",
+        "Notes"
+      ]
+    }
+  ],
+  "saved_at": "2026-01-04T02:44:55.668153+00:00"
+}

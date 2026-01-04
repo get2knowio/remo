@@ -1,0 +1,5 @@
+---
+# Handlers for incus_bootstrap role
+# Handlers are tasks that respond to notifications from other tasks
+# and are only executed when notified
+

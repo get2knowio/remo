@@ -26,10 +26,10 @@ This is an Ansible infrastructure project with the following structure:
 
 **Purpose**: Project initialization and Ansible role structure
 
-- [ ] T001 Create Ansible role directory structure at ansible/roles/incus_bootstrap/
-- [ ] T002 [P] Create role defaults file at ansible/roles/incus_bootstrap/defaults/main.yml
-- [ ] T003 [P] Create empty handlers file at ansible/roles/incus_bootstrap/handlers/main.yml
-- [ ] T004 Verify community.general collection in ansible/requirements.yml
+- [x] T001 Create Ansible role directory structure at ansible/roles/incus_bootstrap/
+- [x] T002 [P] Create role defaults file at ansible/roles/incus_bootstrap/defaults/main.yml
+- [x] T003 [P] Create empty handlers file at ansible/roles/incus_bootstrap/handlers/main.yml
+- [x] T004 Verify community.general collection in ansible/requirements.yml
 
 ---
 

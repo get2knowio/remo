@@ -1,0 +1,78 @@
+---
+# incus_bootstrap default variables
+# This file defines all default configuration for the Incus bootstrap role
+# Ansible best practice: All variables that can be overridden should be in defaults/main.yml
+
+# ============================================================================
+# STORAGE POOL CONFIGURATION
+# ============================================================================
+
+# Name of the Incus storage pool to create
+# Only created if no storage pools exist (idempotent)
+incus_storage_pool_name: "default"
+
+# Storage backend driver for the pool
+# Options: dir (directory), zfs (ZFS pools), btrfs (Btrfs subvolumes), lvm (LVM)
+# dir is the simplest and works on any filesystem, making it the safest default
+incus_storage_pool_driver: "dir"
+
+# ============================================================================
+# NETWORK BRIDGE CONFIGURATION
+# ============================================================================
+
+# Name of the Incus managed network bridge
+# This provides NAT connectivity for containers to reach the host and internet
+incus_network_name: "incusbr0"
+
+# IPv4 configuration for the bridge network
+# Set to "auto" for automatic DHCP assignment, or provide a CIDR (e.g., "10.10.10.1/24")
+incus_network_ipv4: "auto"
+
+# IPv6 configuration for the bridge network
+# Set to "none" to disable IPv6, "auto" for automatic, or provide a CIDR (e.g., "fd42::/64")
+incus_network_ipv6: "none"
+
+# ============================================================================
+# USER PERMISSIONS CONFIGURATION
+# ============================================================================
+
+# User to add to the incus-admin group for non-root container management
+# Defaults to the user running Ansible (typically the current logged-in user)
+incus_user: "{{ ansible_user_id }}"
+
+# ============================================================================
+# BEHAVIORAL FLAGS
+# ============================================================================
+
+# Skip Incus initialization (storage pool and network creation)
+# Set to true to install and configure services only, without initializing storage/network
+incus_skip_init: false
+
+# Enable incus-user.socket for unprivileged container delegation
+# This allows users to run containers in unprivileged mode
+incus_enable_user_socket: true
+
+# ============================================================================
+# SERVICE NAMES AND PACKAGES
+# ============================================================================
+
+# Primary Incus package(s) to install
+# Package name varies by distribution (handled by distribution-specific tasks)
+# These are descriptive - actual package names are distribution-specific
+
+# Incus system daemon socket unit
+incus_system_socket_unit: "incus.socket"
+
+# Incus user socket unit for unprivileged delegation
+incus_user_socket_unit: "incus-user.socket"
+
+# Incus system service unit (activated by socket)
+incus_system_service_unit: "incusd.service"
+
+# ============================================================================
+# USER GROUP CONFIGURATION
+# ============================================================================
+
+# System group for granting Incus daemon access permissions
+# Members can manage Incus containers without requiring sudo
+incus_admin_group: "incus-admin"
