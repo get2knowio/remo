@@ -4,6 +4,74 @@
 # Ansible best practice: All variables that can be overridden should be in defaults/main.yml
 
 # ============================================================================
+# MULTI-DISTRIBUTION SUPPORT
+# ============================================================================
+
+# List of supported OS families
+# Currently only OpenSUSE Tumbleweed (Suse family) is tested and supported
+# To add support for additional distributions:
+#   1. Add the OS family to this list (e.g., 'Debian' for Ubuntu)
+#   2. Add distribution-specific package installation tasks in tasks/main.yml
+#   3. Verify service unit names match the distribution's defaults
+#   4. Test initialization on the target distribution
+#
+# Planned support: Ubuntu (Debian family), Fedora (RedHat family)
+incus_supported_os_families:
+  - "Suse"  # OpenSUSE Tumbleweed, OpenSUSE Leap
+
+# Extension points for new distributions:
+#
+# PACKAGE NAMES:
+#   OpenSUSE (current): 'incus' and 'incus-tools'
+#   Ubuntu/Debian: May require Zabbly PPA or official Incus repository
+#                  https://github.com/zabbly/incus
+#   Fedora/RHEL: May require COPR repository or manual installation
+#                Package names may differ from OpenSUSE
+#
+# PACKAGE MANAGER TASKS:
+#   OpenSUSE: community.general.zypper module (see tasks/main.yml line ~157)
+#   Ubuntu/Debian: ansible.builtin.apt module
+#                  Example: Add apt repository, update cache, install packages
+#   Fedora/RHEL: ansible.builtin.dnf or ansible.builtin.yum module
+#                Example: Add repository, install packages
+#
+# SERVICE UNIT NAMES:
+#   Generally consistent across distributions:
+#     - incus.socket (system socket unit)
+#     - incus-user.socket (user delegation socket)
+#     - incusd.service (main daemon service)
+#   However, always verify service names match on the target distribution
+#   by checking systemd unit files after package installation
+#
+# OS-SPECIFIC INITIALIZATION:
+#   Some distributions may require additional setup:
+#     - Kernel module loading (overlay, br_netfilter)
+#     - Firewall configuration (firewalld on RHEL/Fedora, ufw on Ubuntu)
+#     - SELinux policy adjustments (RHEL/Fedora)
+#     - AppArmor profile adjustments (Ubuntu/Debian)
+#
+# IMPLEMENTATION EXAMPLE (Ubuntu support):
+#   In tasks/main.yml, add after the OpenSUSE package installation block:
+#
+#   - name: Add Zabbly Incus repository for Ubuntu
+#     ansible.builtin.apt_repository:
+#       repo: ppa:zabbly/incus
+#       state: present
+#     when: ansible_os_family == 'Debian'
+#
+#   - name: Install Incus packages on Ubuntu/Debian
+#     ansible.builtin.apt:
+#       name:
+#         - incus
+#         - incus-tools
+#       state: present
+#       update_cache: true
+#     when: ansible_os_family == 'Debian'
+#
+# See the placeholder comment in tasks/main.yml (line ~155) for where to add
+# distribution-specific package installation tasks.
+
+# ============================================================================
 # STORAGE POOL CONFIGURATION
 # ============================================================================
 

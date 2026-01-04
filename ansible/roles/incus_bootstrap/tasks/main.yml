@@ -115,6 +115,55 @@
 #   - Required kernel modules (overlay, br_netfilter)
 #   - Network connectivity for package downloads
 
+- name: Display detected operating system family
+  ansible.builtin.debug:
+    msg: |
+      Detected OS Family: {{ ansible_os_family }}
+      Distribution: {{ ansible_distribution }}
+      Distribution Version: {{ ansible_distribution_version }}
+
+      This information will be used to determine the correct package manager
+      and package names for installing Incus on this system.
+  tags:
+    - preflight
+    - validation
+
+- name: Set OS family fact for easy reference
+  ansible.builtin.set_fact:
+    detected_os_family: "{{ ansible_os_family }}"
+  tags:
+    - preflight
+    - validation
+
+- name: Verify OS family is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in incus_supported_os_families
+    fail_msg: |
+
+      ERROR: Unsupported operating system detected.
+
+      Detected OS: {{ ansible_distribution }} {{ ansible_distribution_version }} (Family: {{ ansible_os_family }})
+      Supported OS families: {{ incus_supported_os_families | join(', ') }}
+
+      This Incus bootstrap role currently supports only OpenSUSE Tumbleweed.
+      Support for additional distributions (Ubuntu, Fedora, etc.) is planned but not yet implemented.
+
+      How you can help:
+        - If you would like to add support for {{ ansible_distribution }}, contributions are welcome!
+        - Review the extension points documented in ansible/roles/incus_bootstrap/defaults/main.yml
+        - Add distribution-specific package installation tasks to ansible/roles/incus_bootstrap/tasks/main.yml
+        - Test the bootstrap on your distribution and submit a pull request
+
+      For more information:
+        - File an issue: https://github.com/cognica-io/remo/issues
+        - Contribution guide: See README.md in the repository root
+
+    success_msg: "OS family '{{ ansible_os_family }}' is supported"
+  tags:
+    - preflight
+    - validation
+
 - name: Check if overlay kernel module is available
   ansible.builtin.command: modprobe -n overlay
   register: overlay_module_check
@@ -154,7 +203,7 @@
 # ============================================================================
 # Distribution-specific package installation tasks will follow here
 
-- name: Install Incus packages on OpenSUSE
+- name: Install Incus packages on Suse family distributions
   community.general.zypper:
     name:
       - incus
@@ -164,6 +213,25 @@
   tags:
     - packages
     - incus_install
+
+# Placeholder for future Debian/Ubuntu support
+# When implementing Ubuntu support:
+#   - Research correct package names (may need official Incus PPA or Zabbly repository)
+#   - Update package manager from zypper to apt
+#   - Test on Ubuntu 22.04 LTS and 24.04 LTS
+#   - Verify package availability: 'incus' and 'incus-tools' or equivalent
+#   - Consider snap package as alternative installation method
+# - name: Install Incus packages on Debian/Ubuntu family distributions
+#   ansible.builtin.apt:
+#     name:
+#       - incus       # TODO: Verify package name for Ubuntu
+#       - incus-tools # TODO: Verify package name for Ubuntu
+#     state: present
+#     update_cache: true
+#   when: ansible_os_family == 'Debian'
+#   tags:
+#     - packages
+#     - incus_install
 
 # ============================================================================
 # SERVICE CONFIGURATION

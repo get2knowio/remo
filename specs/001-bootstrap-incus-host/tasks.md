@@ -109,11 +109,11 @@ This is an Ansible infrastructure project with the following structure:
 
 ### Implementation for User Story 4
 
-- [ ] T018 [US4] Add OS family detection variable (ansible_os_family) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T019 [US4] Refactor package installation to use when: condition for Suse family in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T020 [US4] Add placeholder task block for Debian family (Ubuntu) with comment in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T021 [US4] Add pre-flight check for supported OS with clear fail message in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T022 [US4] Document extension points in ansible/roles/incus_bootstrap/defaults/main.yml comments
+- [x] T018 [US4] Add OS family detection variable (ansible_os_family) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T019 [US4] Refactor package installation to use when: condition for Suse family in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T020 [US4] Add placeholder task block for Debian family (Ubuntu) with comment in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T021 [US4] Add pre-flight check for supported OS with clear fail message in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T022 [US4] Document extension points in ansible/roles/incus_bootstrap/defaults/main.yml comments
 
 **Checkpoint**: All user stories should now be independently functional
 
