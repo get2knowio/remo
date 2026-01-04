@@ -36,3 +36,6 @@ env/
 *.sublime-*
 
 .env
+
+# Maverick workflow state
+.maverick/
