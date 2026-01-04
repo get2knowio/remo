@@ -207,7 +207,7 @@
   ansible.builtin.user:
     name: "{{ incus_user }}"
     groups: "{{ incus_admin_group }}"
-    append: yes
+    append: true
   when: incus_admin_group not in user_groups_output.stdout.split()
   tags:
     - permissions

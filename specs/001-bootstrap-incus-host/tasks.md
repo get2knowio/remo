@@ -93,9 +93,9 @@ This is an Ansible infrastructure project with the following structure:
 
 ### Implementation for User Story 3
 
-- [ ] T015 [US3] Verify playbook follows existing remo playbook patterns (compare with other playbooks in ansible/)
-- [ ] T016 [US3] Add playbook header documentation matching remo style in ansible/incus_bootstrap.yml
-- [ ] T017 [US3] Test playbook execution via ./run.sh incus_bootstrap.yml
+- [x] T015 [US3] Verify playbook follows existing remo playbook patterns (compare with other playbooks in ansible/)
+- [x] T016 [US3] Add playbook header documentation matching remo style in ansible/incus_bootstrap.yml
+- [x] T017 [US3] Test playbook execution via ./run.sh incus_bootstrap.yml
 
 **Checkpoint**: At this point, User Stories 1, 2, AND 3 work - bootstrap integrates with remo workflow
 
