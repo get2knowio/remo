@@ -123,9 +123,9 @@ This is an Ansible infrastructure project with the following structure:
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T023 [P] Add incusd restart handler in ansible/roles/incus_bootstrap/handlers/main.yml
-- [ ] T024 [P] Add post-bootstrap verification tasks (incus version, storage list, network list) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T025 Run quickstart.md validation steps manually
+- [x] T023 [P] Add incusd restart handler in ansible/roles/incus_bootstrap/handlers/main.yml
+- [x] T024 [P] Add post-bootstrap verification tasks (incus version, storage list, network list) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T025 Run quickstart.md validation steps manually
 
 ---
 

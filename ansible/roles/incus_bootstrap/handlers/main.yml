@@ -3,3 +3,10 @@
 # Handlers are tasks that respond to notifications from other tasks
 # and are only executed when notified
 
+- name: Restart incusd
+  ansible.builtin.systemd:
+    name: "{{ incus_system_service_unit }}"
+    state: restarted
+  tags:
+    - services
+    - incus_service

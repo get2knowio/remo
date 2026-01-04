@@ -304,3 +304,171 @@
   tags:
     - incus_init
     - storage
+
+# ============================================================================
+# POST-BOOTSTRAP VERIFICATION
+# ============================================================================
+# These verification tasks confirm that Incus was bootstrapped successfully
+# and is ready for container operations. They are informational and do not
+# fail the playbook, instead providing visibility into the bootstrap status.
+
+- name: Verify Incus CLI is working (incus version)
+  ansible.builtin.command: incus version
+  register: incus_version_output
+  changed_when: false
+  failed_when: false
+  tags:
+    - verification
+    - incus_verify
+
+- name: Display Incus version information
+  ansible.builtin.debug:
+    msg: |
+      Incus CLI verification: {{ 'PASSED' if incus_version_output.rc == 0 else 'FAILED' }}
+
+      {% if incus_version_output.rc == 0 %}
+      Incus is installed and responding to commands.
+
+      Version details:
+      {{ incus_version_output.stdout }}
+      {% else %}
+      WARNING: Incus CLI command failed!
+
+      Error output:
+      {{ incus_version_output.stderr | default('No error output available') }}
+
+      This may indicate:
+        - Incus was not installed correctly
+        - Service is not running (check: systemctl status incus.socket)
+        - Permissions issue (ensure user is in incus-admin group)
+      {% endif %}
+  tags:
+    - verification
+    - incus_verify
+
+- name: Verify Incus storage pools (incus storage list)
+  ansible.builtin.command: incus storage list --format=yaml
+  register: incus_storage_verify
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - verification
+    - incus_verify
+
+- name: Display Incus storage pool verification
+  ansible.builtin.debug:
+    msg: |
+      Storage pool verification: {{ 'PASSED' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
+
+      {% if incus_storage_verify.rc == 0 %}
+      {% if incus_storage_verify.stdout | length > 0 %}
+      Storage pools have been created successfully.
+
+      Available storage pools:
+      {{ incus_storage_verify.stdout }}
+      {% else %}
+      WARNING: No storage pools found!
+
+      This may indicate that Incus initialization did not complete successfully.
+      Try running manually: incus admin init --minimal
+      {% endif %}
+      {% else %}
+      WARNING: Failed to list storage pools!
+
+      Error output:
+      {{ incus_storage_verify.stderr | default('No error output available') }}
+      {% endif %}
+  when: not incus_skip_init
+  tags:
+    - verification
+    - incus_verify
+
+- name: Verify Incus networks (incus network list)
+  ansible.builtin.command: incus network list --format=yaml
+  register: incus_network_verify
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - verification
+    - incus_verify
+
+- name: Display Incus network verification
+  ansible.builtin.debug:
+    msg: |
+      Network verification: {{ 'PASSED' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
+
+      {% if incus_network_verify.rc == 0 %}
+      {% if incus_network_verify.stdout | length > 0 %}
+      Network bridges have been created successfully.
+
+      Available networks:
+      {{ incus_network_verify.stdout }}
+      {% else %}
+      WARNING: No networks found!
+
+      This may indicate that Incus initialization did not complete successfully.
+      Try running manually: incus admin init --minimal
+      {% endif %}
+      {% else %}
+      WARNING: Failed to list networks!
+
+      Error output:
+      {{ incus_network_verify.stderr | default('No error output available') }}
+      {% endif %}
+  when: not incus_skip_init
+  tags:
+    - verification
+    - incus_verify
+
+- name: Summary of Incus bootstrap verification
+  ansible.builtin.debug:
+    msg: |
+
+      ========================================================================
+      INCUS BOOTSTRAP VERIFICATION SUMMARY
+      ========================================================================
+
+      Incus CLI Status: {{ 'OK' if incus_version_output.rc == 0 else 'FAILED' }}
+      {% if not incus_skip_init %}
+      Storage Pools:    {{ 'OK' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
+      Networks:         {{ 'OK' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
+      {% else %}
+      Storage Pools:    SKIPPED (incus_skip_init=true)
+      Networks:         SKIPPED (incus_skip_init=true)
+      {% endif %}
+
+      {% if incus_version_output.rc == 0 and (incus_skip_init or (incus_storage_verify.rc == 0 and incus_network_verify.rc == 0)) %}
+      Bootstrap Status: SUCCESS
+
+      Incus is ready for container operations!
+
+      Next steps:
+        - Launch a container: incus launch images:ubuntu/22.04 my-container
+        - List containers: incus list
+        - Access container shell: incus exec my-container -- bash
+        - View storage pools: incus storage list
+        - View networks: incus network list
+
+      For detailed documentation, visit: https://linuxcontainers.org/incus/docs/
+      {% else %}
+      Bootstrap Status: NEEDS ATTENTION
+
+      One or more verification checks failed. Review the output above for details.
+
+      Common troubleshooting steps:
+        1. Check service status: systemctl status incus.socket incusd.service
+        2. Check journal logs: journalctl -u incus.socket -u incusd.service
+        3. Verify group membership: id {{ incus_user }}
+        4. Manual initialization: incus admin init --minimal
+        5. Check disk space: df -h /
+
+      If issues persist, consult the Incus documentation or open an issue.
+      {% endif %}
+
+      ========================================================================
+
+  tags:
+    - verification
+    - incus_verify
