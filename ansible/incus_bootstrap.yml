@@ -1,0 +1,36 @@
+---
+# Incus Bootstrap playbook - Sets up Incus on localhost for container development
+# Run this to prepare your local workstation to run Incus containers
+
+- name: Bootstrap Incus on localhost
+  hosts: localhost
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: incus_bootstrap
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Incus bootstrap complete!
+
+          Installed:
+          - Incus and incus-tools packages
+          - Incus system daemon (incus.socket, incusd.service)
+          - Incus user socket (incus-user.socket) for unprivileged containers
+          - Storage pool: {{ incus_storage_pool_name }} ({{ incus_storage_pool_driver }} driver)
+          - Network bridge: {{ incus_network_name }}
+
+          User Configuration:
+          - User '{{ incus_user }}' added to '{{ incus_admin_group }}' group
+          - Non-root container management enabled
+
+          IMPORTANT: To use Incus without sudo, you must either:
+            1. Log out and log back in (to refresh group membership)
+            2. Run: newgrp {{ incus_admin_group }}
+
+          You can now launch containers:
+          incus launch images:alpine/edge test-container
+          incus exec test-container -- /bin/sh

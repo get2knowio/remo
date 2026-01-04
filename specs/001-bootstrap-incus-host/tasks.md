@@ -56,12 +56,12 @@ This is an Ansible infrastructure project with the following structure:
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Implement package installation task (zypper) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T007 [US1] Implement incus.socket service enablement in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T008 [US1] Implement incus-user.socket service enablement in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T009 [US1] Implement user group addition (incus-admin) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T010 [US1] Implement Incus initialization (incus admin init --minimal) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T011 [US1] Create main playbook at ansible/incus_bootstrap.yml targeting localhost
+- [x] T006 [US1] Implement package installation task (zypper) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T007 [US1] Implement incus.socket service enablement in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T008 [US1] Implement incus-user.socket service enablement in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T009 [US1] Implement user group addition (incus-admin) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T010 [US1] Implement Incus initialization (incus admin init --minimal) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T011 [US1] Create main playbook at ansible/incus_bootstrap.yml targeting localhost
 
 **Checkpoint**: At this point, User Story 1 should be fully functional - a fresh OpenSUSE system can be bootstrapped and launch containers
 

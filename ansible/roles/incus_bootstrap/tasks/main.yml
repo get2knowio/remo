@@ -154,17 +154,75 @@
 # ============================================================================
 # Distribution-specific package installation tasks will follow here
 
+- name: Install Incus packages on OpenSUSE
+  community.general.zypper:
+    name:
+      - incus
+      - incus-tools
+    state: present
+  when: ansible_os_family == 'Suse'
+  tags:
+    - packages
+    - incus_install
+
 # ============================================================================
 # SERVICE CONFIGURATION
 # ============================================================================
 # Systemd service enablement and startup tasks will follow here
+
+- name: Enable and start incus.socket service
+  ansible.builtin.systemd:
+    name: "{{ incus_system_socket_unit }}"
+    enabled: true
+    state: started
+  tags:
+    - services
+    - incus_service
+
+- name: Enable and start incus-user.socket service
+  ansible.builtin.systemd:
+    name: "{{ incus_user_socket_unit }}"
+    enabled: true
+    state: started
+  when: incus_enable_user_socket
+  tags:
+    - services
+    - incus_service
 
 # ============================================================================
 # USER PERMISSIONS
 # ============================================================================
 # User group membership configuration will follow here
 
+- name: Add user to incus-admin group for non-root container management
+  ansible.builtin.user:
+    name: "{{ incus_user }}"
+    groups: "{{ incus_admin_group }}"
+    append: yes
+  tags:
+    - permissions
+    - incus_users
+
 # ============================================================================
 # INCUS INITIALIZATION
 # ============================================================================
 # Storage pool and network bridge initialization will follow here
+
+- name: Check if Incus storage pools exist
+  ansible.builtin.command: incus storage list --format=csv
+  register: incus_storage_list
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - storage
+
+- name: Initialize Incus with minimal configuration
+  ansible.builtin.command: incus admin init --minimal
+  when:
+    - not incus_skip_init
+    - incus_storage_list.stdout | length == 0
+  tags:
+    - incus_init
+    - storage
