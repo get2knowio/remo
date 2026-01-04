@@ -1,0 +1,170 @@
+---
+# ============================================================================
+# PRE-FLIGHT CHECKS
+# ============================================================================
+# These checks validate prerequisites before making any system changes.
+# They ensure the playbook is running in the correct environment with
+# appropriate permissions to install packages and configure services.
+
+- name: Verify sudo/root privileges are available
+  ansible.builtin.assert:
+    that:
+      - ansible_user_uid == 0 or ansible_env.SUDO_USER is defined or 'root' in group_names or ansible_become is defined
+    fail_msg: |
+
+      ERROR: Insufficient privileges to bootstrap Incus host.
+
+      The Incus bootstrap process requires root/sudo privileges to:
+        - Install system packages (incus, incus-tools)
+        - Configure and enable systemd services (incus.socket, incusd.service)
+        - Add users to the incus-admin group
+        - Initialize storage pools and network bridges
+
+      Please run this playbook with sudo privileges using one of these methods:
+
+        1. Run with --become flag:
+           ansible-playbook -i inventory/hosts playbooks/incus_bootstrap.yml --become
+
+        2. Run with --ask-become-pass for password prompt:
+           ansible-playbook -i inventory/hosts playbooks/incus_bootstrap.yml --become --ask-become-pass
+
+        3. For localhost, run with sudo:
+           sudo ansible-playbook -i inventory/hosts playbooks/incus_bootstrap.yml
+
+      Current user: {{ ansible_user_id }} (UID: {{ ansible_user_uid }})
+      Become enabled: {{ ansible_become | default(false) }}
+
+    success_msg: "Privilege check passed: Running with sufficient permissions"
+  tags:
+    - preflight
+    - validation
+
+- name: Check available disk space on root filesystem
+  ansible.builtin.shell: df -BG / | tail -1 | awk '{print $4}' | sed 's/G//'
+  register: root_disk_space_gb
+  changed_when: false
+  failed_when: false
+  tags:
+    - preflight
+    - validation
+
+- name: Capture detailed disk usage for warning message
+  ansible.builtin.shell: df -h /
+  register: disk_usage_details
+  changed_when: false
+  when: root_disk_space_gb.stdout | int < 10
+  tags:
+    - preflight
+    - validation
+
+- name: Warn if disk space is below recommended minimum (10GB)
+  ansible.builtin.debug:
+    msg: |
+
+      WARNING: Low disk space detected on root filesystem (/).
+
+      Available space: {{ root_disk_space_gb.stdout }}GB
+      Recommended minimum: 10GB
+
+      Incus requires adequate disk space for:
+        - Storage pools (default, images, and container filesystems)
+        - Downloaded container images (can be several GB each)
+        - Container snapshots and backups
+        - Log files and temporary data
+
+      While the installation may proceed, you may encounter issues:
+        - Failure to create storage pools
+        - Inability to download or launch containers
+        - Degraded performance due to disk pressure
+
+      Recommended actions:
+        - Free up disk space by removing unnecessary files
+        - Expand the root filesystem if using a virtual machine
+        - Consider using a dedicated partition/disk for Incus storage pools
+
+      Current disk usage on /:
+      {{ disk_usage_details.stdout }}
+
+  when: root_disk_space_gb.stdout | int < 10
+  tags:
+    - preflight
+    - validation
+
+- name: Set disk space warning fact
+  ansible.builtin.set_fact:
+    disk_space_warning: true
+  when: root_disk_space_gb.stdout | int < 10
+  tags:
+    - preflight
+    - validation
+
+- name: Confirm disk space is adequate
+  ansible.builtin.debug:
+    msg: "Disk space check passed: {{ root_disk_space_gb.stdout }}GB available on root filesystem (10GB minimum recommended)"
+  when: root_disk_space_gb.stdout | int >= 10
+  tags:
+    - preflight
+    - validation
+
+# ============================================================================
+# DISTRIBUTION VALIDATION
+# ============================================================================
+# Future pre-flight checks will be added here to validate:
+#   - Supported distribution and version (OpenSUSE Tumbleweed, Ubuntu, etc.)
+#   - Available disk space for storage pools
+#   - Required kernel modules (overlay, br_netfilter)
+#   - Network connectivity for package downloads
+
+- name: Check if overlay kernel module is available
+  ansible.builtin.command: modprobe -n overlay
+  register: overlay_module_check
+  failed_when: false
+  changed_when: false
+  tags:
+    - preflight
+    - validation
+
+- name: Warn if overlay module is not available
+  ansible.builtin.debug:
+    msg: |
+      WARNING: The overlay kernel module does not appear to be available.
+
+      The overlay filesystem module is required by Incus for efficient container storage.
+      Without this module, Incus storage pools may fail to initialize properly.
+
+      What this means:
+        - Containers use overlay filesystems for layered storage (similar to Docker)
+        - This allows efficient use of disk space through copy-on-write
+        - Missing overlay support will prevent proper container operation
+
+      How to resolve:
+        - On most distributions, the overlay module is built-in or loadable
+        - Check your kernel configuration: zcat /proc/config.gz | grep OVERLAY_FS
+        - You may need to install kernel modules package or update your kernel
+        - For custom kernels, ensure CONFIG_OVERLAY_FS is enabled
+
+      Module check result: {{ overlay_module_check.stderr | default('Unable to determine') }}
+  when: overlay_module_check.rc != 0
+  tags:
+    - preflight
+    - validation
+
+# ============================================================================
+# PACKAGE INSTALLATION
+# ============================================================================
+# Distribution-specific package installation tasks will follow here
+
+# ============================================================================
+# SERVICE CONFIGURATION
+# ============================================================================
+# Systemd service enablement and startup tasks will follow here
+
+# ============================================================================
+# USER PERMISSIONS
+# ============================================================================
+# User group membership configuration will follow here
+
+# ============================================================================
+# INCUS INITIALIZATION
+# ============================================================================
+# Storage pool and network bridge initialization will follow here

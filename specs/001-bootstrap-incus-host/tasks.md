@@ -39,10 +39,10 @@ This is an Ansible infrastructure project with the following structure:
 
 **Critical**: The role structure and defaults must exist before implementing user story tasks.
 
-- [ ] T005 Add localhost connection entry to ansible/inventory/hosts.yml (if not present)
-- [ ] T005a Add pre-flight check for sudo privileges with clear fail message in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T005b Add pre-flight check for minimum disk space (10GB) with warning in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T005c Add pre-flight check for required kernel modules (overlay) with warning in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T005 Add localhost connection entry to ansible/inventory/hosts.yml (if not present)
+- [x] T005a Add pre-flight check for sudo privileges with clear fail message in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T005b Add pre-flight check for minimum disk space (10GB) with warning in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T005c Add pre-flight check for required kernel modules (overlay) with warning in ansible/roles/incus_bootstrap/tasks/main.yml
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
