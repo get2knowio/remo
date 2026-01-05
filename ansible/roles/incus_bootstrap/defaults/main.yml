@@ -89,6 +89,27 @@ incus_supported_os_families:
 #   - Compatibility: Directory storage works everywhere
 #   - Idempotency: Safe to run multiple times (checks before initializing)
 
+# Storage pool name to create during initialization
+# Used in informational output; actual pool is created by 'incus admin init --minimal'
+incus_storage_pool_name: "default"
+
+# Storage backend driver to use
+# Options: dir (directory-based), zfs, btrfs, lvm
+# The 'dir' driver works on any filesystem without special requirements
+incus_storage_pool_driver: "dir"
+
+# Network bridge name to create during initialization
+# Used in informational output; actual network is created by 'incus admin init --minimal'
+incus_network_name: "incusbr0"
+
+# IPv4 address configuration for the network bridge
+# Options: "auto" for automatic assignment, or specific CIDR (e.g., "10.10.10.1/24")
+incus_network_ipv4: "auto"
+
+# IPv6 address configuration for the network bridge
+# Options: "none" to disable IPv6, "auto" for automatic assignment, or specific CIDR
+incus_network_ipv6: "none"
+
 # ============================================================================
 # USER PERMISSIONS CONFIGURATION
 # ============================================================================
