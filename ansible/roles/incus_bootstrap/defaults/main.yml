@@ -93,7 +93,7 @@ incus_storage_pool_driver: "dir"
 incus_network_name: "incusbr0"
 
 # IPv4 configuration for the bridge network
-# Set to "auto" for automatic DHCP assignment, or provide a CIDR (e.g., "10.10.10.1/24")
+# Set to "auto" for automatic DHCP assignment, "none" to disable, or provide a CIDR (e.g., "10.10.10.1/24")
 incus_network_ipv4: "auto"
 
 # IPv6 configuration for the bridge network

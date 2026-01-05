@@ -296,14 +296,65 @@
     - incus_init
     - storage
 
-- name: Initialize Incus with minimal configuration
-  ansible.builtin.command: incus admin init --minimal
+- name: Create Incus storage pool if none exist
+  ansible.builtin.command: >
+    incus storage create {{ incus_storage_pool_name }} {{ incus_storage_pool_driver }}
   when:
     - not incus_skip_init
     - incus_storage_list.stdout | length == 0
   tags:
     - incus_init
     - storage
+
+- name: Check if Incus networks exist
+  ansible.builtin.command: incus network list --format=csv
+  register: incus_network_list
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - network
+
+- name: Create Incus network bridge if none exist
+  ansible.builtin.shell: |
+    incus network create {{ incus_network_name }} \
+    {% if incus_network_ipv4 != 'none' %}
+      ipv4.address={{ incus_network_ipv4 }} \
+      ipv4.nat=true \
+    {% endif %}
+    {% if incus_network_ipv6 != 'none' %}
+      ipv6.address={{ incus_network_ipv6 }} \
+      ipv6.nat=true
+    {% endif %}
+  when:
+    - not incus_skip_init
+    - incus_network_list.stdout | length == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Set default profile to use created storage pool and network
+  ansible.builtin.command: >
+    incus profile device add default root disk path=/ pool={{ incus_storage_pool_name }}
+  when:
+    - not incus_skip_init
+    - incus_storage_list.stdout | length == 0
+  failed_when: false
+  tags:
+    - incus_init
+    - storage
+
+- name: Set default profile to use created network
+  ansible.builtin.command: >
+    incus profile device add default eth0 nic network={{ incus_network_name }}
+  when:
+    - not incus_skip_init
+    - incus_network_list.stdout | length == 0
+  failed_when: false
+  tags:
+    - incus_init
+    - network
 
 # ============================================================================
 # POST-BOOTSTRAP VERIFICATION
