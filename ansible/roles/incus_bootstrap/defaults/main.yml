@@ -72,33 +72,22 @@ incus_supported_os_families:
 # distribution-specific package installation tasks.
 
 # ============================================================================
-# STORAGE POOL CONFIGURATION
+# STORAGE POOL AND NETWORK CONFIGURATION
 # ============================================================================
-
-# Name of the Incus storage pool to create
-# Only created if no storage pools exist (idempotent)
-incus_storage_pool_name: "default"
-
-# Storage backend driver for the pool
-# Options: dir (directory), zfs (ZFS pools), btrfs (Btrfs subvolumes), lvm (LVM)
-# dir is the simplest and works on any filesystem, making it the safest default
-incus_storage_pool_driver: "dir"
-
-# ============================================================================
-# NETWORK BRIDGE CONFIGURATION
-# ============================================================================
-
-# Name of the Incus managed network bridge
-# This provides NAT connectivity for containers to reach the host and internet
-incus_network_name: "incusbr0"
-
-# IPv4 configuration for the bridge network
-# Set to "auto" for automatic DHCP assignment, "none" to disable, or provide a CIDR (e.g., "10.10.10.1/24")
-incus_network_ipv4: "auto"
-
-# IPv6 configuration for the bridge network
-# Set to "none" to disable IPv6, "auto" for automatic, or provide a CIDR (e.g., "fd42::/64")
-incus_network_ipv6: "none"
+# NOTE: When using 'incus admin init --minimal', Incus automatically creates:
+#   - Storage pool: "default" (directory-based, works on any filesystem)
+#   - Network bridge: "incusbr0" (with automatic NAT and DHCP)
+#   - Default profile: configured with both storage and network devices
+#
+# These defaults provide immediate container functionality without manual
+# configuration. For advanced storage backends (ZFS, Btrfs, LVM) or custom
+# network configurations, you can manually configure Incus after bootstrap
+# or set incus_skip_init=true and handle initialization separately.
+#
+# The minimal initialization approach prioritizes:
+#   - Simplicity: One command does all basic setup
+#   - Compatibility: Directory storage works everywhere
+#   - Idempotency: Safe to run multiple times (checks before initializing)
 
 # ============================================================================
 # USER PERMISSIONS CONFIGURATION
@@ -119,6 +108,13 @@ incus_skip_init: false
 # Enable incus-user.socket for unprivileged container delegation
 # This allows users to run containers in unprivileged mode
 incus_enable_user_socket: true
+
+# Control verbosity of verification output
+# Options:
+#   - "summary": Show only task names and pass/fail status (recommended for normal use)
+#   - "detailed": Show full YAML output from verification commands (useful for debugging)
+# This affects the post-bootstrap verification tasks that check Incus installation
+incus_bootstrap_verbosity: "summary"
 
 # ============================================================================
 # SERVICE NAMES AND PACKAGES

@@ -284,24 +284,16 @@
 # ============================================================================
 # INCUS INITIALIZATION
 # ============================================================================
-# Storage pool and network bridge initialization will follow here
+# Initialize Incus with minimal configuration using 'incus admin init --minimal'
+# This creates a default storage pool (directory-based) and network bridge
+# if no existing configuration is found.
 
-- name: Check if Incus storage pools exist
+- name: Check if Incus is already initialized (storage pools exist)
   ansible.builtin.command: incus storage list --format=csv
   register: incus_storage_list
   changed_when: false
   failed_when: false
   when: not incus_skip_init
-  tags:
-    - incus_init
-    - storage
-
-- name: Create Incus storage pool if none exist
-  ansible.builtin.command: >
-    incus storage create {{ incus_storage_pool_name }} {{ incus_storage_pool_driver }}
-  when:
-    - not incus_skip_init
-    - incus_storage_list.stdout | length == 0
   tags:
     - incus_init
     - storage
@@ -316,45 +308,94 @@
     - incus_init
     - network
 
-- name: Create Incus network bridge if none exist
-  ansible.builtin.shell: |
-    incus network create {{ incus_network_name }} \
-    {% if incus_network_ipv4 != 'none' %}
-      ipv4.address={{ incus_network_ipv4 }} \
-      ipv4.nat=true \
-    {% endif %}
-    {% if incus_network_ipv6 != 'none' %}
-      ipv6.address={{ incus_network_ipv6 }} \
-      ipv6.nat=true
-    {% endif %}
+- name: List existing containers before initialization (for preservation check)
+  ansible.builtin.command: incus list --format=csv --columns=ns
+  register: incus_containers_before
+  changed_when: false
+  failed_when: false
   when:
     - not incus_skip_init
-    - incus_network_list.stdout | length == 0
+    - incus_storage_list.stdout | length > 0
   tags:
     - incus_init
-    - network
+    - preservation
 
-- name: Set default profile to use created storage pool and network
-  ansible.builtin.command: >
-    incus profile device add default root disk path=/ pool={{ incus_storage_pool_name }}
+- name: Initialize Incus with minimal configuration if not already initialized
+  ansible.builtin.command: incus admin init --minimal
   when:
     - not incus_skip_init
     - incus_storage_list.stdout | length == 0
-  failed_when: false
+  register: incus_init_result
   tags:
     - incus_init
     - storage
+    - network
 
-- name: Set default profile to use created network
-  ansible.builtin.command: >
-    incus profile device add default eth0 nic network={{ incus_network_name }}
+- name: Display initialization result
+  ansible.builtin.debug:
+    msg: |
+      Incus initialization completed using 'incus admin init --minimal'.
+
+      This command automatically configured:
+        - Storage pool: default (directory-based, using filesystem storage)
+        - Network bridge: incusbr0 (with NAT for container connectivity)
+        - Default profile: configured with storage and network devices
+
+      The minimal initialization uses sensible defaults that work on any filesystem
+      and provides immediate container functionality without manual configuration.
   when:
     - not incus_skip_init
-    - incus_network_list.stdout | length == 0
-  failed_when: false
+    - incus_storage_list.stdout | length == 0
+    - incus_init_result is defined
   tags:
     - incus_init
-    - network
+
+- name: Verify existing containers remain operational after bootstrap
+  ansible.builtin.command: incus list --format=csv --columns=ns
+  register: incus_containers_after
+  changed_when: false
+  failed_when: false
+  when:
+    - not incus_skip_init
+    - incus_containers_before is defined
+    - incus_containers_before.stdout | length > 0
+  tags:
+    - incus_init
+    - preservation
+    - verification
+
+- name: Display container preservation verification
+  ansible.builtin.debug:
+    msg: |
+      Container preservation check: {{ 'PASSED' if incus_containers_after is defined and incus_containers_after.rc == 0 else 'SKIPPED' }}
+
+      {% if incus_containers_after is defined and incus_containers_after.rc == 0 %}
+      All existing containers remain accessible after bootstrap:
+
+      Containers before: {{ incus_containers_before.stdout_lines | length }}
+      Containers after:  {{ incus_containers_after.stdout_lines | length }}
+
+      {% if incus_containers_before.stdout == incus_containers_after.stdout %}
+      ✓ Container list unchanged - all containers preserved
+      {% else %}
+      WARNING: Container list changed during bootstrap!
+
+      Before:
+      {{ incus_containers_before.stdout }}
+
+      After:
+      {{ incus_containers_after.stdout }}
+      {% endif %}
+      {% else %}
+      No existing containers detected, or this is a fresh installation.
+      {% endif %}
+  when:
+    - not incus_skip_init
+    - incus_containers_before is defined
+  tags:
+    - incus_init
+    - preservation
+    - verification
 
 # ============================================================================
 # POST-BOOTSTRAP VERIFICATION
@@ -398,7 +439,7 @@
     - incus_verify
 
 - name: Verify Incus storage pools (incus storage list)
-  ansible.builtin.command: incus storage list --format=yaml
+  ansible.builtin.command: incus storage list --format={{ 'yaml' if incus_bootstrap_verbosity == 'detailed' else 'csv' }}
   register: incus_storage_verify
   changed_when: false
   failed_when: false
@@ -407,7 +448,34 @@
     - verification
     - incus_verify
 
-- name: Display Incus storage pool verification
+- name: Display Incus storage pool verification (summary mode)
+  ansible.builtin.debug:
+    msg: |
+      Storage pool verification: {{ 'PASSED' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
+
+      {% if incus_storage_verify.rc == 0 %}
+      {% if incus_storage_verify.stdout | length > 0 %}
+      Storage pools have been created successfully.
+      {% else %}
+      WARNING: No storage pools found!
+
+      This may indicate that Incus initialization did not complete successfully.
+      Try running manually: incus admin init --minimal
+      {% endif %}
+      {% else %}
+      WARNING: Failed to list storage pools!
+
+      Error output:
+      {{ incus_storage_verify.stderr | default('No error output available') }}
+      {% endif %}
+  when:
+    - not incus_skip_init
+    - incus_bootstrap_verbosity == 'summary'
+  tags:
+    - verification
+    - incus_verify
+
+- name: Display Incus storage pool verification (detailed mode)
   ansible.builtin.debug:
     msg: |
       Storage pool verification: {{ 'PASSED' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
@@ -430,13 +498,15 @@
       Error output:
       {{ incus_storage_verify.stderr | default('No error output available') }}
       {% endif %}
-  when: not incus_skip_init
+  when:
+    - not incus_skip_init
+    - incus_bootstrap_verbosity == 'detailed'
   tags:
     - verification
     - incus_verify
 
 - name: Verify Incus networks (incus network list)
-  ansible.builtin.command: incus network list --format=yaml
+  ansible.builtin.command: incus network list --format={{ 'yaml' if incus_bootstrap_verbosity == 'detailed' else 'csv' }}
   register: incus_network_verify
   changed_when: false
   failed_when: false
@@ -445,7 +515,34 @@
     - verification
     - incus_verify
 
-- name: Display Incus network verification
+- name: Display Incus network verification (summary mode)
+  ansible.builtin.debug:
+    msg: |
+      Network verification: {{ 'PASSED' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
+
+      {% if incus_network_verify.rc == 0 %}
+      {% if incus_network_verify.stdout | length > 0 %}
+      Network bridges have been created successfully.
+      {% else %}
+      WARNING: No networks found!
+
+      This may indicate that Incus initialization did not complete successfully.
+      Try running manually: incus admin init --minimal
+      {% endif %}
+      {% else %}
+      WARNING: Failed to list networks!
+
+      Error output:
+      {{ incus_network_verify.stderr | default('No error output available') }}
+      {% endif %}
+  when:
+    - not incus_skip_init
+    - incus_bootstrap_verbosity == 'summary'
+  tags:
+    - verification
+    - incus_verify
+
+- name: Display Incus network verification (detailed mode)
   ansible.builtin.debug:
     msg: |
       Network verification: {{ 'PASSED' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
@@ -468,7 +565,9 @@
       Error output:
       {{ incus_network_verify.stderr | default('No error output available') }}
       {% endif %}
-  when: not incus_skip_init
+  when:
+    - not incus_skip_init
+    - incus_bootstrap_verbosity == 'detailed'
   tags:
     - verification
     - incus_verify
@@ -485,9 +584,11 @@
       {% if not incus_skip_init %}
       Storage Pools:    {{ 'OK' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
       Networks:         {{ 'OK' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
+      Container Preservation: {{ 'OK' if incus_containers_after is defined and incus_containers_after.rc == 0 else 'N/A (fresh install)' }}
       {% else %}
       Storage Pools:    SKIPPED (incus_skip_init=true)
       Networks:         SKIPPED (incus_skip_init=true)
+      Container Preservation: SKIPPED (incus_skip_init=true)
       {% endif %}
 
       {% if incus_version_output.rc == 0 and (incus_skip_init or (incus_storage_verify.rc == 0 and incus_network_verify.rc == 0)) %}
