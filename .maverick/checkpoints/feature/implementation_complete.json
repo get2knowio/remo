@@ -4,16 +4,31 @@
   "inputs_hash": "f1d6826a9d77083c",
   "step_results": [
     {
-      "name": "init",
+      "name": "preflight",
       "output": {
-        "branch_name": "001-bootstrap-incus-host",
-        "base_branch": "main",
-        "is_clean": false,
-        "synced_with_base": true,
-        "task_file_path": "specs/001-bootstrap-incus-host/tasks.md",
-        "error": null
+        "success": false,
+        "api_available": false,
+        "git_available": true,
+        "github_cli_available": true,
+        "validation_tools_available": true,
+        "errors": [
+          "Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN environment variable is set"
+        ],
+        "warnings": []
       }
+    },
+    {
+      "name": "init",
+      "output": null
+    },
+    {
+      "name": "get_phases",
+      "output": null
+    },
+    {
+      "name": "implement_by_phase",
+      "output": null
     }
   ],
-  "saved_at": "2025-12-30T01:20:09.295700+00:00"
+  "saved_at": "2026-01-05T00:17:22.990140+00:00"
 }
