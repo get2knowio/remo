@@ -29,7 +29,7 @@ incus_supported_os_families:
 #                Package names may differ from OpenSUSE
 #
 # PACKAGE MANAGER TASKS:
-#   OpenSUSE: community.general.zypper module (see tasks/main.yml line ~157)
+#   OpenSUSE: community.general.zypper module (see the OpenSUSE package installation task in tasks/main.yml)
 #   Ubuntu/Debian: ansible.builtin.apt module
 #                  Example: Add apt repository, update cache, install packages
 #   Fedora/RHEL: ansible.builtin.dnf or ansible.builtin.yum module
@@ -120,10 +120,10 @@ incus_network_ipv4: "auto"
 
 # IPv6 address configuration for the network bridge
 # INFORMATIONAL ONLY: Documents what 'incus admin init --minimal' creates.
-# The minimal initialization enables IPv6 with auto-configuration (typically fd42::/64).
-# To disable IPv6 entirely or use a custom IPv6 CIDR, set incus_skip_init=true
-# and create the network manually with 'incus network create'.
-incus_network_ipv6: "auto"
+# Default is "none" to disable IPv6 for security reasons (reduces attack surface).
+# To enable IPv6 with auto-configuration (typically fd42::/64) or use a custom IPv6 CIDR,
+# set incus_skip_init=true and create the network manually with 'incus network create'.
+incus_network_ipv6: "none"
 
 # ============================================================================
 # USER PERMISSIONS CONFIGURATION
@@ -187,4 +187,4 @@ incus_documentation_url: "https://linuxcontainers.org/incus/docs/"
 
 # Project issue tracker URL
 # Used in error messages to guide users to report issues or request features
-project_issues_url: "https://github.com/cognica-io/remo/issues"
+project_issues_url: "https://github.com/get2knowio/remo/issues"

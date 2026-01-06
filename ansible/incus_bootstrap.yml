@@ -3,7 +3,7 @@
 # Run this to prepare your local workstation to run Incus containers
 
 - name: Bootstrap Incus on localhost
-  hosts: localhost
+  hosts: "{{ target_hosts | default('localhost') }}"
   become: true
   gather_facts: true
 

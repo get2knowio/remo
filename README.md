@@ -212,6 +212,16 @@ This will:
 - Initialize a directory-based storage pool
 - Configure a NAT bridge network for container connectivity
 
+#### Verbose Output
+
+For detailed verification output including full YAML configuration:
+
+```bash
+./run.sh incus_bootstrap.yml -e incus_bootstrap_verbosity=detailed
+```
+
+By default, bootstrap shows only summary information. Use `detailed` mode to see complete storage pool and network configurations during verification.
+
 **After bootstrap**, log out and back in (or run `newgrp incus-admin`) to activate group membership, then:
 
 ```bash

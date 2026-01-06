@@ -9,7 +9,7 @@
 - name: Verify sudo/root privileges are available
   ansible.builtin.assert:
     that:
-      - ansible_user_uid == 0 or ansible_user_id == 'root' or ansible_become is defined
+      - ansible_user_uid == 0 or ansible_become is defined
     fail_msg: |
 
       ERROR: Insufficient privileges to bootstrap Incus host.
@@ -54,6 +54,8 @@
 
 - name: Capture detailed disk usage for warning message
   ansible.builtin.shell: df -h /
+  args:
+    executable: /bin/bash
   register: disk_usage_details
   changed_when: false
   when: root_disk_space_gb.stdout | int < 10
@@ -169,7 +171,10 @@
     - validation
 
 - name: Check if overlay kernel module is available
-  ansible.builtin.command: modprobe -n overlay
+  community.general.modprobe:
+    name: overlay
+    state: present
+  check_mode: true
   register: overlay_module_check
   failed_when: false
   changed_when: false
@@ -196,8 +201,8 @@
         - You may need to install kernel modules package or update your kernel
         - For custom kernels, ensure CONFIG_OVERLAY_FS is enabled
 
-      Module check result: {{ overlay_module_check.stderr | default('Unable to determine') }}
-  when: overlay_module_check.rc != 0
+      Module check result: {{ overlay_module_check.msg | default('Unable to determine') }}
+  when: overlay_module_check is failed
   tags:
     - preflight
     - validation
@@ -272,7 +277,15 @@
            journalctl -u {{ incus_system_socket_unit }} -n 50
 
         2. Verify Incus packages are installed correctly:
+           {% if ansible_os_family == 'Suse' %}
            zypper search -i incus
+           {% elif ansible_os_family == 'Debian' %}
+           dpkg -l | grep incus
+           {% elif ansible_os_family == 'RedHat' %}
+           rpm -qa | grep incus
+           {% else %}
+           # Check installed packages using your distribution's package manager
+           {% endif %}
 
         3. Check for port conflicts (Incus uses Unix sockets, but systemd may report conflicts):
            systemctl list-sockets | grep incus
@@ -348,7 +361,7 @@
 # User group membership configuration will follow here
 
 - name: Check if user is already a member of incus-admin group
-  ansible.builtin.command: id -nG {{ incus_user }}
+  ansible.builtin.command: id -nG {{ incus_user | quote }}
   register: user_groups_output
   changed_when: false
   failed_when: false
@@ -411,6 +424,7 @@
     - not incus_skip_init
     - incus_storage_list.stdout | length == 0
   register: incus_init_result
+  changed_when: incus_init_result.rc == 0 and incus_init_result.stdout is search('Created')
   tags:
     - incus_init
     - storage
@@ -533,7 +547,7 @@
     - verification
     - incus_verify
 
-- name: Display Incus storage pool verification (summary mode)
+- name: Display Incus storage pool verification
   ansible.builtin.debug:
     msg: |
       Storage pool verification: {{ 'PASSED' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
@@ -541,36 +555,11 @@
       {% if incus_storage_verify.rc == 0 %}
       {% if incus_storage_verify.stdout | length > 0 %}
       Storage pools have been created successfully.
-      {% else %}
-      WARNING: No storage pools found!
-
-      This may indicate that Incus initialization did not complete successfully.
-      Try running manually: incus admin init --minimal
-      {% endif %}
-      {% else %}
-      WARNING: Failed to list storage pools!
-
-      Error output:
-      {{ incus_storage_verify.stderr | default('No error output available') }}
-      {% endif %}
-  when:
-    - not incus_skip_init
-    - incus_bootstrap_verbosity == 'summary'
-  tags:
-    - verification
-    - incus_verify
-
-- name: Display Incus storage pool verification (detailed mode)
-  ansible.builtin.debug:
-    msg: |
-      Storage pool verification: {{ 'PASSED' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
-
-      {% if incus_storage_verify.rc == 0 %}
-      {% if incus_storage_verify.stdout | length > 0 %}
-      Storage pools have been created successfully.
+      {% if incus_bootstrap_verbosity == 'detailed' %}
 
       Available storage pools:
       {{ incus_storage_verify.stdout }}
+      {% endif %}
       {% else %}
       WARNING: No storage pools found!
 
@@ -583,9 +572,7 @@
       Error output:
       {{ incus_storage_verify.stderr | default('No error output available') }}
       {% endif %}
-  when:
-    - not incus_skip_init
-    - incus_bootstrap_verbosity == 'detailed'
+  when: not incus_skip_init
   tags:
     - verification
     - incus_verify
@@ -600,7 +587,7 @@
     - verification
     - incus_verify
 
-- name: Display Incus network verification (summary mode)
+- name: Display Incus network verification
   ansible.builtin.debug:
     msg: |
       Network verification: {{ 'PASSED' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
@@ -608,36 +595,11 @@
       {% if incus_network_verify.rc == 0 %}
       {% if incus_network_verify.stdout | length > 0 %}
       Network bridges have been created successfully.
-      {% else %}
-      WARNING: No networks found!
-
-      This may indicate that Incus initialization did not complete successfully.
-      Try running manually: incus admin init --minimal
-      {% endif %}
-      {% else %}
-      WARNING: Failed to list networks!
-
-      Error output:
-      {{ incus_network_verify.stderr | default('No error output available') }}
-      {% endif %}
-  when:
-    - not incus_skip_init
-    - incus_bootstrap_verbosity == 'summary'
-  tags:
-    - verification
-    - incus_verify
-
-- name: Display Incus network verification (detailed mode)
-  ansible.builtin.debug:
-    msg: |
-      Network verification: {{ 'PASSED' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
-
-      {% if incus_network_verify.rc == 0 %}
-      {% if incus_network_verify.stdout | length > 0 %}
-      Network bridges have been created successfully.
+      {% if incus_bootstrap_verbosity == 'detailed' %}
 
       Available networks:
       {{ incus_network_verify.stdout }}
+      {% endif %}
       {% else %}
       WARNING: No networks found!
 
@@ -650,9 +612,7 @@
       Error output:
       {{ incus_network_verify.stderr | default('No error output available') }}
       {% endif %}
-  when:
-    - not incus_skip_init
-    - incus_bootstrap_verbosity == 'detailed'
+  when: not incus_skip_init
   tags:
     - verification
     - incus_verify
