@@ -2,11 +2,9 @@
 # Handlers for incus_bootstrap role
 # Handlers are tasks that respond to notifications from other tasks
 # and are only executed when notified
-
-- name: Restart incusd
-  ansible.builtin.systemd:
-    name: "{{ incus_system_service_unit }}"
-    state: restarted
-  tags:
-    - services
-    - incus_service
+#
+# NOTE: Incus uses systemd socket activation (incus.socket) which automatically
+# starts incusd.service on-demand when the socket receives connections.
+# Therefore, manual service restart handlers are not required after package
+# installation. The socket-based architecture ensures the daemon starts
+# automatically when needed.

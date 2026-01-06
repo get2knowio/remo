@@ -9,7 +9,7 @@
 - name: Verify sudo/root privileges are available
   ansible.builtin.assert:
     that:
-      - ansible_user_uid == 0 or ansible_env.SUDO_USER is defined or 'root' in group_names or ansible_become is defined
+      - ansible_user_uid == 0 or ansible_user_id == 'root' or ansible_become is defined
     fail_msg: |
 
       ERROR: Insufficient privileges to bootstrap Incus host.
@@ -40,10 +40,14 @@
     - validation
 
 - name: Check available disk space on root filesystem
-  ansible.builtin.shell: df -BG / | tail -1 | awk '{print $4}' | sed 's/G//'
+  ansible.builtin.shell: |
+    set -o pipefail
+    df -BG / | awk 'NR==2 {print $4}' | sed 's/G//'
+  args:
+    executable: /bin/bash
   register: root_disk_space_gb
   changed_when: false
-  failed_when: false
+  failed_when: root_disk_space_gb.rc != 0 or root_disk_space_gb.stdout == ""
   tags:
     - preflight
     - validation
@@ -156,7 +160,7 @@
         - Test the bootstrap on your distribution and submit a pull request
 
       For more information:
-        - File an issue: https://github.com/cognica-io/remo/issues
+        - File an issue: {{ project_issues_url }}
         - Contribution guide: See README.md in the repository root
 
     success_msg: "OS family '{{ ansible_os_family }}' is supported"
@@ -280,8 +284,8 @@
            journalctl -xe
 
       If the problem persists:
-        - Consult Incus documentation: https://linuxcontainers.org/incus/docs/
-        - File an issue: https://github.com/cognica-io/remo/issues
+        - Consult Incus documentation: {{ incus_documentation_url }}
+        - File an issue: {{ project_issues_url }}
 
     success_msg: "Incus system socket service started successfully"
   tags:
@@ -329,8 +333,8 @@
            systemctl cat {{ incus_user_socket_unit }}
 
       If the problem persists:
-        - Consult Incus documentation: https://linuxcontainers.org/incus/docs/
-        - File an issue: https://github.com/cognica-io/remo/issues
+        - Consult Incus documentation: {{ incus_documentation_url }}
+        - File an issue: {{ project_issues_url }}
 
     success_msg: "Incus user socket service started successfully"
   when: incus_enable_user_socket
@@ -684,7 +688,7 @@
         - View storage pools: incus storage list
         - View networks: incus network list
 
-      For detailed documentation, visit: https://linuxcontainers.org/incus/docs/
+      For detailed documentation, visit: {{ incus_documentation_url }}
       {% else %}
       Bootstrap Status: NEEDS ATTENTION
 
