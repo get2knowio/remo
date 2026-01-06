@@ -18,6 +18,7 @@ Spin up a fully-configured cloud development server in minutes. One command give
 | **Persistent Volume** | `/home/g2k` survives server teardown |
 | **Docker + Compose** | Official Docker CE with compose plugin |
 | **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
+| **Incus Bootstrap** | Container/VM management system (optional, see below) |
 | **Node.js 24 LTS** | From NodeSource repository |
 | **GitHub CLI** | `gh` for GitHub workflow integration |
 | **Zellij** | Terminal multiplexer for persistent sessions |
@@ -191,6 +192,46 @@ The `g2k` user is created with:
 - Passwordless sudo (`NOPASSWD:ALL`)
 - Docker group membership
 - SSH key from your configuration
+
+## Incus Container Management (Optional)
+
+In addition to Docker-based devcontainers, this project includes support for [Incus](https://linuxcontainers.org/incus/) - a modern container and VM management system that's an alternative to LXD.
+
+### Bootstrap Incus on Localhost
+
+To set up Incus on your local workstation or server:
+
+```bash
+./run.sh incus_bootstrap.yml
+```
+
+This will:
+- Install Incus and incus-tools packages (OpenSUSE Tumbleweed)
+- Enable and start the Incus daemon services
+- Add your user to the `incus-admin` group for non-root container management
+- Initialize a directory-based storage pool
+- Configure a NAT bridge network for container connectivity
+
+**After bootstrap**, log out and back in (or run `newgrp incus-admin`) to activate group membership, then:
+
+```bash
+# Launch a container
+incus launch images:alpine/edge my-container
+
+# List containers
+incus list
+
+# Access container shell
+incus exec my-container -- sh
+```
+
+See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-host/quickstart.md) for detailed usage instructions.
+
+### Incus vs Docker
+
+- **Docker**: For devcontainer-based development workflows
+- **Incus**: For system containers, VMs, and infrastructure testing
+- Both can coexist on the same system
 
 ## Troubleshooting
 

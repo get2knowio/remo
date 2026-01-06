@@ -243,6 +243,47 @@
     name: "{{ incus_system_socket_unit }}"
     enabled: true
     state: started
+  register: incus_socket_result
+  failed_when: false
+  tags:
+    - services
+    - incus_service
+
+- name: Verify incus.socket service started successfully
+  ansible.builtin.assert:
+    that:
+      - incus_socket_result is succeeded
+    fail_msg: |
+
+      ERROR: Failed to start Incus system socket service.
+
+      Service: {{ incus_system_socket_unit }}
+      Error: {{ incus_socket_result.msg | default('Service failed to start') }}
+
+      This indicates a problem with the Incus installation or system configuration.
+
+      Troubleshooting steps:
+        1. Check service status manually:
+           systemctl status {{ incus_system_socket_unit }}
+           journalctl -u {{ incus_system_socket_unit }} -n 50
+
+        2. Verify Incus packages are installed correctly:
+           zypper search -i incus
+
+        3. Check for port conflicts (Incus uses Unix sockets, but systemd may report conflicts):
+           systemctl list-sockets | grep incus
+
+        4. Verify systemd unit files exist:
+           systemctl cat {{ incus_system_socket_unit }}
+
+        5. Check system logs for detailed error messages:
+           journalctl -xe
+
+      If the problem persists:
+        - Consult Incus documentation: https://linuxcontainers.org/incus/docs/
+        - File an issue: https://github.com/cognica-io/remo/issues
+
+    success_msg: "Incus system socket service started successfully"
   tags:
     - services
     - incus_service
@@ -252,6 +293,46 @@
     name: "{{ incus_user_socket_unit }}"
     enabled: true
     state: started
+  register: incus_user_socket_result
+  failed_when: false
+  when: incus_enable_user_socket
+  tags:
+    - services
+    - incus_service
+
+- name: Verify incus-user.socket service started successfully
+  ansible.builtin.assert:
+    that:
+      - incus_user_socket_result is succeeded
+    fail_msg: |
+
+      ERROR: Failed to start Incus user socket service.
+
+      Service: {{ incus_user_socket_unit }}
+      Error: {{ incus_user_socket_result.msg | default('Service failed to start') }}
+
+      This indicates a problem with the Incus user delegation configuration.
+
+      Troubleshooting steps:
+        1. Check service status manually:
+           systemctl status {{ incus_user_socket_unit }}
+           journalctl -u {{ incus_user_socket_unit }} -n 50
+
+        2. Verify the user socket is not required for your use case:
+           You can disable this by setting: incus_enable_user_socket=false
+
+        3. Check for systemd user service issues:
+           systemctl --user status
+           loginctl show-user {{ incus_user }}
+
+        4. Verify systemd unit files exist:
+           systemctl cat {{ incus_user_socket_unit }}
+
+      If the problem persists:
+        - Consult Incus documentation: https://linuxcontainers.org/incus/docs/
+        - File an issue: https://github.com/cognica-io/remo/issues
+
+    success_msg: "Incus user socket service started successfully"
   when: incus_enable_user_socket
   tags:
     - services
