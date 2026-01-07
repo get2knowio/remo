@@ -1,0 +1,10 @@
+---
+# Handlers for incus_bootstrap role
+# Handlers are tasks that respond to notifications from other tasks
+# and are only executed when notified
+#
+# NOTE: Incus uses systemd socket activation (incus.socket) which automatically
+# starts incusd.service on-demand when the socket receives connections.
+# Therefore, manual service restart handlers are not required after package
+# installation. The socket-based architecture ensures the daemon starts
+# automatically when needed.

@@ -1,0 +1,77 @@
+# Playbook Interface Contract: incus_bootstrap.yml
+# This file documents the public interface of the incus_bootstrap playbook
+# Version: 1.0.0
+
+playbook_name: incus_bootstrap.yml
+location: ansible/incus_bootstrap.yml
+description: >
+  Bootstrap the local host to run Incus containers.
+  Runs the incus_bootstrap role against localhost.
+
+# Invocation
+invocation:
+  standard: "./run.sh incus_bootstrap.yml"
+  with_vars: "./run.sh incus_bootstrap.yml -e key=value"
+
+# Target hosts
+hosts: localhost
+connection: local
+
+# Required privileges
+privileges:
+  become: true
+  become_method: sudo
+  reason: "Package installation and service management require root"
+
+# Runtime behavior
+behavior:
+  gather_facts: true
+  reason: "OS detection for distribution-specific logic"
+
+# Variable passthrough
+# All role variables can be passed via -e flag
+variable_passthrough:
+  - incus_storage_pool_name
+  - incus_storage_pool_driver
+  - incus_network_name
+  - incus_network_ipv4
+  - incus_network_ipv6
+  - incus_user
+  - incus_skip_init
+  - incus_enable_user_socket
+
+# Exit codes
+exit_codes:
+  0: "Success - bootstrap completed"
+  2: "Failure - one or more tasks failed"
+  4: "Unreachable - cannot connect (should not happen for localhost)"
+
+# Output format (per spec FR-011)
+output:
+  verbosity: summary
+  description: "Task names displayed during execution; details only on errors"
+
+# Post-execution messages
+messages:
+  success: |
+    Incus bootstrap complete!
+
+    Next steps:
+    1. Log out and log back in (or run: newgrp incus-admin)
+    2. Verify with: incus launch images:alpine/edge test && incus delete test --force
+
+  relogin_required: true
+  reason: "Group membership changes require new session"
+
+# Idempotency guarantee
+idempotency:
+  safe_to_rerun: true
+  preserves:
+    - existing containers
+    - existing storage pools
+    - existing networks
+    - existing images
+  modifies_only:
+    - missing packages (installs)
+    - disabled services (enables)
+    - missing group membership (adds user to group)

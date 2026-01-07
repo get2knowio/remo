@@ -1,3 +1,4 @@
+project_type: ansible_playbook
 github:
   owner: get2knowio
   repo: remo

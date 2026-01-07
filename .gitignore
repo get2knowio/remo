@@ -36,3 +36,7 @@ env/
 *.sublime-*
 
 .env
+
+# Maverick workflow state (ignore everything except checkpoints)
+.maverick/*
+!.maverick/checkpoints/

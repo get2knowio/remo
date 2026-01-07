@@ -1,0 +1,34 @@
+{
+  "checkpoint_id": "implementation_complete",
+  "workflow_name": "feature",
+  "inputs_hash": "6f583fbc72062abe",
+  "step_results": [
+    {
+      "name": "preflight",
+      "output": {
+        "success": false,
+        "api_available": false,
+        "git_available": true,
+        "github_cli_available": true,
+        "validation_tools_available": true,
+        "errors": [
+          "Neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN environment variable is set"
+        ],
+        "warnings": []
+      }
+    },
+    {
+      "name": "init",
+      "output": null
+    },
+    {
+      "name": "get_phases",
+      "output": null
+    },
+    {
+      "name": "implement_by_phase",
+      "output": null
+    }
+  ],
+  "saved_at": "2026-01-05T00:50:07.595839+00:00"
+}
