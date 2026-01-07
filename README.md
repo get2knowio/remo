@@ -193,9 +193,9 @@ The `g2k` user is created with:
 - Docker group membership
 - SSH key from your configuration
 
-## Incus Container Management (Optional)
+## Home Lab Alternative: Incus (Optional)
 
-In addition to Docker-based devcontainers, this project includes support for [Incus](https://linuxcontainers.org/incus/) - a modern container and VM management system that's an alternative to LXD.
+As an alternative to Hetzner Cloud, you can use [Incus](https://linuxcontainers.org/incus/) to run lightweight system containers on your own hardware. This gives you the same workflow—SSH into a host, run devcontainers—but on a home server or local workstation instead of a cloud VM.
 
 ### Bootstrap Incus on a Remote Host
 
@@ -253,11 +253,17 @@ incus exec my-container -- sh
 
 See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-host/quickstart.md) for detailed usage instructions.
 
-### Incus vs Docker
+### Hetzner vs Incus
 
-- **Docker**: For devcontainer-based development workflows
-- **Incus**: For system containers, VMs, and infrastructure testing
-- Both can coexist on the same system
+| | Hetzner Cloud | Incus (Home Lab) |
+|---|---|---|
+| **Host** | Cloud VM | System container on your hardware |
+| **Cost** | ~€4/month | Your electricity bill |
+| **Setup** | `./run.sh site.yml` | `./run.sh incus_bootstrap.yml` |
+| **Access** | SSH over internet | SSH over local network |
+| **Use case** | Remote work, always-on | Local development, testing |
+
+Both approaches give you a Linux host where you can run devcontainers.
 
 ## Troubleshooting
 
