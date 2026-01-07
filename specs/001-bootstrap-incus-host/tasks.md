@@ -26,10 +26,10 @@ This is an Ansible infrastructure project with the following structure:
 
 **Purpose**: Project initialization and Ansible role structure
 
-- [ ] T001 Create Ansible role directory structure at ansible/roles/incus_bootstrap/
-- [ ] T002 [P] Create role defaults file at ansible/roles/incus_bootstrap/defaults/main.yml
-- [ ] T003 [P] Create empty handlers file at ansible/roles/incus_bootstrap/handlers/main.yml
-- [ ] T004 Verify community.general collection in ansible/requirements.yml
+- [x] T001 Create Ansible role directory structure at ansible/roles/incus_bootstrap/
+- [x] T002 [P] Create role defaults file at ansible/roles/incus_bootstrap/defaults/main.yml
+- [x] T003 [P] Create empty handlers file at ansible/roles/incus_bootstrap/handlers/main.yml
+- [x] T004 Verify community.general collection in ansible/requirements.yml
 
 ---
 
@@ -39,10 +39,10 @@ This is an Ansible infrastructure project with the following structure:
 
 **Critical**: The role structure and defaults must exist before implementing user story tasks.
 
-- [ ] T005 Add localhost connection entry to ansible/inventory/hosts.yml (if not present)
-- [ ] T005a Add pre-flight check for sudo privileges with clear fail message in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T005b Add pre-flight check for minimum disk space (10GB) with warning in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T005c Add pre-flight check for required kernel modules (overlay) with warning in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T005 Add localhost connection entry to ansible/inventory/hosts.yml (if not present)
+- [x] T005a Add pre-flight check for sudo privileges with clear fail message in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T005b Add pre-flight check for minimum disk space (10GB) with warning in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T005c Add pre-flight check for required kernel modules (overlay) with warning in ansible/roles/incus_bootstrap/tasks/main.yml
 
 **Checkpoint**: Foundation ready - user story implementation can now begin
 
@@ -56,12 +56,12 @@ This is an Ansible infrastructure project with the following structure:
 
 ### Implementation for User Story 1
 
-- [ ] T006 [US1] Implement package installation task (zypper) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T007 [US1] Implement incus.socket service enablement in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T008 [US1] Implement incus-user.socket service enablement in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T009 [US1] Implement user group addition (incus-admin) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T010 [US1] Implement Incus initialization (incus admin init --minimal) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T011 [US1] Create main playbook at ansible/incus_bootstrap.yml targeting localhost
+- [x] T006 [US1] Implement package installation task (zypper) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T007 [US1] Implement incus.socket service enablement in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T008 [US1] Implement incus-user.socket service enablement in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T009 [US1] Implement user group addition (incus-admin) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T010 [US1] Implement Incus initialization (incus admin init --minimal) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T011 [US1] Create main playbook at ansible/incus_bootstrap.yml targeting localhost
 
 **Checkpoint**: At this point, User Story 1 should be fully functional - a fresh OpenSUSE system can be bootstrapped and launch containers
 
@@ -75,9 +75,9 @@ This is an Ansible infrastructure project with the following structure:
 
 ### Implementation for User Story 2
 
-- [ ] T012 [US2] Add idempotency check for storage pool existence before initialization in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T013 [US2] Add conditional for user group membership check in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T014 [US2] Ensure all tasks use state: present pattern (not state: latest) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T012 [US2] Add idempotency check for storage pool existence before initialization in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T013 [US2] Add conditional for user group membership check in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T014 [US2] Ensure all tasks use state: present pattern (not state: latest) in ansible/roles/incus_bootstrap/tasks/main.yml
 
 > **Note**: Network idempotency is handled by T012's storage pool check - `incus admin init --minimal` creates both storage and network atomically, so skipping init preserves both.
 
@@ -93,9 +93,9 @@ This is an Ansible infrastructure project with the following structure:
 
 ### Implementation for User Story 3
 
-- [ ] T015 [US3] Verify playbook follows existing remo playbook patterns (compare with other playbooks in ansible/)
-- [ ] T016 [US3] Add playbook header documentation matching remo style in ansible/incus_bootstrap.yml
-- [ ] T017 [US3] Test playbook execution via ./run.sh incus_bootstrap.yml
+- [x] T015 [US3] Verify playbook follows existing remo playbook patterns (compare with other playbooks in ansible/)
+- [x] T016 [US3] Add playbook header documentation matching remo style in ansible/incus_bootstrap.yml
+- [x] T017 [US3] Test playbook execution via ./run.sh incus_bootstrap.yml
 
 **Checkpoint**: At this point, User Stories 1, 2, AND 3 work - bootstrap integrates with remo workflow
 
@@ -109,11 +109,11 @@ This is an Ansible infrastructure project with the following structure:
 
 ### Implementation for User Story 4
 
-- [ ] T018 [US4] Add OS family detection variable (ansible_os_family) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T019 [US4] Refactor package installation to use when: condition for Suse family in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T020 [US4] Add placeholder task block for Debian family (Ubuntu) with comment in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T021 [US4] Add pre-flight check for supported OS with clear fail message in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T022 [US4] Document extension points in ansible/roles/incus_bootstrap/defaults/main.yml comments
+- [x] T018 [US4] Add OS family detection variable (ansible_os_family) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T019 [US4] Refactor package installation to use when: condition for Suse family in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T020 [US4] Add placeholder task block for Debian family (Ubuntu) with comment in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T021 [US4] Add pre-flight check for supported OS with clear fail message in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T022 [US4] Document extension points in ansible/roles/incus_bootstrap/defaults/main.yml comments
 
 **Checkpoint**: All user stories should now be independently functional
 
@@ -123,9 +123,9 @@ This is an Ansible infrastructure project with the following structure:
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T023 [P] Add incusd restart handler in ansible/roles/incus_bootstrap/handlers/main.yml
-- [ ] T024 [P] Add post-bootstrap verification tasks (incus version, storage list, network list) in ansible/roles/incus_bootstrap/tasks/main.yml
-- [ ] T025 Run quickstart.md validation steps manually
+- [x] T023 [P] Add incusd restart handler in ansible/roles/incus_bootstrap/handlers/main.yml
+- [x] T024 [P] Add post-bootstrap verification tasks (incus version, storage list, network list) in ansible/roles/incus_bootstrap/tasks/main.yml
+- [x] T025 Run quickstart.md validation steps manually
 
 ---
 

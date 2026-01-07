@@ -1,6 +1,6 @@
-# Remote Coding Server
+# Remo
 
-Spin up a fully-configured cloud development server in minutes. One command gives you a persistent, secure remote coding environment with VS Code Dev Containers support.
+Spin up a fully-configured cloud development server in minutes. One command gives you a persistent, secure remote coding environment with Dev Containers support.
 
 ## Why Remote Coding?
 
@@ -18,11 +18,76 @@ Spin up a fully-configured cloud development server in minutes. One command give
 | **Persistent Volume** | `/home/g2k` survives server teardown |
 | **Docker + Compose** | Official Docker CE with compose plugin |
 | **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
+| **Incus Bootstrap** | Container/VM management system (optional, see below) |
 | **Node.js 24 LTS** | From NodeSource repository |
 | **GitHub CLI** | `gh` for GitHub workflow integration |
 | **Zellij** | Terminal multiplexer for persistent sessions |
 | **Strict Firewall** | SSH-only access (port 22) |
 | **DuckDNS Domain** | Automatic DNS registration |
+
+## Quick Start
+
+### Option 1: GitHub Actions (Recommended)
+
+Fork this repo and use GitHub Actions to manage your server without any local setup.
+
+1. **Fork** this repository to your GitHub account
+
+2. **Add secrets** in Settings → Secrets and variables → Actions:
+
+   | Secret | Description |
+   |--------|-------------|
+   | `HETZNER_API_TOKEN` | Your Hetzner Cloud API token |
+   | `SSH_PRIVATE_KEY` | Your SSH private key |
+   | `SSH_PUBLIC_KEY` | Your SSH public key |
+   | `DUCKDNS_TOKEN` | Your DuckDNS token |
+   | `DUCKDNS_DOMAIN` | Your subdomain (without `.duckdns.org`) |
+
+3. **Provision**: Actions → Provision Server → Run workflow → type `yes`
+
+4. **Teardown**: Actions → Teardown Server → Run workflow → type `yes`
+
+#### Scheduled Actions for Cost Optimization
+
+Add automatic schedules to provision at workday start and teardown at end:
+
+```yaml
+on:
+  schedule:
+    - cron: '0 8 * * 1-5'   # 8 AM UTC weekdays
+  workflow_dispatch:
+    # ... existing manual trigger
+```
+
+### Option 2: Local CLI
+
+Run Ansible playbooks directly from your machine.
+
+#### Prerequisites
+
+- Python 3.8+ with pip
+- SSH key pair (`~/.ssh/id_rsa`)
+- [Hetzner Cloud](https://www.hetzner.com/cloud) account + API token
+- [DuckDNS](https://www.duckdns.org/) account + token + subdomain
+
+#### Setup
+
+```bash
+# Clone and install dependencies
+git clone https://github.com/get2knowio/remote-coding.git
+cd remote-coding
+pip install ansible hcloud
+ansible-galaxy collection install -r ansible/requirements.yml
+
+# Configure credentials
+cp .env.example .env
+# Edit .env with your tokens
+
+# Provision!
+./run.sh site.yml
+```
+
+See [ansible/README.md](ansible/README.md) for detailed playbook documentation.
 
 ## The Workflow
 
@@ -103,74 +168,6 @@ touch ~/projects/my-project/.devcontainer-rebuild
 
 This is useful when you need to pick up base image updates or other changes not tracked by the config files.
 
----
-
-## Quick Start
-
-### Option 1: GitHub Actions (Recommended)
-
-Fork this repo and use GitHub Actions to manage your server without any local setup.
-
-1. **Fork** this repository to your GitHub account
-
-2. **Add secrets** in Settings → Secrets and variables → Actions:
-
-   | Secret | Description |
-   |--------|-------------|
-   | `HETZNER_API_TOKEN` | Your Hetzner Cloud API token |
-   | `SSH_PRIVATE_KEY` | Your SSH private key |
-   | `SSH_PUBLIC_KEY` | Your SSH public key |
-   | `DUCKDNS_TOKEN` | Your DuckDNS token |
-   | `DUCKDNS_DOMAIN` | Your subdomain (without `.duckdns.org`) |
-
-3. **Provision**: Actions → Provision Server → Run workflow → type `yes`
-
-4. **Teardown**: Actions → Teardown Server → Run workflow → type `yes`
-
-#### Scheduled Actions for Cost Optimization
-
-Add automatic schedules to provision at workday start and teardown at end:
-
-```yaml
-on:
-  schedule:
-    - cron: '0 8 * * 1-5'   # 8 AM UTC weekdays
-  workflow_dispatch:
-    # ... existing manual trigger
-```
-
-### Option 2: Local CLI
-
-Run Ansible playbooks directly from your machine.
-
-#### Prerequisites
-
-- Python 3.8+ with pip
-- SSH key pair (`~/.ssh/id_rsa`)
-- [Hetzner Cloud](https://www.hetzner.com/cloud) account + API token
-- [DuckDNS](https://www.duckdns.org/) account + token + subdomain
-
-#### Setup
-
-```bash
-# Clone and install dependencies
-git clone https://github.com/get2knowio/remote-coding.git
-cd remote-coding
-pip install ansible hcloud
-ansible-galaxy collection install -r ansible/requirements.yml
-
-# Configure credentials
-cp .env.example .env
-# Edit .env with your tokens
-
-# Provision!
-./run.sh site.yml
-```
-
-See [ansible/README.md](ansible/README.md) for detailed playbook documentation.
-
----
-
 ## Usage Reference
 
 ### Playbooks
@@ -195,6 +192,100 @@ The `g2k` user is created with:
 - Passwordless sudo (`NOPASSWD:ALL`)
 - Docker group membership
 - SSH key from your configuration
+
+## Home Lab Alternative: Incus (Optional)
+
+As an alternative to Hetzner Cloud, you can use [Incus](https://linuxcontainers.org/incus/) to run lightweight system containers on your own hardware. This gives you the same workflow—SSH into a host, run devcontainers—but on a home server or local workstation instead of a cloud VM.
+
+### Bootstrap Incus on a Remote Host
+
+To set up Incus on a remote server (OpenSUSE Tumbleweed):
+
+```bash
+./run.sh incus_bootstrap.yml -i "<host>," -e "target_hosts=all ansible_user=<user>"
+```
+
+Replace `<host>` with your server's IP or hostname, and `<user>` with your SSH username. The trailing comma is required for single-host inventory.
+
+**Requirements:**
+- SSH key access to the remote host
+- The user must have sudo privileges (the playbook uses `become: true`)
+
+**Example:**
+
+```bash
+./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul"
+```
+
+If your user requires a sudo password, add `--ask-become-pass`:
+
+```bash
+./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul" --ask-become-pass
+```
+
+This will:
+- Install Incus and incus-tools packages
+- Enable and start the Incus daemon services
+- Add the specified user to the `incus-admin` group for non-root container management
+- Initialize a directory-based storage pool
+- Configure a **macvlan network** so containers get IPs from your LAN and are directly accessible from other machines
+
+The parent network interface is auto-detected from the default route. To specify it explicitly:
+
+```bash
+./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul incus_network_parent=eth0"
+```
+
+#### Bootstrap on Localhost
+
+For local development, omit the inventory flag:
+
+```bash
+./run.sh incus_bootstrap.yml
+```
+
+#### NAT Bridge Mode
+
+If you prefer containers with private IPs (not directly accessible from LAN), use bridge mode:
+
+```bash
+./run.sh incus_bootstrap.yml -e "incus_network_type=bridge"
+```
+
+#### Verbose Output
+
+For detailed verification output including full YAML configuration:
+
+```bash
+./run.sh incus_bootstrap.yml -e incus_bootstrap_verbosity=detailed
+```
+
+**After bootstrap**, log out and back in (or run `newgrp incus-admin`) to activate group membership, then:
+
+```bash
+# Launch a container (Ubuntu has cloud-init for automatic DHCP)
+incus launch images:ubuntu/24.04 my-container
+
+# List containers (shows IP addresses)
+incus list
+
+# Access container shell
+incus exec my-container -- bash
+```
+
+See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-host/quickstart.md) for detailed usage instructions.
+
+### Hetzner vs Incus
+
+| | Hetzner Cloud | Incus (Home Lab) |
+|---|---|---|
+| **Host** | Cloud VM | System container on your hardware |
+| **Cost** | ~€4/month | Your electricity bill |
+| **Setup** | `./run.sh site.yml` | `./run.sh incus_bootstrap.yml` |
+| **Access** | SSH over internet | SSH directly to container on LAN |
+| **Use case** | Remote work, always-on | Local development, testing |
+
+Both approaches give you a Linux host where you can run devcontainers. With Incus, containers get IPs from your LAN's DHCP server, so you can SSH directly to them from any machine on your network.
 
 ## Troubleshooting
 

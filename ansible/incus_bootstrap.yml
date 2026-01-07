@@ -1,0 +1,42 @@
+---
+# Incus Bootstrap playbook - Sets up Incus for container/VM management
+# By default, configures macvlan networking so containers are accessible from your LAN
+
+- name: Bootstrap Incus
+  hosts: "{{ target_hosts | default('localhost') }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: incus_bootstrap
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Incus bootstrap complete!
+
+          Installed:
+          - Incus and incus-tools packages
+          - Incus system daemon (incus.socket, incusd.service)
+          - Incus user socket (incus-user.socket) for unprivileged containers
+          - Storage pool: {{ incus_storage_pool_name }} ({{ incus_storage_pool_driver }} driver)
+          - Network: {{ incus_network_name }} ({{ incus_network_type }}{% if incus_network_type == 'macvlan' %} on {{ incus_network_parent }}{% endif %})
+
+          User Configuration:
+          - User '{{ incus_user }}' added to '{{ incus_admin_group }}' group
+          - Non-root container management enabled
+
+          {% if incus_network_type == 'macvlan' %}
+          Network:
+          - Containers get IPs from your LAN's DHCP server
+          - Containers are directly accessible from other machines on your network
+          {% endif %}
+
+          IMPORTANT: To use Incus without sudo, you must either:
+            1. Log out and log back in (to refresh group membership)
+            2. Run: newgrp {{ incus_admin_group }}
+
+          Launch a container:
+            incus launch images:ubuntu/24.04 test-container
+            incus exec test-container -- bash

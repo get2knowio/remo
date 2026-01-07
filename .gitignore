@@ -36,4 +36,7 @@ env/
 *.sublime-*
 
 .env
-.claude/settings.local.json
+
+# Maverick workflow state (ignore everything except checkpoints)
+.maverick/*
+!.maverick/checkpoints/

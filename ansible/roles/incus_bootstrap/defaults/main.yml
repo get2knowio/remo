@@ -1,0 +1,177 @@
+---
+# incus_bootstrap default variables
+# This file defines all default configuration for the Incus bootstrap role
+# Ansible best practice: All variables that can be overridden should be in defaults/main.yml
+
+# ============================================================================
+# MULTI-DISTRIBUTION SUPPORT
+# ============================================================================
+
+# List of supported OS families
+# Currently only OpenSUSE Tumbleweed (Suse family) is tested and supported
+# To add support for additional distributions:
+#   1. Add the OS family to this list (e.g., 'Debian' for Ubuntu)
+#   2. Add distribution-specific package installation tasks in tasks/main.yml
+#   3. Verify service unit names match the distribution's defaults
+#   4. Test initialization on the target distribution
+#
+# Planned support: Ubuntu (Debian family), Fedora (RedHat family)
+incus_supported_os_families:
+  - "Suse"  # OpenSUSE Tumbleweed, OpenSUSE Leap
+
+# Extension points for new distributions:
+#
+# PACKAGE NAMES:
+#   OpenSUSE (current): 'incus' and 'incus-tools'
+#   Ubuntu/Debian: May require Zabbly PPA or official Incus repository
+#                  https://github.com/zabbly/incus
+#   Fedora/RHEL: May require COPR repository or manual installation
+#                Package names may differ from OpenSUSE
+#
+# PACKAGE MANAGER TASKS:
+#   OpenSUSE: community.general.zypper module (see the OpenSUSE package installation task in tasks/main.yml)
+#   Ubuntu/Debian: ansible.builtin.apt module
+#                  Example: Add apt repository, update cache, install packages
+#   Fedora/RHEL: ansible.builtin.dnf or ansible.builtin.yum module
+#                Example: Add repository, install packages
+#
+# SERVICE UNIT NAMES:
+#   Generally consistent across distributions:
+#     - incus.socket (system socket unit)
+#     - incus-user.socket (user delegation socket)
+#     - incusd.service (main daemon service)
+#   However, always verify service names match on the target distribution
+#   by checking systemd unit files after package installation
+#
+# OS-SPECIFIC INITIALIZATION:
+#   Some distributions may require additional setup:
+#     - Kernel module loading (overlay, br_netfilter)
+#     - Firewall configuration (firewalld on RHEL/Fedora, ufw on Ubuntu)
+#     - SELinux policy adjustments (RHEL/Fedora)
+#     - AppArmor profile adjustments (Ubuntu/Debian)
+#
+# IMPLEMENTATION EXAMPLE (Ubuntu support):
+#   In tasks/main.yml, add after the OpenSUSE package installation block:
+#
+#   - name: Add Zabbly Incus repository for Ubuntu
+#     ansible.builtin.apt_repository:
+#       repo: ppa:zabbly/incus
+#       state: present
+#     when: ansible_os_family == 'Debian'
+#
+#   - name: Install Incus packages on Ubuntu/Debian
+#     ansible.builtin.apt:
+#       name:
+#         - incus
+#         - incus-tools
+#       state: present
+#       update_cache: true
+#     when: ansible_os_family == 'Debian'
+#
+# See the placeholder comment in tasks/main.yml (line ~155) for where to add
+# distribution-specific package installation tasks.
+
+# ============================================================================
+# STORAGE POOL CONFIGURATION
+# ============================================================================
+
+# Storage pool name
+incus_storage_pool_name: "default"
+
+# Storage backend driver
+# The "dir" driver works on any filesystem without special requirements.
+# For better performance, consider "zfs" or "btrfs" if available.
+incus_storage_pool_driver: "dir"
+
+# ============================================================================
+# NETWORK CONFIGURATION
+# ============================================================================
+# By default, we create a macvlan network so containers get IPs directly from
+# your LAN and are accessible from other machines on the network.
+#
+# Network types:
+#   - macvlan: Containers get IPs from your LAN's DHCP (default)
+#   - bridge: NAT bridge with private IPs (containers only reachable from host)
+
+# Network name for the Incus network
+incus_network_name: "incusbr0"
+
+# Network type: "macvlan" or "bridge"
+# macvlan: Containers appear as separate devices on your LAN
+# bridge: NAT bridge, containers get private IPs (10.x.x.x)
+incus_network_type: "macvlan"
+
+# Parent interface for macvlan network
+# This is the physical network interface on the host (e.g., eth0, enp0s3, ens18)
+# Auto-detected from the default route if not specified
+incus_network_parent: "{{ ansible_default_ipv4.interface | default('') }}"
+
+# IPv4 mode for macvlan (typically "dhcp" to get IPs from your router)
+incus_network_ipv4: "dhcp"
+
+# IPv6 configuration (set to "auto" to enable, "none" to disable)
+incus_network_ipv6: "none"
+
+# ============================================================================
+# USER PERMISSIONS CONFIGURATION
+# ============================================================================
+
+# User to add to the incus-admin group for non-root container management
+# Defaults to the SSH connection user (the user you log in as)
+incus_user: "{{ ansible_user }}"
+
+# ============================================================================
+# BEHAVIORAL FLAGS
+# ============================================================================
+
+# Skip Incus initialization (storage pool and network creation)
+# Set to true to install and configure services only, without initializing storage/network
+incus_skip_init: false
+
+# Enable incus-user.socket for unprivileged container delegation
+# This allows users to run containers in unprivileged mode
+incus_enable_user_socket: true
+
+# Control verbosity of verification output
+# Options:
+#   - "summary": Show only task names and pass/fail status (recommended for normal use)
+#   - "detailed": Show full YAML output from verification commands (useful for debugging)
+# This affects the post-bootstrap verification tasks that check Incus installation
+incus_bootstrap_verbosity: "summary"
+
+# ============================================================================
+# SERVICE NAMES AND PACKAGES
+# ============================================================================
+
+# Primary Incus package(s) to install
+# Package name varies by distribution (handled by distribution-specific tasks)
+# These are descriptive - actual package names are distribution-specific
+
+# Incus system daemon socket unit
+incus_system_socket_unit: "incus.socket"
+
+# Incus user socket unit for unprivileged delegation
+incus_user_socket_unit: "incus-user.socket"
+
+# Incus system service unit (activated by socket)
+incus_system_service_unit: "incusd.service"
+
+# ============================================================================
+# USER GROUP CONFIGURATION
+# ============================================================================
+
+# System group for granting Incus daemon access permissions
+# Members can manage Incus containers without requiring sudo
+incus_admin_group: "incus-admin"
+
+# ============================================================================
+# DOCUMENTATION AND SUPPORT URLS
+# ============================================================================
+
+# Official Incus documentation URL
+# Used in error messages and verification summaries to guide users to official docs
+incus_documentation_url: "https://linuxcontainers.org/incus/docs/"
+
+# Project issue tracker URL
+# Used in error messages to guide users to report issues or request features
+project_issues_url: "https://github.com/get2knowio/remo/issues"

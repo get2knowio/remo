@@ -1,0 +1,853 @@
+---
+# ============================================================================
+# PRE-FLIGHT CHECKS
+# ============================================================================
+# These checks validate prerequisites before making any system changes.
+# They ensure the playbook is running in the correct environment with
+# appropriate permissions to install packages and configure services.
+
+- name: Verify sudo/root privileges are available
+  ansible.builtin.assert:
+    that:
+      - ansible_user_uid == 0 or ansible_become is defined
+    fail_msg: |
+
+      ERROR: Insufficient privileges to bootstrap Incus host.
+
+      The Incus bootstrap process requires root/sudo privileges to:
+        - Install system packages (incus, incus-tools)
+        - Configure and enable systemd services (incus.socket, incusd.service)
+        - Add users to the incus-admin group
+        - Initialize storage pools and network bridges
+
+      Please run this playbook with sudo privileges using one of these methods:
+
+        1. Run with --become flag:
+           ansible-playbook -i inventory/hosts playbooks/incus_bootstrap.yml --become
+
+        2. Run with --ask-become-pass for password prompt:
+           ansible-playbook -i inventory/hosts playbooks/incus_bootstrap.yml --become --ask-become-pass
+
+        3. For localhost, run with sudo:
+           sudo ansible-playbook -i inventory/hosts playbooks/incus_bootstrap.yml
+
+      Current user: {{ ansible_user_id }} (UID: {{ ansible_user_uid }})
+      Become enabled: {{ ansible_become | default(false) }}
+
+    success_msg: "Privilege check passed: Running with sufficient permissions"
+  tags:
+    - preflight
+    - validation
+
+- name: Check available disk space on root filesystem
+  ansible.builtin.shell: |
+    set -o pipefail
+    df -BG / | awk 'NR==2 {print $4}' | sed 's/G//'
+  args:
+    executable: /bin/bash
+  register: root_disk_space_gb
+  changed_when: false
+  failed_when: root_disk_space_gb.rc != 0 or root_disk_space_gb.stdout == ""
+  tags:
+    - preflight
+    - validation
+
+- name: Capture detailed disk usage for warning message
+  ansible.builtin.shell: df -h /
+  args:
+    executable: /bin/bash
+  register: disk_usage_details
+  changed_when: false
+  when: root_disk_space_gb.stdout | int < 10
+  tags:
+    - preflight
+    - validation
+
+- name: Warn if disk space is below recommended minimum (10GB)
+  ansible.builtin.debug:
+    msg: |
+
+      WARNING: Low disk space detected on root filesystem (/).
+
+      Available space: {{ root_disk_space_gb.stdout }}GB
+      Recommended minimum: 10GB
+
+      Incus requires adequate disk space for:
+        - Storage pools (default, images, and container filesystems)
+        - Downloaded container images (can be several GB each)
+        - Container snapshots and backups
+        - Log files and temporary data
+
+      While the installation may proceed, you may encounter issues:
+        - Failure to create storage pools
+        - Inability to download or launch containers
+        - Degraded performance due to disk pressure
+
+      Recommended actions:
+        - Free up disk space by removing unnecessary files
+        - Expand the root filesystem if using a virtual machine
+        - Consider using a dedicated partition/disk for Incus storage pools
+
+      Current disk usage on /:
+      {{ disk_usage_details.stdout }}
+
+  when: root_disk_space_gb.stdout | int < 10
+  tags:
+    - preflight
+    - validation
+
+- name: Set disk space warning fact
+  ansible.builtin.set_fact:
+    disk_space_warning: true
+  when: root_disk_space_gb.stdout | int < 10
+  tags:
+    - preflight
+    - validation
+
+- name: Confirm disk space is adequate
+  ansible.builtin.debug:
+    msg: "Disk space check passed: {{ root_disk_space_gb.stdout }}GB available on root filesystem (10GB minimum recommended)"
+  when: root_disk_space_gb.stdout | int >= 10
+  tags:
+    - preflight
+    - validation
+
+# ============================================================================
+# DISTRIBUTION VALIDATION
+# ============================================================================
+# Future pre-flight checks will be added here to validate:
+#   - Supported distribution and version (OpenSUSE Tumbleweed, Ubuntu, etc.)
+#   - Available disk space for storage pools
+#   - Required kernel modules (overlay, br_netfilter)
+#   - Network connectivity for package downloads
+
+- name: Display detected operating system family
+  ansible.builtin.debug:
+    msg: |
+      Detected OS Family: {{ ansible_os_family }}
+      Distribution: {{ ansible_distribution }}
+      Distribution Version: {{ ansible_distribution_version }}
+
+      This information will be used to determine the correct package manager
+      and package names for installing Incus on this system.
+  tags:
+    - preflight
+    - validation
+
+- name: Set OS family fact for easy reference
+  ansible.builtin.set_fact:
+    detected_os_family: "{{ ansible_os_family }}"
+  tags:
+    - preflight
+    - validation
+
+- name: Verify OS family is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family in incus_supported_os_families
+    fail_msg: |
+
+      ERROR: Unsupported operating system detected.
+
+      Detected OS: {{ ansible_distribution }} {{ ansible_distribution_version }} (Family: {{ ansible_os_family }})
+      Supported OS families: {{ incus_supported_os_families | join(', ') }}
+
+      This Incus bootstrap role currently supports only OpenSUSE Tumbleweed.
+      Support for additional distributions (Ubuntu, Fedora, etc.) is planned but not yet implemented.
+
+      How you can help:
+        - If you would like to add support for {{ ansible_distribution }}, contributions are welcome!
+        - Review the extension points documented in ansible/roles/incus_bootstrap/defaults/main.yml
+        - Add distribution-specific package installation tasks to ansible/roles/incus_bootstrap/tasks/main.yml
+        - Test the bootstrap on your distribution and submit a pull request
+
+      For more information:
+        - File an issue: {{ project_issues_url }}
+        - Contribution guide: See README.md in the repository root
+
+    success_msg: "OS family '{{ ansible_os_family }}' is supported"
+  tags:
+    - preflight
+    - validation
+
+- name: Check if overlay kernel module is available
+  community.general.modprobe:
+    name: overlay
+    state: present
+  check_mode: true
+  register: overlay_module_check
+  failed_when: false
+  changed_when: false
+  tags:
+    - preflight
+    - validation
+
+- name: Warn if overlay module is not available
+  ansible.builtin.debug:
+    msg: |
+      WARNING: The overlay kernel module does not appear to be available.
+
+      The overlay filesystem module is required by Incus for efficient container storage.
+      Without this module, Incus storage pools may fail to initialize properly.
+
+      What this means:
+        - Containers use overlay filesystems for layered storage (similar to Docker)
+        - This allows efficient use of disk space through copy-on-write
+        - Missing overlay support will prevent proper container operation
+
+      How to resolve:
+        - On most distributions, the overlay module is built-in or loadable
+        - Check your kernel configuration: zcat /proc/config.gz | grep OVERLAY_FS
+        - You may need to install kernel modules package or update your kernel
+        - For custom kernels, ensure CONFIG_OVERLAY_FS is enabled
+
+      Module check result: {{ overlay_module_check.msg | default('Unable to determine') }}
+  when: overlay_module_check is failed
+  tags:
+    - preflight
+    - validation
+
+# ============================================================================
+# PACKAGE INSTALLATION
+# ============================================================================
+# Distribution-specific package installation tasks will follow here
+
+- name: Install Incus packages on Suse family distributions
+  community.general.zypper:
+    name:
+      - incus
+      - incus-tools
+    state: present
+  when: ansible_os_family == 'Suse'
+  tags:
+    - packages
+    - incus_install
+
+# Placeholder for future Debian/Ubuntu support
+# When implementing Ubuntu support:
+#   - Research correct package names (may need official Incus PPA or Zabbly repository)
+#   - Update package manager from zypper to apt
+#   - Test on Ubuntu 22.04 LTS and 24.04 LTS
+#   - Verify package availability: 'incus' and 'incus-tools' or equivalent
+#   - Consider snap package as alternative installation method
+# - name: Install Incus packages on Debian/Ubuntu family distributions
+#   ansible.builtin.apt:
+#     name:
+#       - incus       # TODO: Verify package name for Ubuntu
+#       - incus-tools # TODO: Verify package name for Ubuntu
+#     state: present
+#     update_cache: true
+#   when: ansible_os_family == 'Debian'
+#   tags:
+#     - packages
+#     - incus_install
+
+# ============================================================================
+# SERVICE CONFIGURATION
+# ============================================================================
+# Systemd service enablement and startup tasks will follow here
+
+- name: Enable and start incus.socket service
+  ansible.builtin.systemd:
+    name: "{{ incus_system_socket_unit }}"
+    enabled: true
+    state: started
+  register: incus_socket_result
+  failed_when: false
+  tags:
+    - services
+    - incus_service
+
+- name: Verify incus.socket service started successfully
+  ansible.builtin.assert:
+    that:
+      - incus_socket_result is succeeded
+    fail_msg: |
+
+      ERROR: Failed to start Incus system socket service.
+
+      Service: {{ incus_system_socket_unit }}
+      Error: {{ incus_socket_result.msg | default('Service failed to start') }}
+
+      This indicates a problem with the Incus installation or system configuration.
+
+      Troubleshooting steps:
+        1. Check service status manually:
+           systemctl status {{ incus_system_socket_unit }}
+           journalctl -u {{ incus_system_socket_unit }} -n 50
+
+        2. Verify Incus packages are installed correctly:
+           {% if ansible_os_family == 'Suse' %}
+           zypper search -i incus
+           {% elif ansible_os_family == 'Debian' %}
+           dpkg -l | grep incus
+           {% elif ansible_os_family == 'RedHat' %}
+           rpm -qa | grep incus
+           {% else %}
+           # Check installed packages using your distribution's package manager
+           {% endif %}
+
+        3. Check for port conflicts (Incus uses Unix sockets, but systemd may report conflicts):
+           systemctl list-sockets | grep incus
+
+        4. Verify systemd unit files exist:
+           systemctl cat {{ incus_system_socket_unit }}
+
+        5. Check system logs for detailed error messages:
+           journalctl -xe
+
+      If the problem persists:
+        - Consult Incus documentation: {{ incus_documentation_url }}
+        - File an issue: {{ project_issues_url }}
+
+    success_msg: "Incus system socket service started successfully"
+  tags:
+    - services
+    - incus_service
+
+- name: Enable and start incus-user.socket service
+  ansible.builtin.systemd:
+    name: "{{ incus_user_socket_unit }}"
+    enabled: true
+    state: started
+  register: incus_user_socket_result
+  failed_when: false
+  when: incus_enable_user_socket
+  tags:
+    - services
+    - incus_service
+
+- name: Verify incus-user.socket service started successfully
+  ansible.builtin.assert:
+    that:
+      - incus_user_socket_result is succeeded
+    fail_msg: |
+
+      ERROR: Failed to start Incus user socket service.
+
+      Service: {{ incus_user_socket_unit }}
+      Error: {{ incus_user_socket_result.msg | default('Service failed to start') }}
+
+      This indicates a problem with the Incus user delegation configuration.
+
+      Troubleshooting steps:
+        1. Check service status manually:
+           systemctl status {{ incus_user_socket_unit }}
+           journalctl -u {{ incus_user_socket_unit }} -n 50
+
+        2. Verify the user socket is not required for your use case:
+           You can disable this by setting: incus_enable_user_socket=false
+
+        3. Check for systemd user service issues:
+           systemctl --user status
+           loginctl show-user {{ incus_user }}
+
+        4. Verify systemd unit files exist:
+           systemctl cat {{ incus_user_socket_unit }}
+
+      If the problem persists:
+        - Consult Incus documentation: {{ incus_documentation_url }}
+        - File an issue: {{ project_issues_url }}
+
+    success_msg: "Incus user socket service started successfully"
+  when: incus_enable_user_socket
+  tags:
+    - services
+    - incus_service
+
+# ============================================================================
+# USER PERMISSIONS
+# ============================================================================
+# User group membership configuration will follow here
+
+- name: Check if user is already a member of incus-admin group
+  ansible.builtin.command: id -nG {{ incus_user | quote }}
+  register: user_groups_output
+  changed_when: false
+  failed_when: false
+  tags:
+    - permissions
+    - incus_users
+
+- name: Add user to incus-admin group for non-root container management
+  ansible.builtin.user:
+    name: "{{ incus_user }}"
+    groups: "{{ incus_admin_group }}"
+    append: true
+  when: incus_admin_group not in user_groups_output.stdout.split()
+  tags:
+    - permissions
+    - incus_users
+
+# ============================================================================
+# INCUS INITIALIZATION
+# ============================================================================
+# Initialize Incus storage and network. By default, creates a macvlan network
+# so containers get IPs from your LAN and are directly accessible.
+
+- name: Validate parent interface is specified for macvlan
+  ansible.builtin.assert:
+    that:
+      - incus_network_parent | length > 0
+    fail_msg: |
+      ERROR: No parent interface specified for macvlan network.
+
+      The macvlan network type requires a parent interface (the physical NIC).
+      Auto-detection failed or no default route exists.
+
+      Please specify the interface explicitly:
+        -e "incus_network_parent=eth0"
+
+      To find your interface name, run: ip route | grep default
+    success_msg: "Parent interface for macvlan: {{ incus_network_parent }}"
+  when:
+    - not incus_skip_init
+    - incus_network_type == "macvlan"
+  tags:
+    - incus_init
+    - network
+    - validation
+
+- name: Check if Incus is already initialized (storage pools exist)
+  ansible.builtin.command: incus storage list --format=csv
+  register: incus_storage_list
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - storage
+
+- name: Check if Incus networks exist
+  ansible.builtin.command: incus network list --format=csv
+  register: incus_network_list
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - network
+
+- name: List existing containers before initialization (for preservation check)
+  ansible.builtin.command: incus list --format=csv --columns=ns
+  register: incus_containers_before
+  changed_when: false
+  failed_when: false
+  when:
+    - not incus_skip_init
+    - incus_storage_list.stdout | length > 0
+  tags:
+    - incus_init
+    - preservation
+
+- name: Initialize Incus with minimal configuration if not already initialized
+  ansible.builtin.command: incus admin init --minimal
+  when:
+    - not incus_skip_init
+    - incus_storage_list.stdout | length == 0
+  register: incus_init_result
+  changed_when: incus_init_result.rc == 0
+  tags:
+    - incus_init
+    - storage
+
+# ============================================================================
+# NETWORK CONFIGURATION
+# ============================================================================
+# After minimal init, configure the network based on incus_network_type.
+# For macvlan, we delete the default NAT bridge and create a macvlan network.
+# This requires removing the network from the profile first, then re-adding.
+
+- name: Check if target network already exists
+  ansible.builtin.command: incus network show {{ incus_network_name }}
+  register: incus_network_check
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - network
+
+- name: Get current network info
+  ansible.builtin.command: incus network show {{ incus_network_name }}
+  register: incus_network_info
+  changed_when: false
+  failed_when: false
+  when:
+    - not incus_skip_init
+    - incus_network_check.rc | default(1) == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Extract current network type from YAML output
+  ansible.builtin.set_fact:
+    incus_current_network_type: "{{ incus_network_info.stdout | regex_search('^type:\\s*(.+)$', '\\1', multiline=True) | first | default('') }}"
+  when:
+    - not incus_skip_init
+    - incus_network_info.stdout | default('') | length > 0
+  tags:
+    - incus_init
+    - network
+
+- name: Default network type if not extracted
+  ansible.builtin.set_fact:
+    incus_current_network_type: ""
+  when:
+    - not incus_skip_init
+    - incus_current_network_type is not defined
+  tags:
+    - incus_init
+    - network
+
+- name: Set network conversion flag
+  ansible.builtin.set_fact:
+    incus_needs_network_conversion: >-
+      {{ not incus_skip_init
+         and incus_network_type == 'macvlan'
+         and incus_network_check.rc | default(1) == 0
+         and (incus_current_network_type | default('')) == 'bridge' }}
+  tags:
+    - incus_init
+    - network
+
+- name: Display network conversion status
+  ansible.builtin.debug:
+    msg: |
+      Network conversion check:
+        Skip init: {{ incus_skip_init }}
+        Desired type: {{ incus_network_type }}
+        Network exists: {{ incus_network_check.rc | default(1) == 0 }}
+        Current type: '{{ incus_current_network_type | default('') }}'
+        Needs conversion: {{ incus_needs_network_conversion }}
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - network
+
+- name: Check for running containers before network conversion
+  ansible.builtin.command: incus list --format=csv --columns=n,s
+  register: incus_running_containers
+  changed_when: false
+  failed_when: false
+  when: incus_needs_network_conversion | bool
+  tags:
+    - incus_init
+    - network
+
+- name: Fail if containers are running during network conversion
+  ansible.builtin.assert:
+    that:
+      - incus_running_containers.stdout | default('') | trim == '' or 'RUNNING' not in incus_running_containers.stdout
+    fail_msg: |
+
+      ERROR: Cannot convert network while containers are running.
+
+      Running containers detected:
+      {{ incus_running_containers.stdout | default('None') }}
+
+      To convert from bridge to macvlan, please stop or delete all containers first:
+        incus stop --all
+        # or
+        incus delete <container-name> --force
+
+      Then re-run the bootstrap playbook.
+
+    success_msg: "No running containers - safe to convert network"
+  when: incus_needs_network_conversion | bool
+  tags:
+    - incus_init
+    - network
+
+- name: Remove network device from default profile before deletion
+  ansible.builtin.command: incus profile device remove default eth0
+  register: incus_profile_remove
+  changed_when: incus_profile_remove.rc == 0
+  failed_when: false
+  when: incus_needs_network_conversion | bool
+  tags:
+    - incus_init
+    - network
+
+- name: Delete default bridge network to replace with macvlan
+  ansible.builtin.command: incus network delete {{ incus_network_name }}
+  when: incus_needs_network_conversion | bool
+  register: incus_network_delete
+  changed_when: incus_network_delete.rc == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Create macvlan network for LAN connectivity
+  ansible.builtin.command: >
+    incus network create {{ incus_network_name }}
+    --type=macvlan
+    parent={{ incus_network_parent }}
+  when:
+    - not incus_skip_init
+    - incus_network_type == "macvlan"
+    - incus_network_check.rc | default(1) != 0 or incus_network_delete is changed
+  register: incus_macvlan_create
+  changed_when: incus_macvlan_create.rc == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Add network device to default profile
+  ansible.builtin.command: >
+    incus profile device add default eth0 nic network={{ incus_network_name }}
+  when:
+    - not incus_skip_init
+    - incus_network_type == "macvlan"
+    - incus_macvlan_create is changed or incus_profile_remove is changed
+  register: incus_profile_add
+  changed_when: incus_profile_add.rc == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Display initialization result
+  ansible.builtin.debug:
+    msg: |
+      Incus initialization completed.
+
+      Storage:
+        - Pool: {{ incus_storage_pool_name }} ({{ incus_storage_pool_driver }} driver)
+
+      Network:
+        - Type: {{ incus_network_type }}
+        {% if incus_network_type == 'macvlan' %}
+        - Name: {{ incus_network_name }}
+        - Parent interface: {{ incus_network_parent }}
+        - Containers will get IPs from your LAN's DHCP server
+        - Containers are directly accessible from other machines on your network
+        {% else %}
+        - Name: {{ incus_network_name }} (NAT bridge)
+        - Containers get private IPs and are only reachable from the host
+        {% endif %}
+  when:
+    - not incus_skip_init
+    - incus_storage_list.stdout | length == 0 or incus_macvlan_create is changed
+  tags:
+    - incus_init
+
+- name: Verify existing containers remain operational after bootstrap
+  ansible.builtin.command: incus list --format=csv --columns=ns
+  register: incus_containers_after
+  changed_when: false
+  failed_when: false
+  when:
+    - not incus_skip_init
+    - incus_containers_before.stdout is defined
+    - incus_containers_before.stdout | length > 0
+  tags:
+    - incus_init
+    - preservation
+    - verification
+
+- name: Display container preservation verification
+  ansible.builtin.debug:
+    msg: |
+      Container preservation check: {{ 'PASSED' if incus_containers_after.stdout is defined else 'SKIPPED' }}
+
+      {% if incus_containers_after.stdout is defined %}
+      All existing containers remain accessible after bootstrap:
+
+      Containers before: {{ incus_containers_before.stdout_lines | length }}
+      Containers after:  {{ incus_containers_after.stdout_lines | length }}
+
+      {% if incus_containers_before.stdout == incus_containers_after.stdout %}
+      ✓ Container list unchanged - all containers preserved
+      {% else %}
+      WARNING: Container list changed during bootstrap!
+
+      Before:
+      {{ incus_containers_before.stdout }}
+
+      After:
+      {{ incus_containers_after.stdout }}
+      {% endif %}
+      {% else %}
+      No existing containers detected, or this is a fresh installation.
+      {% endif %}
+  when:
+    - not incus_skip_init
+    - incus_containers_before.stdout is defined
+  tags:
+    - incus_init
+    - preservation
+    - verification
+
+# ============================================================================
+# POST-BOOTSTRAP VERIFICATION
+# ============================================================================
+# These verification tasks confirm that Incus was bootstrapped successfully
+# and is ready for container operations. They are informational and do not
+# fail the playbook, instead providing visibility into the bootstrap status.
+
+- name: Verify Incus CLI is working (incus version)
+  ansible.builtin.command: incus version
+  register: incus_version_output
+  changed_when: false
+  failed_when: false
+  tags:
+    - verification
+    - incus_verify
+
+- name: Display Incus version information
+  ansible.builtin.debug:
+    msg: |
+      Incus CLI verification: {{ 'PASSED' if incus_version_output.rc | default(1) == 0 else 'FAILED' }}
+
+      {% if incus_version_output.rc | default(1) == 0 %}
+      Incus is installed and responding to commands.
+
+      Version details:
+      {{ incus_version_output.stdout | default('N/A') }}
+      {% else %}
+      WARNING: Incus CLI command failed!
+
+      Error output:
+      {{ incus_version_output.stderr | default('No error output available') }}
+
+      This may indicate:
+        - Incus was not installed correctly
+        - Service is not running (check: systemctl status incus.socket)
+        - Permissions issue (ensure user is in incus-admin group)
+      {% endif %}
+  tags:
+    - verification
+    - incus_verify
+
+- name: Verify Incus storage pools (incus storage list)
+  ansible.builtin.command: incus storage list --format={{ 'yaml' if incus_bootstrap_verbosity == 'detailed' else 'csv' }}
+  register: incus_storage_verify
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - verification
+    - incus_verify
+
+- name: Display Incus storage pool verification
+  ansible.builtin.debug:
+    msg: |
+      Storage pool verification: {{ 'PASSED' if incus_storage_verify.rc | default(1) == 0 and incus_storage_verify.stdout | default('') | length > 0 else 'FAILED' }}
+
+      {% if incus_storage_verify.rc | default(1) == 0 %}
+      {% if incus_storage_verify.stdout | default('') | length > 0 %}
+      Storage pools have been created successfully.
+      {% if incus_bootstrap_verbosity == 'detailed' %}
+
+      Available storage pools:
+      {{ incus_storage_verify.stdout }}
+      {% endif %}
+      {% else %}
+      WARNING: No storage pools found!
+
+      This may indicate that Incus initialization did not complete successfully.
+      Try running manually: incus admin init --minimal
+      {% endif %}
+      {% else %}
+      WARNING: Failed to list storage pools!
+
+      Error output:
+      {{ incus_storage_verify.stderr | default('No error output available') }}
+      {% endif %}
+  when: not incus_skip_init
+  tags:
+    - verification
+    - incus_verify
+
+- name: Verify Incus networks (incus network list)
+  ansible.builtin.command: incus network list --format={{ 'yaml' if incus_bootstrap_verbosity == 'detailed' else 'csv' }}
+  register: incus_network_verify
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - verification
+    - incus_verify
+
+- name: Display Incus network verification
+  ansible.builtin.debug:
+    msg: |
+      Network verification: {{ 'PASSED' if incus_network_verify.rc | default(1) == 0 and incus_network_verify.stdout | default('') | length > 0 else 'FAILED' }}
+
+      {% if incus_network_verify.rc | default(1) == 0 %}
+      {% if incus_network_verify.stdout | default('') | length > 0 %}
+      Network bridges have been created successfully.
+      {% if incus_bootstrap_verbosity == 'detailed' %}
+
+      Available networks:
+      {{ incus_network_verify.stdout }}
+      {% endif %}
+      {% else %}
+      WARNING: No networks found!
+
+      This may indicate that Incus initialization did not complete successfully.
+      Try running manually: incus admin init --minimal
+      {% endif %}
+      {% else %}
+      WARNING: Failed to list networks!
+
+      Error output:
+      {{ incus_network_verify.stderr | default('No error output available') }}
+      {% endif %}
+  when: not incus_skip_init
+  tags:
+    - verification
+    - incus_verify
+
+- name: Summary of Incus bootstrap verification
+  ansible.builtin.debug:
+    msg: |
+
+      ========================================================================
+      INCUS BOOTSTRAP VERIFICATION SUMMARY
+      ========================================================================
+
+      Incus CLI Status: {{ 'OK' if incus_version_output.rc | default(1) == 0 else 'FAILED' }}
+      {% if not incus_skip_init %}
+      Storage Pools:    {{ 'OK' if incus_storage_verify.rc | default(1) == 0 and incus_storage_verify.stdout | default('') | length > 0 else 'FAILED' }}
+      Networks:         {{ 'OK' if incus_network_verify.rc | default(1) == 0 and incus_network_verify.stdout | default('') | length > 0 else 'FAILED' }}
+      Container Preservation: {{ 'OK' if incus_containers_after.rc | default(1) == 0 else 'N/A (fresh install)' }}
+      {% else %}
+      Storage Pools:    SKIPPED (incus_skip_init=true)
+      Networks:         SKIPPED (incus_skip_init=true)
+      Container Preservation: SKIPPED (incus_skip_init=true)
+      {% endif %}
+
+      {% if incus_version_output.rc | default(1) == 0 and (incus_skip_init or (incus_storage_verify.rc | default(1) == 0 and incus_network_verify.rc | default(1) == 0)) %}
+      Bootstrap Status: SUCCESS
+
+      Incus is ready for container operations!
+
+      Next steps:
+        - Launch a container: incus launch images:ubuntu/22.04 my-container
+        - List containers: incus list
+        - Access container shell: incus exec my-container -- bash
+        - View storage pools: incus storage list
+        - View networks: incus network list
+
+      For detailed documentation, visit: {{ incus_documentation_url }}
+      {% else %}
+      Bootstrap Status: NEEDS ATTENTION
+
+      One or more verification checks failed. Review the output above for details.
+
+      Common troubleshooting steps:
+        1. Check service status: systemctl status incus.socket incusd.service
+        2. Check journal logs: journalctl -u incus.socket -u incusd.service
+        3. Verify group membership: id {{ incus_user }}
+        4. Manual initialization: incus admin init --minimal
+        5. Check disk space: df -h /
+
+      If issues persist, consult the Incus documentation or open an issue.
+      {% endif %}
+
+      ========================================================================
+
+  tags:
+    - verification
+    - incus_verify
