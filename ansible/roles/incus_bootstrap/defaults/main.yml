@@ -117,8 +117,8 @@ incus_network_ipv6: "none"
 # ============================================================================
 
 # User to add to the incus-admin group for non-root container management
-# Defaults to the user running Ansible (typically the current logged-in user)
-incus_user: "{{ ansible_user_id }}"
+# Defaults to the SSH connection user (the user you log in as)
+incus_user: "{{ ansible_user }}"
 
 # ============================================================================
 # BEHAVIORAL FLAGS
