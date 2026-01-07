@@ -202,15 +202,25 @@ As an alternative to Hetzner Cloud, you can use [Incus](https://linuxcontainers.
 To set up Incus on a remote server (OpenSUSE Tumbleweed):
 
 ```bash
-./run.sh incus_bootstrap.yml -i "<host>," -e "target_hosts=all ansible_user=root"
+./run.sh incus_bootstrap.yml -i "<host>," -e "target_hosts=all ansible_user=<user>"
 ```
 
-Replace `<host>` with your server's IP address or hostname. The trailing comma is required for single-host inventory.
+Replace `<host>` with your server's IP or hostname, and `<user>` with your SSH username. The trailing comma is required for single-host inventory.
+
+**Requirements:**
+- SSH key access to the remote host
+- The user must have sudo privileges (the playbook uses `become: true`)
 
 **Example:**
 
 ```bash
-./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=root"
+./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul"
+```
+
+If your user requires a sudo password, add `--ask-become-pass`:
+
+```bash
+./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul" --ask-become-pass
 ```
 
 This will:
