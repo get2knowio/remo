@@ -456,6 +456,7 @@
 # ============================================================================
 # After minimal init, configure the network based on incus_network_type.
 # For macvlan, we delete the default NAT bridge and create a macvlan network.
+# This requires removing the network from the profile first, then re-adding.
 
 - name: Check if target network already exists
   ansible.builtin.command: incus network show {{ incus_network_name }}
@@ -478,18 +479,83 @@
   failed_when: false
   when:
     - not incus_skip_init
-    - incus_network_check.rc == 0
+    - incus_network_check.rc | default(1) == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Set network conversion flag
+  ansible.builtin.set_fact:
+    incus_needs_network_conversion: >-
+      {{ not incus_skip_init
+         and incus_network_type == 'macvlan'
+         and incus_network_check.rc | default(1) == 0
+         and (incus_current_network_type.stdout | default('') | trim) == 'bridge' }}
+  tags:
+    - incus_init
+    - network
+
+- name: Display network conversion status
+  ansible.builtin.debug:
+    msg: |
+      Network conversion check:
+        Skip init: {{ incus_skip_init }}
+        Desired type: {{ incus_network_type }}
+        Network exists: {{ incus_network_check.rc | default(1) == 0 }}
+        Current type: '{{ incus_current_network_type.stdout | default('') | trim }}'
+        Needs conversion: {{ incus_needs_network_conversion }}
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - network
+
+- name: Check for running containers before network conversion
+  ansible.builtin.command: incus list --format=csv --columns=n,s
+  register: incus_running_containers
+  changed_when: false
+  failed_when: false
+  when: incus_needs_network_conversion | bool
+  tags:
+    - incus_init
+    - network
+
+- name: Fail if containers are running during network conversion
+  ansible.builtin.assert:
+    that:
+      - incus_running_containers.stdout | default('') | trim == '' or 'RUNNING' not in incus_running_containers.stdout
+    fail_msg: |
+
+      ERROR: Cannot convert network while containers are running.
+
+      Running containers detected:
+      {{ incus_running_containers.stdout | default('None') }}
+
+      To convert from bridge to macvlan, please stop or delete all containers first:
+        incus stop --all
+        # or
+        incus delete <container-name> --force
+
+      Then re-run the bootstrap playbook.
+
+    success_msg: "No running containers - safe to convert network"
+  when: incus_needs_network_conversion | bool
+  tags:
+    - incus_init
+    - network
+
+- name: Remove network device from default profile before deletion
+  ansible.builtin.command: incus profile device remove default eth0
+  register: incus_profile_remove
+  changed_when: incus_profile_remove.rc == 0
+  failed_when: false
+  when: incus_needs_network_conversion | bool
   tags:
     - incus_init
     - network
 
 - name: Delete default bridge network to replace with macvlan
   ansible.builtin.command: incus network delete {{ incus_network_name }}
-  when:
-    - not incus_skip_init
-    - incus_network_type == "macvlan"
-    - incus_network_check.rc == 0
-    - incus_current_network_type.stdout | default('') == "bridge"
+  when: incus_needs_network_conversion | bool
   register: incus_network_delete
   changed_when: incus_network_delete.rc == 0
   tags:
@@ -504,22 +570,22 @@
   when:
     - not incus_skip_init
     - incus_network_type == "macvlan"
-    - incus_network_check.rc != 0 or incus_network_delete is changed
+    - incus_network_check.rc | default(1) != 0 or incus_network_delete is changed
   register: incus_macvlan_create
   changed_when: incus_macvlan_create.rc == 0
   tags:
     - incus_init
     - network
 
-- name: Update default profile to use macvlan network
+- name: Add network device to default profile
   ansible.builtin.command: >
-    incus profile device set default eth0 network={{ incus_network_name }}
+    incus profile device add default eth0 nic network={{ incus_network_name }}
   when:
     - not incus_skip_init
     - incus_network_type == "macvlan"
-    - incus_macvlan_create is changed
-  register: incus_profile_update
-  changed_when: incus_profile_update.rc == 0
+    - incus_macvlan_create is changed or incus_profile_remove is changed
+  register: incus_profile_add
+  changed_when: incus_profile_add.rc == 0
   tags:
     - incus_init
     - network
