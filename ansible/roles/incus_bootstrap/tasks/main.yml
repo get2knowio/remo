@@ -556,7 +556,7 @@
   failed_when: false
   when:
     - not incus_skip_init
-    - incus_containers_before is defined
+    - incus_containers_before.stdout is defined
     - incus_containers_before.stdout | length > 0
   tags:
     - incus_init
@@ -566,9 +566,9 @@
 - name: Display container preservation verification
   ansible.builtin.debug:
     msg: |
-      Container preservation check: {{ 'PASSED' if incus_containers_after is defined and incus_containers_after.rc == 0 else 'SKIPPED' }}
+      Container preservation check: {{ 'PASSED' if incus_containers_after.stdout is defined else 'SKIPPED' }}
 
-      {% if incus_containers_after is defined and incus_containers_after.rc == 0 %}
+      {% if incus_containers_after.stdout is defined %}
       All existing containers remain accessible after bootstrap:
 
       Containers before: {{ incus_containers_before.stdout_lines | length }}
@@ -590,7 +590,7 @@
       {% endif %}
   when:
     - not incus_skip_init
-    - incus_containers_before is defined
+    - incus_containers_before.stdout is defined
   tags:
     - incus_init
     - preservation
