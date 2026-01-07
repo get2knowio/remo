@@ -468,18 +468,24 @@
     - incus_init
     - network
 
-- name: Get current network type if it exists
-  ansible.builtin.shell: |
-    set -o pipefail
-    incus network show {{ incus_network_name }} --format=json | python3 -c "import sys,json; print(json.load(sys.stdin).get('type',''))"
-  args:
-    executable: /bin/bash
-  register: incus_current_network_type
+- name: Get current network info as JSON
+  ansible.builtin.command: incus network show {{ incus_network_name }} --format=json
+  register: incus_network_info
   changed_when: false
   failed_when: false
   when:
     - not incus_skip_init
     - incus_network_check.rc | default(1) == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Extract current network type
+  ansible.builtin.set_fact:
+    incus_current_network_type: "{{ (incus_network_info.stdout | default('{}') | from_json).type | default('') }}"
+  when:
+    - not incus_skip_init
+    - incus_network_info.stdout is defined
   tags:
     - incus_init
     - network
@@ -490,7 +496,7 @@
       {{ not incus_skip_init
          and incus_network_type == 'macvlan'
          and incus_network_check.rc | default(1) == 0
-         and (incus_current_network_type.stdout | default('') | trim) == 'bridge' }}
+         and (incus_current_network_type | default('')) == 'bridge' }}
   tags:
     - incus_init
     - network
@@ -502,7 +508,7 @@
         Skip init: {{ incus_skip_init }}
         Desired type: {{ incus_network_type }}
         Network exists: {{ incus_network_check.rc | default(1) == 0 }}
-        Current type: '{{ incus_current_network_type.stdout | default('') | trim }}'
+        Current type: '{{ incus_current_network_type | default('') }}'
         Needs conversion: {{ incus_needs_network_conversion }}
   when: not incus_skip_init
   tags:
