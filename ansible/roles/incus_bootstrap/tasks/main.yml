@@ -468,8 +468,8 @@
     - incus_init
     - network
 
-- name: Get current network info as JSON
-  ansible.builtin.command: incus network show {{ incus_network_name }} --format=json
+- name: Get current network info
+  ansible.builtin.command: incus network show {{ incus_network_name }}
   register: incus_network_info
   changed_when: false
   failed_when: false
@@ -480,9 +480,9 @@
     - incus_init
     - network
 
-- name: Extract current network type
+- name: Extract current network type from YAML output
   ansible.builtin.set_fact:
-    incus_current_network_type: "{{ (incus_network_info.stdout | from_json).type | default('') }}"
+    incus_current_network_type: "{{ incus_network_info.stdout | regex_search('^type:\\s*(.+)$', '\\1', multiline=True) | first | default('') }}"
   when:
     - not incus_skip_init
     - incus_network_info.stdout | default('') | length > 0
