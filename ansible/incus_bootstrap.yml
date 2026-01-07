@@ -38,5 +38,5 @@
             2. Run: newgrp {{ incus_admin_group }}
 
           Launch a container:
-            incus launch images:alpine/edge test-container
-            incus exec test-container -- /bin/sh
+            incus launch images:ubuntu/24.04 test-container
+            incus exec test-container -- bash

@@ -263,14 +263,14 @@ For detailed verification output including full YAML configuration:
 **After bootstrap**, log out and back in (or run `newgrp incus-admin`) to activate group membership, then:
 
 ```bash
-# Launch a container
-incus launch images:alpine/edge my-container
+# Launch a container (Ubuntu has cloud-init for automatic DHCP)
+incus launch images:ubuntu/24.04 my-container
 
-# List containers
+# List containers (shows IP addresses)
 incus list
 
 # Access container shell
-incus exec my-container -- sh
+incus exec my-container -- bash
 ```
 
 See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-host/quickstart.md) for detailed usage instructions.
