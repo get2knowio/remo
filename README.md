@@ -197,20 +197,36 @@ The `g2k` user is created with:
 
 In addition to Docker-based devcontainers, this project includes support for [Incus](https://linuxcontainers.org/incus/) - a modern container and VM management system that's an alternative to LXD.
 
-### Bootstrap Incus on Localhost
+### Bootstrap Incus on a Remote Host
 
-To set up Incus on your local workstation or server:
+To set up Incus on a remote server (OpenSUSE Tumbleweed):
+
+```bash
+./run.sh incus_bootstrap.yml -i "<host>," -e "target_hosts=all ansible_user=root"
+```
+
+Replace `<host>` with your server's IP address or hostname. The trailing comma is required for single-host inventory.
+
+**Example:**
+
+```bash
+./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=root"
+```
+
+This will:
+- Install Incus and incus-tools packages
+- Enable and start the Incus daemon services
+- Add the specified user to the `incus-admin` group for non-root container management
+- Initialize a directory-based storage pool
+- Configure a NAT bridge network for container connectivity
+
+#### Bootstrap on Localhost
+
+For local development, omit the inventory flag:
 
 ```bash
 ./run.sh incus_bootstrap.yml
 ```
-
-This will:
-- Install Incus and incus-tools packages (OpenSUSE Tumbleweed)
-- Enable and start the Incus daemon services
-- Add your user to the `incus-admin` group for non-root container management
-- Initialize a directory-based storage pool
-- Configure a NAT bridge network for container connectivity
 
 #### Verbose Output
 
