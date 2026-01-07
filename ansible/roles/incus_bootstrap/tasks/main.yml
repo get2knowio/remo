@@ -482,10 +482,20 @@
 
 - name: Extract current network type
   ansible.builtin.set_fact:
-    incus_current_network_type: "{{ (incus_network_info.stdout | default('{}') | from_json).type | default('') }}"
+    incus_current_network_type: "{{ (incus_network_info.stdout | from_json).type | default('') }}"
   when:
     - not incus_skip_init
-    - incus_network_info.stdout is defined
+    - incus_network_info.stdout | default('') | length > 0
+  tags:
+    - incus_init
+    - network
+
+- name: Default network type if not extracted
+  ansible.builtin.set_fact:
+    incus_current_network_type: ""
+  when:
+    - not incus_skip_init
+    - incus_current_network_type is not defined
   tags:
     - incus_init
     - network
