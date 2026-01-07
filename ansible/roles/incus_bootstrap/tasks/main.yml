@@ -471,7 +471,7 @@
 - name: Get current network type if it exists
   ansible.builtin.shell: |
     set -o pipefail
-    incus network show {{ incus_network_name }} --format=yaml | grep -E '^type:' | awk '{print $2}'
+    incus network show {{ incus_network_name }} --format=json | python3 -c "import sys,json; print(json.load(sys.stdin).get('type',''))"
   args:
     executable: /bin/bash
   register: incus_current_network_type
