@@ -382,9 +382,31 @@
 # ============================================================================
 # INCUS INITIALIZATION
 # ============================================================================
-# Initialize Incus with minimal configuration using 'incus admin init --minimal'
-# This creates a default storage pool (directory-based) and network bridge
-# if no existing configuration is found.
+# Initialize Incus storage and network. By default, creates a macvlan network
+# so containers get IPs from your LAN and are directly accessible.
+
+- name: Validate parent interface is specified for macvlan
+  ansible.builtin.assert:
+    that:
+      - incus_network_parent | length > 0
+    fail_msg: |
+      ERROR: No parent interface specified for macvlan network.
+
+      The macvlan network type requires a parent interface (the physical NIC).
+      Auto-detection failed or no default route exists.
+
+      Please specify the interface explicitly:
+        -e "incus_network_parent=eth0"
+
+      To find your interface name, run: ip route | grep default
+    success_msg: "Parent interface for macvlan: {{ incus_network_parent }}"
+  when:
+    - not incus_skip_init
+    - incus_network_type == "macvlan"
+  tags:
+    - incus_init
+    - network
+    - validation
 
 - name: Check if Incus is already initialized (storage pools exist)
   ansible.builtin.command: incus storage list --format=csv
@@ -424,28 +446,106 @@
     - not incus_skip_init
     - incus_storage_list.stdout | length == 0
   register: incus_init_result
-  changed_when: incus_init_result.rc == 0 and incus_init_result.stdout is search('Created')
+  changed_when: incus_init_result.rc == 0
   tags:
     - incus_init
     - storage
+
+# ============================================================================
+# NETWORK CONFIGURATION
+# ============================================================================
+# After minimal init, configure the network based on incus_network_type.
+# For macvlan, we delete the default NAT bridge and create a macvlan network.
+
+- name: Check if target network already exists
+  ansible.builtin.command: incus network show {{ incus_network_name }}
+  register: incus_network_check
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - network
+
+- name: Get current network type if it exists
+  ansible.builtin.shell: |
+    set -o pipefail
+    incus network show {{ incus_network_name }} --format=yaml | grep -E '^type:' | awk '{print $2}'
+  args:
+    executable: /bin/bash
+  register: incus_current_network_type
+  changed_when: false
+  failed_when: false
+  when:
+    - not incus_skip_init
+    - incus_network_check.rc == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Delete default bridge network to replace with macvlan
+  ansible.builtin.command: incus network delete {{ incus_network_name }}
+  when:
+    - not incus_skip_init
+    - incus_network_type == "macvlan"
+    - incus_network_check.rc == 0
+    - incus_current_network_type.stdout | default('') == "bridge"
+  register: incus_network_delete
+  changed_when: incus_network_delete.rc == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Create macvlan network for LAN connectivity
+  ansible.builtin.command: >
+    incus network create {{ incus_network_name }}
+    --type=macvlan
+    parent={{ incus_network_parent }}
+  when:
+    - not incus_skip_init
+    - incus_network_type == "macvlan"
+    - incus_network_check.rc != 0 or incus_network_delete is changed
+  register: incus_macvlan_create
+  changed_when: incus_macvlan_create.rc == 0
+  tags:
+    - incus_init
+    - network
+
+- name: Update default profile to use macvlan network
+  ansible.builtin.command: >
+    incus profile device set default eth0 network={{ incus_network_name }}
+  when:
+    - not incus_skip_init
+    - incus_network_type == "macvlan"
+    - incus_macvlan_create is changed
+  register: incus_profile_update
+  changed_when: incus_profile_update.rc == 0
+  tags:
+    - incus_init
     - network
 
 - name: Display initialization result
   ansible.builtin.debug:
     msg: |
-      Incus initialization completed using 'incus admin init --minimal'.
+      Incus initialization completed.
 
-      This command automatically configured:
-        - Storage pool: default (directory-based, using filesystem storage)
-        - Network bridge: incusbr0 (with NAT for container connectivity)
-        - Default profile: configured with storage and network devices
+      Storage:
+        - Pool: {{ incus_storage_pool_name }} ({{ incus_storage_pool_driver }} driver)
 
-      The minimal initialization uses sensible defaults that work on any filesystem
-      and provides immediate container functionality without manual configuration.
+      Network:
+        - Type: {{ incus_network_type }}
+        {% if incus_network_type == 'macvlan' %}
+        - Name: {{ incus_network_name }}
+        - Parent interface: {{ incus_network_parent }}
+        - Containers will get IPs from your LAN's DHCP server
+        - Containers are directly accessible from other machines on your network
+        {% else %}
+        - Name: {{ incus_network_name }} (NAT bridge)
+        - Containers get private IPs and are only reachable from the host
+        {% endif %}
   when:
     - not incus_skip_init
-    - incus_storage_list.stdout | length == 0
-    - incus_init_result is defined
+    - incus_storage_list.stdout | length == 0 or incus_macvlan_create is changed
   tags:
     - incus_init
 

@@ -72,57 +72,44 @@ incus_supported_os_families:
 # distribution-specific package installation tasks.
 
 # ============================================================================
-# STORAGE POOL AND NETWORK CONFIGURATION
+# STORAGE POOL CONFIGURATION
 # ============================================================================
-# NOTE: When using 'incus admin init --minimal', Incus automatically creates:
-#   - Storage pool: "default" (directory-based, works on any filesystem)
-#   - Network bridge: "incusbr0" (with automatic NAT and DHCP)
-#   - Default profile: configured with both storage and network devices
-#
-# These defaults provide immediate container functionality without manual
-# configuration. For advanced storage backends (ZFS, Btrfs, LVM) or custom
-# network configurations, you can manually configure Incus after bootstrap
-# or set incus_skip_init=true and handle initialization separately.
-#
-# The minimal initialization approach prioritizes:
-#   - Simplicity: One command does all basic setup
-#   - Compatibility: Directory storage works everywhere
-#   - Idempotency: Safe to run multiple times (checks before initializing)
 
-# Storage pool name created during initialization
-# INFORMATIONAL ONLY: This documents what 'incus admin init --minimal' creates.
-# The minimal initialization always creates a pool named "default".
-# To use a custom name, set incus_skip_init=true and configure manually.
+# Storage pool name
 incus_storage_pool_name: "default"
 
-# Storage backend driver used by the default pool
-# INFORMATIONAL ONLY: Documents what 'incus admin init --minimal' creates.
-# The minimal initialization always uses directory-based storage ("dir").
-# This driver works on any filesystem without special requirements (no ZFS, Btrfs, or LVM needed).
-# To use advanced storage backends (zfs, btrfs, lvm), set incus_skip_init=true
-# and create storage pools manually after bootstrap.
+# Storage backend driver
+# The "dir" driver works on any filesystem without special requirements.
+# For better performance, consider "zfs" or "btrfs" if available.
 incus_storage_pool_driver: "dir"
 
-# Network bridge name created during initialization
-# INFORMATIONAL ONLY: This documents what 'incus admin init --minimal' creates.
-# The minimal initialization always creates a bridge named "incusbr0" with auto-configured NAT.
-# To use a custom network name or configuration, set incus_skip_init=true and configure manually.
+# ============================================================================
+# NETWORK CONFIGURATION
+# ============================================================================
+# By default, we create a macvlan network so containers get IPs directly from
+# your LAN and are accessible from other machines on the network.
+#
+# Network types:
+#   - macvlan: Containers get IPs from your LAN's DHCP (default)
+#   - bridge: NAT bridge with private IPs (containers only reachable from host)
+
+# Network name for the Incus network
 incus_network_name: "incusbr0"
 
-# IPv4 address configuration for the network bridge
-# INFORMATIONAL ONLY: Documents what 'incus admin init --minimal' creates.
-# The minimal initialization auto-configures IPv4 with a random subnet (typically 10.x.x.1/24)
-# and enables NAT for container internet access. The actual subnet is chosen automatically
-# to avoid conflicts with existing networks.
-# To specify a custom IPv4 CIDR (e.g., "10.10.10.1/24"), set incus_skip_init=true
-# and create the network manually with 'incus network create'.
-incus_network_ipv4: "auto"
+# Network type: "macvlan" or "bridge"
+# macvlan: Containers appear as separate devices on your LAN
+# bridge: NAT bridge, containers get private IPs (10.x.x.x)
+incus_network_type: "macvlan"
 
-# IPv6 address configuration for the network bridge
-# INFORMATIONAL ONLY: Documents what 'incus admin init --minimal' creates.
-# Default is "none" to disable IPv6 for security reasons (reduces attack surface).
-# To enable IPv6 with auto-configuration (typically fd42::/64) or use a custom IPv6 CIDR,
-# set incus_skip_init=true and create the network manually with 'incus network create'.
+# Parent interface for macvlan network
+# This is the physical network interface on the host (e.g., eth0, enp0s3, ens18)
+# Auto-detected from the default route if not specified
+incus_network_parent: "{{ ansible_default_ipv4.interface | default('') }}"
+
+# IPv4 mode for macvlan (typically "dhcp" to get IPs from your router)
+incus_network_ipv4: "dhcp"
+
+# IPv6 configuration (set to "auto" to enable, "none" to disable)
 incus_network_ipv6: "none"
 
 # ============================================================================

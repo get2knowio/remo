@@ -228,7 +228,13 @@ This will:
 - Enable and start the Incus daemon services
 - Add the specified user to the `incus-admin` group for non-root container management
 - Initialize a directory-based storage pool
-- Configure a NAT bridge network for container connectivity
+- Configure a **macvlan network** so containers get IPs from your LAN and are directly accessible from other machines
+
+The parent network interface is auto-detected from the default route. To specify it explicitly:
+
+```bash
+./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul incus_network_parent=eth0"
+```
 
 #### Bootstrap on Localhost
 
@@ -238,6 +244,14 @@ For local development, omit the inventory flag:
 ./run.sh incus_bootstrap.yml
 ```
 
+#### NAT Bridge Mode
+
+If you prefer containers with private IPs (not directly accessible from LAN), use bridge mode:
+
+```bash
+./run.sh incus_bootstrap.yml -e "incus_network_type=bridge"
+```
+
 #### Verbose Output
 
 For detailed verification output including full YAML configuration:
@@ -245,8 +259,6 @@ For detailed verification output including full YAML configuration:
 ```bash
 ./run.sh incus_bootstrap.yml -e incus_bootstrap_verbosity=detailed
 ```
-
-By default, bootstrap shows only summary information. Use `detailed` mode to see complete storage pool and network configurations during verification.
 
 **After bootstrap**, log out and back in (or run `newgrp incus-admin`) to activate group membership, then:
 
@@ -270,10 +282,10 @@ See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-hos
 | **Host** | Cloud VM | System container on your hardware |
 | **Cost** | ~€4/month | Your electricity bill |
 | **Setup** | `./run.sh site.yml` | `./run.sh incus_bootstrap.yml` |
-| **Access** | SSH over internet | SSH over local network |
+| **Access** | SSH over internet | SSH directly to container on LAN |
 | **Use case** | Remote work, always-on | Local development, testing |
 
-Both approaches give you a Linux host where you can run devcontainers.
+Both approaches give you a Linux host where you can run devcontainers. With Incus, containers get IPs from your LAN's DHCP server, so you can SSH directly to them from any machine on your network.
 
 ## Troubleshooting
 
