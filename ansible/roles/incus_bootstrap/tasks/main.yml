@@ -615,13 +615,13 @@
 - name: Display Incus version information
   ansible.builtin.debug:
     msg: |
-      Incus CLI verification: {{ 'PASSED' if incus_version_output.rc == 0 else 'FAILED' }}
+      Incus CLI verification: {{ 'PASSED' if incus_version_output.rc | default(1) == 0 else 'FAILED' }}
 
-      {% if incus_version_output.rc == 0 %}
+      {% if incus_version_output.rc | default(1) == 0 %}
       Incus is installed and responding to commands.
 
       Version details:
-      {{ incus_version_output.stdout }}
+      {{ incus_version_output.stdout | default('N/A') }}
       {% else %}
       WARNING: Incus CLI command failed!
 
@@ -650,10 +650,10 @@
 - name: Display Incus storage pool verification
   ansible.builtin.debug:
     msg: |
-      Storage pool verification: {{ 'PASSED' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
+      Storage pool verification: {{ 'PASSED' if incus_storage_verify.rc | default(1) == 0 and incus_storage_verify.stdout | default('') | length > 0 else 'FAILED' }}
 
-      {% if incus_storage_verify.rc == 0 %}
-      {% if incus_storage_verify.stdout | length > 0 %}
+      {% if incus_storage_verify.rc | default(1) == 0 %}
+      {% if incus_storage_verify.stdout | default('') | length > 0 %}
       Storage pools have been created successfully.
       {% if incus_bootstrap_verbosity == 'detailed' %}
 
@@ -690,10 +690,10 @@
 - name: Display Incus network verification
   ansible.builtin.debug:
     msg: |
-      Network verification: {{ 'PASSED' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
+      Network verification: {{ 'PASSED' if incus_network_verify.rc | default(1) == 0 and incus_network_verify.stdout | default('') | length > 0 else 'FAILED' }}
 
-      {% if incus_network_verify.rc == 0 %}
-      {% if incus_network_verify.stdout | length > 0 %}
+      {% if incus_network_verify.rc | default(1) == 0 %}
+      {% if incus_network_verify.stdout | default('') | length > 0 %}
       Network bridges have been created successfully.
       {% if incus_bootstrap_verbosity == 'detailed' %}
 
@@ -725,18 +725,18 @@
       INCUS BOOTSTRAP VERIFICATION SUMMARY
       ========================================================================
 
-      Incus CLI Status: {{ 'OK' if incus_version_output.rc == 0 else 'FAILED' }}
+      Incus CLI Status: {{ 'OK' if incus_version_output.rc | default(1) == 0 else 'FAILED' }}
       {% if not incus_skip_init %}
-      Storage Pools:    {{ 'OK' if incus_storage_verify.rc == 0 and incus_storage_verify.stdout | length > 0 else 'FAILED' }}
-      Networks:         {{ 'OK' if incus_network_verify.rc == 0 and incus_network_verify.stdout | length > 0 else 'FAILED' }}
-      Container Preservation: {{ 'OK' if incus_containers_after is defined and incus_containers_after.rc == 0 else 'N/A (fresh install)' }}
+      Storage Pools:    {{ 'OK' if incus_storage_verify.rc | default(1) == 0 and incus_storage_verify.stdout | default('') | length > 0 else 'FAILED' }}
+      Networks:         {{ 'OK' if incus_network_verify.rc | default(1) == 0 and incus_network_verify.stdout | default('') | length > 0 else 'FAILED' }}
+      Container Preservation: {{ 'OK' if incus_containers_after.rc | default(1) == 0 else 'N/A (fresh install)' }}
       {% else %}
       Storage Pools:    SKIPPED (incus_skip_init=true)
       Networks:         SKIPPED (incus_skip_init=true)
       Container Preservation: SKIPPED (incus_skip_init=true)
       {% endif %}
 
-      {% if incus_version_output.rc == 0 and (incus_skip_init or (incus_storage_verify.rc == 0 and incus_network_verify.rc == 0)) %}
+      {% if incus_version_output.rc | default(1) == 0 and (incus_skip_init or (incus_storage_verify.rc | default(1) == 0 and incus_network_verify.rc | default(1) == 0)) %}
       Bootstrap Status: SUCCESS
 
       Incus is ready for container operations!
