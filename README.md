@@ -15,6 +15,27 @@ Both give you a Linux host where you can run devcontainers, with persistent sess
 
 ---
 
+## CLI Quick Reference
+
+```bash
+# Incus containers
+./remo incus create <name> [--host <host>] [--user <user>] [--domain <domain>]
+./remo incus destroy <name> [--host <host>] [--user <user>] [--yes]
+./remo incus list [--host <host>] [--user <user>]
+./remo incus bootstrap [--host <host>] [--user <user>]
+
+# Hetzner VMs
+./remo hetzner create [--name <name>] [--type <type>] [--location <loc>]
+./remo hetzner destroy [--yes] [--remove-volume]
+
+# Help
+./remo --help
+./remo incus --help
+./remo hetzner --help
+```
+
+---
+
 ## Option 1: Hetzner Cloud (Remote)
 
 Spin up a cloud VM with full dev tooling.
@@ -54,7 +75,7 @@ cp .env.example .env
 # Edit .env with your tokens
 
 # Provision server
-./run.sh hetzner_site.yml
+./remo hetzner create
 
 # SSH in
 ssh g2k@your-subdomain.duckdns.org
@@ -73,8 +94,8 @@ Fork this repo and use GitHub Actions to provision without local setup:
 ### Teardown
 
 ```bash
-./run.sh hetzner_teardown.yml                      # Destroy server (keeps volume)
-./run.sh hetzner_teardown.yml -e remove_volume=true  # Destroy everything
+./remo hetzner destroy --yes                 # Destroy server (keeps volume)
+./remo hetzner destroy --yes --remove-volume # Destroy everything
 ```
 
 ---
@@ -105,44 +126,31 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 ### Quick Start
 
 ```bash
-# Create and configure container in one step (from your laptop)
-./run.sh incus_site.yml \
-  -i "incus-host," \
-  -e "container_name=dev1" \
-  -e "container_domain=int.example.com" \
-  -e "incus_host_user=youruser"
+# Create and configure container in one step
+./remo incus create dev1 --host incus-host --user youruser --domain int.example.com
 
 # SSH in (once DNS registers the hostname)
 ssh ubuntu@dev1
 ssh ubuntu@dev1.int.example.com
+
+# List containers
+./remo incus list --host incus-host --user youruser
 ```
 
-Or run the steps separately:
+### CLI Options
 
-```bash
-# Step 1: Create container
-./run.sh incus_provision.yml -i "incus-host," -e "container_name=dev1 incus_host_user=youruser"
-
-# Step 2: Install dev tools (pass the container IP from step 1)
-./run.sh incus_configure.yml -e "container_ip=192.168.1.x"
-```
-
-### Common Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `container_name` | (required) | Name of the container |
-| `incus_host_user` | (current user) | SSH user for the Incus host |
-| `container_image` | `images:ubuntu/24.04/cloud` | Cloud image to use |
-| `container_domain` | (empty) | Domain for FQDN (e.g., `int.example.com`) |
-| `container_ssh_user` | `ubuntu` | SSH user created in container |
-| `container_mounts` | `[]` | Host directories to mount |
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--host <host>` | localhost | Incus host to connect to |
+| `--user <user>` | (current user) | SSH user for the Incus host |
+| `--domain <domain>` | (none) | Domain for FQDN (e.g., `int.example.com`) |
+| `--image <image>` | `images:ubuntu/24.04/cloud` | Cloud image to use |
+| `--yes`, `-y` | (prompt) | Skip confirmation on destroy |
 
 ### Teardown
 
 ```bash
-./run.sh incus_teardown.yml -e container_name=dev1
-./run.sh incus_teardown.yml -e container_name=dev1 -e force=true  # If running
+./remo incus destroy dev1 --host incus-host --user youruser --yes
 ```
 
 ---
@@ -190,15 +198,13 @@ To use Incus containers, you first need to bootstrap Incus on your host machine.
 ### Bootstrap a Remote Host
 
 ```bash
-./run.sh incus_bootstrap.yml \
-  -i "192.168.1.100," \
-  -e "target_hosts=all ansible_user=paul"
+./remo incus bootstrap --host 192.168.1.100 --user paul
 ```
 
 ### Bootstrap Localhost
 
 ```bash
-./run.sh incus_bootstrap.yml
+./remo incus bootstrap
 ```
 
 ### What Bootstrap Does
@@ -214,14 +220,12 @@ To use Incus containers, you first need to bootstrap Incus on your host machine.
 ### Bootstrap Options
 
 ```bash
-# Specify network interface explicitly
-./run.sh incus_bootstrap.yml -e "incus_network_parent=eth0"
-
-# Use NAT bridge instead of macvlan (containers get private IPs)
-./run.sh incus_bootstrap.yml -e "incus_network_type=bridge"
-
 # Verbose output
-./run.sh incus_bootstrap.yml -e "incus_bootstrap_verbosity=detailed"
+./remo incus bootstrap --verbose
+
+# For advanced options (network type, interface), use ./run.sh directly:
+./run.sh incus_bootstrap.yml -e "incus_network_parent=eth0"
+./run.sh incus_bootstrap.yml -e "incus_network_type=bridge"
 ```
 
 See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-host/quickstart.md) for more details.

@@ -1,0 +1,537 @@
+#!/bin/bash
+# remo - Remote development environment CLI
+# Manages Incus containers and Hetzner VMs for development environments
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ENV_FILE="$SCRIPT_DIR/.env"
+ANSIBLE_DIR="$SCRIPT_DIR/ansible"
+VENV_DIR="$SCRIPT_DIR/.venv"
+
+# Activate virtual environment if it exists
+if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
+    source "$VENV_DIR/bin/activate"
+fi
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# =============================================================================
+# UTILITY FUNCTIONS
+# =============================================================================
+
+print_error() {
+    echo -e "${RED}Error:${NC} $1" >&2
+}
+
+print_success() {
+    echo -e "${GREEN}$1${NC}"
+}
+
+print_info() {
+    echo -e "${BLUE}$1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}$1${NC}"
+}
+
+load_env() {
+    if [ -f "$ENV_FILE" ]; then
+        while IFS='=' read -r key value; do
+            [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+            if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                export "$key=$value"
+            fi
+        done < "$ENV_FILE"
+    fi
+}
+
+run_playbook() {
+    local playbook="$1"
+    shift
+    cd "$ANSIBLE_DIR"
+    ansible-playbook "$playbook" "$@"
+}
+
+# =============================================================================
+# HELP SYSTEM
+# =============================================================================
+
+show_main_help() {
+    cat << 'EOF'
+remo - Remote development environment CLI
+
+USAGE:
+    remo <provider> <command> [options]
+    remo --help
+
+PROVIDERS:
+    incus       Manage Incus containers (local or remote host)
+    hetzner     Manage Hetzner Cloud VMs
+
+EXAMPLES:
+    remo incus create dev1
+    remo incus create dev1 --domain int.example.com
+    remo incus destroy dev1 --yes
+    remo incus list
+    remo incus bootstrap
+
+    remo hetzner create
+    remo hetzner destroy --yes
+
+Run 'remo <provider> --help' for provider-specific commands.
+EOF
+}
+
+show_incus_help() {
+    cat << 'EOF'
+remo incus - Manage Incus containers
+
+USAGE:
+    remo incus <command> [options]
+
+COMMANDS:
+    create <name>       Create and configure a new container
+    destroy <name>      Destroy an existing container
+    list                List all containers
+    bootstrap           Initialize Incus host (network, storage)
+
+CREATE OPTIONS:
+    --domain <domain>   Set container domain (e.g., int.example.com)
+    --image <image>     Container image (default: images:ubuntu/24.04/cloud)
+    --host <host>       Remote Incus host (default: localhost)
+    --user <user>       SSH user for remote host
+
+DESTROY OPTIONS:
+    --yes, -y           Skip confirmation prompt
+    --host <host>       Remote Incus host (default: localhost)
+    --user <user>       SSH user for remote host
+
+BOOTSTRAP OPTIONS:
+    --host <host>       Remote Incus host (default: localhost)
+    --user <user>       SSH user for remote host
+    -v, --verbose       Show detailed output
+
+EXAMPLES:
+    remo incus create dev1
+    remo incus create dev1 --domain int.get2know.io
+    remo incus create dev1 --host 192.168.1.100 --user admin
+    remo incus destroy dev1 --yes
+    remo incus list
+    remo incus bootstrap --host myserver.local --user root
+EOF
+}
+
+show_hetzner_help() {
+    cat << 'EOF'
+remo hetzner - Manage Hetzner Cloud VMs
+
+USAGE:
+    remo hetzner <command> [options]
+
+COMMANDS:
+    create              Provision a new Hetzner VM
+    destroy             Tear down a Hetzner VM
+
+CREATE OPTIONS:
+    --name <name>       Server name (default: remote-coding-server)
+    --type <type>       Server type (default: cx22)
+    --location <loc>    Datacenter location (default: hel1)
+
+DESTROY OPTIONS:
+    --yes, -y           Skip confirmation prompt
+    --remove-volume     Also remove the persistent volume (DESTROYS DATA!)
+
+NOTES:
+    Requires HETZNER_API_TOKEN in .env file or environment.
+    The persistent volume is preserved by default on destroy.
+
+EXAMPLES:
+    remo hetzner create
+    remo hetzner create --name my-server --type cx32
+    remo hetzner destroy --yes
+    remo hetzner destroy --yes --remove-volume
+EOF
+}
+
+# =============================================================================
+# INCUS COMMANDS
+# =============================================================================
+
+incus_create() {
+    local name=""
+    local domain=""
+    local image=""
+    local host="localhost"
+    local user=""
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --domain)
+                domain="$2"
+                shift 2
+                ;;
+            --image)
+                image="$2"
+                shift 2
+                ;;
+            --host)
+                host="$2"
+                shift 2
+                ;;
+            --user)
+                user="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo incus --help' for usage."
+                exit 1
+                ;;
+            *)
+                if [ -z "$name" ]; then
+                    name="$1"
+                else
+                    print_error "Unexpected argument: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$name" ]; then
+        print_error "Container name is required"
+        echo "Usage: remo incus create <name> [options]"
+        exit 1
+    fi
+
+    print_info "Creating Incus container '$name'..."
+
+    # Build ansible extra vars
+    extra_args+=(-e "container_name=$name")
+
+    [ -n "$domain" ] && extra_args+=(-e "container_domain=$domain")
+    [ -n "$image" ] && extra_args+=(-e "container_image=$image")
+
+    if [ "$host" != "localhost" ]; then
+        extra_args+=(-i "$host,")
+        extra_args+=(-e "target_hosts=all")
+        [ -n "$user" ] && extra_args+=(-e "incus_host_user=$user")
+    fi
+
+    run_playbook incus_site.yml "${extra_args[@]}"
+}
+
+incus_destroy() {
+    local name=""
+    local auto_confirm="false"
+    local host="localhost"
+    local user=""
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y)
+                auto_confirm="true"
+                shift
+                ;;
+            --host)
+                host="$2"
+                shift 2
+                ;;
+            --user)
+                user="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo incus --help' for usage."
+                exit 1
+                ;;
+            *)
+                if [ -z "$name" ]; then
+                    name="$1"
+                else
+                    print_error "Unexpected argument: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$name" ]; then
+        print_error "Container name is required"
+        echo "Usage: remo incus destroy <name> [options]"
+        exit 1
+    fi
+
+    print_info "Destroying Incus container '$name'..."
+
+    extra_args+=(-e "container_name=$name")
+    extra_args+=(-e "auto_confirm=$auto_confirm")
+
+    if [ "$host" != "localhost" ]; then
+        extra_args+=(-i "$host,")
+        extra_args+=(-e "target_hosts=all")
+        [ -n "$user" ] && extra_args+=(-e "incus_host_user=$user")
+    fi
+
+    run_playbook incus_teardown.yml "${extra_args[@]}"
+}
+
+incus_list() {
+    local host="localhost"
+    local user=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --host)
+                host="$2"
+                shift 2
+                ;;
+            --user)
+                user="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo incus --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ "$host" = "localhost" ]; then
+        incus list
+    else
+        local ssh_cmd="ssh"
+        [ -n "$user" ] && ssh_cmd="ssh ${user}@${host}" || ssh_cmd="ssh ${host}"
+        $ssh_cmd incus list
+    fi
+}
+
+incus_bootstrap() {
+    local host="localhost"
+    local user=""
+    local verbose=""
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --host)
+                host="$2"
+                shift 2
+                ;;
+            --user)
+                user="$2"
+                shift 2
+                ;;
+            -v|--verbose)
+                verbose="detailed"
+                shift
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo incus --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    print_info "Bootstrapping Incus host..."
+
+    if [ "$host" != "localhost" ]; then
+        extra_args+=(-i "$host,")
+        extra_args+=(-e "target_hosts=all")
+        [ -n "$user" ] && extra_args+=(-e "ansible_user=$user")
+    fi
+
+    [ -n "$verbose" ] && extra_args+=(-e "incus_bootstrap_verbosity=$verbose")
+
+    run_playbook incus_bootstrap.yml "${extra_args[@]}"
+}
+
+handle_incus() {
+    local command="${1:-}"
+    shift || true
+
+    case "$command" in
+        create)
+            incus_create "$@"
+            ;;
+        destroy)
+            incus_destroy "$@"
+            ;;
+        list)
+            incus_list "$@"
+            ;;
+        bootstrap)
+            incus_bootstrap "$@"
+            ;;
+        --help|-h|"")
+            show_incus_help
+            ;;
+        *)
+            print_error "Unknown incus command: $command"
+            echo "Run 'remo incus --help' for available commands."
+            exit 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# HETZNER COMMANDS
+# =============================================================================
+
+hetzner_create() {
+    local name=""
+    local server_type=""
+    local location=""
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            --type)
+                server_type="$2"
+                shift 2
+                ;;
+            --location)
+                location="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo hetzner --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    print_info "Creating Hetzner VM..."
+
+    [ -n "$name" ] && extra_args+=(-e "hetzner_server_name=$name")
+    [ -n "$server_type" ] && extra_args+=(-e "hetzner_server_type=$server_type")
+    [ -n "$location" ] && extra_args+=(-e "hetzner_location=$location")
+
+    run_playbook hetzner_site.yml "${extra_args[@]}"
+}
+
+hetzner_destroy() {
+    local auto_confirm="false"
+    local remove_volume="false"
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y)
+                auto_confirm="true"
+                shift
+                ;;
+            --remove-volume)
+                remove_volume="true"
+                shift
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo hetzner --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ "$remove_volume" = "true" ]; then
+        print_warning "WARNING: --remove-volume will destroy all data on the persistent volume!"
+    fi
+
+    print_info "Destroying Hetzner VM..."
+
+    extra_args+=(-e "auto_confirm=$auto_confirm")
+    extra_args+=(-e "remove_volume=$remove_volume")
+
+    run_playbook hetzner_teardown.yml "${extra_args[@]}"
+}
+
+handle_hetzner() {
+    local command="${1:-}"
+    shift || true
+
+    case "$command" in
+        create)
+            hetzner_create "$@"
+            ;;
+        destroy)
+            hetzner_destroy "$@"
+            ;;
+        --help|-h|"")
+            show_hetzner_help
+            ;;
+        *)
+            print_error "Unknown hetzner command: $command"
+            echo "Run 'remo hetzner --help' for available commands."
+            exit 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# MAIN ENTRY POINT
+# =============================================================================
+
+main() {
+    # Load environment variables
+    load_env
+
+    local provider="${1:-}"
+    shift || true
+
+    case "$provider" in
+        incus)
+            handle_incus "$@"
+            ;;
+        hetzner)
+            handle_hetzner "$@"
+            ;;
+        --help|-h|"")
+            show_main_help
+            ;;
+        --version|-v)
+            echo "remo 0.1.0"
+            ;;
+        *)
+            print_error "Unknown provider: $provider"
+            echo "Run 'remo --help' for available providers."
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
