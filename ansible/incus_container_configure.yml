@@ -21,7 +21,7 @@
 #
 # This playbook:
 # 1. Provisions the container if not already running (reuses incus_container role)
-# 2. Applies configuration roles: docker, user_setup, nodejs, fzf, zellij
+# 2. Applies dev tools from shared tasks/configure_dev_tools.yml
 
 # Play 1: Ensure container is provisioned and get its IP
 - name: Ensure container is provisioned
@@ -66,21 +66,9 @@
         update_cache: true
         cache_valid_time: 3600
 
-  roles:
-    - role: docker
-      when: configure_docker | default(true) | bool
-    - role: user_setup
-      when: configure_user_setup | default(true) | bool
-    - role: nodejs
-      when: configure_nodejs | default(true) | bool
-    - role: devcontainers
-      when: configure_devcontainers | default(true) | bool
-    - role: github_cli
-      when: configure_github_cli | default(true) | bool
-    - role: fzf
-      when: configure_fzf | default(true) | bool
-    - role: zellij
-      when: configure_zellij | default(true) | bool
+  tasks:
+    - name: Configure dev tools
+      ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
 
   post_tasks:
     - name: Display configuration result

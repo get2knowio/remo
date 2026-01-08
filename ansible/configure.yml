@@ -36,14 +36,9 @@
         path: /var/run/reboot-required
       register: reboot_required_file
 
-  roles:
-    - role: docker
-    - role: fzf
-    - role: user_setup
-    - role: nodejs
-    - role: devcontainers
-    - role: github_cli
-    - role: zellij
+  tasks:
+    - name: Configure dev tools
+      ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
 
   post_tasks:
     - name: Display completion message
