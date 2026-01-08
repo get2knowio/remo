@@ -110,7 +110,7 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
   -i "incus-host," \
   -e "container_name=dev1" \
   -e "container_domain=int.example.com" \
-  -e "ansible_user=youruser"
+  -e "incus_host_user=youruser"
 
 # SSH in (once DNS registers the hostname)
 ssh ubuntu@dev1
@@ -121,7 +121,7 @@ Or run the steps separately:
 
 ```bash
 # Step 1: Create container
-./run.sh incus_provision.yml -i "incus-host," -e "container_name=dev1 ansible_user=youruser"
+./run.sh incus_provision.yml -i "incus-host," -e "container_name=dev1 incus_host_user=youruser"
 
 # Step 2: Install dev tools (pass the container IP from step 1)
 ./run.sh incus_configure.yml -e "container_ip=192.168.1.x"
@@ -132,6 +132,7 @@ Or run the steps separately:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `container_name` | (required) | Name of the container |
+| `incus_host_user` | (current user) | SSH user for the Incus host |
 | `container_image` | `images:ubuntu/24.04/cloud` | Cloud image to use |
 | `container_domain` | (empty) | Domain for FQDN (e.g., `int.example.com`) |
 | `container_ssh_user` | `ubuntu` | SSH user created in container |
