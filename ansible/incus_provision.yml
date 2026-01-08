@@ -1,7 +1,7 @@
 ---
-# Incus Container Provisioning Playbook
-# Usage: ./run.sh incus_container.yml -e container_name=<name>
-#        ./run.sh incus_container.yml -i "incus-host," -e "container_name=<name> ansible_user=<user>"
+# Incus Provision Playbook - Create a new container
+# Usage: ./run.sh incus_provision.yml -e container_name=<name>
+#        ./run.sh incus_provision.yml -i "incus-host," -e "container_name=<name> ansible_user=<user>"
 #
 # Required variables:
 #   container_name: Name for the new container

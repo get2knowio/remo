@@ -54,7 +54,7 @@ cp .env.example .env
 # Edit .env with your tokens
 
 # Provision server
-./run.sh site.yml
+./run.sh hetzner_site.yml
 
 # SSH in
 ssh g2k@your-subdomain.duckdns.org
@@ -73,8 +73,8 @@ Fork this repo and use GitHub Actions to provision without local setup:
 ### Teardown
 
 ```bash
-./run.sh teardown.yml                      # Destroy server (keeps volume)
-./run.sh teardown.yml -e remove_volume=true  # Destroy everything
+./run.sh hetzner_teardown.yml                      # Destroy server (keeps volume)
+./run.sh hetzner_teardown.yml -e remove_volume=true  # Destroy everything
 ```
 
 ---
@@ -105,22 +105,26 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 ### Quick Start
 
 ```bash
-# Step 1: Create container (from your laptop, targeting your Incus host)
-./run.sh incus_container.yml \
+# Create and configure container in one step (from your laptop)
+./run.sh incus_site.yml \
   -i "incus-host," \
   -e "container_name=dev1" \
   -e "container_domain=int.example.com" \
   -e "ansible_user=youruser"
 
-# Step 2: Install dev tools (Docker, Node.js, devcontainer CLI, etc.)
-./run.sh incus_container_configure.yml \
-  -i "incus-host," \
-  -e "container_name=dev1" \
-  -e "ansible_user=youruser"
-
 # SSH in (once DNS registers the hostname)
 ssh ubuntu@dev1
 ssh ubuntu@dev1.int.example.com
+```
+
+Or run the steps separately:
+
+```bash
+# Step 1: Create container
+./run.sh incus_provision.yml -i "incus-host," -e "container_name=dev1 ansible_user=youruser"
+
+# Step 2: Install dev tools (pass the container IP from step 1)
+./run.sh incus_configure.yml -e "container_ip=192.168.1.x"
 ```
 
 ### Common Variables
@@ -136,8 +140,8 @@ ssh ubuntu@dev1.int.example.com
 ### Teardown
 
 ```bash
-./run.sh incus_container_teardown.yml -e container_name=dev1
-./run.sh incus_container_teardown.yml -e container_name=dev1 -e force=true  # If running
+./run.sh incus_teardown.yml -e container_name=dev1
+./run.sh incus_teardown.yml -e container_name=dev1 -e force=true  # If running
 ```
 
 ---

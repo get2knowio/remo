@@ -1,0 +1,85 @@
+---
+# Incus Configure Playbook - Install dev tools on an existing container
+# Run this after incus_provision.yml has created the container
+#
+# Usage:
+#   ./run.sh incus_configure.yml -e "container_ip=<ip>"
+#   ./run.sh incus_configure.yml -e "container_ip=<ip> container_user=ubuntu"
+#
+# Required variables:
+#   container_ip: IP address of the container to configure
+#
+# Optional variables:
+#   container_user: SSH user (default: ubuntu)
+#   configure_docker: Enable/disable docker (default: true)
+#   configure_user_setup: Enable/disable user_setup (default: true)
+#   configure_nodejs: Enable/disable nodejs (default: true)
+#   configure_devcontainers: Enable/disable devcontainers (default: true)
+#   configure_github_cli: Enable/disable github_cli (default: true)
+#   configure_fzf: Enable/disable fzf (default: true)
+#   configure_zellij: Enable/disable zellij (default: true)
+
+- name: Add container to inventory
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_ip' is not defined. Use -e container_ip=<ip>"
+      when: container_ip is not defined
+
+    - name: Add container to in-memory inventory
+      ansible.builtin.add_host:
+        name: incus_container
+        ansible_host: "{{ container_ip }}"
+        ansible_user: "{{ container_user | default('ubuntu') }}"
+        ansible_python_interpreter: /usr/bin/python3
+        groups:
+          - incus_containers
+
+- name: Configure Incus container with development tools
+  hosts: incus_container
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Wait for apt to be ready
+      ansible.builtin.wait_for:
+        path: /var/lib/dpkg/lock-frontend
+        state: absent
+        timeout: 60
+      register: apt_wait_result
+      failed_when: false
+
+    - name: Warn if apt lock wait timed out
+      ansible.builtin.debug:
+        msg: "Warning: apt lock wait timed out. Proceeding anyway."
+      when: apt_wait_result.failed | default(false)
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  tasks:
+    - name: Configure dev tools
+      ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Container configuration complete!
+
+          Installed:
+          - Docker (with docker-compose plugin)
+          - User 'ubuntu' with sudo NOPASSWD access
+          - Node.js LTS
+          - @devcontainers/cli
+          - GitHub CLI (gh)
+          - fzf
+          - Zellij terminal multiplexer
+
+          Connect with:
+            ssh {{ ansible_user }}@{{ ansible_host }}

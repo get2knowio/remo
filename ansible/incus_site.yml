@@ -1,0 +1,100 @@
+---
+# Incus Site Playbook - Complete container provisioning and configuration
+# This combines incus_provision.yml and incus_configure.yml into a single workflow
+#
+# Usage:
+#   ./run.sh incus_site.yml -e container_name=<name>
+#   ./run.sh incus_site.yml -i "incus-host," -e "container_name=<name> ansible_user=<user>"
+#   ./run.sh incus_site.yml -e "container_name=<name> container_domain=int.example.com"
+#
+# Required variables:
+#   container_name: Name for the new container
+#
+# Optional variables:
+#   container_image: Image to use (default: images:ubuntu/24.04/cloud)
+#   container_domain: Domain for FQDN (e.g., int.example.com)
+#   container_ssh_user: SSH user (default: ubuntu)
+#   container_mounts: List of host directory mounts
+#   configure_*: Enable/disable specific dev tools (see incus_configure.yml)
+
+# Play 1: Provision the container
+- name: Provision Incus container
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  gather_facts: true
+
+  vars:
+    incus_container_name: "{{ container_name }}"
+    incus_container_image: "{{ container_image | default('images:ubuntu/24.04/cloud') }}"
+    incus_container_profile: "{{ container_profile | default('default') }}"
+    incus_container_network: "{{ container_network | default('incusbr0') }}"
+    incus_container_ssh_user: "{{ container_ssh_user | default('ubuntu') }}"
+    incus_container_ssh_key_path: "{{ container_ssh_key_path | default('~/.ssh/id_rsa.pub') }}"
+    incus_container_domain: "{{ container_domain | default('') }}"
+    incus_container_mounts: "{{ container_mounts | default([]) }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_name' is not defined. Use -e container_name=<name>"
+      when: container_name is not defined
+
+  roles:
+    - role: incus_container
+
+# Play 2: Configure the container with dev tools
+- name: Configure container with development tools
+  hosts: "{{ container_name }}"
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Wait for apt to be ready
+      ansible.builtin.wait_for:
+        path: /var/lib/dpkg/lock-frontend
+        state: absent
+        timeout: 60
+      register: apt_wait_result
+      failed_when: false
+
+    - name: Warn if apt lock wait timed out
+      ansible.builtin.debug:
+        msg: "Warning: apt lock wait timed out. Proceeding anyway."
+      when: apt_wait_result.failed | default(false)
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  tasks:
+    - name: Configure dev tools
+      ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          Container '{{ container_name }}' ready!
+          ============================================================
+
+          IP Address: {{ ansible_host }}
+          Hostname: {{ container_name }}{% if hostvars[groups['incus_containers'][0]]['incus_container_domain'] | default('') | length > 0 %}.{{ hostvars[groups['incus_containers'][0]]['incus_container_domain'] }}{% endif %}
+
+          Installed:
+          - Docker (with docker-compose plugin)
+          - Node.js LTS
+          - @devcontainers/cli
+          - GitHub CLI (gh)
+          - fzf
+          - Zellij terminal multiplexer
+
+          Connect with:
+            ssh {{ ansible_user }}@{{ ansible_host }}
+          {% if hostvars[groups['incus_containers'][0]]['incus_container_domain'] | default('') | length > 0 %}
+            ssh {{ ansible_user }}@{{ container_name }}
+          {% endif %}
+
+          Note: Macvlan containers are not reachable from the Incus host itself.
+          ============================================================

@@ -1,7 +1,7 @@
 ---
-# Incus Container Teardown Playbook
-# Usage: ./run.sh incus_container_teardown.yml -e container_name=<name>
-#        ./run.sh incus_container_teardown.yml -i "incus-host," -e "container_name=<name> ansible_user=<user>"
+# Incus Teardown Playbook - Destroy a container
+# Usage: ./run.sh incus_teardown.yml -e container_name=<name>
+#        ./run.sh incus_teardown.yml -i "incus-host," -e "container_name=<name> ansible_user=<user>"
 #
 # Required variables:
 #   container_name: Name of the container to destroy
