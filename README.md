@@ -2,7 +2,62 @@
 
 Spin up a fully-configured development environment in minutes. One command gives you a persistent, secure coding environment with Dev Containers support.
 
-## Two Ways to Get a Dev Environment
+---
+
+## The Dev Workflow
+
+SSH in and you're greeted with an interactive project menu:
+
+```bash
+ssh remo@your-host
+
+  Remote Coding Server
+  --------------------
+
+> my-project - active
+  another-project
+  [Clone new repo]
+  [Exit to shell]
+```
+
+Select a project and you're in a persistent Zellij session. Devcontainer projects auto-start their container. Disconnect anytime—your session survives.
+
+### Project Menu
+
+On SSH login, the `fzf`-powered menu shows your projects from `~/projects`:
+
+- **Arrow keys** or **1-9**: Select a project
+- **Enter**: Launch/attach to the project's Zellij session
+- **c**: Clone a new repository
+- **x**: Exit to shell
+
+Active Zellij sessions are marked in the menu.
+
+### Persistent Sessions with Zellij
+
+[Zellij](https://zellij.dev/) keeps your terminal sessions alive:
+
+- **Detach**: `Ctrl+o d` returns to the project menu
+- **Reconnect**: SSH back in, select the same project to resume
+
+The host Zellij runs as an "outer" session (tab management only), so you can run an "inner" Zellij inside devcontainers without keybind conflicts.
+
+### What's Installed
+
+Every remo environment includes:
+
+| Tool | Description |
+|------|-------------|
+| **Docker + Compose** | Official Docker CE with compose plugin |
+| **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
+| **Node.js 24 LTS** | From NodeSource repository |
+| **GitHub CLI** | `gh` for GitHub workflow integration |
+| **Zellij** | Terminal multiplexer for persistent sessions |
+| **fzf** | Fuzzy finder powering the project menu |
+
+---
+
+## Two Ways to Get Started
 
 | | Hetzner Cloud | Incus Container |
 |---|---|---|
@@ -11,7 +66,7 @@ Spin up a fully-configured development environment in minutes. One command gives
 | **Access** | SSH over internet via DuckDNS | SSH on your LAN by hostname |
 | **Best for** | Remote work, always-on | Local development, testing |
 
-Both give you a Linux host where you can run devcontainers, with persistent sessions via Zellij.
+Both give you the same dev workflow described above.
 
 ---
 
@@ -39,23 +94,9 @@ Both give you a Linux host where you can run devcontainers, with persistent sess
 
 ---
 
-## Option 1: Hetzner Cloud (Remote)
+## Hetzner Cloud Setup
 
 Spin up a cloud VM with full dev tooling.
-
-### What You Get
-
-| Component | Description |
-|-----------|-------------|
-| **Hetzner Server** | 2 vCPU, 4 GB RAM, 40 GB SSD (Ubuntu 24.04) |
-| **Persistent Volume** | `/home/remo` survives server teardown |
-| **Docker + Compose** | Official Docker CE with compose plugin |
-| **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
-| **Node.js 24 LTS** | From NodeSource repository |
-| **GitHub CLI** | `gh` for GitHub workflow integration |
-| **Zellij** | Terminal multiplexer for persistent sessions |
-| **Strict Firewall** | SSH-only access (port 22) |
-| **DuckDNS Domain** | Automatic DNS registration |
 
 ### Prerequisites
 
@@ -82,6 +123,14 @@ vim .env
 ssh remo@your-subdomain.duckdns.org
 ```
 
+### Additional Features
+
+| Feature | Description |
+|---------|-------------|
+| **Persistent Volume** | `/home/remo` survives server teardown |
+| **Strict Firewall** | SSH-only access (port 22) |
+| **DuckDNS Domain** | Automatic DNS registration |
+
 ### GitHub Actions (Alternative)
 
 Fork this repo and use GitHub Actions to provision without local setup:
@@ -101,23 +150,9 @@ Fork this repo and use GitHub Actions to provision without local setup:
 
 ---
 
-## Option 2: Incus Container (Local/Homelab)
+## Incus Container Setup
 
 Spin up a lightweight system container on your own hardware. Containers get IPs from your LAN's DHCP and are accessible by hostname from any machine on your network.
-
-### What You Get
-
-| Component | Description |
-|-----------|-------------|
-| **System Container** | Lightweight, near-native performance |
-| **LAN IP via DHCP** | Accessible from any machine on your network |
-| **Hostname DNS** | `ssh remo@container-name` (if your router registers DHCP hostnames) |
-| **Docker + Compose** | Official Docker CE with compose plugin |
-| **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
-| **Node.js 24 LTS** | From NodeSource repository |
-| **GitHub CLI** | `gh` for GitHub workflow integration |
-| **Zellij** | Terminal multiplexer for persistent sessions |
-| **Host Mounts** | Persistent data directories from the Incus host |
 
 ### Prerequisites
 
@@ -127,16 +162,27 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 ### Quick Start
 
 ```bash
-# Create and configure container in one step
+# Clone and setup (on your workstation)
+git clone https://github.com/get2knowio/remo.git
+cd remo
+./remo init
+
+# Create and configure container
 ./remo incus create dev1 --host incus-host --user youruser --domain int.example.com
 
-# SSH in (once DNS registers the hostname)
+# SSH in
 ssh remo@dev1
 ssh remo@dev1.int.example.com
-
-# List containers
-./remo incus list --host incus-host --user youruser
 ```
+
+### Additional Features
+
+| Feature | Description |
+|---------|-------------|
+| **System Container** | Lightweight, near-native performance |
+| **LAN IP via DHCP** | Accessible from any machine on your network |
+| **Hostname DNS** | Works if your router registers DHCP hostnames |
+| **Host Mounts** | Optional persistent data directories from the Incus host |
 
 ### CLI Options
 
@@ -153,49 +199,6 @@ ssh remo@dev1.int.example.com
 ```bash
 ./remo incus destroy dev1 --host incus-host --user youruser --yes
 ```
-
----
-
-## The Dev Workflow
-
-Once you have an environment (Hetzner or Incus), the workflow is the same:
-
-```bash
-# 1. SSH in - you'll see the project menu automatically
-ssh remo@your-host
-
-# 2. Select a project from the menu (or clone a new one)
-#    The menu shows all projects in ~/projects
-#    Active Zellij sessions are marked
-
-# 3. Work in your project
-#    - Devcontainer projects auto-start their container
-#    - All projects run inside Zellij for session persistence
-
-# 4. Disconnect anytime - your session persists
-#    Ctrl+o d to detach from Zellij
-#    Close SSH - reconnect later and pick up where you left off
-```
-
-### Project Menu
-
-On SSH login, you're greeted with an interactive project menu powered by `fzf`:
-
-- **Arrow keys** or **1-9**: Select a project
-- **Enter**: Launch/attach to the project's Zellij session
-- **c**: Clone a new repository
-- **x**: Exit to shell
-
-Projects live in `~/projects`. Active Zellij sessions show as "active" in the menu.
-
-### Zellij: Persistent Terminal Sessions
-
-[Zellij](https://zellij.dev/) keeps your terminal sessions alive:
-
-- **Detach**: `Ctrl+o d` returns to host shell (and project menu)
-- **Reconnect**: SSH back in, select the same project to resume
-
-For devcontainers, the host Zellij is configured as an "outer" session (tab management only), so you can run an "inner" Zellij inside containers without keybind conflicts.
 
 ---
 
@@ -237,8 +240,6 @@ To use Incus containers, you first need to bootstrap Incus on your host machine.
 ./run.sh incus_bootstrap.yml -e "incus_network_parent=eth0"
 ./run.sh incus_bootstrap.yml -e "incus_network_type=bridge"
 ```
-
-See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-host/quickstart.md) for more details.
 
 ---
 
