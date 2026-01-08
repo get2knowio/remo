@@ -18,6 +18,9 @@ Both give you a Linux host where you can run devcontainers, with persistent sess
 ## CLI Quick Reference
 
 ```bash
+# First time setup
+./remo init
+
 # Incus containers
 ./remo incus create <name> [--host <host>] [--user <user>] [--domain <domain>]
 ./remo incus destroy <name> [--host <host>] [--user <user>] [--yes]
@@ -56,7 +59,7 @@ Spin up a cloud VM with full dev tooling.
 
 ### Prerequisites
 
-- Python 3.8+ with pip
+- Python 3.8+
 - SSH key pair (`~/.ssh/id_rsa`)
 - [Hetzner Cloud](https://www.hetzner.com/cloud) account + API token
 - [DuckDNS](https://www.duckdns.org/) account + token + subdomain
@@ -64,15 +67,13 @@ Spin up a cloud VM with full dev tooling.
 ### Quick Start
 
 ```bash
-# Clone and install dependencies
-git clone https://github.com/get2knowio/remote-coding.git
-cd remote-coding
-pip install ansible hcloud
-ansible-galaxy collection install -r ansible/requirements.yml
+# Clone and setup
+git clone https://github.com/get2knowio/remo.git
+cd remo
+./remo init
 
-# Configure credentials
-cp .env.example .env
-# Edit .env with your tokens
+# Edit .env with your Hetzner and DuckDNS tokens
+vim .env
 
 # Provision server
 ./remo hetzner create

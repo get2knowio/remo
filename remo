@@ -68,14 +68,16 @@ show_main_help() {
 remo - Remote development environment CLI
 
 USAGE:
-    remo <provider> <command> [options]
+    remo <command> [options]
     remo --help
 
-PROVIDERS:
+COMMANDS:
+    init        Initialize remo (install dependencies, create .env)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
 
 EXAMPLES:
+    remo init
     remo incus create dev1
     remo incus create dev1 --domain int.example.com
     remo incus destroy dev1 --yes
@@ -85,8 +87,139 @@ EXAMPLES:
     remo hetzner create
     remo hetzner destroy --yes
 
-Run 'remo <provider> --help' for provider-specific commands.
+Run 'remo <command> --help' for command-specific options.
 EOF
+}
+
+show_init_help() {
+    cat << 'EOF'
+remo init - Initialize remo environment
+
+USAGE:
+    remo init [options]
+
+DESCRIPTION:
+    Sets up remo by installing dependencies and creating configuration files.
+    Run this once after cloning the repository.
+
+    This command will:
+    1. Create a Python virtual environment (.venv)
+    2. Install Ansible and hcloud Python packages
+    3. Install required Ansible collections
+    4. Create .env from .env.example (if not exists)
+
+OPTIONS:
+    --force     Recreate venv even if it exists
+    --help      Show this help message
+
+EXAMPLES:
+    remo init
+    remo init --force
+EOF
+}
+
+# =============================================================================
+# INIT COMMAND
+# =============================================================================
+
+handle_init() {
+    local force=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force)
+                force=true
+                shift
+                ;;
+            --help|-h)
+                show_init_help
+                return 0
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo init --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    echo ""
+    print_info "Initializing remo..."
+    echo ""
+
+    # Step 1: Create virtual environment
+    if [ -d "$VENV_DIR" ] && [ "$force" = false ]; then
+        print_success "✓ Virtual environment already exists (.venv)"
+    else
+        if [ "$force" = true ] && [ -d "$VENV_DIR" ]; then
+            print_info "Removing existing virtual environment..."
+            rm -rf "$VENV_DIR"
+        fi
+        print_info "Creating virtual environment..."
+        python3 -m venv "$VENV_DIR"
+        print_success "✓ Created virtual environment (.venv)"
+    fi
+
+    # Use venv binaries directly
+    local python="$VENV_DIR/bin/python"
+    local ansible_galaxy="$VENV_DIR/bin/ansible-galaxy"
+
+    # Step 2: Install Python packages
+    # Use uv if available (faster), otherwise use pip
+    print_info "Installing Python packages (ansible, hcloud)..."
+    if command -v uv &> /dev/null; then
+        uv pip install --quiet --python "$python" ansible hcloud
+    else
+        # Ensure pip is available
+        "$python" -m ensurepip --quiet 2>/dev/null || true
+        "$python" -m pip install --quiet --upgrade pip
+        "$python" -m pip install --quiet ansible hcloud
+    fi
+    print_success "✓ Installed ansible and hcloud"
+
+    # Step 3: Install Ansible collections
+    print_info "Installing Ansible collections..."
+    "$ansible_galaxy" collection install -r "$ANSIBLE_DIR/requirements.yml" > /dev/null
+    print_success "✓ Installed Ansible collections"
+
+    # Step 4: Create .env file
+    local env_example="$SCRIPT_DIR/.env.example"
+    if [ -f "$ENV_FILE" ]; then
+        print_success "✓ Configuration file already exists (.env)"
+    elif [ -f "$env_example" ]; then
+        cp "$env_example" "$ENV_FILE"
+        print_success "✓ Created configuration file (.env)"
+    else
+        print_warning "⚠ No .env.example found, skipping .env creation"
+    fi
+
+    # Print next steps
+    echo ""
+    print_success "═══════════════════════════════════════════════════════════════"
+    print_success "  remo initialized successfully!"
+    print_success "═══════════════════════════════════════════════════════════════"
+    echo ""
+
+    if [ -f "$ENV_FILE" ]; then
+        echo "Next step: Configure your credentials in .env"
+        echo ""
+        echo -e "  ${YELLOW}For Hetzner Cloud:${NC}"
+        echo "    HETZNER_API_TOKEN  - Get from https://console.hetzner.cloud/"
+        echo "    DUCKDNS_TOKEN      - Get from https://www.duckdns.org/"
+        echo "    DUCKDNS_DOMAIN     - Your subdomain (without .duckdns.org)"
+        echo ""
+        echo -e "  ${YELLOW}For Incus (local/homelab):${NC}"
+        echo "    No credentials needed - uses SSH keys"
+        echo ""
+        echo "Then run:"
+        echo -e "  ${GREEN}./remo incus create dev1 --host <incus-host> --user <user>${NC}"
+        echo -e "  ${GREEN}./remo hetzner create${NC}"
+        echo ""
+    fi
 }
 
 show_incus_help() {
@@ -514,6 +647,9 @@ main() {
     shift || true
 
     case "$provider" in
+        init)
+            handle_init "$@"
+            ;;
         incus)
             handle_incus "$@"
             ;;
@@ -527,8 +663,8 @@ main() {
             echo "remo 0.1.0"
             ;;
         *)
-            print_error "Unknown provider: $provider"
-            echo "Run 'remo --help' for available providers."
+            print_error "Unknown command: $provider"
+            echo "Run 'remo --help' for available commands."
             exit 1
             ;;
     esac
