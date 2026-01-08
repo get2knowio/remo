@@ -161,30 +161,39 @@ ssh remo@dev1.int.example.com
 Once you have an environment (Hetzner or Incus), the workflow is the same:
 
 ```bash
-# 1. SSH in
-ssh user@your-host
+# 1. SSH in - you'll see the project menu automatically
+ssh remo@your-host
 
-# 2. Start a Zellij session for persistence
-zellij attach --create main
+# 2. Select a project from the menu (or clone a new one)
+#    The menu shows all projects in ~/projects
+#    Active Zellij sessions are marked
 
-# 3. Clone and launch a devcontainer
-git clone https://github.com/your/project.git
-cd project
-devcontainer up --workspace-folder .
-devcontainer exec --workspace-folder . zsh
+# 3. Work in your project
+#    - Devcontainer projects auto-start their container
+#    - All projects run inside Zellij for session persistence
 
 # 4. Disconnect anytime - your session persists
-#    Ctrl+d to detach from Zellij
+#    Ctrl+o d to detach from Zellij
 #    Close SSH - reconnect later and pick up where you left off
 ```
+
+### Project Menu
+
+On SSH login, you're greeted with an interactive project menu powered by `fzf`:
+
+- **Arrow keys** or **1-9**: Select a project
+- **Enter**: Launch/attach to the project's Zellij session
+- **c**: Clone a new repository
+- **x**: Exit to shell
+
+Projects live in `~/projects`. Active Zellij sessions show as "active" in the menu.
 
 ### Zellij: Persistent Terminal Sessions
 
 [Zellij](https://zellij.dev/) keeps your terminal sessions alive:
 
-- **Start/Attach**: `zellij attach --create main`
-- **Detach**: `Ctrl+d` returns to host shell
-- **Reconnect**: SSH back in, run same command to resume
+- **Detach**: `Ctrl+o d` returns to host shell (and project menu)
+- **Reconnect**: SSH back in, select the same project to resume
 
 For devcontainers, the host Zellij is configured as an "outer" session (tab management only), so you can run an "inner" Zellij inside containers without keybind conflicts.
 
