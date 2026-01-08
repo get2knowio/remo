@@ -4,16 +4,17 @@
 #
 # Usage:
 #   ./run.sh incus_site.yml -e container_name=<name>
-#   ./run.sh incus_site.yml -i "incus-host," -e "container_name=<name> ansible_user=<user>"
+#   ./run.sh incus_site.yml -i "incus-host," -e "container_name=<name> incus_host_user=<user>"
 #   ./run.sh incus_site.yml -e "container_name=<name> container_domain=int.example.com"
 #
 # Required variables:
 #   container_name: Name for the new container
 #
 # Optional variables:
+#   incus_host_user: SSH user for the Incus host (default: current user)
 #   container_image: Image to use (default: images:ubuntu/24.04/cloud)
 #   container_domain: Domain for FQDN (e.g., int.example.com)
-#   container_ssh_user: SSH user (default: ubuntu)
+#   container_ssh_user: SSH user inside container (default: ubuntu)
 #   container_mounts: List of host directory mounts
 #   configure_*: Enable/disable specific dev tools (see incus_configure.yml)
 
@@ -21,6 +22,7 @@
 - name: Provision Incus container
   hosts: "{{ target_hosts | default('localhost') }}"
   connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  remote_user: "{{ incus_host_user | default(omit) }}"
   gather_facts: true
 
   vars:

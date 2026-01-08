@@ -44,6 +44,10 @@
     fqdn: {{ incus_container_name }}.{{ incus_container_domain }}
     {% endif %}
     manage_etc_hosts: true
+    package_update: true
+    packages:
+      - openssh-server
+      - python3
     users:
       - name: {{ incus_container_ssh_user }}
         groups: sudo
