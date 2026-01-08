@@ -1,0 +1,151 @@
+---
+# Pre-flight validation checks for incus_container role
+# These checks run before container creation to ensure the environment is ready
+
+# =============================================================================
+# CHECK 1: Incus daemon is running
+# =============================================================================
+- name: Check if Incus daemon is running
+  ansible.builtin.command:
+    cmd: incus version
+  register: incus_version_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if Incus daemon is not running
+  ansible.builtin.fail:
+    msg: |
+      Incus is not installed or the daemon is not running.
+
+      To fix this:
+        1. Install Incus: ./run.sh incus_bootstrap.yml
+        2. Start the daemon: sudo systemctl start incus
+        3. Verify status: sudo systemctl status incus
+        4. Check socket: incus info
+
+      If Incus is installed but not responding, check:
+        - sudo journalctl -u incus -n 50
+
+      Command 'incus version' failed with exit code {{ incus_version_check.rc | default('unknown') }}.
+  when: incus_version_check.rc | default(1) != 0
+
+# =============================================================================
+# CHECK 2: Image is accessible (may need to be fetched from remote)
+# =============================================================================
+- name: Check if container image is accessible
+  ansible.builtin.command:
+    cmd: incus image info {{ incus_container_image }}
+  register: incus_image_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail if container image is not accessible
+  ansible.builtin.fail:
+    msg: >-
+      Container image '{{ incus_container_image }}' is not accessible.
+      The image may not exist or the remote repository may be unreachable.
+      Command 'incus image info {{ incus_container_image }}' failed with exit code {{ incus_image_check.rc | default('unknown') }}.
+      Verify the image name is correct and network connectivity to the image server.
+  when: incus_image_check.rc | default(1) != 0
+
+# =============================================================================
+# CHECK 3: Storage pool exists
+# =============================================================================
+- name: List storage pools
+  ansible.builtin.command:
+    cmd: incus storage list --format=json
+  register: incus_storage_list
+  changed_when: false
+  failed_when: false
+
+- name: Fail if storage list command failed
+  ansible.builtin.fail:
+    msg: >-
+      Failed to list Incus storage pools.
+      Command 'incus storage list --format=json' failed with exit code {{ incus_storage_list.rc | default('unknown') }}.
+      Ensure Incus is properly initialized using the incus_bootstrap role.
+  when: incus_storage_list.rc | default(1) != 0
+
+- name: Parse storage pool list
+  ansible.builtin.set_fact:
+    incus_storage_pools: "{{ incus_storage_list.stdout | default('[]') | from_json }}"
+
+- name: Fail if no storage pools exist
+  ansible.builtin.fail:
+    msg: >-
+      No Incus storage pools are configured.
+      At least one storage pool is required for container creation.
+      Please run the incus_bootstrap role to configure storage pools.
+  when: incus_storage_pools | length == 0
+
+# =============================================================================
+# CHECK 4: Network exists
+# =============================================================================
+- name: List networks
+  ansible.builtin.command:
+    cmd: incus network list --format=json
+  register: incus_network_list
+  changed_when: false
+  failed_when: false
+
+- name: Fail if network list command failed
+  ansible.builtin.fail:
+    msg: >-
+      Failed to list Incus networks.
+      Command 'incus network list --format=json' failed with exit code {{ incus_network_list.rc | default('unknown') }}.
+      Ensure Incus is properly initialized using the incus_bootstrap role.
+  when: incus_network_list.rc | default(1) != 0
+
+- name: Parse network list
+  ansible.builtin.set_fact:
+    incus_networks: "{{ incus_network_list.stdout | default('[]') | from_json }}"
+
+- name: Extract network names
+  ansible.builtin.set_fact:
+    incus_network_names: "{{ incus_networks | map(attribute='name') | list }}"
+
+- name: Fail if configured network does not exist
+  ansible.builtin.fail:
+    msg: >-
+      The configured network '{{ incus_container_network }}' does not exist.
+      Available networks: {{ incus_network_names | join(', ') | default('none') }}.
+      Please create the network using the incus_bootstrap role or update
+      the 'incus_container_network' variable to match an existing network.
+  when: incus_container_network not in incus_network_names
+
+# =============================================================================
+# CHECK 5: SSH public key exists (checked on controller, not Incus host)
+# =============================================================================
+- name: Expand SSH public key path
+  ansible.builtin.set_fact:
+    incus_ssh_key_expanded: "{{ incus_container_ssh_key_path | expanduser }}"
+
+- name: Check if SSH public key file exists
+  ansible.builtin.stat:
+    path: "{{ incus_ssh_key_expanded }}"
+  register: incus_ssh_key_stat
+  delegate_to: localhost
+  become: false
+
+- name: Fail if SSH public key file does not exist
+  ansible.builtin.fail:
+    msg: >-
+      SSH public key file not found at '{{ incus_container_ssh_key_path }}'
+      (expanded: '{{ incus_ssh_key_expanded }}').
+      This key is required for SSH access to the container.
+      Generate a key pair with 'ssh-keygen' or update
+      the 'incus_container_ssh_key_path' variable to point to an existing key.
+  when: not (incus_ssh_key_stat.stat.exists | default(false))
+
+# =============================================================================
+# Pre-flight checks complete
+# =============================================================================
+- name: Pre-flight validation complete
+  ansible.builtin.debug:
+    msg: >-
+      All pre-flight checks passed:
+      - Incus daemon is running (version: {{ (incus_version_check.stdout | default('unknown')).split('\n')[0] | default('unknown') }})
+      - Image '{{ incus_container_image }}' is accessible
+      - {{ incus_storage_pools | length }} storage pool(s) available
+      - Network '{{ incus_container_network }}' exists
+      - SSH public key found at '{{ incus_ssh_key_expanded }}'

@@ -1,0 +1,16 @@
+---
+# Group variables for Incus containers
+# Connection defaults for all containers in the incus_containers group
+
+# Python interpreter location (Ubuntu 24.04 default)
+ansible_python_interpreter: /usr/bin/python3
+
+# Default SSH user for Incus containers (created by cloud-init)
+ansible_user: ubuntu
+
+# Default SSH private key path
+# Can be overridden per-container in inventory
+ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+# SSH connection settings optimized for containers
+ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

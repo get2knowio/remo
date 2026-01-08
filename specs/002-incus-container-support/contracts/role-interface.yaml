@@ -1,0 +1,272 @@
+# Role Interface Contract: Incus Container Roles
+# This file documents the public interface of container management roles
+# Version: 1.0.0
+
+---
+# Role: incus_container
+role_name: incus_container
+location: ansible/roles/incus_container
+description: >
+  Creates and provisions an Incus container with SSH access.
+  Handles complete lifecycle: existence check, creation, cloud-init,
+  startup, IP discovery, SSH wait, and inventory registration.
+
+# Input Variables
+variables:
+  required:
+    - name: incus_container_name
+      type: string
+      description: "Unique name for the container"
+      validation: "alphanumeric with dashes/underscores, max 63 chars"
+      example: "dev-container"
+
+  optional:
+    - name: incus_container_image
+      type: string
+      default: "images:ubuntu/24.04/cloud"
+      description: "Container image to use (must be cloud-enabled for SSH)"
+      validation: "Must exist in configured image remotes"
+      examples:
+        - "images:ubuntu/24.04/cloud"
+        - "images:ubuntu/22.04/cloud"
+        - "images:debian/12/cloud"
+
+    - name: incus_container_profile
+      type: string
+      default: "default"
+      description: "Incus profile to apply"
+      validation: "Profile must exist"
+
+    - name: incus_container_ssh_user
+      type: string
+      default: "ubuntu"
+      description: "User for SSH access (created via cloud-init)"
+
+    - name: incus_container_ssh_key_path
+      type: string
+      default: "~/.ssh/id_rsa.pub"
+      description: "Path to SSH public key for injection"
+      validation: "File must exist and be readable"
+
+    - name: incus_container_ssh_private_key
+      type: string
+      default: "~/.ssh/id_rsa"
+      description: "Path to SSH private key for connection testing"
+
+    - name: incus_container_network
+      type: string
+      default: "incusbr0"
+      description: "Incus network to attach container"
+      validation: "Network must exist (created by 001-bootstrap-incus-host)"
+
+    - name: incus_container_wait_timeout
+      type: integer
+      default: 180
+      description: "Seconds to wait for SSH availability"
+      validation: "Positive integer, max 600"
+
+    - name: incus_container_mounts
+      type: list[Mount]
+      default: "[]"
+      description: "Host directory mounts for persistent storage"
+      example: |
+        - source: /home/user/projects
+          target: /home/ubuntu/projects
+          device_name: projects
+
+# Output Facts
+output_facts:
+  - name: incus_container_ip
+    type: string
+    description: "IPv4 address assigned to container"
+    example: "10.180.234.50"
+
+  - name: incus_container_created
+    type: boolean
+    description: "True if container was created in this run"
+
+  - name: incus_container_exists
+    type: boolean
+    description: "True if container exists after role execution"
+
+# Dependencies
+dependencies:
+  system:
+    - name: incus
+      reason: "Container runtime"
+      check: "incus version"
+    - name: jq
+      reason: "JSON parsing for IP extraction"
+      check: "which jq"
+
+  incus:
+    - name: storage_pool
+      reason: "Container filesystem storage"
+      check: "incus storage list | grep -q default"
+    - name: network
+      reason: "Container networking"
+      check: "incus network show incusbr0"
+
+  files:
+    - name: ssh_public_key
+      path: "{{ incus_container_ssh_key_path }}"
+      reason: "SSH key injection"
+
+# Task Sequence
+tasks:
+  - name: Check if container exists
+    command: "incus info {{ incus_container_name }}"
+    changes: none
+    output: register container_exists (rc == 0)
+
+  - name: Initialize container
+    command: "incus init {{ incus_container_image }} {{ incus_container_name }}"
+    changes: creates container in stopped state
+    when: container does not exist
+
+  - name: Configure cloud-init
+    command: "incus config set {{ incus_container_name }} cloud-init.user-data ..."
+    changes: sets cloud-init configuration
+    when: container was just created
+
+  - name: Add disk devices
+    command: "incus config device add {{ incus_container_name }} ... disk ..."
+    changes: adds mount points
+    when: mounts defined and device not present
+
+  - name: Start container
+    command: "incus start {{ incus_container_name }}"
+    changes: starts container
+    when: container not running
+
+  - name: Wait for IP address
+    command: "incus list {{ incus_container_name }} --format=json | jq ..."
+    changes: none
+    output: register incus_container_ip
+    retries: 30, delay: 2
+
+  - name: Wait for SSH availability
+    module: ansible.builtin.wait_for
+    changes: none
+    retries: configurable via timeout
+
+  - name: Add container to inventory
+    module: ansible.builtin.add_host
+    changes: updates in-memory inventory
+    groups: incus_containers
+
+# Idempotency Guarantees
+idempotency:
+  container_exists_running: "No changes, returns current IP"
+  container_exists_stopped: "Starts container, waits for IP"
+  container_absent: "Creates, configures, starts, waits for IP"
+  mount_device_exists: "Skips device addition"
+  ssh_already_accessible: "Passes wait immediately"
+
+# Error Conditions
+errors:
+  - condition: "Incus not installed/running"
+    detection: "incus version fails"
+    message: "Incus is not available. Run 001-bootstrap-incus-host first."
+
+  - condition: "Image not found"
+    detection: "incus init returns 'Image not found'"
+    message: "Image {{ incus_container_image }} not available. Check image remote."
+
+  - condition: "SSH key not found"
+    detection: "stat {{ incus_container_ssh_key_path }} fails"
+    message: "SSH public key not found at {{ incus_container_ssh_key_path }}"
+
+  - condition: "SSH timeout"
+    detection: "wait_for exceeds timeout"
+    message: "SSH not available after {{ incus_container_wait_timeout }}s. Check cloud-init logs."
+
+  - condition: "Mount source not accessible"
+    detection: "Directory creation fails"
+    message: "Cannot create/access mount source: {{ mount.source }}"
+
+---
+# Role: incus_container_teardown
+role_name: incus_container_teardown
+location: ansible/roles/incus_container_teardown
+description: >
+  Destroys an Incus container with configurable data preservation.
+  Handles running containers, confirmation prompts, and mount cleanup.
+
+# Input Variables
+variables:
+  required:
+    - name: incus_container_name
+      type: string
+      description: "Name of container to destroy"
+
+  optional:
+    - name: incus_container_preserve_data
+      type: boolean
+      default: true
+      description: "Keep host mount directories after destruction"
+
+    - name: incus_container_force
+      type: boolean
+      default: false
+      description: "Force delete running container (otherwise stops first)"
+
+    - name: auto_confirm
+      type: boolean
+      default: false
+      description: "Skip user confirmation prompt"
+
+# Output Facts
+output_facts:
+  - name: incus_container_destroyed
+    type: boolean
+    description: "True if container was destroyed in this run"
+
+  - name: incus_container_data_preserved
+    type: list[string]
+    description: "Paths of preserved mount directories"
+
+# Task Sequence
+tasks:
+  - name: Check if container exists
+    command: "incus info {{ incus_container_name }}"
+    changes: none
+    output: register container_exists
+
+  - name: Display teardown warning
+    module: ansible.builtin.debug
+    when: container exists
+
+  - name: Confirm teardown
+    module: ansible.builtin.pause
+    when: "not auto_confirm and container exists"
+
+  - name: Stop container
+    command: "incus stop {{ incus_container_name }}"
+    when: "container running and not force"
+
+  - name: Delete container
+    command: "incus delete {{ incus_container_name }} {{ '--force' if force else '' }}"
+    when: container exists
+
+  - name: Remove mount directories
+    module: ansible.builtin.file
+    when: "not preserve_data"
+
+# Idempotency Guarantees
+idempotency:
+  container_exists: "Destroys container"
+  container_absent: "No-op, returns success"
+  data_preserved: "Mount directories remain"
+  data_removed: "Mount directories deleted"
+
+# Error Conditions
+errors:
+  - condition: "User cancels confirmation"
+    detection: "User input != 'yes'"
+    exit_code: 99
+    message: "Teardown aborted by user"
+
+  - condition: "Force required for running container"
+    detection: "Delete fails on running container"
+    message: "Container is running. Use force=true or stop first."

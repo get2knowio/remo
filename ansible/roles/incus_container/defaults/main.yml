@@ -1,0 +1,105 @@
+---
+# incus_container default variables
+# This file defines all default configuration for the Incus container management role
+# Ansible best practice: All variables that can be overridden should be in defaults/main.yml
+
+# ============================================================================
+# CONTAINER IDENTITY
+# ============================================================================
+# These variables define the container's basic identity and image source
+
+# Container name - REQUIRED, no default value
+# Must be unique within the Incus instance
+# Example: "dev-container", "web-server-01"
+# incus_container_name: ""
+
+# Container image to use
+# Must be a cloud-enabled image that supports cloud-init for SSH key injection
+# Common cloud images:
+#   - images:ubuntu/24.04/cloud (Ubuntu 24.04 LTS)
+#   - images:ubuntu/22.04/cloud (Ubuntu 22.04 LTS)
+#   - images:debian/12/cloud (Debian 12)
+#   - images:opensuse/tumbleweed/cloud (OpenSUSE Tumbleweed)
+incus_container_image: "images:ubuntu/24.04/cloud"
+
+# Incus profile to apply to the container
+# Profiles define resource limits, network configuration, and device mappings
+# The "default" profile is created by Incus initialization
+incus_container_profile: "default"
+
+# ============================================================================
+# SSH CONFIGURATION
+# ============================================================================
+# These variables configure SSH access to the container via cloud-init
+
+# Username for SSH access to the container
+# This user is created by cloud-init and granted sudo privileges
+incus_container_ssh_user: "ubuntu"
+
+# Path to the SSH public key for injection into the container
+# The public key content is read and injected via cloud-init user-data
+# Supports tilde expansion for home directory
+incus_container_ssh_key_path: "~/.ssh/id_rsa.pub"
+
+# Path to the SSH private key for Ansible connections to the container
+# Used when adding the container to Ansible inventory via add_host
+# Supports tilde expansion for home directory
+incus_container_ssh_private_key: "~/.ssh/id_rsa"
+
+# ============================================================================
+# NETWORK CONFIGURATION
+# ============================================================================
+# These variables configure container networking
+
+# Network to attach the container to
+# This should be a network created by the incus_bootstrap role (001-bootstrap-incus-host)
+# Default "incusbr0" is a macvlan network where containers get LAN IPs via DHCP
+incus_container_network: "incusbr0"
+
+# Network interface name inside container (for IP detection)
+# This is the interface name that the container uses for its primary network connection
+# Common values: "eth0" (default for most images), "enp5s0" (some distros)
+incus_container_network_interface: "eth0"
+
+# Timeout in seconds to wait for container SSH availability
+# The role waits for the container to:
+#   1. Start and obtain an IP address
+#   2. Complete cloud-init configuration
+#   3. Accept SSH connections
+# Increase this value for slower networks or images with longer boot times
+incus_container_wait_timeout: 180
+
+# Domain name for the container's FQDN
+# When set, the container's FQDN will be: <container_name>.<domain>
+# This is sent to the DHCP server for DNS registration
+# Example: "int.get2know.io" results in FQDN "my-container.int.get2know.io"
+# Leave empty to use only the container name as hostname
+incus_container_domain: ""
+
+# ============================================================================
+# PERSISTENT STORAGE
+# ============================================================================
+# These variables configure host directory mounts for persistent data
+
+# List of host-to-container directory mounts
+# Each mount creates an Incus disk device that maps a host directory into the container
+# Data persists in host directories even if the container is destroyed
+#
+# Mount structure:
+#   source: Absolute path on the host (will be created if it doesn't exist)
+#   target: Absolute path inside the container where the directory is mounted
+#   device_name: (optional) Incus device name, defaults to a name derived from target
+#
+# Example:
+#   incus_container_mounts:
+#     - source: "/home/{{ ansible_user_id }}/projects"
+#       target: "/home/ubuntu/projects"
+#       device_name: "projects"
+#     - source: "/mnt/data/{{ incus_container_name }}"
+#       target: "/data"
+#
+# Validation rules:
+#   - source must be an absolute path
+#   - target must be an absolute path
+#   - device_name must be alphanumeric with underscores/dashes only
+incus_container_mounts: []

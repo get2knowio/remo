@@ -1,0 +1,64 @@
+---
+# Incus Teardown Playbook - Destroy a container
+# Usage: ./run.sh incus_teardown.yml -e container_name=<name>
+#        ./run.sh incus_teardown.yml -i "incus-host," -e "container_name=<name> incus_host_user=<user>"
+#
+# Required variables:
+#   container_name: Name of the container to destroy
+#
+# Optional variables (see roles/incus_container_teardown/defaults/main.yml):
+#   preserve_data: Keep mount directories (default: true)
+#   force: Force delete even if running (default: false)
+#   auto_confirm: Skip confirmation prompt (default: false)
+#
+# Remote host support:
+#   Use -i "hostname," to target a remote Incus host (note the trailing comma)
+#   Use -e incus_host_user=<user> to specify the SSH user for the Incus host
+
+- name: Teardown Incus container
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  remote_user: "{{ incus_host_user | default(omit) }}"
+  gather_facts: false
+
+  vars:
+    # Map user-friendly variable names to role variables
+    incus_container_name: "{{ container_name }}"
+    incus_container_preserve_data: "{{ preserve_data | default(true) | bool }}"
+    incus_container_force: "{{ force | default(false) | bool }}"
+    incus_container_auto_confirm: "{{ auto_confirm | default(false) | bool }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_name' is not defined. Use -e container_name=<name>"
+      when: container_name is not defined
+
+  roles:
+    - role: incus_container_teardown
+
+  # T036: Success message
+  post_tasks:
+    - name: Display teardown success message
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          Container teardown complete!
+          ============================================================
+
+          Container: {{ incus_container_name }}
+          Destroyed: {{ incus_container_destroyed | default(false) }}
+          Data preserved: {{ incus_container_data_preserved | default(true) }}
+
+          {% if incus_container_destroyed | default(false) %}
+          The container has been successfully removed.
+          {% else %}
+          No container was destroyed (container may not have existed).
+          {% endif %}
+
+          {% if incus_container_data_preserved | default(true) %}
+          Any host mount directories have been preserved.
+          {% else %}
+          Mount directories were left for manual cleanup if needed.
+          {% endif %}
+          ============================================================

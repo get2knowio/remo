@@ -1,0 +1,49 @@
+---
+# Shared dev tools configuration
+# Include this from any playbook to install the standard dev environment
+#
+# Required: Run on a host with become: true and apt cache updated
+#
+# Optional variables to disable specific tools:
+#   configure_docker: false
+#   configure_user_setup: false
+#   configure_nodejs: false
+#   configure_devcontainers: false
+#   configure_github_cli: false
+#   configure_fzf: false
+#   configure_zellij: false
+
+- name: Install Docker
+  ansible.builtin.include_role:
+    name: docker
+  when: configure_docker | default(true) | bool
+
+- name: Configure user environment
+  ansible.builtin.include_role:
+    name: user_setup
+  when: configure_user_setup | default(true) | bool
+
+- name: Install Node.js
+  ansible.builtin.include_role:
+    name: nodejs
+  when: configure_nodejs | default(true) | bool
+
+- name: Install Dev Containers CLI
+  ansible.builtin.include_role:
+    name: devcontainers
+  when: configure_devcontainers | default(true) | bool
+
+- name: Install GitHub CLI
+  ansible.builtin.include_role:
+    name: github_cli
+  when: configure_github_cli | default(true) | bool
+
+- name: Install fzf
+  ansible.builtin.include_role:
+    name: fzf
+  when: configure_fzf | default(true) | bool
+
+- name: Install Zellij
+  ansible.builtin.include_role:
+    name: zellij
+  when: configure_zellij | default(true) | bool

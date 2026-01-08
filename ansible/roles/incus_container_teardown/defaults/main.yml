@@ -1,0 +1,41 @@
+---
+# Default variables for incus_container_teardown role
+#
+# This role manages container destruction with data preservation options.
+
+# -----------------------------------------------------------------------------
+# Container Identity (REQUIRED)
+# -----------------------------------------------------------------------------
+
+# incus_container_name: (no default - required)
+# The name of the Incus container to destroy.
+# This variable must be provided when calling the role.
+
+# -----------------------------------------------------------------------------
+# Data Preservation
+# -----------------------------------------------------------------------------
+
+# When true, host mount directories (disk devices) are preserved after
+# container deletion. When false, mounted host directories may be removed.
+# Set to false only if you want a complete cleanup including data directories.
+incus_container_preserve_data: true
+
+# -----------------------------------------------------------------------------
+# Force Deletion
+# -----------------------------------------------------------------------------
+
+# When true, forcefully delete the container even if it is running.
+# When false, the role will stop the container gracefully before deletion.
+# Use with caution - force delete does not allow the container to shut down
+# cleanly.
+incus_container_force: false
+
+# -----------------------------------------------------------------------------
+# Confirmation
+# -----------------------------------------------------------------------------
+
+# When true, skip the confirmation prompt before destroying the container.
+# This is useful for automated pipelines or when the caller has already
+# confirmed the destructive action.
+# When false (default), the role will pause and require confirmation.
+incus_container_auto_confirm: false

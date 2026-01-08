@@ -1,0 +1,13 @@
+---
+# Handlers for incus_container role
+#
+# This role does not currently require handlers as all operations are
+# performed directly in tasks without needing deferred actions:
+#   - Container creation: Immediate via `incus init`
+#   - Cloud-init configuration: Applied before first start
+#   - Container start: Immediate via `incus start`
+#   - IP address acquisition: Polled until available
+#
+# Unlike services (e.g., Docker) that need restart handlers when configuration
+# changes, Incus containers are configured before starting, eliminating the
+# need for restart-on-change patterns.

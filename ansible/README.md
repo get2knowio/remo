@@ -1,15 +1,66 @@
 # Ansible Playbooks
 
-This directory contains the Ansible automation for provisioning and configuring the remote coding server.
+This directory contains the Ansible automation for provisioning and configuring development environments.
 
 ## Playbooks
 
+### Hetzner Cloud
+
 | Playbook | Description |
 |----------|-------------|
-| `site.yml` | Complete workflow: provision server + configure all software |
-| `provision.yml` | Create Hetzner server and register with DuckDNS |
-| `configure.yml` | Install software on an existing server |
-| `teardown.yml` | Destroy server and optionally the volume |
+| `hetzner_site.yml` | Complete workflow: provision + configure |
+| `hetzner_provision.yml` | Create server and register with DuckDNS |
+| `hetzner_configure.yml` | Install dev tools on existing server |
+| `hetzner_teardown.yml` | Destroy server and optionally the volume |
+
+### Incus Containers
+
+| Playbook | Description |
+|----------|-------------|
+| `incus_site.yml` | Complete workflow: provision + configure |
+| `incus_provision.yml` | Create container with SSH access |
+| `incus_configure.yml` | Install dev tools on existing container |
+| `incus_teardown.yml` | Destroy container |
+| `incus_bootstrap.yml` | Install and configure Incus on a host |
+
+### Shared Configuration
+
+Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task file (`tasks/configure_dev_tools.yml`) to install:
+- Docker (with docker-compose plugin)
+- Node.js LTS
+- @devcontainers/cli
+- GitHub CLI (gh)
+- fzf
+- Zellij terminal multiplexer
+
+## Running Playbooks
+
+### Hetzner
+
+```bash
+./run.sh hetzner_site.yml                    # Full provision + configure
+./run.sh hetzner_provision.yml               # Just create server
+./run.sh hetzner_configure.yml               # Configure existing server
+./run.sh hetzner_teardown.yml                # Destroy server (keep volume)
+./run.sh hetzner_teardown.yml -e remove_volume=true  # Destroy everything
+```
+
+### Incus
+
+```bash
+# Full workflow (provision + configure)
+./run.sh incus_site.yml -e container_name=dev1
+
+# Or step by step
+./run.sh incus_provision.yml -e container_name=dev1
+./run.sh incus_configure.yml -e container_ip=<ip>
+
+# Teardown
+./run.sh incus_teardown.yml -e container_name=dev1
+
+# Bootstrap Incus on a host (prerequisite)
+./run.sh incus_bootstrap.yml -i "host," -e "target_hosts=all ansible_user=user"
+```
 
 ## Roles
 
@@ -17,43 +68,22 @@ This directory contains the Ansible automation for provisioning and configuring 
 |------|-------------|
 | `hetzner_server` | Creates Hetzner Cloud server, firewall, volume, and SSH key |
 | `duckdns` | Updates DuckDNS with the server's IP address |
+| `incus_bootstrap` | Installs and configures Incus with storage and networking |
+| `incus_container` | Creates and configures an Incus container |
+| `incus_container_teardown` | Destroys an Incus container |
 | `docker` | Installs Docker CE and docker-compose plugin |
-| `user_setup` | Creates `g2k` user with sudo and docker access |
+| `user_setup` | Creates user with sudo and docker access |
 | `nodejs` | Installs Node.js LTS from NodeSource |
 | `devcontainers` | Installs @devcontainers/cli globally |
 | `github_cli` | Installs GitHub CLI (`gh`) |
+| `fzf` | Installs fzf fuzzy finder |
 | `zellij` | Installs and configures Zellij terminal multiplexer |
-
-## Running Playbooks
-
-### Using the wrapper script (recommended)
-
-From the repository root:
-
-```bash
-./run.sh site.yml                    # Full provision + configure
-./run.sh provision.yml               # Just create server
-./run.sh configure.yml               # Configure existing server
-./run.sh teardown.yml                # Destroy server (keep volume)
-./run.sh teardown.yml -e remove_volume=true  # Destroy everything
-```
-
-### Running directly
-
-From this directory:
-
-```bash
-ansible-playbook site.yml
-ansible-playbook provision.yml
-ansible-playbook configure.yml -e "hetzner_server_ip=<ip>"
-ansible-playbook teardown.yml
-```
 
 ## Configuration
 
-### Environment Variables
+### Environment Variables (Hetzner)
 
-Set these in `.env` at the repository root, or export them:
+Set these in `.env` at the repository root:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
@@ -63,109 +93,62 @@ Set these in `.env` at the repository root, or export them:
 | `SSH_PRIVATE_KEY_PATH` | No | Path to SSH private key (default: `~/.ssh/id_rsa`) |
 | `SSH_PUBLIC_KEY_PATH` | No | Path to SSH public key (default: `~/.ssh/id_rsa.pub`) |
 
-### Global Variables
+### Incus Variables
 
-Edit `group_vars/all.yml` to customize:
-
-```yaml
-# Server configuration
-hetzner_server_name: remote-coding
-hetzner_server_type: cx22
-hetzner_server_image: ubuntu-24.04
-hetzner_server_location: hel1
-
-# Node.js version
-nodejs_version: "24"
-
-# Zellij session name
-zellij_session_name: main
-
-# Workspace directory for devshell helper
-dev_workspace_dir: ~/workspace
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `container_name` | (required) | Name of the container |
+| `container_image` | `images:ubuntu/24.04/cloud` | Cloud image to use |
+| `container_domain` | (empty) | Domain for FQDN, enables DHCP hostname registration |
+| `container_ssh_user` | `ubuntu` | SSH user created in container |
+| `container_ip` | (required for configure) | IP address of container to configure |
 
 ## Project Structure
 
 ```
 ansible/
-├── ansible.cfg          # Ansible configuration
-├── requirements.yml     # Galaxy collection dependencies
-├── site.yml             # Main playbook
-├── provision.yml        # Server creation only
-├── configure.yml        # Software installation only
-├── teardown.yml         # Cleanup playbook
+├── hetzner_site.yml          # Hetzner: full workflow
+├── hetzner_provision.yml     # Hetzner: create server
+├── hetzner_configure.yml     # Hetzner: install dev tools
+├── hetzner_teardown.yml      # Hetzner: destroy server
+├── incus_site.yml            # Incus: full workflow
+├── incus_provision.yml       # Incus: create container
+├── incus_configure.yml       # Incus: install dev tools
+├── incus_teardown.yml        # Incus: destroy container
+├── incus_bootstrap.yml       # Incus: install Incus on host
+├── tasks/
+│   └── configure_dev_tools.yml  # Shared dev tools configuration
+├── roles/
+│   ├── hetzner_server/
+│   ├── duckdns/
+│   ├── incus_bootstrap/
+│   ├── incus_container/
+│   ├── incus_container_teardown/
+│   ├── docker/
+│   ├── user_setup/
+│   ├── nodejs/
+│   ├── devcontainers/
+│   ├── github_cli/
+│   ├── fzf/
+│   └── zellij/
 ├── inventory/
-│   └── hosts.yml        # Dynamic inventory
-├── group_vars/
-│   └── all.yml          # Global variables
-└── roles/
-    ├── hetzner_server/
-    │   ├── defaults/main.yml
-    │   └── tasks/main.yml
-    ├── duckdns/
-    │   ├── defaults/main.yml
-    │   └── tasks/main.yml
-    ├── docker/
-    │   ├── handlers/main.yml
-    │   └── tasks/main.yml
-    ├── user_setup/
-    │   ├── defaults/main.yml
-    │   ├── tasks/main.yml
-    │   └── templates/devshell.sh.j2
-    ├── nodejs/
-    │   ├── defaults/main.yml
-    │   └── tasks/main.yml
-    ├── devcontainers/
-    │   └── tasks/main.yml
-    ├── github_cli/
-    │   └── tasks/main.yml
-    └── zellij/
-        ├── defaults/main.yml
-        ├── tasks/main.yml
-        └── templates/config.kdl.j2
+│   └── hosts.yml
+└── group_vars/
+    └── all.yml
 ```
 
-## Adding New Roles
+## Adding New Dev Tools
 
-1. Create role structure:
-   ```bash
-   mkdir -p roles/myrole/{tasks,defaults,handlers,templates}
-   ```
+To add a new tool to both Hetzner and Incus environments:
 
-2. Add tasks in `roles/myrole/tasks/main.yml`
+1. Create the role in `roles/mytool/tasks/main.yml`
 
-3. Add the role to `configure.yml` (or `site.yml`):
+2. Add it to `tasks/configure_dev_tools.yml`:
    ```yaml
-   roles:
-     - role: myrole
+   - name: Install mytool
+     ansible.builtin.include_role:
+       name: mytool
+     when: configure_mytool | default(true) | bool
    ```
 
-4. Optionally add a tag for selective execution:
-   ```yaml
-   roles:
-     - role: myrole
-       tags: [myrole]
-   ```
-
-## Server Specifications
-
-Default Hetzner server (configurable in `group_vars/all.yml`):
-
-| Spec | Value |
-|------|-------|
-| Type | cx22 (smallest shared vCPU) |
-| CPU | 2 vCPU (shared) |
-| RAM | 4 GB |
-| Disk | 40 GB SSD |
-| Image | Ubuntu 24.04 LTS |
-| Location | Helsinki (hel1) |
-
-## Firewall Rules
-
-The `hetzner_server` role creates a firewall allowing only:
-
-| Port | Protocol | Description |
-|------|----------|-------------|
-| 22 | TCP | SSH |
-
-All other inbound traffic is blocked.
+Both environments will automatically get the new tool.
