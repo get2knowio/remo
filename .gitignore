@@ -40,3 +40,4 @@ env/
 # Maverick workflow state (ignore everything except checkpoints)
 .maverick/*
 !.maverick/checkpoints/
+.claude/settings.local.json
