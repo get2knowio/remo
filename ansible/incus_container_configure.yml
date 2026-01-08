@@ -10,6 +10,8 @@
 #   configure_docker: Enable/disable docker role (default: true)
 #   configure_user_setup: Enable/disable user_setup role (default: true)
 #   configure_nodejs: Enable/disable nodejs role (default: true)
+#   configure_devcontainers: Enable/disable devcontainers role (default: true)
+#   configure_github_cli: Enable/disable github_cli role (default: true)
 #   configure_fzf: Enable/disable fzf role (default: true)
 #   configure_zellij: Enable/disable zellij role (default: true)
 #
@@ -71,6 +73,10 @@
       when: configure_user_setup | default(true) | bool
     - role: nodejs
       when: configure_nodejs | default(true) | bool
+    - role: devcontainers
+      when: configure_devcontainers | default(true) | bool
+    - role: github_cli
+      when: configure_github_cli | default(true) | bool
     - role: fzf
       when: configure_fzf | default(true) | bool
     - role: zellij
@@ -87,6 +93,8 @@
           Installed tools:
             - Docker: {{ 'Yes' if (configure_docker | default(true)) else 'No' }}
             - Node.js: {{ 'Yes' if (configure_nodejs | default(true)) else 'No' }}
+            - Dev Containers CLI: {{ 'Yes' if (configure_devcontainers | default(true)) else 'No' }}
+            - GitHub CLI: {{ 'Yes' if (configure_github_cli | default(true)) else 'No' }}
             - fzf: {{ 'Yes' if (configure_fzf | default(true)) else 'No' }}
             - Zellij: {{ 'Yes' if (configure_zellij | default(true)) else 'No' }}
 

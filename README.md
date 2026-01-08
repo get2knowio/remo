@@ -90,8 +90,11 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 | **System Container** | Lightweight, near-native performance |
 | **LAN IP via DHCP** | Accessible from any machine on your network |
 | **Hostname DNS** | `ssh ubuntu@container-name` (if your router registers DHCP hostnames) |
-| **Docker + Compose** | Optional: install via configure playbook |
-| **Dev Containers CLI** | Optional: install via configure playbook |
+| **Docker + Compose** | Official Docker CE with compose plugin |
+| **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
+| **Node.js 24 LTS** | From NodeSource repository |
+| **GitHub CLI** | `gh` for GitHub workflow integration |
+| **Zellij** | Terminal multiplexer for persistent sessions |
 | **Host Mounts** | Persistent data directories from the Incus host |
 
 ### Prerequisites
@@ -102,26 +105,22 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 ### Quick Start
 
 ```bash
-# Create a container (from your laptop, targeting your Incus host)
+# Step 1: Create container (from your laptop, targeting your Incus host)
 ./run.sh incus_container.yml \
   -i "incus-host," \
   -e "container_name=dev1" \
   -e "container_domain=int.example.com" \
   -e "ansible_user=youruser"
 
+# Step 2: Install dev tools (Docker, Node.js, devcontainer CLI, etc.)
+./run.sh incus_container_configure.yml \
+  -i "incus-host," \
+  -e "container_name=dev1" \
+  -e "ansible_user=youruser"
+
 # SSH in (once DNS registers the hostname)
 ssh ubuntu@dev1
 ssh ubuntu@dev1.int.example.com
-
-# Or by IP (shown in playbook output)
-ssh ubuntu@192.168.1.x
-```
-
-### Configure with Dev Tools (Optional)
-
-```bash
-# Install Docker, Node.js, fzf, Zellij in the container
-./run.sh incus_container_configure.yml -e container_name=dev1
 ```
 
 ### Common Variables

@@ -190,12 +190,12 @@ Provision and manage Incus containers on localhost. Requires an Incus host boots
 ### Container Configuration
 
 ```bash
-# Configure container with all default tools (docker, nodejs, fzf, zellij)
+# Configure container with all dev tools (Docker, Node.js, devcontainer CLI, GitHub CLI, fzf, Zellij)
 ./run.sh incus_container_configure.yml -e container_name=mycontainer
 
 # Disable specific tools
 ./run.sh incus_container_configure.yml -e container_name=mycontainer -e configure_docker=false
-./run.sh incus_container_configure.yml -e container_name=mycontainer -e configure_nodejs=false
+./run.sh incus_container_configure.yml -e container_name=mycontainer -e configure_devcontainers=false
 ```
 
 ### Container Teardown
