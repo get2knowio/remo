@@ -1,7 +1,7 @@
 # Quickstart: Incus Container Support
 
 **Feature Branch**: `002-incus-container-support`
-**Date**: 2025-12-28
+**Date**: 2026-01-07
 
 ## Prerequisites
 
@@ -39,10 +39,12 @@
 ### Connect to Container
 
 ```bash
-# SSH into the container
+# SSH into the container from a separate workstation (not the Incus host)
+# Containers get LAN IPs via DHCP (macvlan networking)
 ssh ubuntu@<container_ip>
 
-# Or use incus directly (no SSH required)
+# IMPORTANT: The Incus host CANNOT SSH to containers directly (macvlan limitation)
+# Use incus exec on the host instead:
 incus exec dev -- bash
 ```
 

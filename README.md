@@ -1,76 +1,46 @@
 # Remo
 
-Spin up a fully-configured cloud development server in minutes. One command gives you a persistent, secure remote coding environment with Dev Containers support.
+Spin up a fully-configured development environment in minutes. One command gives you a persistent, secure coding environment with Dev Containers support.
 
-## Why Remote Coding?
+## Two Ways to Get a Dev Environment
 
-- **Code from anywhere** - SSH into your server from any machine
-- **Persistent sessions** - Disconnect and reconnect without losing work (Zellij terminal multiplexer)
-- **Dev Containers ready** - Full Docker and devcontainer CLI support out of the box
-- **Cost-effective** - Pay only for what you use (~€4/month for Hetzner's smallest server)
-- **Data persistence** - Your home directory survives server teardown/rebuild
+| | Hetzner Cloud | Incus Container |
+|---|---|---|
+| **Where** | Cloud VM (remote) | Container on your hardware (local/homelab) |
+| **Cost** | ~€4/month | Your electricity |
+| **Access** | SSH over internet via DuckDNS | SSH on your LAN by hostname |
+| **Best for** | Remote work, always-on | Local development, testing |
 
-## What You Get
+Both give you a Linux host where you can run devcontainers, with persistent sessions via Zellij.
+
+---
+
+## Option 1: Hetzner Cloud (Remote)
+
+Spin up a cloud VM with full dev tooling.
+
+### What You Get
 
 | Component | Description |
 |-----------|-------------|
-| **Hetzner Cloud Server** | 2 vCPU, 4 GB RAM, 40 GB SSD (Ubuntu 24.04) |
+| **Hetzner Server** | 2 vCPU, 4 GB RAM, 40 GB SSD (Ubuntu 24.04) |
 | **Persistent Volume** | `/home/g2k` survives server teardown |
 | **Docker + Compose** | Official Docker CE with compose plugin |
 | **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
-| **Incus Bootstrap** | Container/VM management system (optional, see below) |
 | **Node.js 24 LTS** | From NodeSource repository |
 | **GitHub CLI** | `gh` for GitHub workflow integration |
 | **Zellij** | Terminal multiplexer for persistent sessions |
 | **Strict Firewall** | SSH-only access (port 22) |
 | **DuckDNS Domain** | Automatic DNS registration |
 
-## Quick Start
-
-### Option 1: GitHub Actions (Recommended)
-
-Fork this repo and use GitHub Actions to manage your server without any local setup.
-
-1. **Fork** this repository to your GitHub account
-
-2. **Add secrets** in Settings → Secrets and variables → Actions:
-
-   | Secret | Description |
-   |--------|-------------|
-   | `HETZNER_API_TOKEN` | Your Hetzner Cloud API token |
-   | `SSH_PRIVATE_KEY` | Your SSH private key |
-   | `SSH_PUBLIC_KEY` | Your SSH public key |
-   | `DUCKDNS_TOKEN` | Your DuckDNS token |
-   | `DUCKDNS_DOMAIN` | Your subdomain (without `.duckdns.org`) |
-
-3. **Provision**: Actions → Provision Server → Run workflow → type `yes`
-
-4. **Teardown**: Actions → Teardown Server → Run workflow → type `yes`
-
-#### Scheduled Actions for Cost Optimization
-
-Add automatic schedules to provision at workday start and teardown at end:
-
-```yaml
-on:
-  schedule:
-    - cron: '0 8 * * 1-5'   # 8 AM UTC weekdays
-  workflow_dispatch:
-    # ... existing manual trigger
-```
-
-### Option 2: Local CLI
-
-Run Ansible playbooks directly from your machine.
-
-#### Prerequisites
+### Prerequisites
 
 - Python 3.8+ with pip
 - SSH key pair (`~/.ssh/id_rsa`)
 - [Hetzner Cloud](https://www.hetzner.com/cloud) account + API token
 - [DuckDNS](https://www.duckdns.org/) account + token + subdomain
 
-#### Setup
+### Quick Start
 
 ```bash
 # Clone and install dependencies
@@ -83,209 +53,176 @@ ansible-galaxy collection install -r ansible/requirements.yml
 cp .env.example .env
 # Edit .env with your tokens
 
-# Provision!
+# Provision server
 ./run.sh site.yml
+
+# SSH in
+ssh g2k@your-subdomain.duckdns.org
 ```
 
-See [ansible/README.md](ansible/README.md) for detailed playbook documentation.
+### GitHub Actions (Alternative)
 
-## The Workflow
+Fork this repo and use GitHub Actions to provision without local setup:
+
+1. **Add secrets** in Settings → Secrets → Actions:
+   - `HETZNER_API_TOKEN`, `SSH_PRIVATE_KEY`, `SSH_PUBLIC_KEY`
+   - `DUCKDNS_TOKEN`, `DUCKDNS_DOMAIN`
+
+2. **Run**: Actions → Provision Server → Run workflow → type `yes`
+
+### Teardown
 
 ```bash
-# 1. Provision your server (one command)
-./run.sh site.yml
+./run.sh teardown.yml                      # Destroy server (keeps volume)
+./run.sh teardown.yml -e remove_volume=true  # Destroy everything
+```
 
-# 2. SSH in and start coding
-ssh g2k@your-subdomain.duckdns.org
+---
 
-# 3. Start a Zellij session for persistence (optional)
+## Option 2: Incus Container (Local/Homelab)
+
+Spin up a lightweight system container on your own hardware. Containers get IPs from your LAN's DHCP and are accessible by hostname from any machine on your network.
+
+### What You Get
+
+| Component | Description |
+|-----------|-------------|
+| **System Container** | Lightweight, near-native performance |
+| **LAN IP via DHCP** | Accessible from any machine on your network |
+| **Hostname DNS** | `ssh ubuntu@container-name` (if your router registers DHCP hostnames) |
+| **Docker + Compose** | Optional: install via configure playbook |
+| **Dev Containers CLI** | Optional: install via configure playbook |
+| **Host Mounts** | Persistent data directories from the Incus host |
+
+### Prerequisites
+
+- Incus installed and bootstrapped on your host (see [Incus Bootstrap](#incus-bootstrap) below)
+- SSH key pair (`~/.ssh/id_rsa`)
+
+### Quick Start
+
+```bash
+# Create a container (from your laptop, targeting your Incus host)
+./run.sh incus_container.yml \
+  -i "incus-host," \
+  -e "container_name=dev1" \
+  -e "container_domain=int.example.com" \
+  -e "ansible_user=youruser"
+
+# SSH in (once DNS registers the hostname)
+ssh ubuntu@dev1
+ssh ubuntu@dev1.int.example.com
+
+# Or by IP (shown in playbook output)
+ssh ubuntu@192.168.1.x
+```
+
+### Configure with Dev Tools (Optional)
+
+```bash
+# Install Docker, Node.js, fzf, Zellij in the container
+./run.sh incus_container_configure.yml -e container_name=dev1
+```
+
+### Common Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `container_name` | (required) | Name of the container |
+| `container_image` | `images:ubuntu/24.04/cloud` | Cloud image to use |
+| `container_domain` | (empty) | Domain for FQDN (e.g., `int.example.com`) |
+| `container_ssh_user` | `ubuntu` | SSH user created in container |
+| `container_mounts` | `[]` | Host directories to mount |
+
+### Teardown
+
+```bash
+./run.sh incus_container_teardown.yml -e container_name=dev1
+./run.sh incus_container_teardown.yml -e container_name=dev1 -e force=true  # If running
+```
+
+---
+
+## The Dev Workflow
+
+Once you have an environment (Hetzner or Incus), the workflow is the same:
+
+```bash
+# 1. SSH in
+ssh user@your-host
+
+# 2. Start a Zellij session for persistence
 zellij attach --create main
 
-# 4. Clone a repo and launch a devcontainer:
+# 3. Clone and launch a devcontainer
 git clone https://github.com/your/project.git
 cd project
 devcontainer up --workspace-folder .
 devcontainer exec --workspace-folder . zsh
 
-# 5. Disconnect anytime - your session persists (if using Zellij)
-#    Ctrl+o, d to detach from Zellij
+# 4. Disconnect anytime - your session persists
+#    Ctrl+d to detach from Zellij
 #    Close SSH - reconnect later and pick up where you left off
-
-# 6. Tear down when done (data persists on volume)
-./run.sh teardown.yml
 ```
 
-## Zellij: Persistent Terminal Sessions
+### Zellij: Persistent Terminal Sessions
 
-[Zellij](https://zellij.dev/) is available for persistent terminal sessions:
+[Zellij](https://zellij.dev/) keeps your terminal sessions alive:
 
-- **Start/Attach**: Run `zellij attach --create main` to start or attach to a session
-- **Detach**: `Ctrl+o, d` returns to host shell
-- **Persist**: Close SSH, processes keep running
-- **Reconnect**: SSH back in, run `zellij attach --create main` to resume
+- **Start/Attach**: `zellij attach --create main`
+- **Detach**: `Ctrl+d` returns to host shell
+- **Reconnect**: SSH back in, run same command to resume
 
-### Nested Zellij for Devcontainers
+For devcontainers, the host Zellij is configured as an "outer" session (tab management only), so you can run an "inner" Zellij inside containers without keybind conflicts.
 
-The server's Zellij is configured as an "outer" session for **tab management only**. This lets you run a second "inner" Zellij inside devcontainers without keybind conflicts.
+---
 
-**Outer Zellij keybinds (on the host):**
-| Keybind | Action |
-|---------|--------|
-| `Ctrl-t` | New tab |
-| `Ctrl-Tab` | Next tab |
-| `Ctrl-Shift-Tab` | Previous tab |
-| `Ctrl-w` | Close tab |
-| `Ctrl-d` | Detach from session |
+## Incus Bootstrap
 
-All other keybinds pass through to the inner Zellij in your devcontainer.
+**Skip this if you already have Incus installed and initialized.**
 
-### devshell Helper
+To use Incus containers, you first need to bootstrap Incus on your host machine. This installs Incus, creates a storage pool, and configures macvlan networking so containers get LAN IPs.
 
-A convenience script at `~/.local/bin/devshell`:
+### Bootstrap a Remote Host
 
 ```bash
-devshell  # cd to workspace, start devcontainer, open shell inside
+./run.sh incus_bootstrap.yml \
+  -i "192.168.1.100," \
+  -e "target_hosts=all ansible_user=paul"
 ```
 
-### Automatic Devcontainer Rebuilds
-
-The system automatically detects when your devcontainer configuration has changed and rebuilds the container when needed. This happens when:
-
-- `.devcontainer/devcontainer.json` is modified
-- `.devcontainer/Dockerfile` is modified  
-- `.devcontainer/docker-compose.yml` is modified
-- `.devcontainer.json` (root level) is modified
-
-Configuration hashes are stored in `~/.cache/devcontainer-hashes/` and compared on each session start.
-
-**Force a manual rebuild:**
-```bash
-# Create a rebuild flag file in your project
-touch ~/projects/my-project/.devcontainer-rebuild
-
-# Next time you select the project, it will rebuild
-```
-
-This is useful when you need to pick up base image updates or other changes not tracked by the config files.
-
-## Usage Reference
-
-### Playbooks
-
-| Command | Description |
-|---------|-------------|
-| `./run.sh site.yml` | Full provisioning + configuration |
-| `./run.sh provision.yml` | Create server + update DNS only |
-| `./run.sh configure.yml -e "hetzner_server_ip=<ip>"` | Configure existing server |
-| `./run.sh teardown.yml` | Destroy server (keeps volume) |
-| `./run.sh teardown.yml -e remove_volume=true` | Destroy server + volume |
-
-### Connecting
-
-```bash
-ssh g2k@<your-subdomain>.duckdns.org
-```
-
-## User Account
-
-The `g2k` user is created with:
-- Passwordless sudo (`NOPASSWD:ALL`)
-- Docker group membership
-- SSH key from your configuration
-
-## Home Lab Alternative: Incus (Optional)
-
-As an alternative to Hetzner Cloud, you can use [Incus](https://linuxcontainers.org/incus/) to run lightweight system containers on your own hardware. This gives you the same workflow—SSH into a host, run devcontainers—but on a home server or local workstation instead of a cloud VM.
-
-### Bootstrap Incus on a Remote Host
-
-To set up Incus on a remote server (OpenSUSE Tumbleweed):
-
-```bash
-./run.sh incus_bootstrap.yml -i "<host>," -e "target_hosts=all ansible_user=<user>"
-```
-
-Replace `<host>` with your server's IP or hostname, and `<user>` with your SSH username. The trailing comma is required for single-host inventory.
-
-**Requirements:**
-- SSH key access to the remote host
-- The user must have sudo privileges (the playbook uses `become: true`)
-
-**Example:**
-
-```bash
-./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul"
-```
-
-If your user requires a sudo password, add `--ask-become-pass`:
-
-```bash
-./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul" --ask-become-pass
-```
-
-This will:
-- Install Incus and incus-tools packages
-- Enable and start the Incus daemon services
-- Add the specified user to the `incus-admin` group for non-root container management
-- Initialize a directory-based storage pool
-- Configure a **macvlan network** so containers get IPs from your LAN and are directly accessible from other machines
-
-The parent network interface is auto-detected from the default route. To specify it explicitly:
-
-```bash
-./run.sh incus_bootstrap.yml -i "192.168.1.100," -e "target_hosts=all ansible_user=paul incus_network_parent=eth0"
-```
-
-#### Bootstrap on Localhost
-
-For local development, omit the inventory flag:
+### Bootstrap Localhost
 
 ```bash
 ./run.sh incus_bootstrap.yml
 ```
 
-#### NAT Bridge Mode
+### What Bootstrap Does
 
-If you prefer containers with private IPs (not directly accessible from LAN), use bridge mode:
+- Installs Incus packages (OpenSUSE Tumbleweed)
+- Enables and starts Incus daemon
+- Adds your user to `incus-admin` group
+- Creates directory-based storage pool
+- Configures macvlan network (containers get LAN IPs via DHCP)
+
+**After bootstrap**, log out and back in (or `newgrp incus-admin`) to activate group membership.
+
+### Bootstrap Options
 
 ```bash
+# Specify network interface explicitly
+./run.sh incus_bootstrap.yml -e "incus_network_parent=eth0"
+
+# Use NAT bridge instead of macvlan (containers get private IPs)
 ./run.sh incus_bootstrap.yml -e "incus_network_type=bridge"
+
+# Verbose output
+./run.sh incus_bootstrap.yml -e "incus_bootstrap_verbosity=detailed"
 ```
 
-#### Verbose Output
+See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-host/quickstart.md) for more details.
 
-For detailed verification output including full YAML configuration:
-
-```bash
-./run.sh incus_bootstrap.yml -e incus_bootstrap_verbosity=detailed
-```
-
-**After bootstrap**, log out and back in (or run `newgrp incus-admin`) to activate group membership, then:
-
-```bash
-# Launch a container (Ubuntu has cloud-init for automatic DHCP)
-incus launch images:ubuntu/24.04 my-container
-
-# List containers (shows IP addresses)
-incus list
-
-# Access container shell
-incus exec my-container -- bash
-```
-
-See [specs/001-bootstrap-incus-host/quickstart.md](specs/001-bootstrap-incus-host/quickstart.md) for detailed usage instructions.
-
-### Hetzner vs Incus
-
-| | Hetzner Cloud | Incus (Home Lab) |
-|---|---|---|
-| **Host** | Cloud VM | System container on your hardware |
-| **Cost** | ~€4/month | Your electricity bill |
-| **Setup** | `./run.sh site.yml` | `./run.sh incus_bootstrap.yml` |
-| **Access** | SSH over internet | SSH directly to container on LAN |
-| **Use case** | Remote work, always-on | Local development, testing |
-
-Both approaches give you a Linux host where you can run devcontainers. With Incus, containers get IPs from your LAN's DHCP server, so you can SSH directly to them from any machine on your network.
+---
 
 ## Troubleshooting
 
@@ -301,6 +238,16 @@ ansible-galaxy collection install -r ansible/requirements.yml
 
 **Hetzner API errors?**
 Verify your API token has read/write permissions in the Hetzner Cloud Console.
+
+**Container not accessible by hostname?**
+- Verify your router/DHCP server registers hostnames (check if other devices are accessible by name)
+- DNS registration may take a few seconds after container boot
+- Try by IP first to confirm the container is running
+
+**Can't reach container from Incus host?**
+This is a known macvlan limitation. Access containers from a different machine on your LAN.
+
+---
 
 ## License
 

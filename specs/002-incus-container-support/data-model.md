@@ -1,7 +1,7 @@
 # Data Model: Incus Container Support
 
 **Feature Branch**: `002-incus-container-support`
-**Date**: 2025-12-28
+**Date**: 2026-01-07
 **Status**: Complete
 
 ## Overview
@@ -38,7 +38,7 @@ Manages the complete container lifecycle: create, start, wait for readiness, reg
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `incus_container_network` | string | `"incusbr0"` | Network to attach (from 001-bootstrap-incus-host) |
+| `incus_container_network` | string | `"incusbr0"` | Macvlan network to attach (from 001-bootstrap-incus-host). Containers get LAN IPs via DHCP. |
 | `incus_container_wait_timeout` | integer | `180` | Seconds to wait for SSH availability |
 
 #### Persistent Storage

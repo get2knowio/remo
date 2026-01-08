@@ -1,7 +1,7 @@
 # Research: Incus Container Support
 
 **Feature Branch**: `002-incus-container-support`
-**Date**: 2025-12-28
+**Date**: 2026-01-07
 **Status**: Complete
 
 ## Overview
@@ -117,22 +117,23 @@ incus config device add <container> <device_name> disk \
 
 ### 5. Network Configuration
 
-**Decision**: Use default `incusbr0` bridge network (created by 001-bootstrap-incus-host)
+**Decision**: Use default `incusbr0` macvlan network (created by 001-bootstrap-incus-host)
 
 **Rationale**:
-- Bridge network provides NAT connectivity automatically
-- Container IP is routable from host
-- DHCP assigns addresses automatically
-- Matches spec scope (no advanced networking required)
+- Macvlan provides containers with LAN IP addresses via DHCP
+- Containers are directly accessible from any machine on the network
+- Mirrors the Hetzner workflow - SSH to containers from workstation using LAN IPs
+- No NAT or port forwarding complexity
 
 **Alternatives Considered**:
-- macvlan: More complex, requires host NIC configuration
-- Port forwarding only: Less flexible for development workflows
+- Bridge network with NAT: Simpler setup but containers only reachable from host
+- Port forwarding: Adds configuration overhead for each service
 
 **Container Accessibility**:
-- Containers get IPs on the incusbr0 subnet (e.g., 10.x.x.x)
-- Host can reach container directly via this IP
-- Container can reach external networks via NAT
+- Containers get IPs from LAN's DHCP server (e.g., 192.168.x.x)
+- **Important**: The Incus host CANNOT reach containers directly (macvlan kernel limitation)
+- Access containers from a separate workstation (same as Hetzner workflow)
+- IP assignment may take a few seconds after container start - polling required
 
 ### 6. Role Compatibility Analysis
 

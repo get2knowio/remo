@@ -7,6 +7,8 @@ Auto-generated from all feature plans. Last updated: 2026-01-06
 See `.specify/memory/constitution.md` for project principles and non-negotiable standards.
 
 ## Active Technologies
+- Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (existing), Incus CLI (local) (002-incus-container-support)
+- N/A (Incus storage pools already configured by 001-bootstrap-incus-host) (002-incus-container-support)
 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module) (001-bootstrap-incus-host)
 
@@ -90,10 +92,10 @@ Before committing Ansible code:
 Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
+- 002-incus-container-support: Added Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (existing), Incus CLI (local)
 
 - 001-bootstrap-incus-host: Added Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module)
 - 001-bootstrap-incus-host: Added macvlan networking as default (containers get LAN IPs)
-- Constitution v1.0.0: Established defensive variable access and testing standards
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->

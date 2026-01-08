@@ -169,3 +169,53 @@ The `hetzner_server` role creates a firewall allowing only:
 | 22 | TCP | SSH |
 
 All other inbound traffic is blocked.
+
+## Incus Container Commands
+
+Provision and manage Incus containers on localhost. Requires an Incus host bootstrapped with `incus_bootstrap.yml`.
+
+### Container Provisioning
+
+```bash
+# Create a new container
+./run.sh incus_container.yml -e container_name=mycontainer
+
+# Create with custom image
+./run.sh incus_container.yml -e container_name=mycontainer -e container_image=images:debian/12/cloud
+
+# Create with custom SSH user
+./run.sh incus_container.yml -e container_name=mycontainer -e container_ssh_user=admin
+```
+
+### Container Configuration
+
+```bash
+# Configure container with all default tools (docker, nodejs, fzf, zellij)
+./run.sh incus_container_configure.yml -e container_name=mycontainer
+
+# Disable specific tools
+./run.sh incus_container_configure.yml -e container_name=mycontainer -e configure_docker=false
+./run.sh incus_container_configure.yml -e container_name=mycontainer -e configure_nodejs=false
+```
+
+### Container Teardown
+
+```bash
+# Destroy container (preserves host data directories by default)
+./run.sh incus_container_teardown.yml -e container_name=mycontainer
+
+# Force destroy running container
+./run.sh incus_container_teardown.yml -e container_name=mycontainer -e force=true
+```
+
+### Common Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `container_name` | (required) | Name of the container |
+| `container_image` | `images:ubuntu/24.04/cloud` | Cloud image to use |
+| `container_ssh_user` | `ubuntu` | SSH user created in container |
+| `container_ssh_key_path` | `~/.ssh/id_rsa.pub` | SSH public key to inject |
+| `container_domain` | (empty) | Domain for FQDN, enables DHCP hostname registration |
+| `force` | `false` | Force teardown of running containers |
+| `preserve_data` | `true` | Keep host mount directories on teardown |

@@ -1,0 +1,164 @@
+---
+# Tasks for incus_container_teardown role
+# Destroys an Incus container with optional data preservation
+
+# T028: Check if container exists
+- name: Check if container exists
+  ansible.builtin.command:
+    cmd: incus info {{ incus_container_name }}
+  register: container_exists_check
+  changed_when: false
+  failed_when: false
+
+- name: Set container exists fact
+  ansible.builtin.set_fact:
+    incus_teardown_container_exists: "{{ container_exists_check.rc | default(1) == 0 }}"
+
+# Skip remaining tasks if container doesn't exist
+- name: Skip teardown if container does not exist
+  ansible.builtin.debug:
+    msg: "Container '{{ incus_container_name }}' does not exist. Nothing to teardown."
+  when: not incus_teardown_container_exists
+
+# T029: Display teardown warning
+- name: Display teardown warning
+  ansible.builtin.debug:
+    msg: |
+      ============================================================
+      WARNING: About to destroy container '{{ incus_container_name }}'
+      ============================================================
+
+      Data preservation: {{ 'ENABLED - mount directories will be kept' if incus_container_preserve_data else 'DISABLED - all data will be deleted' }}
+      Force delete: {{ 'YES' if incus_container_force else 'NO - will stop gracefully first' }}
+
+      This action cannot be undone!
+      ============================================================
+  when: incus_teardown_container_exists
+
+# T030: User confirmation pause (skip if incus_container_auto_confirm)
+- name: Pause for confirmation
+  ansible.builtin.pause:
+    prompt: "Press Enter to continue with container destruction, or Ctrl+C to abort"
+  when:
+    - incus_teardown_container_exists
+    - not (incus_container_auto_confirm | default(false) | bool)
+
+# Get mount directories BEFORE stopping/deleting container
+- name: Get mount devices from container config
+  ansible.builtin.command:
+    cmd: incus config device list {{ incus_container_name }}
+  register: device_list_result
+  changed_when: false
+  failed_when: false
+  when: incus_teardown_container_exists
+
+- name: Get source paths for each mount device
+  ansible.builtin.command:
+    cmd: incus config device get {{ incus_container_name }} {{ item }} source
+  loop: "{{ device_list_result.stdout_lines | default([]) }}"
+  register: mount_sources
+  changed_when: false
+  failed_when: false
+  when: incus_teardown_container_exists
+
+- name: Build list of mount source directories
+  ansible.builtin.set_fact:
+    incus_teardown_mount_dirs: "{{ mount_sources.results | default([]) | selectattr('stdout', 'defined') | map(attribute='stdout') | select('string') | list }}"
+  when: incus_teardown_container_exists
+
+- name: Initialize empty mount dirs list if container doesn't exist
+  ansible.builtin.set_fact:
+    incus_teardown_mount_dirs: []
+  when: not incus_teardown_container_exists
+
+# T031: Stop container (if not force deleting)
+- name: Stop container gracefully
+  ansible.builtin.command:
+    cmd: incus stop {{ incus_container_name }}
+  register: container_stop_result
+  changed_when: container_stop_result.rc | default(1) == 0
+  failed_when: false
+  when:
+    - incus_teardown_container_exists
+    - not (incus_container_force | default(false) | bool)
+
+- name: Warn if graceful stop failed
+  ansible.builtin.debug:
+    msg: |
+      Warning: Graceful stop failed: {{ container_stop_result.stderr | default('unknown error') }}
+      Container deletion may fail. Consider using force=true if needed.
+  when:
+    - incus_teardown_container_exists
+    - not (incus_container_force | default(false) | bool)
+    - container_stop_result.rc | default(0) != 0
+
+# T032: Delete container
+- name: Delete container
+  ansible.builtin.command:
+    cmd: "incus delete {{ incus_container_name }}{{ ' --force' if (incus_container_force | default(false) | bool) else '' }}"
+  register: container_delete_result
+  changed_when: container_delete_result.rc | default(1) == 0
+  when: incus_teardown_container_exists
+
+- name: Fail if container deletion failed
+  ansible.builtin.fail:
+    msg: "Failed to delete container '{{ incus_container_name }}': {{ container_delete_result.stderr | default('unknown error') }}"
+  when:
+    - incus_teardown_container_exists
+    - container_delete_result.rc | default(1) != 0
+
+# T033: Mount directory cleanup (when preserve_data is false)
+- name: Display mount directories found
+  ansible.builtin.debug:
+    msg: "Mount directories found: {{ incus_teardown_mount_dirs | default([]) }}"
+  when:
+    - incus_teardown_container_exists
+    - container_delete_result.rc | default(1) == 0
+    - incus_teardown_mount_dirs | default([]) | length > 0
+
+- name: Remove mount directories (preserve_data=false)
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ incus_teardown_mount_dirs | default([]) }}"
+  when:
+    - incus_teardown_container_exists
+    - container_delete_result.rc | default(1) == 0
+    - not (incus_container_preserve_data | default(true) | bool)
+    - incus_teardown_mount_dirs | default([]) | length > 0
+
+- name: Note about preserved mount directories
+  ansible.builtin.debug:
+    msg: |
+      Mount directories have been preserved: {{ incus_teardown_mount_dirs | default([]) }}
+      The container has been deleted, but the above host mount directories remain intact.
+  when:
+    - incus_teardown_container_exists
+    - container_delete_result.rc | default(1) == 0
+    - incus_container_preserve_data | default(true) | bool
+    - incus_teardown_mount_dirs | default([]) | length > 0
+
+- name: Note about removed mount directories
+  ansible.builtin.debug:
+    msg: |
+      Mount directories have been removed: {{ incus_teardown_mount_dirs | default([]) }}
+      The container and all associated host mount directories have been deleted.
+  when:
+    - incus_teardown_container_exists
+    - container_delete_result.rc | default(1) == 0
+    - not (incus_container_preserve_data | default(true) | bool)
+    - incus_teardown_mount_dirs | default([]) | length > 0
+
+# T034: Set teardown output facts
+- name: Set teardown output facts
+  ansible.builtin.set_fact:
+    incus_container_destroyed: "{{ container_delete_result.rc | default(1) == 0 }}"
+    incus_container_data_preserved: "{{ incus_teardown_mount_dirs | default([]) if (incus_container_preserve_data | default(true) | bool) else [] }}"
+  when: incus_teardown_container_exists
+
+# Set facts when container didn't exist
+- name: Set output facts for non-existent container
+  ansible.builtin.set_fact:
+    incus_container_destroyed: false
+    incus_container_data_preserved: []
+  when: not incus_teardown_container_exists

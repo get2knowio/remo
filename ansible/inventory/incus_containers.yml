@@ -1,0 +1,40 @@
+---
+# Incus Containers Inventory
+#
+# This file defines containers managed by the incus_container role.
+# Containers can be added here manually after creation, or they will be
+# dynamically registered during provisioning using add_host.
+#
+# HOW TO ADD CONTAINERS:
+# ----------------------
+# 1. Uncomment the example entry below (or copy it)
+# 2. Replace the container name (e.g., 'dev-container') with your container's name
+# 3. Set ansible_host to the container's IP address (assigned via DHCP from incusbr0)
+# 4. Optionally customize ansible_user if not using the default 'ubuntu'
+# 5. Update ansible_ssh_private_key_file if using a different key
+#
+# FINDING CONTAINER IPs:
+# ----------------------
+# Run: incus list
+# The IPv4 column shows the assigned IP address.
+#
+# EXAMPLE:
+# --------
+# If you created a container named 'my-dev-box' with IP 10.180.234.51:
+#
+#   my-dev-box:
+#     ansible_host: 10.180.234.51
+#     ansible_user: ubuntu
+#     ansible_ssh_private_key_file: ~/.ssh/id_rsa
+#
+all:
+  children:
+    incus_containers:
+      hosts:
+        # Example entry - uncomment and modify as needed
+        # dev-container:
+        #   ansible_host: 10.180.234.50
+        #   ansible_user: ubuntu
+        #   ansible_ssh_private_key_file: ~/.ssh/id_rsa
+      vars:
+        ansible_python_interpreter: /usr/bin/python3

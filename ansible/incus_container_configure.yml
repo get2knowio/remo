@@ -1,0 +1,95 @@
+---
+# Incus Container Configuration Playbook
+# Usage: ./run.sh incus_container_configure.yml -e container_name=<name>
+#        ./run.sh incus_container_configure.yml -i "incus-host," -e "container_name=<name> ansible_user=<user>"
+#
+# Required variables:
+#   container_name: Name of the container to configure
+#
+# Optional variables:
+#   configure_docker: Enable/disable docker role (default: true)
+#   configure_user_setup: Enable/disable user_setup role (default: true)
+#   configure_nodejs: Enable/disable nodejs role (default: true)
+#   configure_fzf: Enable/disable fzf role (default: true)
+#   configure_zellij: Enable/disable zellij role (default: true)
+#
+# Remote host support:
+#   Use -i "hostname," to target a remote Incus host (note the trailing comma)
+#   Use -e ansible_user=<user> to specify the SSH user for the Incus host
+#
+# This playbook:
+# 1. Provisions the container if not already running (reuses incus_container role)
+# 2. Applies configuration roles: docker, user_setup, nodejs, fzf, zellij
+
+# Play 1: Ensure container is provisioned and get its IP
+- name: Ensure container is provisioned
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  gather_facts: true
+
+  vars:
+    incus_container_name: "{{ container_name }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_name' is not defined. Use -e container_name=<name>"
+      when: container_name is not defined
+
+  roles:
+    - role: incus_container
+
+# Play 2: Configure the container with standard roles
+- name: Configure container with development tools
+  hosts: "{{ container_name }}"
+  gather_facts: true
+  become: true
+
+  pre_tasks:
+    - name: Wait for apt to be ready
+      ansible.builtin.wait_for:
+        path: /var/lib/dpkg/lock-frontend
+        state: absent
+        timeout: 60
+      register: apt_wait_result
+      failed_when: false
+
+    - name: Warn if apt lock wait timed out
+      ansible.builtin.debug:
+        msg: "Warning: apt lock wait timed out after 60s. Proceeding anyway - apt update may fail if lock is held."
+      when: apt_wait_result.failed | default(false)
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  roles:
+    - role: docker
+      when: configure_docker | default(true) | bool
+    - role: user_setup
+      when: configure_user_setup | default(true) | bool
+    - role: nodejs
+      when: configure_nodejs | default(true) | bool
+    - role: fzf
+      when: configure_fzf | default(true) | bool
+    - role: zellij
+      when: configure_zellij | default(true) | bool
+
+  post_tasks:
+    - name: Display configuration result
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          Container '{{ container_name }}' configured successfully!
+          ============================================================
+
+          Installed tools:
+            - Docker: {{ 'Yes' if (configure_docker | default(true)) else 'No' }}
+            - Node.js: {{ 'Yes' if (configure_nodejs | default(true)) else 'No' }}
+            - fzf: {{ 'Yes' if (configure_fzf | default(true)) else 'No' }}
+            - Zellij: {{ 'Yes' if (configure_zellij | default(true)) else 'No' }}
+
+          Connect with:
+            ssh {{ ansible_user }}@{{ ansible_host }}
+          ============================================================

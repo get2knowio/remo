@@ -73,16 +73,17 @@ As a developer, I want to destroy Incus containers when no longer needed, with t
 
 ### User Story 5 - Container Networking Access (Priority: P3)
 
-As a developer, I want to access services running inside my Incus containers from my host machine, so that I can test web applications, APIs, and other networked services during development.
+As a developer, I want to access services running inside my Incus containers from my workstation (or any machine on the LAN), so that I can test web applications, APIs, and SSH into containers just like I would with Hetzner VMs.
 
-**Why this priority**: Service accessibility is important for development workflows but can be achieved through multiple methods (port forwarding, bridge networking) after core provisioning works.
+**Why this priority**: Service accessibility is important for development workflows. With macvlan networking, containers get LAN IPs directly from DHCP, making them accessible from any machine on the network (except the Incus host itself, which is a known macvlan limitation).
 
-**Independent Test**: Can be fully tested by running a web server in a container and accessing it from the host via the container's IP address or forwarded port.
+**Independent Test**: Can be fully tested by running a web server in a container and accessing it from a separate workstation on the same LAN via the container's IP address.
 
 **Acceptance Scenarios**:
 
-1. **Given** a running container with a web server, **When** I access the container's IP address from the host, **Then** the web server responds.
-2. **Given** a container on the default Incus bridge network, **When** I query the container's IP, **Then** I receive a routable IP address on the bridge subnet.
+1. **Given** a running container with a web server, **When** I access the container's LAN IP address from a separate machine on the network, **Then** the web server responds.
+2. **Given** a container on the default macvlan network, **When** I query the container's IP, **Then** I receive an IP address assigned by the LAN's DHCP server.
+3. **Given** a running container with SSH enabled, **When** I SSH to the container's LAN IP from my workstation, **Then** I connect successfully (just like connecting to a Hetzner VM).
 
 ---
 
@@ -106,8 +107,8 @@ As a developer, I want to access services running inside my Incus containers fro
 - **FR-006**: System MUST support container destruction with configurable data preservation options.
 - **FR-007**: System MUST operate idempotently - repeated runs with the same parameters produce the same result without side effects.
 - **FR-008**: System MUST use the container image `images:ubuntu/24.04/cloud` as the default (cloud variant required for cloud-init SSH key injection), with the image being configurable via playbook variables.
-- **FR-009**: System MUST support both static inventory files and dynamic inventory generation for container tracking.
-- **FR-010**: System MUST attach containers to the default Incus bridge network (incusbr0) for host accessibility.
+- **FR-009**: System MUST support both static inventory files and dynamic inventory registration via `add_host` for container tracking. (Note: A standalone dynamic inventory plugin is out of scope; containers are registered dynamically at provisioning time.)
+- **FR-010**: System MUST attach containers to the default Incus macvlan network so containers receive LAN IP addresses via DHCP and are directly accessible from other machines on the network.
 
 ### Key Entities
 
@@ -124,17 +125,19 @@ As a developer, I want to access services running inside my Incus containers fro
 - **SC-002**: Existing configuration roles (docker, nodejs, user_setup) execute successfully on Incus containers without modification.
 - **SC-003**: Provisioning, configuration, and teardown operations complete without manual intervention on a bootstrapped Incus host.
 - **SC-004**: The container workflow mirrors the Hetzner workflow: users issue the same style of commands with analogous parameters.
-- **SC-005**: Containers are accessible from the host via their bridge network IP immediately after provisioning completes.
+- **SC-005**: Containers are accessible from the user's workstation (or any LAN machine) via their macvlan-assigned LAN IP immediately after provisioning completes.
 - **SC-006**: Data in designated persistent mounts survives container destruction when preservation is requested.
 - **SC-007**: Users can manage 10+ containers simultaneously without workflow complexity increases (same commands work regardless of container count).
 
 ## Assumptions
 
-- The Incus host has already been bootstrapped using the 001-bootstrap-incus-host feature (Incus installed, storage pool configured, network bridge active).
+- The Incus host has already been bootstrapped using the 001-bootstrap-incus-host feature (Incus installed, storage pool configured, macvlan network active).
 - The target container image (`images:ubuntu/24.04/cloud`) is accessible via the default Incus image remote or a configured remote.
 - The user running Ansible has membership in the `incus-admin` group or equivalent permissions to manage Incus containers.
 - SSH key pairs exist on the control machine and can be injected into containers via cloud-init or profile configuration.
-- The Incus bridge network (incusbr0) provides NAT connectivity, allowing containers to reach external networks and the host to reach containers.
+- The Incus macvlan network provides containers with LAN IP addresses via DHCP, allowing containers to be directly accessible from other machines on the network.
+- **Important macvlan limitation**: The Incus host machine CANNOT directly communicate with containers on the macvlan network (this is a known kernel limitation). Users access containers from a separate workstation, just like accessing Hetzner VMs.
+- The user runs Ansible playbooks from their workstation (separate from the Incus host), targeting containers by their LAN IP addresses - mirroring the Hetzner workflow where you SSH to VMs from your local machine, not from the Hetzner infrastructure.
 - Container SSH access will use the same key-based authentication pattern as Hetzner hosts (public key from `~/.ssh/id_rsa.pub`).
 - Initial user inside containers will be `ubuntu` (for Ubuntu images) or a configurable user, with sudo privileges.
 
@@ -144,22 +147,23 @@ As a developer, I want to access services running inside my Incus containers fro
 
 - Single Incus host (local workstation) container management
 - Container lifecycle: create, configure, start, stop, destroy
-- SSH-based Ansible connectivity to containers
+- SSH-based Ansible connectivity to containers (from user's workstation to container LAN IPs)
 - Inventory integration (static and dynamic)
 - Reuse of existing configuration roles
 - Persistent storage mounts from host to container
-- Default bridge networking (incusbr0)
+- Default macvlan networking (containers get LAN IPs via DHCP)
 
 ### Out of Scope
 
 - Multi-host Incus clustering or remote Incus server management
 - Container image building or customization
-- Advanced networking (macvlan, SR-IOV, custom bridges)
+- Advanced networking (SR-IOV, custom bridges, overlay networks)
 - GPU passthrough or hardware device mapping
 - Container migration between hosts
 - Windows or non-Linux containers
 - Integration with container orchestration platforms (Kubernetes, etc.)
 - Automated container scaling or load balancing
+- Host-to-container direct communication (macvlan limitation; use separate workstation)
 
 ## Dependencies
 
@@ -172,10 +176,14 @@ As a developer, I want to access services running inside my Incus containers fro
 | Aspect              | Hetzner Hosts                      | Incus Containers                    |
 | ------------------- | ---------------------------------- | ----------------------------------- |
 | Provisioning API    | Hetzner Cloud API (hcloud)         | Incus CLI/API (local)               |
-| Network Model       | Public IP + firewall rules         | Private bridge IP (NAT)             |
+| Network Model       | Public IP + firewall rules         | LAN IP via DHCP (macvlan)           |
+| Access Pattern      | SSH from workstation to VM         | SSH from workstation to container   |
+| Host Communication  | N/A (hypervisor is cloud infra)    | Not possible (macvlan limitation)   |
 | Persistent Storage  | Detachable cloud volumes           | Host directory mounts               |
 | Cost Model          | Pay-per-use cloud billing          | No additional cost (local)          |
 | Boot Time           | 1-2 minutes (VM + cloud-init)      | 5-30 seconds (container)            |
 | Isolation Level     | Full VM (hardware virtualization)  | Container (shared kernel)           |
 | DNS/Discovery       | DuckDNS integration                | Local /etc/hosts or mDNS            |
 | Default User        | root (then g2k)                    | ubuntu (or configurable)            |
+
+**Key similarity**: With macvlan networking, the access pattern is identical to Hetzner - you SSH to containers from your workstation using their IP addresses. The Incus host is just the hypervisor (like Hetzner's infrastructure), not an access point.

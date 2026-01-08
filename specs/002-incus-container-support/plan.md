@@ -1,54 +1,37 @@
 # Implementation Plan: Incus Container Support
 
-**Branch**: `002-incus-container-support` | **Date**: 2025-12-28 | **Spec**: [spec.md](spec.md)
+**Branch**: `002-incus-container-support` | **Date**: 2026-01-07 | **Spec**: [spec.md](./spec.md)
 **Input**: Feature specification from `/specs/002-incus-container-support/spec.md`
-
-**Note**: This template is filled in by the `/speckit.plan` command. See `.specify/templates/commands/plan.md` for the execution workflow.
 
 ## Summary
 
-Extend remo's infrastructure provisioning to support Incus/LXC containers on a local host. This feature creates Ansible playbooks and roles to provision, configure, and destroy containers using the same workflow patterns as Hetzner VMs. Containers will be managed via SSH, tracked in Ansible inventory, and configured using existing roles (docker, nodejs, user_setup).
+Extend remo's infrastructure provisioning with Incus/LXC container support, enabling local container creation and management using the same Ansible workflow style as remote Hetzner hosts. Technical approach: Create an `incus_container` Ansible role for container lifecycle management (create, configure, destroy), a dynamic inventory plugin for automatic container discovery, and integrate SSH bootstrapping via cloud-init for key injection.
 
 ## Technical Context
 
 **Language/Version**: Ansible 2.14+ / YAML
-**Primary Dependencies**: `ansible.builtin`, `community.general` (existing from 001-bootstrap-incus-host)
-**Storage**: N/A (Incus storage pools configured by 001-bootstrap-incus-host; optional host directory mounts for persistence)
-**Testing**: Manual verification via playbook execution; idempotency test via re-run; SSH connectivity checks
-**Target Platform**: Linux (OpenSUSE Tumbleweed primary; Ubuntu secondary) - localhost Incus host
-**Project Type**: Infrastructure automation (Ansible playbooks and roles)
-**Performance Goals**: Container provisioning and SSH availability within 3 minutes (per SC-001)
-**Constraints**: Must be idempotent; must not disrupt existing containers; must reuse existing roles without modification
-**Scale/Scope**: Single Incus host; 10+ containers (per SC-007); no clustering
+**Primary Dependencies**: `ansible.builtin`, `community.general` (existing), Incus CLI (local)
+**Storage**: N/A (Incus storage pools already configured by 001-bootstrap-incus-host)
+**Testing**: Manual playbook execution + idempotency verification
+**Target Platform**: Linux workstation (OpenSUSE Tumbleweed, future: Ubuntu)
+**Project Type**: Single project (Ansible roles and playbooks)
+**Performance Goals**: Container provisioning + SSH accessible within 3 minutes
+**Constraints**: Must work with macvlan networking (host cannot reach containers directly)
+**Scale/Scope**: Single Incus host, 10+ containers manageable simultaneously
 
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-**Status**: PASS (no violations)
+| Principle | Status | Notes |
+|-----------|--------|-------|
+| I. Defensive Variable Access | ✅ REQUIRED | All registered variable attributes MUST use `\| default()` filters |
+| II. Test All Conditional Paths | ✅ REQUIRED | Test playbooks on fresh + existing systems |
+| III. Idempotent by Default | ✅ REQUIRED | `changed_when` must be accurate; check state before changes |
+| IV. Fail Fast with Clear Messages | ✅ REQUIRED | Pre-flight checks with actionable error messages |
+| V. Documentation Reflects Reality | ✅ REQUIRED | Update README alongside feature delivery |
 
-The constitution file (`.specify/memory/constitution.md`) contains template placeholders and no project-specific principles have been defined yet. This feature follows infrastructure automation best practices and aligns with patterns established in 001-bootstrap-incus-host:
-
-- **Simplicity**: Ansible role pattern matching existing roles (docker, hetzner_server)
-- **Idempotency**: All tasks designed for safe re-runs (core Ansible principle)
-- **Consistency**: Workflow mirrors Hetzner provisioning (provision.yml → configure.yml → teardown.yml)
-- **Reuse**: Existing configuration roles (docker, nodejs, user_setup) applied without modification
-- **Test-First Spirit**: Acceptance scenarios defined in spec with measurable success criteria
-
-No complexity justifications required.
-
-### Post-Design Re-evaluation
-
-**Status**: PASS (no new violations)
-
-After Phase 1 design completion:
-- Design maintains simplicity with only two new roles and three playbooks
-- Data model uses standard Ansible variable patterns (consistent with 001-bootstrap-incus-host)
-- Contracts document focused, minimal interfaces matching Hetzner workflow
-- No over-engineering: shell commands for Incus operations (no custom modules), cloud-init for SSH (standard approach)
-- Research confirmed role reuse without modification is achievable
-
-No complexity justifications required.
+**Gate Status**: PASS - All principles applicable and will be enforced during implementation.
 
 ## Project Structure
 
@@ -56,7 +39,6 @@ No complexity justifications required.
 
 ```text
 specs/002-incus-container-support/
-├── spec.md              # Feature specification (input)
 ├── plan.md              # This file (/speckit.plan command output)
 ├── research.md          # Phase 0 output (/speckit.plan command)
 ├── data-model.md        # Phase 1 output (/speckit.plan command)
@@ -69,42 +51,48 @@ specs/002-incus-container-support/
 
 ```text
 ansible/
-├── incus_container.yml           # New playbook: Container provisioning
-├── incus_container_configure.yml # New playbook: Container configuration
-├── incus_container_teardown.yml  # New playbook: Container destruction
-├── inventory/
-│   ├── hosts.yml                 # Existing: Add container entries dynamically
-│   └── incus_containers.yml      # New: Static inventory for containers (optional)
 ├── roles/
-│   ├── incus_container/          # New role: Container lifecycle + SSH access
-│   │   ├── tasks/
-│   │   │   ├── main.yml          # Core container operations
-│   │   │   └── preflight.yml     # Pre-flight validation checks
-│   │   ├── defaults/
-│   │   │   └── main.yml          # Variables: image, profile, network, SSH
-│   │   └── handlers/
-│   │       └── main.yml          # (if needed)
-│   ├── incus_container_teardown/ # New role: Container destruction
-│   │   ├── tasks/
-│   │   │   └── main.yml          # Stop, delete, cleanup operations
-│   │   └── defaults/
-│   │       └── main.yml          # Preservation options
-│   ├── docker/                   # Existing: Reused for container configuration
-│   ├── nodejs/                   # Existing: Reused for container configuration
-│   ├── user_setup/               # Existing: Reused for container configuration
-│   └── ...                       # Other existing roles
+│   ├── incus_bootstrap/          # Existing (from 001)
+│   │   ├── defaults/main.yml
+│   │   ├── handlers/main.yml
+│   │   └── tasks/main.yml
+│   └── incus_container/          # NEW - Container provisioning role
+│       ├── defaults/main.yml     # Default container settings
+│       ├── tasks/
+│       │   ├── main.yml          # Entry point with state routing
+│       │   └── preflight.yml     # Pre-flight validation checks
+│       └── handlers/main.yml     # Success message handlers
+│   └── incus_container_teardown/ # NEW - Container destruction role
+│       ├── defaults/main.yml     # Destruction options
+│       └── tasks/main.yml        # Teardown logic
+├── inventory/
+│   ├── hosts.yml                 # Existing static inventory
+│   └── incus_containers.yml      # NEW - Static container inventory
+├── incus_bootstrap.yml           # Existing (from 001)
+├── incus_container.yml           # NEW - Container provisioning playbook
+├── incus_container_configure.yml # NEW - Apply roles to containers
+├── incus_container_teardown.yml  # NEW - Container destruction playbook
 └── group_vars/
-    └── incus_containers.yml      # New: Variables for container group
+    ├── all.yml                   # Existing
+    └── incus_containers.yml      # NEW - Container-specific vars
 ```
 
-**Structure Decision**: Infrastructure automation project using existing Ansible structure in `ansible/` directory. Two new roles (`incus_container`, `incus_container_teardown`) handle container lifecycle and destruction. Three new playbooks parallel the Hetzner workflow: provision → configure → teardown. Existing configuration roles are reused without modification.
+**Structure Decision**: Ansible infrastructure project following established patterns from 001-bootstrap-incus-host. New `incus_container` role for container lifecycle, separate playbooks for each operation (provision, configure, teardown) mirroring Hetzner workflow.
+
+## Post-Design Constitution Check
+
+*Re-evaluated after Phase 1 design artifacts generated.*
+
+| Principle | Status | Design Compliance |
+|-----------|--------|-------------------|
+| I. Defensive Variable Access | ✅ COMPLIANT | Research doc includes patterns with `\| default()` for all registered variables |
+| II. Test All Conditional Paths | ✅ COMPLIANT | Data model defines idempotency behavior for all states (absent, stopped, running) |
+| III. Idempotent by Default | ✅ COMPLIANT | Role contracts specify `changed_when` requirements and state checks |
+| IV. Fail Fast with Clear Messages | ✅ COMPLIANT | Pre-flight checks documented in contracts (Incus daemon, image, storage, network, SSH key) |
+| V. Documentation Reflects Reality | ✅ COMPLIANT | Quickstart doc created alongside design; README update required at implementation |
+
+**Post-Design Gate Status**: PASS - Design artifacts enforce all Constitution principles.
 
 ## Complexity Tracking
 
-> **Fill ONLY if Constitution Check has violations that must be justified**
-
-No violations detected. Design is minimal:
-- Two new roles for container-specific operations
-- Three new playbooks matching established patterns
-- Reuse of existing configuration roles without modification
-- Standard Ansible inventory patterns
+> No constitution violations requiring justification.

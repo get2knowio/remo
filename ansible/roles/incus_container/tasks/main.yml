@@ -1,0 +1,239 @@
+---
+# Main tasks for incus_container role
+
+- name: Include preflight checks
+  ansible.builtin.include_tasks: preflight.yml
+
+- name: Check if container exists
+  ansible.builtin.command:
+    cmd: incus info {{ incus_container_name }}
+  register: container_exists_check
+  changed_when: false
+  failed_when: false
+
+- name: Set container exists fact
+  ansible.builtin.set_fact:
+    incus_container_exists: "{{ container_exists_check.rc | default(1) == 0 }}"
+
+- name: Create container
+  ansible.builtin.command:
+    cmd: >-
+      incus init {{ incus_container_image }} {{ incus_container_name }}
+      --profile {{ incus_container_profile }}
+      --network {{ incus_container_network }}
+  register: container_create_result
+  changed_when: container_create_result.rc | default(1) == 0
+  when: not incus_container_exists
+
+- name: Set container created fact
+  ansible.builtin.set_fact:
+    incus_container_created: "{{ not incus_container_exists }}"
+
+# T010: Configure cloud-init for SSH key injection and hostname
+# Note: shell module required because:
+# 1. No native Ansible module exists for Incus container config
+# 2. community.general.lxd_container is LXD-specific, not Incus-compatible
+# 3. Heredoc syntax required for multi-line cloud-init YAML
+# Hostname configuration enables DHCP hostname registration for DNS resolution
+- name: Configure cloud-init for SSH key injection
+  ansible.builtin.shell: |
+    incus config set {{ incus_container_name }} cloud-init.user-data - << 'EOF'
+    #cloud-config
+    hostname: {{ incus_container_name }}
+    {% if incus_container_domain | default('') | length > 0 %}
+    fqdn: {{ incus_container_name }}.{{ incus_container_domain }}
+    {% endif %}
+    manage_etc_hosts: true
+    users:
+      - name: {{ incus_container_ssh_user }}
+        groups: sudo
+        shell: /bin/bash
+        sudo: ['ALL=(ALL) NOPASSWD:ALL']
+        ssh_authorized_keys:
+          - {{ lookup('file', incus_container_ssh_key_path | expanduser) }}
+    EOF
+  register: cloudinit_config_result
+  changed_when: cloudinit_config_result.rc | default(1) == 0
+  when: incus_container_created | default(false)
+
+# T040: Create mount source directories on host
+- name: Create mount source directories
+  ansible.builtin.file:
+    path: "{{ item.source }}"
+    state: directory
+    mode: '0755'
+  loop: "{{ incus_container_mounts | default([]) }}"
+  when:
+    - incus_container_created | default(false)
+    - incus_container_mounts | default([]) | length > 0
+
+# T042: Check existing disk devices for idempotency
+- name: Get existing container devices
+  ansible.builtin.command:
+    cmd: incus config device list {{ incus_container_name }} --format=json
+  register: existing_devices_result
+  changed_when: false
+  failed_when: false
+  when: incus_container_mounts | default([]) | length > 0
+
+- name: Parse existing devices
+  ansible.builtin.set_fact:
+    existing_device_names: "{{ (existing_devices_result.stdout | default('{}') | from_json).keys() | list }}"
+  when: existing_devices_result.rc | default(1) == 0
+
+# T041: Add disk devices for mounts
+- name: Add disk device for mount
+  ansible.builtin.command:
+    cmd: >-
+      incus config device add {{ incus_container_name }} {{ item.device_name | default(item.target | basename | regex_replace('[^a-zA-Z0-9_-]', '_')) }}
+      disk source={{ item.source }} path={{ item.target }} shift=true
+  loop: "{{ incus_container_mounts | default([]) }}"
+  register: mount_device_result
+  changed_when: mount_device_result.rc | default(1) == 0
+  failed_when: false
+  when:
+    - incus_container_created | default(false)
+    - incus_container_mounts | default([]) | length > 0
+    - (item.device_name | default(item.target | basename | regex_replace('[^a-zA-Z0-9_-]', '_'))) not in (existing_device_names | default([]))
+
+- name: Report mount device failures
+  ansible.builtin.debug:
+    msg: "Warning: Failed to add mount device '{{ item.item.device_name | default(item.item.target | basename) }}': {{ item.stderr | default('unknown error') }}"
+  loop: "{{ mount_device_result.results | default([]) }}"
+  when:
+    - mount_device_result.results is defined
+    - item.rc is defined
+    - item.rc | default(0) != 0
+  loop_control:
+    label: "{{ item.item.target | default('unknown') }}"
+
+# T011: Container Start Tasks
+- name: Check container state
+  ansible.builtin.command:
+    cmd: incus list {{ incus_container_name }} --format=json
+  register: container_state_info
+  changed_when: false
+  failed_when: false
+  when: incus_container_exists or (incus_container_created | default(false))
+
+- name: Parse container state
+  ansible.builtin.set_fact:
+    container_status: "{{ ((container_state_info.stdout | default('[]') | from_json) | first | default({})).status | default('Unknown') }}"
+  when:
+    - container_state_info is defined
+    - container_state_info.skipped is not defined or not container_state_info.skipped
+    - container_state_info.stdout is defined
+    - container_state_info.stdout | length > 2
+
+- name: Start container
+  ansible.builtin.command:
+    cmd: incus start {{ incus_container_name }}
+  register: container_start_result
+  changed_when: container_start_result.rc | default(1) == 0
+  when:
+    - incus_container_exists or (incus_container_created | default(false))
+    - container_status | default('Unknown') != 'Running'
+
+# T038: Verify network attachment after container start
+- name: Verify container network attachment
+  ansible.builtin.command:
+    cmd: incus config device list {{ incus_container_name }}
+  register: container_devices
+  changed_when: false
+  when: incus_container_exists or (incus_container_created | default(false))
+
+- name: Debug network devices
+  ansible.builtin.debug:
+    msg: "Container network devices: {{ container_devices.stdout | default('none') }}"
+    verbosity: 1
+  when: container_devices is defined
+
+# T012: Wait for container IP address
+# Uses native Jinja2 JSON parsing instead of external jq command
+- name: Get container info for IP address
+  ansible.builtin.command:
+    cmd: incus list {{ incus_container_name }} --format=json
+  register: container_list_result
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: >-
+    ((container_list_result.stdout | default('[]') | from_json | first | default({})).state | default({})).network | default({})
+    | dict2items
+    | selectattr('key', 'equalto', incus_container_network_interface | default('eth0'))
+    | map(attribute='value')
+    | first | default({})
+    | dict2items
+    | selectattr('key', 'equalto', 'addresses')
+    | map(attribute='value')
+    | first | default([])
+    | selectattr('family', 'equalto', 'inet')
+    | list | length > 0
+  when: incus_container_exists or (incus_container_created | default(false))
+
+- name: Extract container IP from JSON
+  ansible.builtin.set_fact:
+    incus_container_ip: >-
+      {{ ((((container_list_result.stdout | default('[]') | from_json | first | default({})).state | default({})).network | default({}))[incus_container_network_interface | default('eth0')].addresses | default([])
+         | selectattr('family', 'equalto', 'inet') | list | first | default({})).address | default('') | trim }}
+  when:
+    - incus_container_exists or (incus_container_created | default(false))
+    - container_list_result.stdout | default('') | length > 0
+
+# T013: Wait for SSH to become available on the container
+# This task ensures the container is ready for Ansible configuration
+# by waiting until SSH is accepting connections on port 22.
+# NOTE: delegate_to: localhost is important for macvlan networking
+# where containers may not be reachable from the Incus host itself.
+- name: Wait for SSH to become available
+  ansible.builtin.wait_for:
+    host: "{{ incus_container_ip }}"
+    port: 22
+    timeout: "{{ incus_container_wait_timeout }}"
+    state: started
+  register: ssh_wait_result
+  failed_when: false
+  when:
+    - incus_container_ip is defined
+    - incus_container_ip | length > 0
+  delegate_to: localhost
+  become: false
+
+- name: Provide troubleshooting guidance if SSH connection timed out
+  ansible.builtin.fail:
+    msg: |
+      SSH connection to {{ incus_container_name }} ({{ incus_container_ip | default('unknown IP') }}) timed out after {{ incus_container_wait_timeout }} seconds.
+
+      Troubleshooting steps:
+        1. Check container status: incus list {{ incus_container_name }}
+        2. Check cloud-init logs: incus exec {{ incus_container_name }} -- cat /var/log/cloud-init-output.log
+        3. Verify SSH service: incus exec {{ incus_container_name }} -- systemctl status ssh
+        4. Check network connectivity from Incus host: incus exec {{ incus_container_name }} -- ip addr
+        5. For macvlan networks, SSH from your workstation (not the Incus host)
+  when: ssh_wait_result is defined and ssh_wait_result.failed | default(false)
+
+# T014: Dynamic inventory registration
+- name: Add container to in-memory inventory
+  ansible.builtin.add_host:
+    name: "{{ incus_container_name }}"
+    ansible_host: "{{ incus_container_ip | default('') }}"
+    ansible_user: "{{ incus_container_ssh_user | default('root') }}"
+    ansible_ssh_private_key_file: "{{ incus_container_ssh_private_key | default('~/.ssh/id_rsa') | expanduser }}"
+    ansible_python_interpreter: /usr/bin/python3
+    groups:
+      - incus_containers
+  when:
+    - incus_container_ip is defined
+    - incus_container_ip | default('') | length > 0
+
+# T015: Set output facts for external consumption
+- name: Set output facts for container
+  ansible.builtin.set_fact:
+    incus_container_result:
+      name: "{{ incus_container_name }}"
+      ip: "{{ incus_container_ip | default('') }}"
+      created: "{{ incus_container_created | default(false) }}"
+      exists: "{{ incus_container_exists | default(false) }}"
+      ssh_user: "{{ incus_container_ssh_user }}"
+      ssh_key: "{{ incus_container_ssh_private_key | expanduser }}"
+  when: incus_container_ip is defined

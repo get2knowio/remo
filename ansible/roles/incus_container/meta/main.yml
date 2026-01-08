@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  author: remo project
+  description: Provision Incus containers with cloud-init SSH key injection
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - jammy
+        - noble
+    - name: openSUSE
+      versions:
+        - all
+  galaxy_tags:
+    - incus
+    - containers
+    - virtualization
+    - cloud-init
+
+dependencies: []
