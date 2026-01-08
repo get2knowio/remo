@@ -129,16 +129,16 @@
 
 - name: Create zellij config directory for user
   ansible.builtin.file:
-    path: "/home/{{ g2k_user }}/.config/zellij"
+    path: "/home/{{ remo_user }}/.config/zellij"
     state: directory
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0755'
 
 - name: Deploy zellij config for outer session
   ansible.builtin.template:
     src: config.kdl.j2
-    dest: "/home/{{ g2k_user }}/.config/zellij/config.kdl"
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    dest: "/home/{{ remo_user }}/.config/zellij/config.kdl"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0644'

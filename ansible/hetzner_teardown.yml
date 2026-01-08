@@ -85,7 +85,7 @@
       ansible.builtin.debug:
         msg: |
           Volume '{{ hetzner_volume_name }}' has been PRESERVED.
-          Your data in /home/g2k will be available when you provision a new server.
+          Your data in /home/remo will be available when you provision a new server.
           To remove the volume and all data, run:
             ./run.sh teardown.yml -e remove_volume=true
       when: not (remove_volume | bool)

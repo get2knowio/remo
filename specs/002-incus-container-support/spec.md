@@ -139,7 +139,7 @@ As a developer, I want to access services running inside my Incus containers fro
 - **Important macvlan limitation**: The Incus host machine CANNOT directly communicate with containers on the macvlan network (this is a known kernel limitation). Users access containers from a separate workstation, just like accessing Hetzner VMs.
 - The user runs Ansible playbooks from their workstation (separate from the Incus host), targeting containers by their LAN IP addresses - mirroring the Hetzner workflow where you SSH to VMs from your local machine, not from the Hetzner infrastructure.
 - Container SSH access will use the same key-based authentication pattern as Hetzner hosts (public key from `~/.ssh/id_rsa.pub`).
-- Initial user inside containers will be `ubuntu` (for Ubuntu images) or a configurable user, with sudo privileges.
+- Initial user inside containers will be `remo` (configurable), with sudo privileges.
 
 ## Scope Boundaries
 
@@ -184,6 +184,6 @@ As a developer, I want to access services running inside my Incus containers fro
 | Boot Time           | 1-2 minutes (VM + cloud-init)      | 5-30 seconds (container)            |
 | Isolation Level     | Full VM (hardware virtualization)  | Container (shared kernel)           |
 | DNS/Discovery       | DuckDNS integration                | Local /etc/hosts or mDNS            |
-| Default User        | root (then g2k)                    | ubuntu (or configurable)            |
+| Default User        | root (then remo)                   | remo (configurable)                 |
 
 **Key similarity**: With macvlan networking, the access pattern is identical to Hetzner - you SSH to containers from your workstation using their IP addresses. The Incus host is just the hypervisor (like Hetzner's infrastructure), not an access point.

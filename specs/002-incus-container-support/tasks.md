@@ -51,7 +51,7 @@
 
 **Goal**: Spin up an Incus container with SSH access using same workflow as Hetzner VMs
 
-**Independent Test**: Run `./run.sh incus_container.yml -e container_name=test-us1` and verify SSH connectivity via `ssh ubuntu@<container_ip>`
+**Independent Test**: Run `./run.sh incus_container.yml -e container_name=test-us1` and verify SSH connectivity via `ssh remo@<container_ip>`
 
 ### Implementation for User Story 1
 

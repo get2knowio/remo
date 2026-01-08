@@ -30,7 +30,7 @@ Manages the complete container lifecycle: create, start, wait for readiness, reg
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `incus_container_ssh_user` | string | `"ubuntu"` | User for SSH access |
+| `incus_container_ssh_user` | string | `"remo"` | User for SSH access |
 | `incus_container_ssh_key_path` | string | `"~/.ssh/id_rsa.pub"` | Path to public key for injection |
 | `incus_container_ssh_private_key` | string | `"~/.ssh/id_rsa"` | Path to private key for connections |
 
@@ -113,7 +113,7 @@ Defines a host-to-container directory mount for persistent storage.
 ```yaml
 incus_container_mounts:
   - source: "/home/{{ ansible_user_id }}/projects"
-    target: "/home/ubuntu/projects"
+    target: "/home/remo/projects"
     device_name: "projects"
   - source: "/mnt/data/{{ incus_container_name }}"
     target: "/data"
@@ -132,7 +132,7 @@ Represents a container in Ansible inventory.
 | Field | Type | Description |
 |-------|------|-------------|
 | `ansible_host` | string | Container IP address (from `incus_container_ip`) |
-| `ansible_user` | string | SSH user (default: `ubuntu`) |
+| `ansible_user` | string | SSH user (default: `remo`) |
 | `ansible_ssh_private_key_file` | string | Path to SSH private key |
 | `ansible_python_interpreter` | string | Python path (default: `/usr/bin/python3`) |
 
@@ -144,7 +144,7 @@ all:
       hosts:
         dev-container:
           ansible_host: 10.180.234.50
-          ansible_user: ubuntu
+          ansible_user: remo
           ansible_ssh_private_key_file: ~/.ssh/id_rsa
       vars:
         ansible_python_interpreter: /usr/bin/python3
@@ -218,7 +218,7 @@ users:
 │  │ • container_image    │      │  │                                 │  │ │
 │  │ • ssh_key_path       │      │  │  • dev-container                │  │ │
 │  │ • mounts[]           │      │  │    - ansible_host: <ip>         │  │ │
-│  └──────────┬───────────┘      │  │    - ansible_user: ubuntu       │  │ │
+│  └──────────┬───────────┘      │  │    - ansible_user: remo       │  │ │
 │             │                  │  │                                 │  │ │
 │             │ creates/manages  │  └─────────────────────────────────┘  │ │
 │             ▼                  │                   │                   │ │
@@ -236,13 +236,13 @@ users:
 │  │  │  │ Cloud-Init      │    │ Network (eth0)  │                │  │ │ │
 │  │  │  │                 │    │                 │                │  │ │ │
 │  │  │  │ • SSH keys      │    │ • incusbr0      │◄───────────────│──│─┘ │
-│  │  │  │ • ubuntu user   │    │ • DHCP IP       │  SSH connection│  │   │
+│  │  │  │ • remo user   │    │ • DHCP IP       │  SSH connection│  │   │
 │  │  │  └─────────────────┘    └─────────────────┘                │  │   │
 │  │  │                                                             │  │   │
 │  │  │  ┌─────────────────────────────────────────────────────┐   │  │   │
 │  │  │  │ Disk Devices (Mounts)                                │   │  │   │
 │  │  │  │                                                      │   │  │   │
-│  │  │  │ projects: /host/projects → /home/ubuntu/projects    │   │  │   │
+│  │  │  │ projects: /host/projects → /home/remo/projects    │   │  │   │
 │  │  │  │ data: /mnt/data/name → /data                        │   │  │   │
 │  │  │  └─────────────────────────────────────────────────────┘   │  │   │
 │  │  └────────────────────────────────────────────────────────────┘  │   │

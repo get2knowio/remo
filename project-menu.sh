@@ -4,7 +4,7 @@
 
 set -e
 
-PROJECTS_DIR="/home/g2k/projects"
+PROJECTS_DIR="/home/remo/projects"
 
 # Get list of active zellij sessions
 get_active_sessions() {

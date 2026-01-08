@@ -41,7 +41,7 @@
 ```bash
 # SSH into the container from a separate workstation (not the Incus host)
 # Containers get LAN IPs via DHCP (macvlan networking)
-ssh ubuntu@<container_ip>
+ssh remo@<container_ip>
 
 # IMPORTANT: The Incus host CANNOT SSH to containers directly (macvlan limitation)
 # Use incus exec on the host instead:
@@ -72,7 +72,7 @@ incus exec dev -- bash
 ./run.sh incus_container_configure.yml -e container_name=myproject
 
 # 3. SSH and start working
-ssh ubuntu@$(incus list myproject -c 4 --format=csv | cut -d, -f1)
+ssh remo@$(incus list myproject -c 4 --format=csv | cut -d, -f1)
 ```
 
 ### Workflow 2: Container with Persistent Storage
@@ -114,7 +114,7 @@ ssh ubuntu@$(incus list myproject -c 4 --format=csv | cut -d, -f1)
 |----------|---------|-------------|
 | `container_name` | **required** | Unique container identifier |
 | `container_image` | `images:ubuntu/24.04/cloud` | Cloud-enabled container image |
-| `container_ssh_user` | `ubuntu` | SSH user for access |
+| `container_ssh_user` | `remo` | SSH user for access |
 | `container_ssh_key_path` | `~/.ssh/id_rsa.pub` | Public key to inject |
 | `container_mounts` | `[]` | Host directory mounts |
 
@@ -143,8 +143,8 @@ Default roles: `docker`, `user_setup`, `nodejs`, `fzf`, `zellij`
 | Provision | `./run.sh provision.yml` | `./run.sh incus_container.yml -e container_name=X` |
 | Configure | `./run.sh configure.yml` | `./run.sh incus_container_configure.yml -e container_name=X` |
 | Teardown | `./run.sh teardown.yml` | `./run.sh incus_container_teardown.yml -e container_name=X` |
-| Connect | `ssh g2k@<ip>` | `ssh ubuntu@<ip>` |
-| Default user | `root` → `g2k` | `ubuntu` |
+| Connect | `ssh remo@<ip>` | `ssh remo@<ip>` |
+| Default user | `root` → `remo` | `remo` |
 
 ## Troubleshooting
 

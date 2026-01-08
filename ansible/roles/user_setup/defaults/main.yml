@@ -1,11 +1,11 @@
 ---
-g2k_user: "g2k"
+remo_user: "remo"
 
 # Development workspace directory (parent folder for all projects)
-dev_workspace_dir: "/home/{{ g2k_user }}/projects"
+dev_workspace_dir: "/home/{{ remo_user }}/projects"
 
 # Zellij session name for SSH auto-attach
 zellij_session_name: "main"
 
 # Volume device for persistent home directory (set by hetzner_server role)
-g2k_volume_device: ""
+remo_volume_device: ""

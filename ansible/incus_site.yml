@@ -14,7 +14,7 @@
 #   incus_host_user: SSH user for the Incus host (default: current user)
 #   container_image: Image to use (default: images:ubuntu/24.04/cloud)
 #   container_domain: Domain for FQDN (e.g., int.example.com)
-#   container_ssh_user: SSH user inside container (default: ubuntu)
+#   container_ssh_user: SSH user inside container (default: remo)
 #   container_mounts: List of host directory mounts
 #   configure_*: Enable/disable specific dev tools (see incus_configure.yml)
 
@@ -30,7 +30,7 @@
     incus_container_image: "{{ container_image | default('images:ubuntu/24.04/cloud') }}"
     incus_container_profile: "{{ container_profile | default('default') }}"
     incus_container_network: "{{ container_network | default('incusbr0') }}"
-    incus_container_ssh_user: "{{ container_ssh_user | default('ubuntu') }}"
+    incus_container_ssh_user: "{{ container_ssh_user | default('remo') }}"
     incus_container_ssh_key_path: "{{ container_ssh_key_path | default('~/.ssh/id_rsa.pub') }}"
     incus_container_domain: "{{ container_domain | default('') }}"
     incus_container_mounts: "{{ container_mounts | default([]) }}"

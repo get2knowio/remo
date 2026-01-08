@@ -6,7 +6,7 @@
 ansible_python_interpreter: /usr/bin/python3
 
 # Default SSH user for Incus containers (created by cloud-init)
-ansible_user: ubuntu
+ansible_user: remo
 
 # Default SSH private key path
 # Can be overridden per-container in inventory

@@ -100,7 +100,7 @@ Set these in `.env` at the repository root:
 | `container_name` | (required) | Name of the container |
 | `container_image` | `images:ubuntu/24.04/cloud` | Cloud image to use |
 | `container_domain` | (empty) | Domain for FQDN, enables DHCP hostname registration |
-| `container_ssh_user` | `ubuntu` | SSH user created in container |
+| `container_ssh_user` | `remo` | SSH user created in container |
 | `container_ip` | (required for configure) | IP address of container to configure |
 
 ## Project Structure

@@ -34,7 +34,7 @@ incus_container_profile: "default"
 
 # Username for SSH access to the container
 # This user is created by cloud-init and granted sudo privileges
-incus_container_ssh_user: "ubuntu"
+incus_container_ssh_user: "remo"
 
 # Path to the SSH public key for injection into the container
 # The public key content is read and injected via cloud-init user-data
@@ -93,7 +93,7 @@ incus_container_domain: ""
 # Example:
 #   incus_container_mounts:
 #     - source: "/home/{{ ansible_user_id }}/projects"
-#       target: "/home/ubuntu/projects"
+#       target: "/home/remo/projects"
 #       device_name: "projects"
 #     - source: "/mnt/data/{{ incus_container_name }}"
 #       target: "/data"

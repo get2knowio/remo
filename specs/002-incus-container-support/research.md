@@ -39,7 +39,7 @@ This research consolidates technical findings for implementing Incus container m
 - Ubuntu cloud images (`images:ubuntu/24.04/cloud`) have cloud-init pre-configured
 - SSH keys injected at first boot via cloud-init are idempotent
 - Matches the pattern used by Hetzner cloud-init for VMs
-- Default `ubuntu` user aligns with existing role expectations
+- Default `remo` user aligns with existing role expectations
 
 **Alternatives Considered**:
 - Manual `incus exec` to install openssh-server and add keys: Not idempotent, error-prone
@@ -49,7 +49,7 @@ This research consolidates technical findings for implementing Incus container m
 ```yaml
 #cloud-config
 users:
-  - name: ubuntu
+  - name: remo
     groups: sudo
     shell: /bin/bash
     ssh_authorized_keys:
@@ -160,7 +160,7 @@ incus config device add <container> <device_name> disk \
 
 **Static Inventory** (`ansible/inventory/incus_containers.yml`):
 - Pre-defined container entries for known environments
-- Connection parameters (user: ubuntu, SSH key path)
+- Connection parameters (user: remo, SSH key path)
 - Group membership for role application
 
 **Dynamic Inventory** (via `add_host` in provisioning playbook):

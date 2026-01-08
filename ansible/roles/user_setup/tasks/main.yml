@@ -2,56 +2,56 @@
 # Volume setup must happen BEFORE creating the user
 - name: Check if volume device exists
   ansible.builtin.stat:
-    path: "{{ g2k_volume_device }}"
+    path: "{{ remo_volume_device }}"
   register: volume_device_stat
-  when: g2k_volume_device | length > 0
+  when: remo_volume_device | length > 0
 
 - name: Check if volume is already formatted
   ansible.builtin.command:
-    cmd: "blkid {{ g2k_volume_device }}"
+    cmd: "blkid {{ remo_volume_device }}"
   register: volume_blkid
   changed_when: false
   failed_when: false
   when:
-    - g2k_volume_device | length > 0
+    - remo_volume_device | length > 0
     - volume_device_stat.stat.exists | default(false)
 
 - name: Format volume with ext4 filesystem
   ansible.builtin.filesystem:
     fstype: ext4
-    dev: "{{ g2k_volume_device }}"
+    dev: "{{ remo_volume_device }}"
   when:
-    - g2k_volume_device | length > 0
+    - remo_volume_device | length > 0
     - volume_device_stat.stat.exists | default(false)
     - volume_blkid.rc != 0
 
 - name: Create temporary mount point for home directory
   ansible.builtin.file:
-    path: "/home/{{ g2k_user }}"
+    path: "/home/{{ remo_user }}"
     state: directory
     mode: '0755'
   when:
-    - g2k_volume_device | length > 0
+    - remo_volume_device | length > 0
     - volume_device_stat.stat.exists | default(false)
 
 - name: Mount volume as user home directory
   ansible.posix.mount:
-    path: "/home/{{ g2k_user }}"
-    src: "{{ g2k_volume_device }}"
+    path: "/home/{{ remo_user }}"
+    src: "{{ remo_volume_device }}"
     fstype: ext4
     opts: defaults,nofail
     state: mounted
   when:
-    - g2k_volume_device | length > 0
+    - remo_volume_device | length > 0
     - volume_device_stat.stat.exists | default(false)
 
 - name: Resize filesystem if volume was resized
   ansible.builtin.command:
-    cmd: "resize2fs {{ g2k_volume_device }}"
+    cmd: "resize2fs {{ remo_volume_device }}"
   register: resize_result
   changed_when: "'Nothing to do' not in resize_result.stderr"
   when:
-    - g2k_volume_device | length > 0
+    - remo_volume_device | length > 0
     - volume_device_stat.stat.exists | default(false)
 
 - name: Install figlet for ASCII banners
@@ -60,64 +60,64 @@
     state: present
     update_cache: true
 
-- name: Create g2k user
+- name: Create remo user
   ansible.builtin.user:
-    name: "{{ g2k_user }}"
+    name: "{{ remo_user }}"
     shell: /bin/bash
     create_home: true
     state: present
 
 - name: Ensure home directory has correct ownership
   ansible.builtin.file:
-    path: "/home/{{ g2k_user }}"
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    path: "/home/{{ remo_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0755'
     state: directory
 
-- name: Create .ssh directory for g2k user
+- name: Create .ssh directory for remo user
   ansible.builtin.file:
-    path: "/home/{{ g2k_user }}/.ssh"
+    path: "/home/{{ remo_user }}/.ssh"
     state: directory
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0700'
 
-- name: Check if authorized_keys already exists for g2k user
+- name: Check if authorized_keys already exists for remo user
   ansible.builtin.stat:
-    path: "/home/{{ g2k_user }}/.ssh/authorized_keys"
-  register: g2k_authorized_keys
+    path: "/home/{{ remo_user }}/.ssh/authorized_keys"
+  register: remo_authorized_keys
 
-- name: Copy authorized_keys from root to g2k user
+- name: Copy authorized_keys from root to remo user
   ansible.builtin.copy:
     src: /root/.ssh/authorized_keys
-    dest: "/home/{{ g2k_user }}/.ssh/authorized_keys"
+    dest: "/home/{{ remo_user }}/.ssh/authorized_keys"
     remote_src: true
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0600'
-  when: not g2k_authorized_keys.stat.exists
+  when: not remo_authorized_keys.stat.exists
 
-- name: Add g2k user to docker group
+- name: Add remo user to docker group
   ansible.builtin.user:
-    name: "{{ g2k_user }}"
+    name: "{{ remo_user }}"
     groups: docker
     append: true
 
-- name: Configure passwordless sudo for g2k user
+- name: Configure passwordless sudo for remo user
   ansible.builtin.lineinfile:
-    path: /etc/sudoers.d/{{ g2k_user }}
-    line: "{{ g2k_user }} ALL=(ALL) NOPASSWD:ALL"
+    path: /etc/sudoers.d/{{ remo_user }}
+    line: "{{ remo_user }} ALL=(ALL) NOPASSWD:ALL"
     create: true
     mode: '0440'
     validate: 'visudo -cf %s'
 
 - name: Create devcontainer mount directories
   ansible.builtin.file:
-    path: "/home/{{ g2k_user }}/{{ item }}"
+    path: "/home/{{ remo_user }}/{{ item }}"
     state: directory
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0755'
   loop:
     - .codex
@@ -130,13 +130,13 @@
   ansible.builtin.file:
     path: "{{ dev_workspace_dir }}"
     state: directory
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0755'
 
 - name: Ensure ~/.local/bin is in PATH via .bashrc
   ansible.builtin.blockinfile:
-    path: "/home/{{ g2k_user }}/.bashrc"
+    path: "/home/{{ remo_user }}/.bashrc"
     marker: "# {mark} ANSIBLE MANAGED BLOCK - PATH"
     block: |
       # Add ~/.local/bin to PATH if it exists
@@ -144,13 +144,13 @@
           PATH="$HOME/.local/bin:$PATH"
       fi
     create: true
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0644'
 
 - name: Configure terminal type fallback for unknown terminals
   ansible.builtin.blockinfile:
-    path: "/home/{{ g2k_user }}/.bashrc"
+    path: "/home/{{ remo_user }}/.bashrc"
     marker: "# {mark} ANSIBLE MANAGED BLOCK - TERM FALLBACK"
     block: |
       # Fallback for unknown terminal types (e.g., xterm-ghostty)
@@ -159,14 +159,14 @@
           export TERM=xterm-256color
       fi
     create: true
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0644'
     insertbefore: "# {mark} ANSIBLE MANAGED BLOCK - PROJECT MENU"
 
 - name: Configure project-menu auto-start on SSH login
   ansible.builtin.blockinfile:
-    path: "/home/{{ g2k_user }}/.bashrc"
+    path: "/home/{{ remo_user }}/.bashrc"
     marker: "# {mark} ANSIBLE MANAGED BLOCK - PROJECT MENU"
     block: |
       # Auto-start project-menu on SSH login
@@ -184,14 +184,14 @@
           fi
       fi
     create: true
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0644'
     insertafter: EOF
 
 - name: Configure devcontainer auto-start inside zellij sessions
   ansible.builtin.blockinfile:
-    path: "/home/{{ g2k_user }}/.bashrc"
+    path: "/home/{{ remo_user }}/.bashrc"
     marker: "# {mark} ANSIBLE MANAGED BLOCK - DEVCONTAINER AUTO-START"
     block: |
       # Auto-start devcontainer when inside a zellij session for a devcontainer project
@@ -261,14 +261,14 @@
           unset _project_dir _hash_dir _hash_file _rebuild_flag _current_hash _stored_hash _container_id
       fi
     create: true
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0644'
     insertafter: EOF
 
 - name: Ensure .bash_profile sources .bashrc for login shells
   ansible.builtin.blockinfile:
-    path: "/home/{{ g2k_user }}/.bash_profile"
+    path: "/home/{{ remo_user }}/.bash_profile"
     marker: "# {mark} ANSIBLE MANAGED BLOCK - BASHRC"
     block: |
       # Debug logging for SSH login
@@ -290,28 +290,28 @@
       fi
       echo "[DEBUG] .bash_profile done" >> /tmp/shell-debug.log
     create: true
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0644'
 
 - name: Install devshell helper script
   ansible.builtin.template:
     src: devshell.sh.j2
-    dest: "/home/{{ g2k_user }}/.local/bin/devshell"
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    dest: "/home/{{ remo_user }}/.local/bin/devshell"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0755'
 
 - name: Install project-menu script
   ansible.builtin.template:
     src: project-menu.sh.j2
-    dest: "/home/{{ g2k_user }}/.local/bin/project-menu"
-    owner: "{{ g2k_user }}"
-    group: "{{ g2k_user }}"
+    dest: "/home/{{ remo_user }}/.local/bin/project-menu"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
     mode: '0755'
 
-- name: Verify g2k user exists
-  ansible.builtin.command: id {{ g2k_user }}
+- name: Verify remo user exists
+  ansible.builtin.command: id {{ remo_user }}
   register: user_setup_user_info
   changed_when: false
 

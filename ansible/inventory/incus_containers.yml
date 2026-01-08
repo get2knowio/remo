@@ -10,7 +10,7 @@
 # 1. Uncomment the example entry below (or copy it)
 # 2. Replace the container name (e.g., 'dev-container') with your container's name
 # 3. Set ansible_host to the container's IP address (assigned via DHCP from incusbr0)
-# 4. Optionally customize ansible_user if not using the default 'ubuntu'
+# 4. Optionally customize ansible_user if not using the default 'remo'
 # 5. Update ansible_ssh_private_key_file if using a different key
 #
 # FINDING CONTAINER IPs:
@@ -24,7 +24,7 @@
 #
 #   my-dev-box:
 #     ansible_host: 10.180.234.51
-#     ansible_user: ubuntu
+#     ansible_user: remo
 #     ansible_ssh_private_key_file: ~/.ssh/id_rsa
 #
 all:
@@ -34,7 +34,7 @@ all:
         # Example entry - uncomment and modify as needed
         # dev-container:
         #   ansible_host: 10.180.234.50
-        #   ansible_user: ubuntu
+        #   ansible_user: remo
         #   ansible_ssh_private_key_file: ~/.ssh/id_rsa
       vars:
         ansible_python_interpreter: /usr/bin/python3

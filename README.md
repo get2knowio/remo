@@ -48,7 +48,7 @@ Spin up a cloud VM with full dev tooling.
 | Component | Description |
 |-----------|-------------|
 | **Hetzner Server** | 2 vCPU, 4 GB RAM, 40 GB SSD (Ubuntu 24.04) |
-| **Persistent Volume** | `/home/g2k` survives server teardown |
+| **Persistent Volume** | `/home/remo` survives server teardown |
 | **Docker + Compose** | Official Docker CE with compose plugin |
 | **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
 | **Node.js 24 LTS** | From NodeSource repository |
@@ -79,7 +79,7 @@ vim .env
 ./remo hetzner create
 
 # SSH in
-ssh g2k@your-subdomain.duckdns.org
+ssh remo@your-subdomain.duckdns.org
 ```
 
 ### GitHub Actions (Alternative)
@@ -111,7 +111,7 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 |-----------|-------------|
 | **System Container** | Lightweight, near-native performance |
 | **LAN IP via DHCP** | Accessible from any machine on your network |
-| **Hostname DNS** | `ssh ubuntu@container-name` (if your router registers DHCP hostnames) |
+| **Hostname DNS** | `ssh remo@container-name` (if your router registers DHCP hostnames) |
 | **Docker + Compose** | Official Docker CE with compose plugin |
 | **Dev Containers CLI** | `devcontainer up`, `devcontainer exec`, etc. |
 | **Node.js 24 LTS** | From NodeSource repository |
@@ -131,8 +131,8 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 ./remo incus create dev1 --host incus-host --user youruser --domain int.example.com
 
 # SSH in (once DNS registers the hostname)
-ssh ubuntu@dev1
-ssh ubuntu@dev1.int.example.com
+ssh remo@dev1
+ssh remo@dev1.int.example.com
 
 # List containers
 ./remo incus list --host incus-host --user youruser
