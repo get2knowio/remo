@@ -1,4 +1,12 @@
 ---
+# Preflight validation
+- name: Validate Hetzner API token is set
+  ansible.builtin.fail:
+    msg: |
+      Hetzner API token is not configured.
+      Set the HETZNER_API_TOKEN environment variable or pass -e hetzner_api_token=<token>
+  when: hetzner_api_token | default('') | length == 0
+
 - name: Check if hcloud Python library is available
   delegate_to: localhost
   become: false
