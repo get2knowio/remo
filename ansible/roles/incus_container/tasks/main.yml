@@ -60,6 +60,15 @@
   changed_when: cloudinit_config_result.rc | default(1) == 0
   when: incus_container_created | default(false)
 
+# Enable security.nesting for Docker-in-Docker support
+# This allows running Docker containers inside the Incus container
+- name: Enable security nesting for Docker support
+  ansible.builtin.command:
+    cmd: incus config set {{ incus_container_name }} security.nesting=true
+  register: nesting_config_result
+  changed_when: nesting_config_result.rc | default(1) == 0
+  when: incus_container_created | default(false)
+
 # T040: Create mount source directories on host
 - name: Create mount source directories
   ansible.builtin.file:
