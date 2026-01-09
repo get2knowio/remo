@@ -243,19 +243,28 @@
               fi
               
               echo "Starting devcontainer for $ZELLIJ_SESSION_NAME..."
-              devcontainer up --workspace-folder "$_project_dir" $_rebuild_flag
-              
+              if ! devcontainer up --workspace-folder "$_project_dir" $_rebuild_flag; then
+                  echo ""
+                  echo "devcontainer up failed. [Press any key to continue]"
+                  read -n 1 -s -r
+                  exit 1
+              fi
+
               # Store current hash after successful start
               echo "$_current_hash" > "$_hash_file"
-              
+
               echo ""
               echo "Entering devcontainer (exit to return to host shell)..."
               echo ""
-              
+
               # Run devcontainer shell (not exec, so we can stop container after)
-              devcontainer exec --workspace-folder "$_project_dir" /bin/bash -c \
-                  'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
-              
+              if ! devcontainer exec --workspace-folder "$_project_dir" /bin/bash -c \
+                  'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'; then
+                  echo ""
+                  echo "devcontainer exec failed. [Press any key to continue]"
+                  read -n 1 -s -r
+              fi
+
               # After exiting devcontainer, stop the container to free resources
               echo ""
               echo "Stopping devcontainer..."
