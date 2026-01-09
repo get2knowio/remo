@@ -114,16 +114,17 @@ show_menu() {
 }
 
 # Handle cloning a new repo
+# Note: User-facing messages go to stderr, only repo name goes to stdout
 handle_clone() {
     local repo_url
     local repo_name
 
-    echo ""
-    echo -n "Enter GitHub repo URL (or owner/repo): "
+    echo "" >&2
+    echo -n "Enter GitHub repo (owner/repo or URL): " >&2
     read -r repo_url
 
     if [ -z "$repo_url" ]; then
-        echo "Cancelled."
+        echo "Cancelled." >&2
         return 1
     fi
 
@@ -133,24 +134,24 @@ handle_clone() {
     local target_dir="$PROJECTS_DIR/$repo_name"
 
     if [ -d "$target_dir" ]; then
-        echo "Error: Directory $target_dir already exists"
+        echo "Error: Directory $target_dir already exists" >&2
         sleep 2
         return 1
     fi
 
-    echo "Cloning $repo_url to $target_dir..."
+    echo "Cloning $repo_url to $target_dir..." >&2
 
-    # Use gh for better auth handling
+    # Use gh for better auth handling, redirect output to stderr
     if command -v gh &> /dev/null; then
-        gh repo clone "$repo_url" "$target_dir"
+        gh repo clone "$repo_url" "$target_dir" >&2
     else
-        git clone "$repo_url" "$target_dir"
+        git clone "$repo_url" "$target_dir" >&2
     fi
 
-    echo "Cloned successfully!"
+    echo "Cloned successfully!" >&2
     sleep 1
 
-    # Return the repo name to launch
+    # Return the repo name to stdout (for capture by caller)
     echo "$repo_name"
 }
 
