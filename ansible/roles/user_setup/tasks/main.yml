@@ -90,6 +90,11 @@
     group: "{{ remo_user }}"
     mode: '0700'
 
+- name: Check if root has authorized_keys (Hetzner injects keys to root)
+  ansible.builtin.stat:
+    path: /root/.ssh/authorized_keys
+  register: root_authorized_keys
+
 - name: Copy authorized_keys from root to remo user
   ansible.builtin.copy:
     src: /root/.ssh/authorized_keys
@@ -98,6 +103,7 @@
     owner: "{{ remo_user }}"
     group: "{{ remo_user }}"
     mode: '0600'
+  when: root_authorized_keys.stat.exists | default(false)
 
 - name: Add remo user to docker group
   ansible.builtin.user:
