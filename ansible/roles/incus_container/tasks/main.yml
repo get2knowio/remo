@@ -69,6 +69,14 @@
   changed_when: nesting_config_result.rc | default(1) == 0
   when: incus_container_created | default(false)
 
+# Enable auto-start so container restarts after host reboot
+- name: Enable container auto-start
+  ansible.builtin.command:
+    cmd: incus config set {{ incus_container_name }} boot.autostart=true
+  register: autostart_config_result
+  changed_when: autostart_config_result.rc | default(1) == 0
+  when: incus_container_created | default(false)
+
 # T040: Create mount source directories on host
 - name: Create mount source directories
   ansible.builtin.file:
