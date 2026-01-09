@@ -103,7 +103,9 @@
     owner: "{{ remo_user }}"
     group: "{{ remo_user }}"
     mode: '0600'
-  when: root_authorized_keys.stat.exists | default(false)
+  when:
+    - root_authorized_keys.stat.exists | default(false)
+    - root_authorized_keys.stat.size | default(0) > 0
 
 - name: Add remo user to docker group
   ansible.builtin.user:
