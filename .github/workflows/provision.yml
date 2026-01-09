@@ -44,4 +44,4 @@ jobs:
           ANSIBLE_HOST_KEY_CHECKING: 'false'
         run: |
           cd ansible
-          ansible-playbook site.yml
+          ansible-playbook hetzner_site.yml

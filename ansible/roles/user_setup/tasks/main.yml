@@ -75,6 +75,13 @@
     mode: '0755'
     state: directory
 
+- name: Fix ownership of all home directory contents
+  ansible.builtin.file:
+    path: "/home/{{ remo_user }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    recurse: true
+
 - name: Create .ssh directory for remo user
   ansible.builtin.file:
     path: "/home/{{ remo_user }}/.ssh"
@@ -82,11 +89,6 @@
     owner: "{{ remo_user }}"
     group: "{{ remo_user }}"
     mode: '0700'
-
-- name: Check if authorized_keys already exists for remo user
-  ansible.builtin.stat:
-    path: "/home/{{ remo_user }}/.ssh/authorized_keys"
-  register: remo_authorized_keys
 
 - name: Copy authorized_keys from root to remo user
   ansible.builtin.copy:
@@ -96,7 +98,6 @@
     owner: "{{ remo_user }}"
     group: "{{ remo_user }}"
     mode: '0600'
-  when: not remo_authorized_keys.stat.exists
 
 - name: Add remo user to docker group
   ansible.builtin.user:
