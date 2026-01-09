@@ -35,4 +35,4 @@ jobs:
           DUCKDNS_DOMAIN: ${{ secrets.DUCKDNS_DOMAIN }}
         run: |
           cd ansible
-          ansible-playbook teardown.yml -e auto_confirm=true
+          ansible-playbook hetzner_teardown.yml -e auto_confirm=true
