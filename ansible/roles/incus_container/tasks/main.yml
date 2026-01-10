@@ -48,6 +48,14 @@
     packages:
       - openssh-server
       - python3
+    write_files:
+      - path: /etc/ssh/sshd_config.d/no-dns.conf
+        content: |
+          # Disable DNS lookups to prevent SSH typing lag
+          UseDNS no
+          GSSAPIAuthentication no
+        owner: root:root
+        permissions: '0644'
     users:
       - name: {{ incus_container_ssh_user }}
         groups: sudo
