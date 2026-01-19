@@ -80,6 +80,7 @@ EXAMPLES:
     remo init
     remo incus create dev1
     remo incus create dev1 --domain int.example.com
+    remo incus update dev1 --only zellij
     remo incus destroy dev1 --yes
     remo incus list
     remo incus bootstrap
@@ -232,6 +233,7 @@ USAGE:
 COMMANDS:
     create <name>       Create and configure a new container
     destroy <name>      Destroy an existing container
+    update <name>       Update dev tools on an existing container
     list                List all containers
     bootstrap           Initialize Incus host (network, storage)
 
@@ -246,6 +248,14 @@ DESTROY OPTIONS:
     --host <host>       Remote Incus host (default: localhost)
     --user <user>       SSH user for remote host
 
+UPDATE OPTIONS:
+    --only <tool>       Only update specified tool (can repeat)
+    --skip <tool>       Skip specified tool (can repeat)
+    --host <host>       Remote Incus host (default: localhost)
+    --user <user>       SSH user for remote host
+
+    Available tools: docker, user_setup, nodejs, devcontainers, github_cli, fzf, zellij
+
 BOOTSTRAP OPTIONS:
     --host <host>       Remote Incus host (default: localhost)
     --user <user>       SSH user for remote host
@@ -256,6 +266,8 @@ EXAMPLES:
     remo incus create dev1 --domain int.get2know.io
     remo incus create dev1 --host 192.168.1.100 --user admin
     remo incus destroy dev1 --yes
+    remo incus update dev1 --only zellij
+    remo incus update dev1 --skip docker --skip nodejs
     remo incus list
     remo incus bootstrap --host myserver.local --user root
 EOF
@@ -501,6 +513,103 @@ incus_bootstrap() {
     run_playbook incus_bootstrap.yml "${extra_args[@]}"
 }
 
+incus_update() {
+    local name=""
+    local host="localhost"
+    local user=""
+    local only=()
+    local skip=()
+    local extra_args=()
+
+    # Available tools for --only and --skip
+    local all_tools="docker user_setup nodejs devcontainers github_cli fzf zellij"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --host)
+                host="$2"
+                shift 2
+                ;;
+            --user)
+                user="$2"
+                shift 2
+                ;;
+            --only)
+                only+=("$2")
+                shift 2
+                ;;
+            --skip)
+                skip+=("$2")
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo incus --help' for usage."
+                exit 1
+                ;;
+            *)
+                if [ -z "$name" ]; then
+                    name="$1"
+                else
+                    print_error "Unexpected argument: $1"
+                    exit 1
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$name" ]; then
+        print_error "Container name is required"
+        echo "Usage: remo incus update <name> [options]"
+        exit 1
+    fi
+
+    # Get container IP from Incus host
+    print_info "Looking up container '$name'..."
+    local container_ip
+    if [ "$host" = "localhost" ]; then
+        container_ip=$(incus list "$name" -f csv -c 4 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+    else
+        local ssh_target="$host"
+        [ -n "$user" ] && ssh_target="${user}@${host}"
+        container_ip=$(ssh "$ssh_target" "incus list '$name' -f csv -c 4" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+    fi
+
+    if [ -z "$container_ip" ]; then
+        print_error "Could not find IP for container '$name'"
+        exit 1
+    fi
+
+    print_info "Found container at $container_ip"
+    print_info "Configuring container '$name'..."
+
+    extra_args+=(-e "container_ip=$container_ip")
+
+    # Handle --only: disable all tools except specified ones
+    if [ ${#only[@]} -gt 0 ]; then
+        for tool in $all_tools; do
+            local enabled="false"
+            for o in "${only[@]}"; do
+                if [ "$tool" = "$o" ]; then
+                    enabled="true"
+                    break
+                fi
+            done
+            extra_args+=(-e "configure_${tool}=$enabled")
+        done
+    fi
+
+    # Handle --skip: disable specified tools
+    if [ ${#skip[@]} -gt 0 ]; then
+        for s in "${skip[@]}"; do
+            extra_args+=(-e "configure_${s}=false")
+        done
+    fi
+
+    run_playbook incus_configure.yml "${extra_args[@]}"
+}
+
 handle_incus() {
     local command="${1:-}"
     shift || true
@@ -511,6 +620,9 @@ handle_incus() {
             ;;
         destroy)
             incus_destroy "$@"
+            ;;
+        update)
+            incus_update "$@"
             ;;
         list)
             incus_list "$@"
