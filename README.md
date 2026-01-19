@@ -40,7 +40,7 @@ Active Zellij sessions are marked in the menu.
 - **Detach**: `Ctrl+d` returns to the project menu
 - **Reconnect**: SSH back in, select the same project to resume
 
-The host Zellij runs as an "outer" session (tab management only), so you can run an "inner" Zellij inside devcontainers without keybind conflicts.
+The host Zellij runs as a minimal "outer" session wrapper with no UI and only `Ctrl+d` bound. All other keybindings pass through, so you can run a full Zellij inside devcontainers without conflicts.
 
 ### What's Installed
 

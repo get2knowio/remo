@@ -135,10 +135,26 @@
     group: "{{ remo_user }}"
     mode: '0755'
 
+- name: Create zellij layouts directory for user
+  ansible.builtin.file:
+    path: "/home/{{ remo_user }}/.config/zellij/layouts"
+    state: directory
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0755'
+
 - name: Deploy zellij config for outer session
   ansible.builtin.template:
     src: config.kdl.j2
     dest: "/home/{{ remo_user }}/.config/zellij/config.kdl"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+
+- name: Deploy minimal layout for outer zellij
+  ansible.builtin.template:
+    src: layouts/minimal.kdl.j2
+    dest: "/home/{{ remo_user }}/.config/zellij/layouts/minimal.kdl"
     owner: "{{ remo_user }}"
     group: "{{ remo_user }}"
     mode: '0644'

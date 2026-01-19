@@ -1,29 +1,18 @@
+// Minimal outer zellij config - session wrapper only
+// All keybindings pass through to inner shell/zellij except Ctrl+d to detach
+
 keybinds clear-defaults=true {
-  // --- Outer Zellij handles tab management only ---
-
-  normal {
-    bind "Ctrl t" { NewTab; }
-    bind "Ctrl Tab" { GoToNextTab; }
-    bind "Ctrl Shift Tab" { GoToPreviousTab; }
-
-    // You probably want close-tab as well:
-    bind "Ctrl w" { CloseTab; }
-
-    // Optional: detach zellij
-    bind "Ctrl d" { Detach; }
-  }
-
-  // Allow basic UI control
-  locked {
-    bind "Ctrl t" { SwitchToMode "Normal"; }
-  }
+    // Only binding: detach to return to project menu
+    shared {
+        bind "Ctrl d" { Detach; }
+    }
 }
 
-// Hide pane frames - we only use tabs in the outer zellij
+// Use minimal layout with no tab-bar or status-bar
+default_layout "minimal"
+
+// Hide pane frames for clean look
 pane_frames false
 
 // Disable startup tips
 show_startup_tips false
-
-// Default tab name for new tabs
-default_tab_name "host"
