@@ -75,6 +75,7 @@ COMMANDS:
     init        Initialize remo (install dependencies, create .env)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
+    self-update Update remo to a newer version
 
 EXAMPLES:
     remo init
@@ -87,6 +88,9 @@ EXAMPLES:
 
     remo hetzner create
     remo hetzner destroy --yes
+
+    remo self-update
+    remo self-update --pre-release
 
 Run 'remo <command> --help' for command-specific options.
 EOF
@@ -642,6 +646,155 @@ handle_incus() {
 }
 
 # =============================================================================
+# SELF-UPDATE COMMAND
+# =============================================================================
+
+show_self_update_help() {
+    cat << 'EOF'
+remo self-update - Update remo to a newer version
+
+USAGE:
+    remo self-update [options]
+
+OPTIONS:
+    --version <version>   Update to specific version (e.g., v1.0.0)
+    --pre-release         Update to latest pre-release version
+    --check               Check for updates without installing
+    --help                Show this help message
+
+EXAMPLES:
+    remo self-update                    # Update to latest stable
+    remo self-update --pre-release      # Update to latest pre-release
+    remo self-update --version v1.0.0   # Update to specific version
+    remo self-update --check            # Check for available updates
+EOF
+}
+
+get_latest_release() {
+    local include_prerelease="$1"
+    local releases
+
+    releases=$(curl -fsSL "https://api.github.com/repos/get2knowio/remo/releases?per_page=20" 2>/dev/null)
+
+    if [ "$include_prerelease" = "true" ]; then
+        echo "$releases" | grep -o '"tag_name": "[^"]*"' | head -1 | cut -d'"' -f4
+    else
+        echo "$releases" | python3 -c "
+import sys, json
+releases = json.load(sys.stdin)
+for r in releases:
+    if not r.get('prerelease', False) and not r.get('draft', False):
+        tag = r.get('tag_name', '')
+        if '-rc' not in tag and '-beta' not in tag and '-alpha' not in tag:
+            print(tag)
+            break
+" 2>/dev/null || echo ""
+    fi
+}
+
+handle_self_update() {
+    local version=""
+    local pre_release=false
+    local check_only=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --version)
+                version="$2"
+                shift 2
+                ;;
+            --pre-release)
+                pre_release=true
+                shift
+                ;;
+            --check)
+                check_only=true
+                shift
+                ;;
+            --help|-h)
+                show_self_update_help
+                return 0
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo self-update --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Get current version
+    local current_version=""
+    if [ -f "$SCRIPT_DIR/VERSION" ]; then
+        current_version=$(cat "$SCRIPT_DIR/VERSION")
+    fi
+
+    print_info "Current version: ${current_version:-unknown}"
+
+    # Determine target version
+    local target_version=""
+    if [ -n "$version" ]; then
+        target_version="$version"
+    elif [ "$pre_release" = "true" ]; then
+        print_info "Checking for latest pre-release..."
+        target_version=$(get_latest_release true)
+    else
+        print_info "Checking for latest stable release..."
+        target_version=$(get_latest_release false)
+    fi
+
+    if [ -z "$target_version" ]; then
+        print_error "Could not determine target version"
+        exit 1
+    fi
+
+    # Strip 'v' prefix for comparison
+    local target_clean="${target_version#v}"
+    local current_clean="${current_version#v}"
+
+    print_info "Latest version: $target_version"
+
+    if [ "$target_clean" = "$current_clean" ]; then
+        print_success "Already up to date!"
+        return 0
+    fi
+
+    if [ "$check_only" = "true" ]; then
+        echo ""
+        print_warning "Update available: $current_version -> $target_version"
+        echo "Run 'remo self-update' to install"
+        return 0
+    fi
+
+    echo ""
+    print_info "Updating remo: $current_version -> $target_version"
+    echo ""
+
+    # Fetch and checkout the new version
+    cd "$SCRIPT_DIR"
+
+    print_info "Fetching updates..."
+    git fetch --tags origin 2>/dev/null
+
+    print_info "Checking out $target_version..."
+    git checkout "$target_version" 2>/dev/null
+
+    # Re-run init to update dependencies
+    print_info "Updating dependencies..."
+    ./remo init
+
+    echo ""
+    print_success "=============================================="
+    print_success "  remo updated to $target_version"
+    print_success "=============================================="
+    echo ""
+}
+
+# =============================================================================
 # HETZNER COMMANDS
 # =============================================================================
 
@@ -768,11 +921,18 @@ main() {
         hetzner)
             handle_hetzner "$@"
             ;;
+        self-update)
+            handle_self_update "$@"
+            ;;
         --help|-h|"")
             show_main_help
             ;;
         --version|-v)
-            echo "remo 0.1.0"
+            if [ -f "$SCRIPT_DIR/VERSION" ]; then
+                echo "remo $(cat "$SCRIPT_DIR/VERSION")"
+            else
+                echo "remo (version unknown)"
+            fi
             ;;
         *)
             print_error "Unknown command: $provider"

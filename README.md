@@ -4,6 +4,35 @@ Spin up a fully-configured development environment in minutes. One command gives
 
 ---
 
+## Installation
+
+```bash
+# Install latest stable version
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+
+# Install latest pre-release (for testing new features)
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --pre-release
+
+# Install specific version
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --version v1.0.0
+```
+
+After installation, `remo` is available in `~/.local/bin`. Add it to your PATH if needed:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+### Updating
+
+```bash
+remo self-update                    # Update to latest stable
+remo self-update --pre-release      # Update to latest pre-release
+remo self-update --check            # Check for updates
+```
+
+---
+
 ## The Dev Workflow
 
 SSH in and you're greeted with an interactive project menu:
@@ -73,23 +102,27 @@ Both give you the same dev workflow described above.
 ## CLI Quick Reference
 
 ```bash
-# First time setup
-./remo init
+# First time setup (if installed manually)
+remo init
 
 # Incus containers
-./remo incus create <name> [--host <host>] [--user <user>] [--domain <domain>]
-./remo incus destroy <name> [--host <host>] [--user <user>] [--yes]
-./remo incus list [--host <host>] [--user <user>]
-./remo incus bootstrap [--host <host>] [--user <user>]
+remo incus create <name> [--host <host>] [--user <user>] [--domain <domain>]
+remo incus update <name> [--only <tool>] [--skip <tool>]
+remo incus destroy <name> [--host <host>] [--user <user>] [--yes]
+remo incus list [--host <host>] [--user <user>]
+remo incus bootstrap [--host <host>] [--user <user>]
 
 # Hetzner VMs
-./remo hetzner create [--name <name>] [--type <type>] [--location <loc>]
-./remo hetzner destroy [--yes] [--remove-volume]
+remo hetzner create [--name <name>] [--type <type>] [--location <loc>]
+remo hetzner destroy [--yes] [--remove-volume]
+
+# Updates
+remo self-update [--pre-release] [--version <version>]
 
 # Help
-./remo --help
-./remo incus --help
-./remo hetzner --help
+remo --help
+remo incus --help
+remo hetzner --help
 ```
 
 ---
@@ -108,16 +141,14 @@ Spin up a cloud VM with full dev tooling.
 ### Quick Start
 
 ```bash
-# Clone and setup
-git clone https://github.com/get2knowio/remo.git
-cd remo
-./remo init
+# Install remo
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 
 # Edit .env with your Hetzner and DuckDNS tokens
-vim .env
+vim ~/.remo/.env
 
 # Provision server
-./remo hetzner create
+remo hetzner create
 
 # SSH in
 ssh remo@your-subdomain.duckdns.org
@@ -144,8 +175,8 @@ Fork this repo and use GitHub Actions to provision without local setup:
 ### Teardown
 
 ```bash
-./remo hetzner destroy --yes                 # Destroy server (keeps volume)
-./remo hetzner destroy --yes --remove-volume # Destroy everything
+remo hetzner destroy --yes                 # Destroy server (keeps volume)
+remo hetzner destroy --yes --remove-volume # Destroy everything
 ```
 
 ---
@@ -162,13 +193,11 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 ### Quick Start
 
 ```bash
-# Clone and setup (on your workstation)
-git clone https://github.com/get2knowio/remo.git
-cd remo
-./remo init
+# Install remo (on your workstation)
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 
 # Create and configure container
-./remo incus create dev1 --host incus-host --user youruser --domain int.example.com
+remo incus create dev1 --host incus-host --user youruser --domain int.example.com
 
 # SSH in
 ssh remo@dev1
@@ -197,7 +226,7 @@ ssh remo@dev1.int.example.com
 ### Teardown
 
 ```bash
-./remo incus destroy dev1 --host incus-host --user youruser --yes
+remo incus destroy dev1 --host incus-host --user youruser --yes
 ```
 
 ---
@@ -211,13 +240,13 @@ To use Incus containers, you first need to bootstrap Incus on your host machine.
 ### Bootstrap a Remote Host
 
 ```bash
-./remo incus bootstrap --host 192.168.1.100 --user paul
+remo incus bootstrap --host 192.168.1.100 --user paul
 ```
 
 ### Bootstrap Localhost
 
 ```bash
-./remo incus bootstrap
+remo incus bootstrap
 ```
 
 ### What Bootstrap Does
@@ -234,9 +263,10 @@ To use Incus containers, you first need to bootstrap Incus on your host machine.
 
 ```bash
 # Verbose output
-./remo incus bootstrap --verbose
+remo incus bootstrap --verbose
 
-# For advanced options (network type, interface), use ./run.sh directly:
+# For advanced options (network type, interface), use the ansible playbook directly:
+cd ~/.remo/ansible
 ./run.sh incus_bootstrap.yml -e "incus_network_parent=eth0"
 ./run.sh incus_bootstrap.yml -e "incus_network_type=bridge"
 ```
