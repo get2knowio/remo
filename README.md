@@ -8,13 +8,13 @@ Spin up a fully-configured development environment in minutes. One command gives
 
 ```bash
 # Install latest stable version
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
 # Install latest pre-release (for testing new features)
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --pre-release
+curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
 
 # Install specific version
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --version v1.0.0
+curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --version v1.0.0
 ```
 
 After installation, `remo` is available in `~/.local/bin`. Add it to your PATH if needed:
@@ -142,7 +142,7 @@ Spin up a cloud VM with full dev tooling.
 
 ```bash
 # Install remo
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
 # Edit .env with your Hetzner and DuckDNS tokens
 vim ~/.remo/.env
@@ -194,7 +194,7 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 
 ```bash
 # Install remo (on your workstation)
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
 # Create and configure container
 remo incus create dev1 --host incus-host --user youruser --domain int.example.com
