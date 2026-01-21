@@ -99,6 +99,32 @@ get_project_dirs() {
     fi
 }
 
+# Get git status indicators for a project directory
+# Returns: string with status symbols (e.g., "● ⇡" or "●" or "⇡" or "")
+get_git_status_indicators() {
+    local project_dir="$1"
+    local indicators=""
+
+    # Skip if not a git repo
+    [ -d "$project_dir/.git" ] || return
+
+    # Check for uncommitted changes (modified, staged, or untracked)
+    if ! git -C "$project_dir" diff --quiet HEAD 2>/dev/null || \
+       [ -n "$(git -C "$project_dir" status --porcelain 2>/dev/null)" ]; then
+        indicators="●"
+    fi
+
+    # Check for unpushed commits (ahead of upstream)
+    local ahead
+    ahead=$(git -C "$project_dir" rev-list --count @{upstream}..HEAD 2>/dev/null || echo "0")
+    if [ "$ahead" -gt 0 ]; then
+        [ -n "$indicators" ] && indicators="$indicators "
+        indicators="${indicators}⇡"
+    fi
+
+    echo "$indicators"
+}
+
 # Build menu options
 build_menu_options() {
     local active_sessions
@@ -120,10 +146,30 @@ build_menu_options() {
         [ -n "$session" ] && active_map["$session"]=1
     done
 
-    # Build options: show projects, marking active zellij sessions
+    # Build options: show projects with git status and active indicators
     for dir in "${project_dirs[@]}"; do
+        local indicators=""
+
+        # Add git status indicators
+        local git_status
+        git_status=$(get_git_status_indicators "$PROJECTS_DIR/$dir")
+        [ -n "$git_status" ] && indicators="$git_status"
+
+        # Add active indicator if session is running
         if [ -n "${active_map[$dir]}" ]; then
-            options+=("$dir - active")
+            [ -n "$indicators" ] && indicators="$indicators "
+            indicators="${indicators}⚡"
+        fi
+
+        # Build display name with colored indicators
+        if [ -n "$indicators" ]; then
+            # Color the indicators: ● yellow, ⇡ cyan, ⚡ green
+            local colored
+            colored=$(echo "$indicators" | sed \
+                -e 's/●/\\033[33m●\\033[0m/g' \
+                -e 's/⇡/\\033[36m⇡\\033[0m/g' \
+                -e 's/⚡/\\033[32m⚡\\033[0m/g')
+            options+=("$(printf '%s %b' "$dir" "$colored")")
         else
             options+=("$dir")
         fi
@@ -292,14 +338,12 @@ main() {
                 echo "Exiting to shell. Run 'project-menu' to return."
                 exit 0
                 ;;
-            *" - active")
-                # Extract project name (remove " - active" suffix)
-                local project_name="${selection% - active}"
-                launch_session "$project_name"
-                ;;
             *)
-                # Regular project directory
-                launch_session "$selection"
+                # Extract project name (strip ANSI codes and status indicators)
+                local project_name
+                # Remove ANSI escape codes, then strip trailing indicators (● ⇡ ⚡ and spaces)
+                project_name=$(echo "$selection" | sed 's/\x1b\[[0-9;]*m//g' | sed -E 's/ [●⇡⚡ ]+$//')
+                launch_session "$project_name"
                 ;;
         esac
 
