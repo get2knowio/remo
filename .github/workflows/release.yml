@@ -58,30 +58,30 @@ jobs:
           PREV_TAG="${{ steps.prev_tag.outputs.prev_tag }}"
 
           # Create release notes file
-          cat > release_notes.md << 'HEADER'
+          cat > release_notes.md << HEADER
           ## Installation
 
-          ```bash
+          \`\`\`bash
           # Install this version
           curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --version $TAG
           HEADER
 
           # Add pre-release note if applicable
           if [ "${{ steps.prerelease.outputs.is_prerelease }}" == "true" ]; then
-            cat >> release_notes.md << 'PRERELEASE'
+            cat >> release_notes.md << PRERELEASE
 
           # Or install latest pre-release
           curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
-          ```
+          \`\`\`
 
-          > **Note:** This is a pre-release version for testing. Use `--pre-release` flag to install.
+          > **Note:** This is a pre-release version for testing. Use \`--pre-release\` flag to install.
           PRERELEASE
           else
-            cat >> release_notes.md << 'STABLE'
+            cat >> release_notes.md << STABLE
 
           # Or install latest stable
           curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
-          ```
+          \`\`\`
           STABLE
           fi
 
