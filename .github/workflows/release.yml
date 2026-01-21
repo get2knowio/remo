@@ -1,0 +1,110 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get tag name
+        id: tag
+        run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+
+      - name: Validate VERSION matches tag
+        run: |
+          VERSION_FILE=$(cat VERSION | tr -d '[:space:]')
+          TAG_VERSION="${{ steps.tag.outputs.tag }}"
+          TAG_VERSION="${TAG_VERSION#v}"  # Remove 'v' prefix
+
+          if [ "$VERSION_FILE" != "$TAG_VERSION" ]; then
+            echo "::error::VERSION file ($VERSION_FILE) does not match tag ($TAG_VERSION)"
+            exit 1
+          fi
+          echo "VERSION file matches tag: $VERSION_FILE"
+
+      - name: Check if pre-release
+        id: prerelease
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          if [[ "$TAG" == *"-rc"* ]] || [[ "$TAG" == *"-beta"* ]] || [[ "$TAG" == *"-alpha"* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+            echo "This is a pre-release"
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+            echo "This is a stable release"
+          fi
+
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          PREV_TAG="${{ steps.prev_tag.outputs.prev_tag }}"
+
+          # Create release notes file
+          cat > release_notes.md << 'HEADER'
+          ## Installation
+
+          ```bash
+          # Install this version
+          curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --version $TAG
+          HEADER
+
+          # Add pre-release note if applicable
+          if [ "${{ steps.prerelease.outputs.is_prerelease }}" == "true" ]; then
+            cat >> release_notes.md << 'PRERELEASE'
+
+          # Or install latest pre-release
+          curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
+          ```
+
+          > **Note:** This is a pre-release version for testing. Use `--pre-release` flag to install.
+          PRERELEASE
+          else
+            cat >> release_notes.md << 'STABLE'
+
+          # Or install latest stable
+          curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
+          ```
+          STABLE
+          fi
+
+          # Add changes section
+          echo "" >> release_notes.md
+          echo "## Changes" >> release_notes.md
+          echo "" >> release_notes.md
+
+          if [ -n "$PREV_TAG" ]; then
+            # List commits since previous tag
+            git log --pretty=format:"- %s" ${PREV_TAG}..HEAD >> release_notes.md
+            echo "" >> release_notes.md
+            echo "" >> release_notes.md
+            echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...$TAG" >> release_notes.md
+          else
+            echo "Initial release" >> release_notes.md
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.tag.outputs.tag }}
+          body_path: release_notes.md
+          prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
+          draft: false

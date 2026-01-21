@@ -1,0 +1,37 @@
+name: Sync install.sh to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'install.sh'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check if sync needed
+        id: check
+        run: |
+          if ! diff -q install.sh docs/install.sh > /dev/null 2>&1; then
+            echo "needs_sync=true" >> $GITHUB_OUTPUT
+          else
+            echo "needs_sync=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync install.sh to docs/
+        if: steps.check.outputs.needs_sync == 'true'
+        run: |
+          cp install.sh docs/install.sh
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/install.sh
+          git commit -m "chore: sync install.sh to docs/ for GitHub Pages"
+          git push
