@@ -1,6 +1,9 @@
 ---
 remo_user: "remo"
 
+# Version displayed in project-menu banner
+remo_version: ""
+
 # Development workspace directory (parent folder for all projects)
 dev_workspace_dir: "/home/{{ remo_user }}/projects"
 

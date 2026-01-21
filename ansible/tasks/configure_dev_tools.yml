@@ -21,6 +21,8 @@
 - name: Configure user environment
   ansible.builtin.include_role:
     name: user_setup
+  vars:
+    remo_version: "{{ lookup('file', playbook_dir + '/../VERSION', errors='ignore') | default('', true) | trim }}"
   when: configure_user_setup | default(true) | bool
 
 - name: Install Node.js
