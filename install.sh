@@ -20,9 +20,9 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 print_error() { echo -e "${RED}Error:${NC} $1" >&2; }
-print_success() { echo -e "${GREEN}$1${NC}"; }
-print_info() { echo -e "${BLUE}$1${NC}"; }
-print_warning() { echo -e "${YELLOW}$1${NC}"; }
+print_success() { echo -e "${GREEN}$1${NC}" >&2; }
+print_info() { echo -e "${BLUE}$1${NC}" >&2; }
+print_warning() { echo -e "${YELLOW}$1${NC}" >&2; }
 
 # Parse arguments
 VERSION=""
