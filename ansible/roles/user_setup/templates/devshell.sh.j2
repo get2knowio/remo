@@ -86,8 +86,26 @@ fi
 echo "Starting devcontainer for $REPO_NAME..."
 devcontainer up --workspace-folder "$WORKSPACE_DIR"
 
-# Execute a shell inside the devcontainer
-devcontainer exec --workspace-folder "$WORKSPACE_DIR" /bin/bash -c 'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
+# Loop to allow re-entry if there are local changes
+while true; do
+    # Execute a shell inside the devcontainer
+    devcontainer exec --workspace-folder "$WORKSPACE_DIR" /bin/bash -c 'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
+
+    # Check for uncommitted or unpushed changes
+    has_uncommitted=$(devcontainer exec --workspace-folder "$WORKSPACE_DIR" git status --porcelain 2>/dev/null)
+    has_unpushed=$(devcontainer exec --workspace-folder "$WORKSPACE_DIR" git log @{u}.. --oneline 2>/dev/null)
+
+    if [ -n "$has_uncommitted" ] || [ -n "$has_unpushed" ]; then
+        echo ""
+        echo "Warning: You have local changes that have not been pushed."
+        read -p "Re-enter container? [y/N] " response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            continue
+        fi
+    fi
+
+    break
+done
 
 # When we exit the devcontainer, rename tab back to "host"
 if [ -n "$ZELLIJ" ]; then
