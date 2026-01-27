@@ -82,6 +82,7 @@ COMMANDS:
     init        Initialize remo (install dependencies, create .env)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
+    aws         Manage AWS EC2 instances with EFS storage
     self-update Update remo to a newer version
 
 EXAMPLES:
@@ -95,6 +96,11 @@ EXAMPLES:
 
     remo hetzner create
     remo hetzner destroy --yes
+
+    remo aws create
+    remo aws create --spot
+    remo aws destroy --yes
+    remo aws update-ip
 
     remo self-update
     remo self-update --pre-release
@@ -182,16 +188,16 @@ handle_init() {
 
     # Step 2: Install Python packages
     # Use uv if available (faster), otherwise use pip
-    print_info "Installing Python packages (ansible, hcloud)..."
+    print_info "Installing Python packages (ansible, hcloud, boto3)..."
     if command -v uv &> /dev/null; then
-        uv pip install --quiet --python "$python" ansible hcloud
+        uv pip install --quiet --python "$python" ansible hcloud boto3 botocore
     else
         # Ensure pip is available
         "$python" -m ensurepip --quiet 2>/dev/null || true
         "$python" -m pip install --quiet --upgrade pip
-        "$python" -m pip install --quiet ansible hcloud
+        "$python" -m pip install --quiet ansible hcloud boto3 botocore
     fi
-    print_success "✓ Installed ansible and hcloud"
+    print_success "✓ Installed ansible, hcloud, and boto3"
 
     # Step 3: Install Ansible collections
     print_info "Installing Ansible collections..."
@@ -224,12 +230,18 @@ handle_init() {
         echo "    DUCKDNS_TOKEN      - Get from https://www.duckdns.org/"
         echo "    DUCKDNS_DOMAIN     - Your subdomain (without .duckdns.org)"
         echo ""
+        echo -e "  ${YELLOW}For AWS:${NC}"
+        echo "    AWS_ACCESS_KEY_ID      - Get from AWS IAM console"
+        echo "    AWS_SECRET_ACCESS_KEY  - Get from AWS IAM console"
+        echo "    AWS_REGION             - Optional (default: us-west-2)"
+        echo ""
         echo -e "  ${YELLOW}For Incus (local/homelab):${NC}"
         echo "    No credentials needed - uses SSH keys"
         echo ""
         echo "Then run:"
         echo -e "  ${GREEN}./remo incus create dev1 --host <incus-host> --user <user>${NC}"
         echo -e "  ${GREEN}./remo hetzner create${NC}"
+        echo -e "  ${GREEN}./remo aws create${NC}"
         echo ""
     fi
 }
@@ -908,6 +920,306 @@ handle_hetzner() {
 }
 
 # =============================================================================
+# AWS COMMANDS
+# =============================================================================
+
+show_aws_help() {
+    cat << 'EOF'
+remo aws - Manage AWS EC2 instances with EFS storage
+
+USAGE:
+    remo aws <command> [options]
+
+COMMANDS:
+    create              Provision a new AWS EC2 instance
+    destroy             Tear down an AWS EC2 instance
+    update-ip           Update security group with current IP
+    info                Show instance information
+
+CREATE OPTIONS:
+    --name <name>       Resource namespace (default: $USER)
+    --type <type>       Instance type (default: t3.medium)
+    --region <region>   AWS region (default: us-west-2)
+    --spot              Use spot instance (cheaper but can be interrupted)
+    --dns               Also create Route53 DNS record
+
+DESTROY OPTIONS:
+    --yes, -y           Skip confirmation prompt
+    --remove-efs        Also remove the EFS filesystem (DESTROYS DATA!)
+    --name <name>       Resource namespace (default: $USER)
+
+UPDATE-IP OPTIONS:
+    --name <name>       Resource namespace (default: $USER)
+
+NOTES:
+    Requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env file.
+    The EFS filesystem is preserved by default on destroy.
+    Resources are namespaced by --name to support multiple users.
+
+SSH ACCESS:
+    After provisioning, connect using:
+        ssh remo-aws
+
+    SSH config is automatically updated in ~/.ssh/config
+
+EXAMPLES:
+    remo aws create
+    remo aws create --spot
+    remo aws create --name alice --type t3.large
+    remo aws create --dns
+    remo aws destroy --yes
+    remo aws destroy --yes --remove-efs
+    remo aws update-ip
+    remo aws info
+EOF
+}
+
+aws_create() {
+    local name=""
+    local instance_type=""
+    local region=""
+    local use_spot="false"
+    local create_dns="false"
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            --type)
+                instance_type="$2"
+                shift 2
+                ;;
+            --region)
+                region="$2"
+                shift 2
+                ;;
+            --spot)
+                use_spot="true"
+                shift
+                ;;
+            --dns)
+                create_dns="true"
+                shift
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo aws --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    print_info "Creating AWS EC2 instance..."
+
+    [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
+    [ -n "$instance_type" ] && extra_args+=(-e "aws_instance_type=$instance_type")
+    [ -n "$region" ] && extra_args+=(-e "aws_region=$region")
+    [ "$use_spot" = "true" ] && extra_args+=(-e "aws_use_spot=true")
+    [ "$create_dns" = "true" ] && extra_args+=(-e "aws_create_dns=true")
+
+    run_playbook aws_site.yml "${extra_args[@]}"
+}
+
+aws_destroy() {
+    local auto_confirm="false"
+    local remove_efs="false"
+    local name=""
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y)
+                auto_confirm="true"
+                shift
+                ;;
+            --remove-efs)
+                remove_efs="true"
+                shift
+                ;;
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo aws --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ "$remove_efs" = "true" ]; then
+        print_warning "WARNING: --remove-efs will destroy all data on the EFS filesystem!"
+    fi
+
+    print_info "Destroying AWS EC2 instance..."
+
+    [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
+    extra_args+=(-e "auto_confirm=$auto_confirm")
+    extra_args+=(-e "remove_efs=$remove_efs")
+
+    run_playbook aws_teardown.yml "${extra_args[@]}"
+}
+
+aws_update_ip() {
+    local name=""
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo aws --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    print_info "Updating AWS security group with current IP..."
+
+    [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
+
+    run_playbook aws_update_ip.yml "${extra_args[@]}"
+}
+
+aws_info() {
+    local name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo aws --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Use Python with boto3 to get instance info
+    local resource_name="${name:-$USER}"
+
+    python3 << EOF
+import os
+import sys
+
+try:
+    import boto3
+except ImportError:
+    print("Error: boto3 is not installed. Run 'remo init' first.", file=sys.stderr)
+    sys.exit(1)
+
+region = os.environ.get('AWS_REGION', 'us-west-2')
+access_key = os.environ.get('AWS_ACCESS_KEY_ID', '')
+secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+
+if not access_key or not secret_key:
+    print("Error: AWS credentials not set. Configure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.", file=sys.stderr)
+    sys.exit(1)
+
+ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+
+instance_name = "remo-${resource_name}"
+
+response = ec2.describe_instances(
+    Filters=[
+        {'Name': 'tag:Name', 'Values': [instance_name]},
+        {'Name': 'tag:remo', 'Values': ['true']},
+        {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
+    ]
+)
+
+instances = []
+for reservation in response.get('Reservations', []):
+    instances.extend(reservation.get('Instances', []))
+
+if not instances:
+    print(f"No AWS instance found with name: {instance_name}")
+    print(f"Run 'remo aws create' to provision a new instance.")
+    sys.exit(0)
+
+instance = instances[0]
+state = instance.get('State', {}).get('Name', 'unknown')
+instance_id = instance.get('InstanceId', 'unknown')
+instance_type = instance.get('InstanceType', 'unknown')
+public_ip = instance.get('PublicIpAddress', 'N/A')
+public_dns = instance.get('PublicDnsName', 'N/A')
+launch_time = instance.get('LaunchTime', 'unknown')
+
+print(f"""
+AWS Instance Information:
+========================
+Name:          {instance_name}
+Instance ID:   {instance_id}
+State:         {state}
+Type:          {instance_type}
+Region:        {region}
+Public IP:     {public_ip}
+Public DNS:    {public_dns}
+Launch Time:   {launch_time}
+
+SSH Connection:
+  ssh remo-aws
+  ssh remo@{public_ip}
+""")
+EOF
+}
+
+handle_aws() {
+    local command="${1:-}"
+    shift || true
+
+    case "$command" in
+        create)
+            aws_create "$@"
+            ;;
+        destroy)
+            aws_destroy "$@"
+            ;;
+        update-ip)
+            aws_update_ip "$@"
+            ;;
+        info)
+            aws_info "$@"
+            ;;
+        --help|-h|"")
+            show_aws_help
+            ;;
+        *)
+            print_error "Unknown aws command: $command"
+            echo "Run 'remo aws --help' for available commands."
+            exit 1
+            ;;
+    esac
+}
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 
@@ -927,6 +1239,9 @@ main() {
             ;;
         hetzner)
             handle_hetzner "$@"
+            ;;
+        aws)
+            handle_aws "$@"
             ;;
         self-update)
             handle_self_update "$@"

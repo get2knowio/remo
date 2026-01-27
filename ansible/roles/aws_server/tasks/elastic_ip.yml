@@ -1,0 +1,100 @@
+---
+# Elastic IP - Allocate and associate with instance
+
+- name: Check for existing Elastic IP
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_eip_info:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+    filters:
+      "tag:Name": "{{ aws_instance_name }}-eip"
+      "tag:remo": "true"
+  register: existing_eip
+
+- name: Allocate Elastic IP if not exists
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_eip:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+    device_id: "{{ aws_instance_id }}"
+    in_vpc: true
+    state: present
+    tags:
+      Name: "{{ aws_instance_name }}-eip"
+      remo: "true"
+      remo_resource_name: "{{ aws_resource_name }}"
+  register: new_eip_result
+  when: existing_eip.addresses | default([]) | length == 0
+
+- name: Associate existing Elastic IP with instance
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_eip:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+    device_id: "{{ aws_instance_id }}"
+    public_ip: "{{ existing_eip.addresses[0].public_ip }}"
+    allow_reassociation: true
+    state: present
+  register: existing_eip_result
+  when: existing_eip.addresses | default([]) | length > 0
+
+- name: Set Elastic IP fact (new)
+  ansible.builtin.set_fact:
+    aws_elastic_ip: "{{ new_eip_result.public_ip }}"
+    aws_elastic_ip_allocation_id: "{{ new_eip_result.allocation_id }}"
+  when: existing_eip.addresses | default([]) | length == 0
+
+- name: Set Elastic IP fact (existing)
+  ansible.builtin.set_fact:
+    aws_elastic_ip: "{{ existing_eip.addresses[0].public_ip }}"
+    aws_elastic_ip_allocation_id: "{{ existing_eip.addresses[0].allocation_id }}"
+  when: existing_eip.addresses | default([]) | length > 0
+
+- name: Update instance IP facts after EIP assignment
+  ansible.builtin.set_fact:
+    aws_instance_public_ip: "{{ aws_elastic_ip }}"
+
+- name: Update inventory with Elastic IP
+  delegate_to: localhost
+  become: false
+  ansible.builtin.add_host:
+    name: aws_server
+    ansible_host: "{{ aws_elastic_ip }}"
+    ansible_user: ubuntu
+    ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
+    groups: provisioned
+
+- name: Get instance public DNS after EIP assignment
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_instance_info:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+    instance_ids:
+      - "{{ aws_instance_id }}"
+  register: instance_info_after_eip
+
+- name: Update public DNS fact
+  ansible.builtin.set_fact:
+    aws_instance_public_dns: "{{ instance_info_after_eip.instances[0].public_dns_name | default('') }}"
+
+- name: Display Elastic IP info
+  ansible.builtin.debug:
+    msg: "Elastic IP: {{ aws_elastic_ip }} associated with {{ aws_instance_name }}"
+
+- name: Wait for SSH after EIP association
+  delegate_to: localhost
+  become: false
+  ansible.builtin.wait_for:
+    host: "{{ aws_elastic_ip }}"
+    port: 22
+    delay: 5
+    timeout: 60
+    state: started

@@ -54,6 +54,38 @@
     - remo_volume_device | length > 0
     - volume_device_stat.stat.exists | default(false)
 
+# EFS Setup (AWS) - alternative to block volume
+- name: Install NFS utilities for EFS mounting
+  ansible.builtin.apt:
+    name:
+      - nfs-common
+      - binutils
+    state: present
+    update_cache: true
+  when: remo_efs_id | default('') | length > 0
+
+- name: Install amazon-efs-utils (with stunnel for TLS)
+  ansible.builtin.apt:
+    name: stunnel4
+    state: present
+  when: remo_efs_id | default('') | length > 0
+
+- name: Create temporary mount point for EFS home directory
+  ansible.builtin.file:
+    path: "/home/{{ remo_user }}"
+    state: directory
+    mode: '0755'
+  when: remo_efs_id | default('') | length > 0
+
+- name: Mount EFS as user home directory
+  ansible.posix.mount:
+    path: "/home/{{ remo_user }}"
+    src: "{{ remo_efs_id }}.efs.{{ remo_efs_region }}.amazonaws.com:/"
+    fstype: nfs4
+    opts: "nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev"
+    state: mounted
+  when: remo_efs_id | default('') | length > 0
+
 - name: Install figlet for ASCII banners
   ansible.builtin.apt:
     name: figlet
@@ -95,6 +127,11 @@
     path: /root/.ssh/authorized_keys
   register: root_authorized_keys
 
+- name: Check if ubuntu user has authorized_keys (AWS EC2 injects keys to ubuntu)
+  ansible.builtin.stat:
+    path: /home/ubuntu/.ssh/authorized_keys
+  register: ubuntu_authorized_keys
+
 - name: Copy authorized_keys from root to remo user
   ansible.builtin.copy:
     src: /root/.ssh/authorized_keys
@@ -106,6 +143,19 @@
   when:
     - root_authorized_keys.stat.exists | default(false)
     - root_authorized_keys.stat.size | default(0) > 0
+
+- name: Copy authorized_keys from ubuntu to remo user (AWS EC2)
+  ansible.builtin.copy:
+    src: /home/ubuntu/.ssh/authorized_keys
+    dest: "/home/{{ remo_user }}/.ssh/authorized_keys"
+    remote_src: true
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0600'
+  when:
+    - not (root_authorized_keys.stat.exists | default(false)) or (root_authorized_keys.stat.size | default(0) == 0)
+    - ubuntu_authorized_keys.stat.exists | default(false)
+    - ubuntu_authorized_keys.stat.size | default(0) > 0
 
 - name: Add remo user to docker group
   ansible.builtin.user:

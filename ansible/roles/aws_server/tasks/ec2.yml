@@ -1,0 +1,278 @@
+---
+# EC2 Instance - Create key pair and launch instance
+
+- name: Read SSH public key
+  delegate_to: localhost
+  become: false
+  ansible.builtin.slurp:
+    src: "{{ aws_ssh_public_key_path | expanduser }}"
+  register: ssh_public_key_content
+
+- name: Create or update EC2 key pair
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_key:
+    name: "{{ aws_key_name }}"
+    key_material: "{{ ssh_public_key_content.content | b64decode }}"
+    region: "{{ aws_region }}"
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    state: present
+    tags:
+      Name: "{{ aws_key_name }}"
+      remo: "true"
+      remo_resource_name: "{{ aws_resource_name }}"
+  register: ec2_key_result
+
+- name: Display key pair info
+  ansible.builtin.debug:
+    msg: "EC2 key pair: {{ aws_key_name }}"
+
+- name: Find Ubuntu 24.04 AMI
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_ami_info:
+    owners:
+      - "{{ aws_ami_owner }}"
+    filters:
+      name: "{{ aws_ami_name_pattern }}"
+      architecture: x86_64
+      state: available
+      virtualization-type: hvm
+    region: "{{ aws_region }}"
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+  register: ami_result
+
+- name: Fail if no AMI found
+  ansible.builtin.fail:
+    msg: |
+      No Ubuntu 24.04 AMI found matching pattern: {{ aws_ami_name_pattern }}
+      Region: {{ aws_region }}
+  when: ami_result.images | default([]) | length == 0
+
+- name: Set AMI ID fact (most recent)
+  ansible.builtin.set_fact:
+    aws_ami_id: "{{ (ami_result.images | sort(attribute='creation_date', reverse=true) | first).image_id }}"
+
+- name: Display AMI info
+  ansible.builtin.debug:
+    msg: "Using AMI: {{ aws_ami_id }} ({{ (ami_result.images | sort(attribute='creation_date', reverse=true) | first).name }})"
+
+- name: Check if instance already exists
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_instance_info:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+    filters:
+      "tag:Name": "{{ aws_instance_name }}"
+      "tag:remo": "true"
+      instance-state-name:
+        - pending
+        - running
+        - stopping
+        - stopped
+  register: existing_instance
+
+- name: Set existing instance fact
+  ansible.builtin.set_fact:
+    aws_instance_exists: "{{ existing_instance.instances | default([]) | length > 0 }}"
+
+- name: Get first default subnet for instance launch
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_vpc_subnet_info:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+    filters:
+      vpc-id: "{{ aws_vpc_id }}"
+      default-for-az: "true"
+  register: default_subnets_for_ec2
+  when: not aws_instance_exists
+
+- name: Create EC2 instance (on-demand)
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_instance:
+    name: "{{ aws_instance_name }}"
+    key_name: "{{ aws_key_name }}"
+    instance_type: "{{ aws_instance_type }}"
+    image_id: "{{ aws_ami_id }}"
+    security_groups:
+      - "{{ aws_security_group_id }}"
+    vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
+    region: "{{ aws_region }}"
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    network:
+      assign_public_ip: true
+    volumes:
+      - device_name: /dev/sda1
+        ebs:
+          volume_size: 20
+          volume_type: gp3
+          delete_on_termination: true
+    tags:
+      Name: "{{ aws_instance_name }}"
+      remo: "true"
+      remo_resource_name: "{{ aws_resource_name }}"
+    state: running
+    wait: true
+    wait_timeout: 300
+  register: ec2_instance_result
+  when:
+    - not aws_instance_exists
+    - not (aws_use_spot | bool)
+
+- name: Create EC2 spot instance
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_instance:
+    name: "{{ aws_instance_name }}"
+    key_name: "{{ aws_key_name }}"
+    instance_type: "{{ aws_instance_type }}"
+    image_id: "{{ aws_ami_id }}"
+    security_groups:
+      - "{{ aws_security_group_id }}"
+    vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
+    region: "{{ aws_region }}"
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    network:
+      assign_public_ip: true
+    volumes:
+      - device_name: /dev/sda1
+        ebs:
+          volume_size: 20
+          volume_type: gp3
+          delete_on_termination: true
+    instance_market_options:
+      market_type: spot
+      spot_options:
+        spot_instance_type: persistent
+        instance_interruption_behavior: stop
+    tags:
+      Name: "{{ aws_instance_name }}"
+      remo: "true"
+      remo_resource_name: "{{ aws_resource_name }}"
+    state: running
+    wait: true
+    wait_timeout: 300
+  register: ec2_spot_result
+  when:
+    - not aws_instance_exists
+    - aws_use_spot | bool
+
+- name: Set instance result fact (new on-demand)
+  ansible.builtin.set_fact:
+    aws_ec2_result: "{{ ec2_instance_result }}"
+  when:
+    - not aws_instance_exists
+    - not (aws_use_spot | bool)
+
+- name: Set instance result fact (new spot)
+  ansible.builtin.set_fact:
+    aws_ec2_result: "{{ ec2_spot_result }}"
+  when:
+    - not aws_instance_exists
+    - aws_use_spot | bool
+
+- name: Set instance result fact (existing)
+  ansible.builtin.set_fact:
+    aws_ec2_result:
+      instances: "{{ existing_instance.instances }}"
+  when: aws_instance_exists
+
+- name: Start existing instance if stopped
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_instance:
+    instance_ids:
+      - "{{ existing_instance.instances[0].instance_id }}"
+    region: "{{ aws_region }}"
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    state: running
+    wait: true
+  when:
+    - aws_instance_exists
+    - existing_instance.instances[0].state.name | default('') == 'stopped'
+
+- name: Set instance ID fact
+  ansible.builtin.set_fact:
+    aws_instance_id: "{{ aws_ec2_result.instances[0].instance_id }}"
+
+- name: Get instance public IP
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_instance_info:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+    instance_ids:
+      - "{{ aws_instance_id }}"
+  register: instance_info
+
+- name: Set instance IP fact
+  ansible.builtin.set_fact:
+    aws_instance_public_ip: "{{ instance_info.instances[0].public_ip_address | default('') }}"
+    aws_instance_public_dns: "{{ instance_info.instances[0].public_dns_name | default('') }}"
+
+- name: Display instance info
+  ansible.builtin.debug:
+    msg: "EC2 instance: {{ aws_instance_name }} ({{ aws_instance_id }}) - IP: {{ aws_instance_public_ip }}"
+
+- name: Wait for SSH port to become available
+  delegate_to: localhost
+  become: false
+  ansible.builtin.wait_for:
+    host: "{{ aws_instance_public_ip }}"
+    port: 22
+    delay: 10
+    timeout: 300
+    state: started
+
+- name: Wait for cloud-init to complete
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    cmd: >
+      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=10 -o BatchMode=yes
+      -i {{ aws_ssh_private_key_path | expanduser }}
+      ubuntu@{{ aws_instance_public_ip }}
+      'cloud-init status --wait || true'
+  register: cloud_init_result
+  changed_when: false
+  retries: 6
+  delay: 10
+  until: cloud_init_result.rc == 0
+
+- name: Verify SSH connection is stable
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    cmd: >
+      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=10 -o BatchMode=yes
+      -i {{ aws_ssh_private_key_path | expanduser }}
+      ubuntu@{{ aws_instance_public_ip }}
+      'echo SSH connection successful'
+  register: ssh_test_result
+  changed_when: false
+  retries: 3
+  delay: 5
+  until: ssh_test_result.rc == 0
+
+- name: Add new instance to inventory
+  delegate_to: localhost
+  become: false
+  ansible.builtin.add_host:
+    name: aws_server
+    ansible_host: "{{ aws_instance_public_ip }}"
+    ansible_user: ubuntu
+    ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
+    groups: provisioned

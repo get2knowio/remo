@@ -1,0 +1,63 @@
+---
+# Security Group - SSH access from detected IP
+
+- name: Get default VPC info
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_vpc_net_info:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+    filters:
+      isDefault: "true"
+  register: default_vpc_result
+
+- name: Fail if no default VPC exists
+  ansible.builtin.fail:
+    msg: |
+      No default VPC found in region {{ aws_region }}.
+      Please create a default VPC or specify a VPC ID.
+  when: default_vpc_result.vpcs | default([]) | length == 0
+
+- name: Set VPC ID fact
+  ansible.builtin.set_fact:
+    aws_vpc_id: "{{ default_vpc_result.vpcs[0].vpc_id }}"
+
+- name: Display VPC info
+  ansible.builtin.debug:
+    msg: "Using VPC: {{ aws_vpc_id }}"
+
+- name: Create security group for SSH access
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_security_group:
+    name: "{{ aws_security_group_name }}"
+    description: "SSH access for remo dev environment ({{ aws_resource_name }})"
+    vpc_id: "{{ aws_vpc_id }}"
+    region: "{{ aws_region }}"
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    rules:
+      - proto: tcp
+        ports:
+          - 22
+        cidr_ip: "{{ aws_allowed_ssh_cidr }}"
+        rule_desc: "SSH from {{ aws_allowed_ssh_cidr }}"
+    rules_egress:
+      - proto: all
+        cidr_ip: "0.0.0.0/0"
+        rule_desc: "Allow all outbound"
+    state: present
+    tags:
+      Name: "{{ aws_security_group_name }}"
+      remo: "true"
+      remo_resource_name: "{{ aws_resource_name }}"
+  register: security_group_result
+
+- name: Set security group ID fact
+  ansible.builtin.set_fact:
+    aws_security_group_id: "{{ security_group_result.group_id }}"
+
+- name: Display security group info
+  ansible.builtin.debug:
+    msg: "Security group: {{ aws_security_group_name }} ({{ aws_security_group_id }})"

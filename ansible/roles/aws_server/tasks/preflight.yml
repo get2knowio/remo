@@ -1,0 +1,79 @@
+---
+# Preflight checks - validate credentials and auto-detect current IP
+
+- name: Validate AWS credentials are set
+  ansible.builtin.fail:
+    msg: |
+      AWS credentials are not configured.
+      Set the following environment variables:
+        AWS_ACCESS_KEY_ID
+        AWS_SECRET_ACCESS_KEY
+      Or pass them via -e aws_access_key_id=<key> -e aws_secret_access_key=<secret>
+  when: >
+    (aws_access_key_id | default('') | length == 0) or
+    (aws_secret_access_key | default('') | length == 0)
+
+- name: Check if boto3 Python library is available
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    cmd: "{{ ansible_playbook_python }} -c 'import boto3'"
+  register: boto3_check
+  changed_when: false
+  failed_when: false
+
+- name: Ensure boto3 Python library is installed
+  delegate_to: localhost
+  become: false
+  ansible.builtin.pip:
+    name:
+      - boto3
+      - botocore
+    state: present
+    executable: "{{ ansible_playbook_python | dirname }}/pip"
+  when: boto3_check.rc | default(1) != 0
+
+- name: Auto-detect current public IP if not specified
+  delegate_to: localhost
+  become: false
+  ansible.builtin.uri:
+    url: "https://checkip.amazonaws.com"
+    return_content: true
+  register: current_ip_result
+  when: aws_allowed_ssh_cidr | default('') | length == 0
+
+- name: Set SSH allowed CIDR from detected IP
+  ansible.builtin.set_fact:
+    aws_allowed_ssh_cidr: "{{ current_ip_result.content | trim }}/32"
+  when: aws_allowed_ssh_cidr | default('') | length == 0
+
+- name: Display detected IP
+  ansible.builtin.debug:
+    msg: "SSH will be allowed from: {{ aws_allowed_ssh_cidr }}"
+
+- name: Validate SSH public key exists
+  delegate_to: localhost
+  become: false
+  ansible.builtin.stat:
+    path: "{{ aws_ssh_public_key_path | expanduser }}"
+  register: ssh_key_stat
+
+- name: Fail if SSH public key does not exist
+  ansible.builtin.fail:
+    msg: |
+      SSH public key not found at: {{ aws_ssh_public_key_path }}
+      Please specify a valid path with -e aws_ssh_public_key_path=<path>
+  when: not (ssh_key_stat.stat.exists | default(false))
+
+- name: Verify AWS credentials work
+  delegate_to: localhost
+  become: false
+  amazon.aws.aws_caller_identity_info:
+    access_key: "{{ aws_access_key_id }}"
+    secret_key: "{{ aws_secret_access_key }}"
+    region: "{{ aws_region }}"
+  register: caller_identity
+
+- name: Display AWS account info
+  ansible.builtin.debug:
+    msg: "AWS Account: {{ caller_identity.account }} ({{ caller_identity.arn }})"

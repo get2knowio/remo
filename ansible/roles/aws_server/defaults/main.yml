@@ -1,0 +1,51 @@
+---
+# AWS Server Role Defaults
+
+# Resource naming - namespaced by user for multi-user support
+aws_resource_name: "{{ lookup('env', 'USER') | default('remo', true) }}"
+
+# Derived resource names
+aws_key_name: "remo-{{ aws_resource_name }}-key"
+aws_security_group_name: "remo-{{ aws_resource_name }}-sg"
+aws_efs_name: "remo-{{ aws_resource_name }}-home"
+aws_instance_name: "remo-{{ aws_resource_name }}"
+
+# AWS credentials and region
+aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
+
+# Instance configuration
+aws_instance_type: "t3.medium"  # 2 vCPU, 4GB RAM - good for dev
+aws_use_spot: false
+aws_spot_max_price: ""  # Empty means on-demand price
+
+# AMI configuration - Ubuntu 24.04 LTS
+aws_ami_owner: "099720109477"  # Canonical's AWS account
+aws_ami_name_pattern: "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
+
+# SSH configuration
+aws_ssh_public_key_path: "~/.ssh/id_rsa.pub"
+aws_ssh_private_key_path: "~/.ssh/id_rsa"
+
+# Security group - SSH allowed CIDR (auto-detected if empty)
+aws_allowed_ssh_cidr: ""
+
+# EFS configuration
+aws_create_efs: true
+aws_efs_lifecycle_policy: "AFTER_7_DAYS"  # Move to IA after 7 days
+aws_efs_throughput_mode: "bursting"  # bursting or provisioned
+
+# Route53 configuration (optional)
+aws_create_dns: false
+aws_route53_zone_id: "{{ lookup('env', 'AWS_ROUTE53_ZONE_ID') | default('', true) }}"
+aws_route53_zone_domain: "{{ lookup('env', 'AWS_ROUTE53_ZONE_DOMAIN') | default('', true) }}"
+aws_route53_record_name: "{{ aws_resource_name }}"  # Creates <name>.<domain>
+
+# Elastic IP
+aws_create_eip: true
+
+# SSH config management
+aws_manage_ssh_config: true
+aws_ssh_config_path: "~/.ssh/config"
+aws_ssh_host_alias: "remo-aws"

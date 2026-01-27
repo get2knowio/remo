@@ -1,0 +1,28 @@
+---
+# AWS Server Role - Main Task Entry Point
+# Creates EC2 instance with EFS storage, security group, and Elastic IP
+
+- name: Run preflight checks
+  ansible.builtin.include_tasks: preflight.yml
+
+- name: Create security group
+  ansible.builtin.include_tasks: security_group.yml
+
+- name: Create EFS filesystem
+  ansible.builtin.include_tasks: efs.yml
+  when: aws_create_efs | bool
+
+- name: Create EC2 instance
+  ansible.builtin.include_tasks: ec2.yml
+
+- name: Create Elastic IP
+  ansible.builtin.include_tasks: elastic_ip.yml
+  when: aws_create_eip | bool
+
+- name: Create Route53 DNS record
+  ansible.builtin.include_tasks: route53.yml
+  when: aws_create_dns | bool
+
+- name: Update SSH config
+  ansible.builtin.include_tasks: ssh_config.yml
+  when: aws_manage_ssh_config | bool
