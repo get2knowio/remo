@@ -52,22 +52,27 @@
 
   pre_tasks:
     - name: Wait for apt to be ready
-      ansible.builtin.wait_for:
-        path: /var/lib/dpkg/lock-frontend
-        state: absent
-        timeout: 60
-      register: apt_wait_result
-      failed_when: false
-
-    - name: Warn if apt lock wait timed out
-      ansible.builtin.debug:
-        msg: "Warning: apt lock wait timed out. Proceeding anyway."
-      when: apt_wait_result.failed | default(false)
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+          sleep 5
+        done
+      args:
+        executable: /bin/bash
+      register: apt_lock_result
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: apt_lock_result.rc == 0
 
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
 
   tasks:
     - name: Configure dev tools
@@ -77,26 +82,34 @@
     - name: Display completion message
       ansible.builtin.debug:
         msg: |
-          ============================================================
-          Container '{{ container_name }}' ready!
-          ============================================================
+          Container provisioning and configuration complete!
 
-          IP Address: {{ ansible_host }}
-          Hostname: {{ container_name }}{% if hostvars[groups['incus_containers'][0]]['incus_container_domain'] | default('') | length > 0 %}.{{ hostvars[groups['incus_containers'][0]]['incus_container_domain'] }}{% endif %}
+          Container Information:
+          - Name: {{ container_name }}
+          - IP Address: {{ ansible_host }}
+          - Hostname: {{ container_name }}{% if hostvars[groups['incus_containers'][0]]['incus_container_domain'] | default('') | length > 0 %}.{{ hostvars[groups['incus_containers'][0]]['incus_container_domain'] }}{% endif %}
+
 
           Installed:
           - Docker (with docker-compose plugin)
-          - Node.js LTS
+          - User 'remo' with sudo NOPASSWD access
+          - User 'remo' added to docker group
+          - Node.js LTS (v{{ nodejs_version }})
+          - Git
+          - fzf (fuzzy finder for TUI menu)
           - @devcontainers/cli
           - GitHub CLI (gh)
-          - fzf
           - Zellij terminal multiplexer
 
+          Login Experience:
+          - Project menu auto-starts on SSH login
+          - Select projects with arrow keys
+          - Devcontainer projects auto-start their container
+          - Non-devcontainer projects use zellij sessions
+
           Connect with:
-            ssh {{ ansible_user }}@{{ ansible_host }}
-          {% if hostvars[groups['incus_containers'][0]]['incus_container_domain'] | default('') | length > 0 %}
-            ssh {{ ansible_user }}@{{ container_name }}
-          {% endif %}
+            ssh remo@{{ ansible_host }}
+            ssh remo@{{ container_name }}{% if hostvars[groups['incus_containers'][0]]['incus_container_domain'] | default('') | length > 0 %}.{{ hostvars[groups['incus_containers'][0]]['incus_container_domain'] }}{% endif %}
+
 
           Note: Macvlan containers are not reachable from the Incus host itself.
-          ============================================================

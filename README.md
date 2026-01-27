@@ -94,16 +94,19 @@ remo init                           # Install dependencies, create .env
 
 # Hetzner Cloud
 remo hetzner create                 # Provision VM
+remo hetzner update                 # Update dev tools
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
 # AWS
 remo aws create [--spot]            # Provision EC2 + EFS
+remo aws update                     # Update dev tools
 remo aws destroy [--yes]            # Tear down (keeps EFS)
 remo aws update-ip                  # Update security group with current IP
 remo aws info                       # Show instance info
 
 # Incus Containers
 remo incus create <name> [--host H] # Create container
+remo incus update <name>            # Update dev tools
 remo incus destroy <name> [--yes]   # Destroy container
 remo incus list                     # List containers
 remo incus bootstrap                # Initialize Incus on host

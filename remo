@@ -305,12 +305,19 @@ USAGE:
 
 COMMANDS:
     create              Provision a new Hetzner VM
+    update              Update dev tools on an existing VM
     destroy             Tear down a Hetzner VM
 
 CREATE OPTIONS:
     --name <name>       Server name (default: remote-coding-server)
     --type <type>       Server type (default: cx22)
     --location <loc>    Datacenter location (default: hel1)
+
+UPDATE OPTIONS:
+    --only <tool>       Only update specified tool (can repeat)
+    --skip <tool>       Skip specified tool (can repeat)
+
+    Available tools: docker, user_setup, nodejs, devcontainers, github_cli, fzf, zellij
 
 DESTROY OPTIONS:
     --yes, -y           Skip confirmation prompt
@@ -323,6 +330,8 @@ NOTES:
 EXAMPLES:
     remo hetzner create
     remo hetzner create --name my-server --type cx32
+    remo hetzner update
+    remo hetzner update --only zellij
     remo hetzner destroy --yes
     remo hetzner destroy --yes --remove-volume
 EOF
@@ -897,6 +906,70 @@ hetzner_destroy() {
     run_playbook hetzner_teardown.yml "${extra_args[@]}"
 }
 
+hetzner_update() {
+    local only=()
+    local skip=()
+    local extra_args=()
+
+    # Available tools for --only and --skip
+    local all_tools="docker user_setup nodejs devcontainers github_cli fzf zellij"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --only)
+                only+=("$2")
+                shift 2
+                ;;
+            --skip)
+                skip+=("$2")
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo hetzner --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Get server IP from DuckDNS domain
+    local domain="${DUCKDNS_DOMAIN:-}"
+    if [ -z "$domain" ]; then
+        print_error "DUCKDNS_DOMAIN not set. Cannot determine server address."
+        exit 1
+    fi
+
+    local server_host="${domain}.duckdns.org"
+    print_info "Updating Hetzner VM at $server_host..."
+
+    # Handle --only: disable all tools except specified ones
+    if [ ${#only[@]} -gt 0 ]; then
+        for tool in $all_tools; do
+            local enabled="false"
+            for o in "${only[@]}"; do
+                if [ "$tool" = "$o" ]; then
+                    enabled="true"
+                    break
+                fi
+            done
+            extra_args+=(-e "configure_${tool}=$enabled")
+        done
+    fi
+
+    # Handle --skip: disable specified tools
+    if [ ${#skip[@]} -gt 0 ]; then
+        for s in "${skip[@]}"; do
+            extra_args+=(-e "configure_${s}=false")
+        done
+    fi
+
+    run_playbook hetzner_configure.yml -i "${server_host}," -e "ansible_user=remo" "${extra_args[@]}"
+}
+
 handle_hetzner() {
     local command="${1:-}"
     shift || true
@@ -904,6 +977,9 @@ handle_hetzner() {
     case "$command" in
         create)
             hetzner_create "$@"
+            ;;
+        update)
+            hetzner_update "$@"
             ;;
         destroy)
             hetzner_destroy "$@"
@@ -932,6 +1008,7 @@ USAGE:
 
 COMMANDS:
     create              Provision a new AWS EC2 instance
+    update              Update dev tools on an existing instance
     destroy             Tear down an AWS EC2 instance
     update-ip           Update security group with current IP
     info                Show instance information
@@ -942,6 +1019,13 @@ CREATE OPTIONS:
     --region <region>   AWS region (default: us-west-2)
     --spot              Use spot instance (cheaper but can be interrupted)
     --dns               Also create Route53 DNS record
+
+UPDATE OPTIONS:
+    --only <tool>       Only update specified tool (can repeat)
+    --skip <tool>       Skip specified tool (can repeat)
+    --name <name>       Resource namespace (default: $USER)
+
+    Available tools: docker, user_setup, nodejs, devcontainers, github_cli, fzf, zellij
 
 DESTROY OPTIONS:
     --yes, -y           Skip confirmation prompt
@@ -967,6 +1051,8 @@ EXAMPLES:
     remo aws create --spot
     remo aws create --name alice --type t3.large
     remo aws create --dns
+    remo aws update
+    remo aws update --only zellij
     remo aws destroy --yes
     remo aws destroy --yes --remove-efs
     remo aws update-ip
@@ -1191,6 +1277,112 @@ SSH Connection:
 EOF
 }
 
+aws_update() {
+    local name=""
+    local only=()
+    local skip=()
+    local extra_args=()
+
+    # Available tools for --only and --skip
+    local all_tools="docker user_setup nodejs devcontainers github_cli fzf zellij"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            --only)
+                only+=("$2")
+                shift 2
+                ;;
+            --skip)
+                skip+=("$2")
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo aws --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    # Get instance IP using aws_info logic
+    local resource_name="${name:-$USER}"
+    local instance_ip
+
+    instance_ip=$(python3 << EOF
+import os
+import sys
+
+try:
+    import boto3
+except ImportError:
+    sys.exit(1)
+
+region = os.environ.get('AWS_REGION', 'us-west-2')
+access_key = os.environ.get('AWS_ACCESS_KEY_ID', '')
+secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+
+if not access_key or not secret_key:
+    sys.exit(1)
+
+ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+
+response = ec2.describe_instances(
+    Filters=[
+        {'Name': 'tag:Name', 'Values': ['remo-${resource_name}']},
+        {'Name': 'tag:remo', 'Values': ['true']},
+        {'Name': 'instance-state-name', 'Values': ['running']}
+    ]
+)
+
+instances = []
+for reservation in response.get('Reservations', []):
+    instances.extend(reservation.get('Instances', []))
+
+if instances:
+    print(instances[0].get('PublicIpAddress', ''))
+EOF
+)
+
+    if [ -z "$instance_ip" ]; then
+        print_error "Could not find running AWS instance for '$resource_name'"
+        echo "Run 'remo aws info --name $resource_name' to check instance status."
+        exit 1
+    fi
+
+    print_info "Updating AWS instance at $instance_ip..."
+
+    # Handle --only: disable all tools except specified ones
+    if [ ${#only[@]} -gt 0 ]; then
+        for tool in $all_tools; do
+            local enabled="false"
+            for o in "${only[@]}"; do
+                if [ "$tool" = "$o" ]; then
+                    enabled="true"
+                    break
+                fi
+            done
+            extra_args+=(-e "configure_${tool}=$enabled")
+        done
+    fi
+
+    # Handle --skip: disable specified tools
+    if [ ${#skip[@]} -gt 0 ]; then
+        for s in "${skip[@]}"; do
+            extra_args+=(-e "configure_${s}=false")
+        done
+    fi
+
+    run_playbook aws_configure.yml -e "instance_ip=$instance_ip" "${extra_args[@]}"
+}
+
 handle_aws() {
     local command="${1:-}"
     shift || true
@@ -1198,6 +1390,9 @@ handle_aws() {
     case "$command" in
         create)
             aws_create "$@"
+            ;;
+        update)
+            aws_update "$@"
             ;;
         destroy)
             aws_destroy "$@"

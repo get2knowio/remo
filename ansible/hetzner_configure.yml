@@ -1,9 +1,21 @@
 ---
-# Configure playbook - Installs all software on the provisioned server
-# Run this after provision.yml has created the server
+# Hetzner Configure Playbook - Install/update dev tools on an existing server
+# Run this to update an already provisioned Hetzner server
+#
+# Usage:
+#   ./run.sh hetzner_configure.yml -i "server.duckdns.org," -e "ansible_user=remo"
+#
+# Optional variables:
+#   configure_docker: Enable/disable docker (default: true)
+#   configure_user_setup: Enable/disable user_setup (default: true)
+#   configure_nodejs: Enable/disable nodejs (default: true)
+#   configure_devcontainers: Enable/disable devcontainers (default: true)
+#   configure_github_cli: Enable/disable github_cli (default: true)
+#   configure_fzf: Enable/disable fzf (default: true)
+#   configure_zellij: Enable/disable zellij (default: true)
 
 - name: Configure Hetzner Cloud Server
-  hosts: hetzner_server
+  hosts: all
   become: true
   gather_facts: true
 
@@ -63,15 +75,15 @@
           - Devcontainer projects auto-start their container
           - Non-devcontainer projects use zellij sessions
 
-          You can now SSH to the server as the remo user:
-          ssh remo@{{ duckdns_domain }}.duckdns.org
+          Connect with:
+            ssh remo@{{ ansible_host }}
 
     - name: Reboot server if required by package updates
       ansible.builtin.reboot:
         msg: "Rebooting to apply system updates"
         reboot_timeout: 300
-      when: reboot_required_file.stat.exists
+      when: reboot_required_file.stat.exists | default(false)
 
     - name: Display reboot status
       ansible.builtin.debug:
-        msg: "{{ 'Server was rebooted to apply system updates.' if reboot_required_file.stat.exists else 'No reboot was required.' }}"
+        msg: "{{ 'Server was rebooted to apply system updates.' if reboot_required_file.stat.exists | default(false) else 'No reboot was required.' }}"

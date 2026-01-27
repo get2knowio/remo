@@ -60,6 +60,15 @@ remo aws create --name alice --type t3.large --region us-east-1
 # Create with Route53 DNS record
 remo aws create --dns
 
+# Update dev tools on existing instance
+remo aws update
+
+# Update only specific tools
+remo aws update --only zellij --only fzf
+
+# Update but skip specific tools
+remo aws update --skip docker --skip nodejs
+
 # Show instance information
 remo aws info
 
@@ -82,6 +91,16 @@ remo aws destroy --yes --remove-efs
 | `--region <region>` | `us-west-2` | AWS region |
 | `--spot` | (off) | Use spot instance for cost savings |
 | `--dns` | (off) | Create Route53 DNS record |
+
+### Update Options
+
+| Option | Description |
+|--------|-------------|
+| `--only <tool>` | Only update specified tool (can repeat) |
+| `--skip <tool>` | Skip specified tool (can repeat) |
+| `--name <name>` | Resource namespace (default: `$USER`) |
+
+Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
 ### Destroy Options
 

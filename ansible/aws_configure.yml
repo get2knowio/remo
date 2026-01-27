@@ -1,16 +1,16 @@
 ---
-# Incus Configure Playbook - Install dev tools on an existing container
-# Run this after incus_provision.yml has created the container
+# AWS Configure Playbook - Install/update dev tools on an existing instance
+# Run this to update an already provisioned AWS EC2 instance
 #
 # Usage:
-#   ./run.sh incus_configure.yml -e "container_ip=<ip>"
-#   ./run.sh incus_configure.yml -e "container_ip=<ip> container_user=remo"
+#   ./run.sh aws_configure.yml -e "instance_ip=<ip>"
+#   ./run.sh aws_configure.yml -e "instance_ip=<ip> instance_user=ubuntu"
 #
 # Required variables:
-#   container_ip: IP address of the container to configure
+#   instance_ip: IP address of the instance to configure
 #
 # Optional variables:
-#   container_user: SSH user (default: remo)
+#   instance_user: SSH user (default: ubuntu for initial, remo after setup)
 #   configure_docker: Enable/disable docker (default: true)
 #   configure_user_setup: Enable/disable user_setup (default: true)
 #   configure_nodejs: Enable/disable nodejs (default: true)
@@ -19,27 +19,27 @@
 #   configure_fzf: Enable/disable fzf (default: true)
 #   configure_zellij: Enable/disable zellij (default: true)
 
-- name: Add container to inventory
+- name: Add instance to inventory
   hosts: localhost
   gather_facts: false
 
   tasks:
     - name: Validate required variables
       ansible.builtin.fail:
-        msg: "Required variable 'container_ip' is not defined. Use -e container_ip=<ip>"
-      when: container_ip is not defined
+        msg: "Required variable 'instance_ip' is not defined. Use -e instance_ip=<ip>"
+      when: instance_ip is not defined
 
-    - name: Add container to in-memory inventory
+    - name: Add instance to in-memory inventory
       ansible.builtin.add_host:
-        name: incus_container
-        ansible_host: "{{ container_ip }}"
-        ansible_user: "{{ container_user | default('remo') }}"
-        ansible_python_interpreter: /usr/bin/python3
+        name: aws_instance
+        ansible_host: "{{ instance_ip }}"
+        ansible_user: "{{ instance_user | default('remo') }}"
+        ansible_ssh_private_key_file: "{{ ssh_private_key_path | default('~/.ssh/id_rsa') }}"
         groups:
-          - incus_containers
+          - provisioned
 
-- name: Configure Incus container with development tools
-  hosts: incus_container
+- name: Configure AWS EC2 instance with development tools
+  hosts: aws_instance
   become: true
   gather_facts: true
 
@@ -67,6 +67,11 @@
         upgrade: dist
         autoremove: true
 
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
   tasks:
     - name: Configure dev tools
       ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
@@ -75,7 +80,7 @@
     - name: Display completion message
       ansible.builtin.debug:
         msg: |
-          Container configuration complete!
+          Instance configuration complete!
 
           Installed:
           - Docker (with docker-compose plugin)
@@ -96,3 +101,13 @@
 
           Connect with:
             ssh remo@{{ ansible_host }}
+
+    - name: Reboot instance if required by package updates
+      ansible.builtin.reboot:
+        msg: "Rebooting to apply system updates"
+        reboot_timeout: 300
+      when: reboot_required_file.stat.exists | default(false)
+
+    - name: Display reboot status
+      ansible.builtin.debug:
+        msg: "{{ 'Instance was rebooted to apply system updates.' if reboot_required_file.stat.exists | default(false) else 'No reboot was required.' }}"

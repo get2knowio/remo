@@ -51,6 +51,15 @@ remo hetzner create
 # Create with custom options
 remo hetzner create --name my-server --type cx32 --location fsn1
 
+# Update dev tools on existing server
+remo hetzner update
+
+# Update only specific tools
+remo hetzner update --only zellij --only fzf
+
+# Update but skip specific tools
+remo hetzner update --skip docker --skip nodejs
+
 # Destroy server (keeps persistent volume)
 remo hetzner destroy --yes
 
@@ -65,6 +74,15 @@ remo hetzner destroy --yes --remove-volume
 | `--name <name>` | `remote-coding-server` | Server name |
 | `--type <type>` | `cx22` | Server type (see [Hetzner pricing](https://www.hetzner.com/cloud)) |
 | `--location <loc>` | `hel1` | Datacenter: `fsn1`, `nbg1`, `hel1`, `ash`, `hil` |
+
+### Update Options
+
+| Option | Description |
+|--------|-------------|
+| `--only <tool>` | Only update specified tool (can repeat) |
+| `--skip <tool>` | Skip specified tool (can repeat) |
+
+Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
 ### Destroy Options
 
