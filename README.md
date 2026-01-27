@@ -2,8 +2,6 @@
 
 Spin up a fully-configured development environment in minutes. One command gives you a persistent, secure coding environment with Dev Containers support.
 
----
-
 ## Installation
 
 ```bash
@@ -12,24 +10,28 @@ curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
 # Install latest pre-release (for testing new features)
 curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
-
-# Install specific version
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --version v1.0.0
 ```
 
-After installation, `remo` is available in `~/.local/bin`. Add it to your PATH if needed:
+After installation, `remo` is available in `~/.local/bin`. Update with:
 
 ```bash
-export PATH="$HOME/.local/bin:$PATH"
+remo self-update
 ```
 
-### Updating
+---
 
-```bash
-remo self-update                    # Update to latest stable
-remo self-update --pre-release      # Update to latest pre-release
-remo self-update --check            # Check for updates
-```
+## Choose Your Platform
+
+| | [Hetzner Cloud](docs/hetzner.md) | [AWS](docs/aws.md) | [Incus](docs/incus.md) |
+|---|---|---|---|
+| **Type** | Cloud VM | Cloud VM | Local container |
+| **Location** | EU/US datacenters | Global regions | Your hardware |
+| **Cost** | ~€4/month | ~$30/month | Your electricity |
+| **Storage** | Block volume | EFS (elastic) | Host mounts |
+| **Access** | DuckDNS domain | Elastic IP / Route53 | LAN hostname |
+| **Best for** | EU, budget hosting | US, enterprise, elastic storage | Local dev, homelab |
+
+All platforms give you the same dev workflow and tooling described below.
 
 ---
 
@@ -37,7 +39,7 @@ remo self-update --check            # Check for updates
 
 SSH in and you're greeted with an interactive project menu:
 
-```bash
+```
 ssh remo@your-host
 
   Remote Coding Server
@@ -53,25 +55,23 @@ Select a project and you're in a persistent Zellij session. Devcontainer project
 
 ### Project Menu
 
-On SSH login, the `fzf`-powered menu shows your projects from `~/projects`:
+The `fzf`-powered menu shows your projects from `~/projects`:
 
 - **Arrow keys** or **1-9**: Select a project
 - **Enter**: Launch/attach to the project's Zellij session
 - **c**: Clone a new repository
 - **x**: Exit to shell
 
-Active Zellij sessions are marked in the menu.
-
-### Persistent Sessions with Zellij
+### Persistent Sessions
 
 [Zellij](https://zellij.dev/) keeps your terminal sessions alive:
 
 - **Detach**: `Ctrl+d` returns to the project menu
 - **Reconnect**: SSH back in, select the same project to resume
 
-The host Zellij runs as a minimal "outer" session wrapper with no UI and only `Ctrl+d` bound. All other keybindings pass through, so you can run a full Zellij inside devcontainers without conflicts.
+---
 
-### What's Installed
+## What's Installed
 
 Every remo environment includes:
 
@@ -86,190 +86,40 @@ Every remo environment includes:
 
 ---
 
-## Two Ways to Get Started
-
-| | Hetzner Cloud | Incus Container |
-|---|---|---|
-| **Where** | Cloud VM (remote) | Container on your hardware (local/homelab) |
-| **Cost** | ~€4/month | Your electricity |
-| **Access** | SSH over internet via DuckDNS | SSH on your LAN by hostname |
-| **Best for** | Remote work, always-on | Local development, testing |
-
-Both give you the same dev workflow described above.
-
----
-
 ## CLI Quick Reference
 
 ```bash
-# First time setup (if installed manually)
-remo init
+# Setup
+remo init                           # Install dependencies, create .env
 
-# Incus containers
-remo incus create <name> [--host <host>] [--user <user>] [--domain <domain>]
-remo incus update <name> [--only <tool>] [--skip <tool>]
-remo incus destroy <name> [--host <host>] [--user <user>] [--yes]
-remo incus list [--host <host>] [--user <user>]
-remo incus bootstrap [--host <host>] [--user <user>]
+# Hetzner Cloud
+remo hetzner create                 # Provision VM
+remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
-# Hetzner VMs
-remo hetzner create [--name <name>] [--type <type>] [--location <loc>]
-remo hetzner destroy [--yes] [--remove-volume]
+# AWS
+remo aws create [--spot]            # Provision EC2 + EFS
+remo aws destroy [--yes]            # Tear down (keeps EFS)
+remo aws update-ip                  # Update security group with current IP
+remo aws info                       # Show instance info
+
+# Incus Containers
+remo incus create <name> [--host H] # Create container
+remo incus destroy <name> [--yes]   # Destroy container
+remo incus list                     # List containers
+remo incus bootstrap                # Initialize Incus on host
 
 # Updates
-remo self-update [--pre-release] [--version <version>]
+remo self-update                    # Update to latest version
 
 # Help
 remo --help
-remo incus --help
-remo hetzner --help
+remo <command> --help
 ```
 
----
-
-## Hetzner Cloud Setup
-
-Spin up a cloud VM with full dev tooling.
-
-### Prerequisites
-
-- Python 3.8+
-- SSH key pair (`~/.ssh/id_rsa`)
-- [Hetzner Cloud](https://www.hetzner.com/cloud) account + API token
-- [DuckDNS](https://www.duckdns.org/) account + token + subdomain
-
-### Quick Start
-
-```bash
-# Install remo
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
-
-# Edit .env with your Hetzner and DuckDNS tokens
-vim ~/.remo/.env
-
-# Provision server
-remo hetzner create
-
-# SSH in
-ssh remo@your-subdomain.duckdns.org
-```
-
-### Additional Features
-
-| Feature | Description |
-|---------|-------------|
-| **Persistent Volume** | `/home/remo` survives server teardown |
-| **Strict Firewall** | SSH-only access (port 22) |
-| **DuckDNS Domain** | Automatic DNS registration |
-
-### GitHub Actions (Alternative)
-
-Fork this repo and use GitHub Actions to provision without local setup:
-
-1. **Add secrets** in Settings → Secrets → Actions:
-   - `HETZNER_API_TOKEN`, `SSH_PRIVATE_KEY`, `SSH_PUBLIC_KEY`
-   - `DUCKDNS_TOKEN`, `DUCKDNS_DOMAIN`
-
-2. **Run**: Actions → Provision Server → Run workflow → type `yes`
-
-### Teardown
-
-```bash
-remo hetzner destroy --yes                 # Destroy server (keeps volume)
-remo hetzner destroy --yes --remove-volume # Destroy everything
-```
-
----
-
-## Incus Container Setup
-
-Spin up a lightweight system container on your own hardware. Containers get IPs from your LAN's DHCP and are accessible by hostname from any machine on your network.
-
-### Prerequisites
-
-- Incus installed and bootstrapped on your host (see [Incus Bootstrap](#incus-bootstrap) below)
-- SSH key pair (`~/.ssh/id_rsa`)
-
-### Quick Start
-
-```bash
-# Install remo (on your workstation)
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
-
-# Create and configure container
-remo incus create dev1 --host incus-host --user youruser --domain int.example.com
-
-# SSH in
-ssh remo@dev1
-ssh remo@dev1.int.example.com
-```
-
-### Additional Features
-
-| Feature | Description |
-|---------|-------------|
-| **System Container** | Lightweight, near-native performance |
-| **LAN IP via DHCP** | Accessible from any machine on your network |
-| **Hostname DNS** | Works if your router registers DHCP hostnames |
-| **Host Mounts** | Optional persistent data directories from the Incus host |
-
-### CLI Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--host <host>` | localhost | Incus host to connect to |
-| `--user <user>` | (current user) | SSH user for the Incus host |
-| `--domain <domain>` | (none) | Domain for FQDN (e.g., `int.example.com`) |
-| `--image <image>` | `images:ubuntu/24.04/cloud` | Cloud image to use |
-| `--yes`, `-y` | (prompt) | Skip confirmation on destroy |
-
-### Teardown
-
-```bash
-remo incus destroy dev1 --host incus-host --user youruser --yes
-```
-
----
-
-## Incus Bootstrap
-
-**Skip this if you already have Incus installed and initialized.**
-
-To use Incus containers, you first need to bootstrap Incus on your host machine. This installs Incus, creates a storage pool, and configures macvlan networking so containers get LAN IPs.
-
-### Bootstrap a Remote Host
-
-```bash
-remo incus bootstrap --host 192.168.1.100 --user paul
-```
-
-### Bootstrap Localhost
-
-```bash
-remo incus bootstrap
-```
-
-### What Bootstrap Does
-
-- Installs Incus packages (OpenSUSE Tumbleweed)
-- Enables and starts Incus daemon
-- Adds your user to `incus-admin` group
-- Creates directory-based storage pool
-- Configures macvlan network (containers get LAN IPs via DHCP)
-
-**After bootstrap**, log out and back in (or `newgrp incus-admin`) to activate group membership.
-
-### Bootstrap Options
-
-```bash
-# Verbose output
-remo incus bootstrap --verbose
-
-# For advanced options (network type, interface), use the ansible playbook directly:
-cd ~/.remo/ansible
-./run.sh incus_bootstrap.yml -e "incus_network_parent=eth0"
-./run.sh incus_bootstrap.yml -e "incus_network_type=bridge"
-```
+See platform-specific docs for full options:
+- [Hetzner Cloud](docs/hetzner.md)
+- [AWS](docs/aws.md)
+- [Incus Containers](docs/incus.md)
 
 ---
 
@@ -282,19 +132,14 @@ ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa
 
 **Ansible collection not found?**
 ```bash
-ansible-galaxy collection install -r ansible/requirements.yml
+remo init  # Reinstalls dependencies
 ```
 
-**Hetzner API errors?**
-Verify your API token has read/write permissions in the Hetzner Cloud Console.
-
-**Container not accessible by hostname?**
-- Verify your router/DHCP server registers hostnames (check if other devices are accessible by name)
-- DNS registration may take a few seconds after container boot
-- Try by IP first to confirm the container is running
-
-**Can't reach container from Incus host?**
-This is a known macvlan limitation. Access containers from a different machine on your LAN.
+**Platform-specific issues?**
+See troubleshooting sections in:
+- [Hetzner troubleshooting](docs/hetzner.md#troubleshooting)
+- [AWS troubleshooting](docs/aws.md#troubleshooting)
+- [Incus troubleshooting](docs/incus.md#troubleshooting)
 
 ---
 
