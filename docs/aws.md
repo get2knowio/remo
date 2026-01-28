@@ -21,8 +21,8 @@ vim ~/.remo/.env
 # Provision instance
 remo aws create
 
-# SSH in (uses auto-configured ~/.ssh/config)
-ssh remo-aws
+# Connect
+remo shell
 ```
 
 ## Configuration
@@ -117,7 +117,6 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **EFS Storage** | `/home/remo` on elastic filesystem, persists across instance termination |
 | **Auto IP Detection** | SSH allowed only from your current public IP |
 | **Elastic IP** | Stable public IP that survives instance stop/start |
-| **SSH Config** | Auto-managed `~/.ssh/config` for easy `ssh remo-aws` access |
 | **Spot Instances** | Optional spot pricing for ~70% cost savings |
 | **Multi-user** | Resources namespaced by `--name` for shared AWS accounts |
 

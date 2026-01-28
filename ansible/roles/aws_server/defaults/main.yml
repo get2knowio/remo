@@ -44,8 +44,3 @@ aws_route53_record_name: "{{ aws_resource_name }}"  # Creates <name>.<domain>
 
 # Elastic IP
 aws_create_eip: true
-
-# SSH config management
-aws_manage_ssh_config: true
-aws_ssh_config_path: "~/.ssh/config"
-aws_ssh_host_alias: "remo-aws"

@@ -22,7 +22,3 @@
 - name: Create Route53 DNS record
   ansible.builtin.include_tasks: route53.yml
   when: aws_create_dns | bool
-
-- name: Update SSH config
-  ansible.builtin.include_tasks: ssh_config.yml
-  when: aws_manage_ssh_config | bool

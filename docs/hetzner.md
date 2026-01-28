@@ -21,8 +21,8 @@ vim ~/.remo/.env
 # Provision server
 remo hetzner create
 
-# SSH in
-ssh remo@your-subdomain.duckdns.org
+# Connect
+remo shell
 ```
 
 ## Configuration

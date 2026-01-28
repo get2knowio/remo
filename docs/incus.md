@@ -16,8 +16,8 @@ curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 # Create and configure container
 remo incus create dev1 --host incus-host --user youruser
 
-# SSH in
-ssh remo@dev1
+# Connect
+remo shell
 ```
 
 ## Configuration

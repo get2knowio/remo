@@ -89,6 +89,10 @@ Every remo environment includes:
 ## CLI Quick Reference
 
 ```bash
+# Connect to environment
+remo shell                          # Auto-connect (or picker if multiple)
+remo shell --list                   # List all environments with SSH commands
+
 # Setup
 remo init                           # Install dependencies, create .env
 

@@ -90,7 +90,8 @@
           - Data persists when instance is terminated
 
           Connect using:
-          ssh {{ hostvars['localhost']['aws_ssh_host_alias'] | default('remo-aws') }}
+            remo shell
+            ssh remo@{{ ansible_host }}
 
     - name: Reboot server if required by package updates
       ansible.builtin.reboot:

@@ -79,6 +79,7 @@ USAGE:
     remo --help
 
 COMMANDS:
+    shell       Connect to a remo environment (auto-detects or picker)
     init        Initialize remo (install dependencies, create .env)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
@@ -86,7 +87,9 @@ COMMANDS:
     self-update Update remo to a newer version
 
 EXAMPLES:
-    remo init
+    remo shell
+    remo shell --list
+
     remo incus create dev1
     remo incus create dev1 --domain int.example.com
     remo incus update dev1 --only zellij
@@ -95,10 +98,12 @@ EXAMPLES:
     remo incus bootstrap
 
     remo hetzner create
+    remo hetzner update
     remo hetzner destroy --yes
 
     remo aws create
     remo aws create --spot
+    remo aws update
     remo aws destroy --yes
     remo aws update-ip
 
@@ -338,6 +343,34 @@ EOF
 }
 
 # =============================================================================
+# KNOWN INCUS HOSTS MANAGEMENT
+# =============================================================================
+
+KNOWN_INCUS_HOSTS_FILE="$SCRIPT_DIR/.known_incus_hosts"
+
+save_incus_host() {
+    local host="$1"
+    local user="$2"
+
+    # Create file if it doesn't exist
+    touch "$KNOWN_INCUS_HOSTS_FILE"
+
+    # Format: host:user (user can be empty)
+    local entry="${host}:${user}"
+
+    # Remove existing entry for this host, then add new one
+    grep -v "^${host}:" "$KNOWN_INCUS_HOSTS_FILE" > "${KNOWN_INCUS_HOSTS_FILE}.tmp" 2>/dev/null || true
+    mv "${KNOWN_INCUS_HOSTS_FILE}.tmp" "$KNOWN_INCUS_HOSTS_FILE"
+    echo "$entry" >> "$KNOWN_INCUS_HOSTS_FILE"
+}
+
+get_known_incus_hosts() {
+    if [ -f "$KNOWN_INCUS_HOSTS_FILE" ]; then
+        cat "$KNOWN_INCUS_HOSTS_FILE"
+    fi
+}
+
+# =============================================================================
 # INCUS COMMANDS
 # =============================================================================
 
@@ -402,6 +435,11 @@ incus_create() {
         extra_args+=(-i "$host,")
         extra_args+=(-e "target_hosts=all")
         [ -n "$user" ] && extra_args+=(-e "incus_host_user=$user")
+        # Save this host for later discovery
+        save_incus_host "$host" "$user"
+    else
+        # Save localhost too
+        save_incus_host "localhost" ""
     fi
 
     run_playbook incus_site.yml "${extra_args[@]}"
@@ -1415,6 +1453,264 @@ handle_aws() {
 }
 
 # =============================================================================
+# SHELL COMMAND
+# =============================================================================
+
+show_shell_help() {
+    cat << 'EOF'
+remo shell - Connect to a remo environment
+
+USAGE:
+    remo shell [options]
+
+OPTIONS:
+    --list              List all available environments with SSH commands
+
+DESCRIPTION:
+    Discovers all active remo environments and connects to one:
+    - If exactly one environment exists, connects directly
+    - If multiple environments exist, shows an interactive picker
+    - Environments are discovered from AWS, Hetzner, and known Incus hosts
+
+EXAMPLES:
+    remo shell              # Connect (or pick if multiple)
+    remo shell --list       # List all environments
+EOF
+}
+
+# Discover all available environments
+# Output format: TYPE:NAME:HOST:USER:SSH_CMD
+discover_environments() {
+    local environments=()
+
+    # Discover AWS instances
+    if [ -n "${AWS_ACCESS_KEY_ID:-}" ] && [ -n "${AWS_SECRET_ACCESS_KEY:-}" ]; then
+        local aws_instances
+        aws_instances=$(python3 << 'PYEOF'
+import os
+import sys
+
+try:
+    import boto3
+except ImportError:
+    sys.exit(0)
+
+region = os.environ.get('AWS_REGION', 'us-west-2')
+access_key = os.environ.get('AWS_ACCESS_KEY_ID', '')
+secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+
+if not access_key or not secret_key:
+    sys.exit(0)
+
+try:
+    ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+
+    response = ec2.describe_instances(
+        Filters=[
+            {'Name': 'tag:remo', 'Values': ['true']},
+            {'Name': 'instance-state-name', 'Values': ['running']}
+        ]
+    )
+
+    for reservation in response.get('Reservations', []):
+        for instance in reservation.get('Instances', []):
+            name = 'unknown'
+            for tag in instance.get('Tags', []):
+                if tag['Key'] == 'Name':
+                    name = tag['Value']
+                    break
+            ip = instance.get('PublicIpAddress', '')
+            instance_type = instance.get('InstanceType', '')
+            if ip:
+                print(f"aws:{name}:{ip}:remo:ssh remo@{ip}:{instance_type}")
+except Exception:
+    pass
+PYEOF
+)
+        if [ -n "$aws_instances" ]; then
+            while IFS= read -r line; do
+                environments+=("$line")
+            done <<< "$aws_instances"
+        fi
+    fi
+
+    # Discover Hetzner server
+    if [ -n "${DUCKDNS_DOMAIN:-}" ]; then
+        local hetzner_host="${DUCKDNS_DOMAIN}.duckdns.org"
+        # Quick check if host resolves and SSH port is open
+        if timeout 2 bash -c "echo >/dev/tcp/$hetzner_host/22" 2>/dev/null; then
+            environments+=("hetzner:${DUCKDNS_DOMAIN}:${hetzner_host}:remo:ssh remo@${hetzner_host}:")
+        fi
+    fi
+
+    # Discover Incus containers from known hosts
+    while IFS=: read -r incus_host incus_user; do
+        [ -z "$incus_host" ] && continue
+
+        local ssh_prefix=""
+        if [ "$incus_host" != "localhost" ]; then
+            if [ -n "$incus_user" ]; then
+                ssh_prefix="ssh ${incus_user}@${incus_host}"
+            else
+                ssh_prefix="ssh ${incus_host}"
+            fi
+        fi
+
+        # Query incus for running containers
+        local containers
+        if [ "$incus_host" = "localhost" ]; then
+            containers=$(incus list -f csv -c n,s,4 2>/dev/null | grep ",RUNNING," || true)
+        else
+            local ssh_cmd="$ssh_prefix"
+            containers=$($ssh_cmd "incus list -f csv -c n,s,4" 2>/dev/null | grep ",RUNNING," || true)
+        fi
+
+        if [ -n "$containers" ]; then
+            while IFS=, read -r cname cstate caddrs; do
+                # Extract first IPv4 address
+                local ip
+                ip=$(echo "$caddrs" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+                if [ -n "$ip" ]; then
+                    local display_host="$incus_host"
+                    [ "$incus_host" = "localhost" ] && display_host="local"
+                    environments+=("incus:${cname}@${display_host}:${ip}:remo:ssh remo@${ip}:")
+                fi
+            done <<< "$containers"
+        fi
+    done < <(get_known_incus_hosts)
+
+    # Output all discovered environments
+    for env in "${environments[@]}"; do
+        echo "$env"
+    done
+}
+
+shell_list() {
+    print_info "Discovering remo environments..."
+    echo ""
+
+    local environments
+    environments=$(discover_environments)
+
+    if [ -z "$environments" ]; then
+        echo "No active remo environments found."
+        echo ""
+        echo "Create one with:"
+        echo "  remo aws create"
+        echo "  remo hetzner create"
+        echo "  remo incus create <name>"
+        return 0
+    fi
+
+    printf "%-8s %-25s %-18s %s\n" "TYPE" "NAME" "HOST" "SSH COMMAND"
+    printf "%-8s %-25s %-18s %s\n" "----" "----" "----" "-----------"
+
+    while IFS=: read -r type name host user ssh_cmd extra; do
+        printf "%-8s %-25s %-18s %s\n" "$type" "$name" "$host" "$ssh_cmd"
+    done <<< "$environments"
+}
+
+shell_connect() {
+    local environments
+    environments=$(discover_environments)
+
+    if [ -z "$environments" ]; then
+        print_error "No active remo environments found."
+        echo ""
+        echo "Create one with:"
+        echo "  remo aws create"
+        echo "  remo hetzner create"
+        echo "  remo incus create <name>"
+        exit 1
+    fi
+
+    local count
+    count=$(echo "$environments" | wc -l)
+
+    local selected
+    if [ "$count" -eq 1 ]; then
+        selected="$environments"
+    else
+        # Use fzf to pick
+        if ! command -v fzf &> /dev/null; then
+            print_error "Multiple environments found but fzf is not installed."
+            echo "Install fzf or use 'remo shell --list' to see environments."
+            exit 1
+        fi
+
+        # Build picker options
+        local options=""
+        while IFS=: read -r type name host user ssh_cmd extra; do
+            options+="${type}: ${name} (${host})"$'\n'
+        done <<< "$environments"
+
+        local choice
+        choice=$(echo -n "$options" | fzf --prompt="Select environment: " --height=10 --reverse)
+
+        if [ -z "$choice" ]; then
+            echo "No selection made."
+            exit 0
+        fi
+
+        # Find the matching environment
+        local choice_type choice_name
+        choice_type=$(echo "$choice" | cut -d: -f1)
+        choice_name=$(echo "$choice" | cut -d: -f2 | sed 's/^ //' | cut -d' ' -f1)
+
+        while IFS=: read -r type name host user ssh_cmd extra; do
+            if [ "$type" = "$choice_type" ] && [ "$name" = "$choice_name" ]; then
+                selected="${type}:${name}:${host}:${user}:${ssh_cmd}:${extra}"
+                break
+            fi
+        done <<< "$environments"
+    fi
+
+    if [ -z "$selected" ]; then
+        print_error "Could not determine environment to connect to."
+        exit 1
+    fi
+
+    # Parse selected environment
+    local type name host user ssh_cmd extra
+    IFS=: read -r type name host user ssh_cmd extra <<< "$selected"
+
+    print_info "Connecting to $type: $name ($host)..."
+    exec ssh "${user}@${host}"
+}
+
+handle_shell() {
+    local list_only=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --list|-l)
+                list_only=true
+                shift
+                ;;
+            --help|-h)
+                show_shell_help
+                return 0
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo shell --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    if [ "$list_only" = true ]; then
+        shell_list
+    else
+        shell_connect
+    fi
+}
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 
@@ -1428,6 +1724,9 @@ main() {
     case "$provider" in
         init)
             handle_init "$@"
+            ;;
+        shell)
+            handle_shell "$@"
             ;;
         incus)
             handle_incus "$@"
