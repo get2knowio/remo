@@ -20,6 +20,9 @@ vault.yml
 # Local configuration
 *.local.yml
 
+# Remo state directory (per-user data)
+.remo/
+
 # SSH keys
 *.pem
 id_rsa

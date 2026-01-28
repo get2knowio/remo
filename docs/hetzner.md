@@ -51,6 +51,9 @@ remo hetzner create
 # Create with custom options
 remo hetzner create --name my-server --type cx32 --location fsn1
 
+# List registered servers
+remo hetzner list
+
 # Update dev tools on existing server
 remo hetzner update
 

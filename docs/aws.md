@@ -60,6 +60,9 @@ remo aws create --name alice --type t3.large --region us-east-1
 # Create with Route53 DNS record
 remo aws create --dns
 
+# List registered instances
+remo aws list
+
 # Update dev tools on existing instance
 remo aws update
 

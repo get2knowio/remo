@@ -36,6 +36,9 @@ remo incus create dev1
 # Create with domain for FQDN
 remo incus create dev1 --domain int.example.com
 
+# List registered containers
+remo incus list
+
 # Update dev tools on existing container
 remo incus update dev1 --host myserver --user paul
 
@@ -44,9 +47,6 @@ remo incus update dev1 --only zellij --only fzf
 
 # Skip specific tools during update
 remo incus update dev1 --skip docker --skip nodejs
-
-# List containers
-remo incus list --host myserver --user paul
 
 # Destroy container
 remo incus destroy dev1 --host myserver --user paul --yes
