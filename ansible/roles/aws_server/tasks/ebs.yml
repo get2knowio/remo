@@ -1,6 +1,7 @@
 ---
 # EBS - Elastic Block Store for persistent home directory
 # Creates a persistent EBS volume that survives instance termination
+# Supports live resizing: change aws_ebs_size and re-run to grow the volume
 
 - name: Check if EBS volume already exists
   delegate_to: localhost
@@ -10,7 +11,6 @@
     filters:
       "tag:Name": "{{ aws_ebs_name }}"
       "tag:remo": "true"
-      status: available
   register: existing_ebs
 
 - name: Get instance availability zone
@@ -57,9 +57,22 @@
     aws_ebs_volume_id: "{{ existing_ebs.volumes[0].id }}"
   when: existing_ebs.volumes | default([]) | length > 0
 
+- name: Resize EBS volume if requested size is larger
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_vol:
+    id: "{{ aws_ebs_volume_id }}"
+    volume_size: "{{ aws_ebs_size }}"
+    region: "{{ aws_region }}"
+    modify_volume: true
+    state: present
+  when:
+    - existing_ebs.volumes | default([]) | length > 0
+    - (existing_ebs.volumes[0].size | int) < (aws_ebs_size | int)
+
 - name: Display EBS info
   ansible.builtin.debug:
-    msg: "EBS volume: {{ aws_ebs_name }} ({{ aws_ebs_volume_id }})"
+    msg: "EBS volume: {{ aws_ebs_name }} ({{ aws_ebs_volume_id }}, {{ aws_ebs_size }}GB)"
 
 - name: Check if volume is already attached
   delegate_to: localhost
