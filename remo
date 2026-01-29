@@ -378,6 +378,7 @@ CREATE OPTIONS:
     --name <name>       Server name (default: remote-coding-server)
     --type <type>       Server type (default: cx22)
     --location <loc>    Datacenter location (default: hel1)
+    --volume-size <GB>  Persistent home volume size in GB (default: 10)
 
 UPDATE OPTIONS:
     --name <name>       Server name (default: remote-coding-server)
@@ -1066,6 +1067,7 @@ hetzner_create() {
     local name=""
     local server_type=""
     local location=""
+    local volume_size=""
     local extra_args=()
 
     while [[ $# -gt 0 ]]; do
@@ -1080,6 +1082,10 @@ hetzner_create() {
                 ;;
             --location)
                 location="$2"
+                shift 2
+                ;;
+            --volume-size)
+                volume_size="$2"
                 shift 2
                 ;;
             -*)
@@ -1099,6 +1105,7 @@ hetzner_create() {
     [ -n "$name" ] && extra_args+=(-e "hetzner_server_name=$name")
     [ -n "$server_type" ] && extra_args+=(-e "hetzner_server_type=$server_type")
     [ -n "$location" ] && extra_args+=(-e "hetzner_location=$location")
+    [ -n "$volume_size" ] && extra_args+=(-e "hetzner_volume_size=$volume_size")
 
     run_playbook hetzner_site.yml "${extra_args[@]}"
 
@@ -1336,6 +1343,7 @@ CREATE OPTIONS:
     --region <region>   AWS region (default: us-west-2)
     --spot              Use spot instance (cheaper but can be interrupted)
     --dns               Also create Route53 DNS record
+    --volume-size <GB>  Persistent home volume size in GB (default: 50)
 
 UPDATE OPTIONS:
     --only <tool>       Only update specified tool (can repeat)
@@ -1382,6 +1390,7 @@ aws_create() {
     local name=""
     local instance_type=""
     local region=""
+    local volume_size=""
     local use_spot="false"
     local create_dns="false"
     local extra_args=()
@@ -1398,6 +1407,10 @@ aws_create() {
                 ;;
             --region)
                 region="$2"
+                shift 2
+                ;;
+            --volume-size)
+                volume_size="$2"
                 shift 2
                 ;;
             --spot)
@@ -1427,6 +1440,7 @@ aws_create() {
     [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
     [ -n "$instance_type" ] && extra_args+=(-e "aws_instance_type=$instance_type")
     [ -n "$region" ] && extra_args+=(-e "aws_region=$region")
+    [ -n "$volume_size" ] && extra_args+=(-e "aws_ebs_size=$volume_size")
     [ "$use_spot" = "true" ] && extra_args+=(-e "aws_use_spot=true")
     [ "$create_dns" = "true" ] && extra_args+=(-e "aws_create_dns=true")
 
