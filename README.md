@@ -98,12 +98,14 @@ remo init                           # Install dependencies, create .env
 # Hetzner Cloud
 remo hetzner create                 # Provision VM
 remo hetzner list                   # List registered VMs
+remo hetzner sync                   # Discover existing VMs
 remo hetzner update                 # Update dev tools
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
 # AWS
 remo aws create [--spot]            # Provision EC2 + EFS
 remo aws list                       # List registered instances
+remo aws sync                       # Discover existing instances
 remo aws update                     # Update dev tools
 remo aws destroy [--yes]            # Tear down (keeps EFS)
 remo aws update-ip                  # Update security group with current IP
@@ -112,6 +114,7 @@ remo aws info                       # Show instance info
 # Incus Containers
 remo incus create <name> [--host H] # Create container
 remo incus list                     # List registered containers
+remo incus sync [--host H]          # Discover existing containers
 remo incus update <name>            # Update dev tools
 remo incus destroy <name> [--yes]   # Destroy container
 remo incus bootstrap                # Initialize Incus on host
@@ -138,6 +141,13 @@ See platform-specific docs for full options:
 ---
 
 ## Troubleshooting
+
+**Installed remo on a new machine with existing instances?**
+```bash
+remo aws sync       # Discover AWS instances with 'remo' tag
+remo hetzner sync   # Discover Hetzner VMs with 'remo' label
+remo incus sync     # Discover Incus containers
+```
 
 **SSH connection fails?**
 ```bash
