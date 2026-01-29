@@ -333,6 +333,9 @@ SYNC OPTIONS:
     --host <host>       Remote Incus host (default: localhost)
     --user <user>       SSH user for remote host
 
+    Note: Incus sync adds containers without removing existing entries,
+    since containers may come from multiple hosts.
+
 EXAMPLES:
     remo incus create dev1
     remo incus create dev1 --domain int.get2know.io
@@ -430,6 +433,16 @@ remove_known_host() {
     [ ! -f "$KNOWN_HOSTS_FILE" ] && return 0
 
     grep -v "^${type}:${name}:" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
+    mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
+}
+
+# Clear all entries for a given type
+clear_known_hosts_by_type() {
+    local type="$1"
+
+    [ ! -f "$KNOWN_HOSTS_FILE" ] && return 0
+
+    grep -v "^${type}:" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
     mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
 }
 
@@ -1154,6 +1167,9 @@ hetzner_sync() {
         return 1
     fi
 
+    # Clear existing Hetzner entries and replace with discovered ones
+    clear_known_hosts_by_type "hetzner"
+
     local count=0
     while IFS= read -r name; do
         [ -z "$name" ] && continue
@@ -1170,11 +1186,10 @@ for server in data.get('servers', []):
 
     if [ "$count" -eq 0 ]; then
         print_warning "No Hetzner VMs found with 'remo' label."
-        return 0
+    else
+        echo ""
+        print_success "Synced $count Hetzner VM(s) to known_hosts."
     fi
-
-    echo ""
-    print_success "Synced $count Hetzner VM(s) to known_hosts."
 }
 
 handle_hetzner() {
@@ -1713,6 +1728,9 @@ EOF
         return 1
     fi
 
+    # Clear existing AWS entries and replace with discovered ones
+    clear_known_hosts_by_type "aws"
+
     local count=0
     while IFS= read -r line; do
         [ -z "$line" ] && continue
@@ -1732,11 +1750,10 @@ for inst in data.get('instances', []):
 
     if [ "$count" -eq 0 ]; then
         print_warning "No running AWS instances found with 'remo' tag."
-        return 0
+    else
+        echo ""
+        print_success "Synced $count AWS instance(s) to known_hosts."
     fi
-
-    echo ""
-    print_success "Synced $count AWS instance(s) to known_hosts."
 }
 
 handle_aws() {
