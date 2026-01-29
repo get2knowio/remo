@@ -5,8 +5,9 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_vpc_net_info:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     filters:
       isDefault: "true"
@@ -35,8 +36,9 @@
     description: "SSH access for remo dev environment ({{ aws_resource_name }})"
     vpc_id: "{{ aws_vpc_id }}"
     region: "{{ aws_region }}"
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     rules:
       - proto: tcp
         ports:

@@ -25,8 +25,9 @@
   delegate_to: localhost
   become: false
   amazon.aws.route53:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     state: present
     zone: "{{ aws_route53_zone_domain }}"
     record: "{{ aws_full_dns_name }}"

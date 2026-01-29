@@ -1,17 +1,6 @@
 ---
 # Preflight checks - validate credentials and auto-detect current IP
-
-- name: Validate AWS credentials are set
-  ansible.builtin.fail:
-    msg: |
-      AWS credentials are not configured.
-      Set the following environment variables:
-        AWS_ACCESS_KEY_ID
-        AWS_SECRET_ACCESS_KEY
-      Or pass them via -e aws_access_key_id=<key> -e aws_secret_access_key=<secret>
-  when: >
-    (aws_access_key_id | default('') | length == 0) or
-    (aws_secret_access_key | default('') | length == 0)
+# Supports both explicit credentials (env vars) and AWS SSO
 
 - name: Check if boto3 Python library is available
   delegate_to: localhost
@@ -32,6 +21,11 @@
     state: present
     executable: "{{ ansible_playbook_python | dirname }}/pip"
   when: boto3_check.rc | default(1) != 0
+
+- name: Determine AWS authentication method
+  ansible.builtin.set_fact:
+    aws_use_profile: "{{ aws_profile | default('') | length > 0 }}"
+    aws_use_explicit_creds: "{{ (aws_access_key_id | default('') | length > 0) and (aws_secret_access_key | default('') | length > 0) and (aws_profile | default('') | length == 0) }}"
 
 - name: Auto-detect current public IP if not specified
   delegate_to: localhost
@@ -72,16 +66,30 @@
     cmd: |
       {{ ansible_playbook_python }} << 'PYTHON'
       import boto3
-      sts = boto3.client('sts',
+      {% if aws_profile %}
+      # Use SSO profile
+      session = boto3.Session(profile_name='{{ aws_profile }}', region_name='{{ aws_region }}')
+      {% elif aws_access_key_id and aws_secret_access_key %}
+      # Use explicit credentials
+      session = boto3.Session(
         aws_access_key_id='{{ aws_access_key_id }}',
         aws_secret_access_key='{{ aws_secret_access_key }}',
         region_name='{{ aws_region }}')
+      {% else %}
+      # Use default credential chain (env vars, IAM role, etc.)
+      session = boto3.Session(region_name='{{ aws_region }}')
+      {% endif %}
+      sts = session.client('sts')
       identity = sts.get_caller_identity()
       print(identity['Account'] + ':' + identity['Arn'])
       PYTHON
   register: caller_identity_result
   changed_when: false
 
+- name: Set caller identity result
+  ansible.builtin.set_fact:
+    caller_identity_output: "{{ caller_identity_result.stdout | default('') }}"
+
 - name: Display AWS account info
   ansible.builtin.debug:
-    msg: "AWS Account: {{ caller_identity_result.stdout.split(':')[0] }} ({{ caller_identity_result.stdout.split(':')[1:] | join(':') }})"
+    msg: "AWS Account: {{ caller_identity_output.split(':')[0] }} ({{ caller_identity_output.split(':')[1:] | join(':') }})"

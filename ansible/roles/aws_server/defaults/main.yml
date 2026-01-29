@@ -11,8 +11,11 @@ aws_efs_name: "remo-{{ aws_resource_name }}-home"
 aws_instance_name: "remo-{{ aws_resource_name }}"
 
 # AWS credentials and region
-aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
-aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+# For SSO: set AWS_PROFILE env var or pass -e aws_profile=<profile-name>
+# For explicit credentials: set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+aws_profile: "{{ lookup('env', 'AWS_PROFILE') | default('', true) }}"
+aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default('', true) }}"
+aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default('', true) }}"
 aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
 
 # Instance configuration

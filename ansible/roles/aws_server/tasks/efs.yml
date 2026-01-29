@@ -5,8 +5,9 @@
   delegate_to: localhost
   become: false
   amazon.aws.efs_info:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     tags:
       Name: "{{ aws_efs_name }}"
@@ -16,8 +17,9 @@
   delegate_to: localhost
   become: false
   community.aws.efs:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     name: "{{ aws_efs_name }}"
     throughput_mode: "{{ aws_efs_throughput_mode }}"
@@ -47,8 +49,9 @@
   delegate_to: localhost
   become: false
   amazon.aws.efs_info:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     id: "{{ aws_efs_id }}"
   register: efs_status
@@ -64,8 +67,9 @@
     description: "EFS mount target access for remo ({{ aws_resource_name }})"
     vpc_id: "{{ aws_vpc_id }}"
     region: "{{ aws_region }}"
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     rules:
       - proto: tcp
         ports:
@@ -87,8 +91,9 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_vpc_subnet_info:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     filters:
       vpc-id: "{{ aws_vpc_id }}"
@@ -99,8 +104,9 @@
   delegate_to: localhost
   become: false
   community.aws.efs_info:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     id: "{{ aws_efs_id }}"
   register: efs_info_with_targets
@@ -113,8 +119,9 @@
   delegate_to: localhost
   become: false
   community.aws.efs:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     id: "{{ aws_efs_id }}"
     targets:
@@ -129,15 +136,23 @@
 - name: Set lifecycle policy for infrequent access
   delegate_to: localhost
   become: false
-  ansible.builtin.command:
-    cmd: >
-      {{ ansible_playbook_python }} -c "
+  ansible.builtin.shell:
+    cmd: |
+      {{ ansible_playbook_python }} << 'PYTHON'
       import boto3
+      {% if aws_profile %}
+      session = boto3.Session(profile_name='{{ aws_profile }}', region_name='{{ aws_region }}')
+      client = session.client('efs')
+      {% elif aws_access_key_id and aws_secret_access_key %}
       client = boto3.client('efs',
           region_name='{{ aws_region }}',
           aws_access_key_id='{{ aws_access_key_id }}',
           aws_secret_access_key='{{ aws_secret_access_key }}'
       )
+      {% else %}
+      session = boto3.Session(region_name='{{ aws_region }}')
+      client = session.client('efs')
+      {% endif %}
       client.put_lifecycle_configuration(
           FileSystemId='{{ aws_efs_id }}',
           LifecyclePolicies=[
@@ -146,6 +161,6 @@
           ]
       )
       print('Lifecycle policy set')
-      "
+      PYTHON
   register: lifecycle_result
   changed_when: "'Lifecycle policy set' in lifecycle_result.stdout | default('')"

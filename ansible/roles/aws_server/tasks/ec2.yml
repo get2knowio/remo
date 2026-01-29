@@ -15,8 +15,9 @@
     name: "{{ aws_key_name }}"
     key_material: "{{ ssh_public_key_content.content | b64decode }}"
     region: "{{ aws_region }}"
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     state: present
     tags:
       Name: "{{ aws_key_name }}"
@@ -40,8 +41,9 @@
       state: available
       virtualization-type: hvm
     region: "{{ aws_region }}"
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
   register: ami_result
 
 - name: Fail if no AMI found
@@ -63,8 +65,9 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_instance_info:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     filters:
       "tag:Name": "{{ aws_instance_name }}"
@@ -84,8 +87,9 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_vpc_subnet_info:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     filters:
       vpc-id: "{{ aws_vpc_id }}"
@@ -105,8 +109,9 @@
       - "{{ aws_security_group_id }}"
     vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
     region: "{{ aws_region }}"
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     network:
       assign_public_ip: true
     volumes:
@@ -139,8 +144,9 @@
       - "{{ aws_security_group_id }}"
     vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
     region: "{{ aws_region }}"
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     network:
       assign_public_ip: true
     volumes:
@@ -193,8 +199,9 @@
     instance_ids:
       - "{{ existing_instance.instances[0].instance_id }}"
     region: "{{ aws_region }}"
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     state: running
     wait: true
   when:
@@ -209,8 +216,9 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_instance_info:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
+    profile: "{{ aws_profile if aws_profile else omit }}"
+    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
+    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
     region: "{{ aws_region }}"
     instance_ids:
       - "{{ aws_instance_id }}"
