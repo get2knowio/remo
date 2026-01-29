@@ -333,8 +333,7 @@ SYNC OPTIONS:
     --host <host>       Remote Incus host (default: localhost)
     --user <user>       SSH user for remote host
 
-    Note: Incus sync adds containers without removing existing entries,
-    since containers may come from multiple hosts.
+    Note: Sync replaces all entries for the specified host.
 
 EXAMPLES:
     remo incus create dev1
@@ -446,6 +445,17 @@ clear_known_hosts_by_type() {
     mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
 }
 
+# Clear all entries for a given type and name prefix (e.g., incus:myhost/*)
+clear_known_hosts_by_prefix() {
+    local type="$1"
+    local prefix="$2"
+
+    [ ! -f "$KNOWN_HOSTS_FILE" ] && return 0
+
+    grep -v "^${type}:${prefix}" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
+    mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
+}
+
 # Get all known hosts (optionally filtered by type)
 get_known_hosts() {
     local filter_type="${1:-}"
@@ -528,8 +538,9 @@ incus_create() {
 
     run_playbook incus_site.yml "${extra_args[@]}"
 
-    # Save to known_hosts on success (container accessible by name)
-    save_known_host "incus" "$name" "$name" "remo"
+    # Save to known_hosts on success
+    # Format: incus:HOST/CONTAINER:CONTAINER:remo
+    save_known_host "incus" "${host}/${name}" "$name" "remo"
 }
 
 incus_destroy() {
@@ -590,17 +601,21 @@ incus_destroy() {
     run_playbook incus_teardown.yml "${extra_args[@]}"
 
     # Remove from known_hosts
-    remove_known_host "incus" "$name"
+    # Format: incus:HOST/CONTAINER:CONTAINER:remo
+    remove_known_host "incus" "${host}/${name}"
 }
 
 incus_list() {
     echo ""
-    printf "%-25s %-25s %s\n" "NAME" "HOST" "SSH COMMAND"
-    printf "%-25s %-25s %s\n" "----" "----" "-----------"
+    printf "%-20s %-20s %-20s %s\n" "CONTAINER" "INCUS HOST" "SSH HOST" "SSH COMMAND"
+    printf "%-20s %-20s %-20s %s\n" "---------" "----------" "--------" "-----------"
 
     while IFS=: read -r type name host user; do
         [ "$type" != "incus" ] && continue
-        printf "%-25s %-25s %s\n" "$name" "$host" "ssh ${user}@${host}"
+        # name is in format: incus_host/container_name
+        local incus_host="${name%/*}"
+        local container="${name#*/}"
+        printf "%-20s %-20s %-20s %s\n" "$container" "$incus_host" "$host" "ssh ${user}@${host}"
     done < <(get_known_hosts "incus")
 
     local count
@@ -638,7 +653,7 @@ incus_sync() {
         esac
     done
 
-    print_info "Discovering Incus containers..."
+    print_info "Discovering Incus containers on '$host'..."
 
     local containers
     if [ "$host" = "localhost" ]; then
@@ -649,16 +664,19 @@ incus_sync() {
         containers=$(ssh "$ssh_target" "incus list -f csv -c n" 2>/dev/null || true)
     fi
 
+    # Clear existing entries for this host and replace with discovered ones
+    clear_known_hosts_by_prefix "incus" "${host}/"
+
     if [ -z "$containers" ]; then
-        print_warning "No Incus containers found."
+        print_warning "No Incus containers found on '$host'."
         return 0
     fi
 
     local count=0
     while IFS= read -r name; do
         [ -z "$name" ] && continue
-        # Container name is also the hostname for SSH access
-        save_known_host "incus" "$name" "$name" "remo"
+        # Format: incus:HOST/CONTAINER:CONTAINER:remo
+        save_known_host "incus" "${host}/${name}" "$name" "remo"
         print_success "  Registered: $name"
         ((count++)) || true
     done <<< "$containers"
@@ -1851,7 +1869,14 @@ shell_connect() {
         # Build picker options
         local options=""
         while IFS=: read -r type name host user; do
-            options+="${type}: ${name} (${host})"$'\n'
+            local display_name="$name"
+            # For incus, show container name without host prefix
+            if [ "$type" = "incus" ]; then
+                local incus_host="${name%/*}"
+                local container="${name#*/}"
+                display_name="${container} (on ${incus_host})"
+            fi
+            options+="${type}: ${display_name} (${host})"$'\n'
         done <<< "$hosts"
 
         local choice
@@ -1862,13 +1887,15 @@ shell_connect() {
             exit 0
         fi
 
-        # Find the matching environment
-        local choice_type choice_name
+        # Find the matching environment by extracting SSH host from choice
+        # Format is "type: display_name (ssh_host)"
+        local choice_type choice_host
         choice_type=$(echo "$choice" | cut -d: -f1)
-        choice_name=$(echo "$choice" | cut -d: -f2 | sed 's/^ //' | cut -d' ' -f1)
+        # Extract the last parenthesized value (SSH host)
+        choice_host=$(echo "$choice" | grep -oE '\([^)]+\)$' | tr -d '()')
 
         while IFS=: read -r type name host user; do
-            if [ "$type" = "$choice_type" ] && [ "$name" = "$choice_name" ]; then
+            if [ "$type" = "$choice_type" ] && [ "$host" = "$choice_host" ]; then
                 selected="${type}:${name}:${host}:${user}"
                 break
             fi
