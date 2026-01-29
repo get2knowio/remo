@@ -133,7 +133,7 @@ See platform-specific docs for full options:
 
 | Variable | Description |
 |----------|-------------|
-| `REMO_HOME` | Config directory for remo state (default: `<install-dir>/.remo`) |
+| `REMO_HOME` | Config directory for remo state (default: `~/.config/remo`) |
 
 ---
 

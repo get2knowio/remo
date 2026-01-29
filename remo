@@ -16,8 +16,8 @@ ENV_FILE="$SCRIPT_DIR/.env"
 ANSIBLE_DIR="$SCRIPT_DIR/ansible"
 VENV_DIR="$SCRIPT_DIR/.venv"
 
-# Config directory - can be overridden with REMO_HOME
-REMO_HOME="${REMO_HOME:-$SCRIPT_DIR/.remo}"
+# Config directory - follows XDG spec, can be overridden with REMO_HOME
+REMO_HOME="${REMO_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/remo}"
 
 # Activate virtual environment if it exists
 if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
@@ -90,7 +90,7 @@ COMMANDS:
     self-update Update remo to a newer version
 
 ENVIRONMENT:
-    REMO_HOME   Config directory (default: <install-dir>/.remo)
+    REMO_HOME   Config directory (default: ~/.config/remo)
 
 EXAMPLES:
     remo shell

@@ -20,7 +20,7 @@ vault.yml
 # Local configuration
 *.local.yml
 
-# Remo state directory (per-user data)
+# Remo state directory (legacy location, now uses ~/.config/remo)
 .remo/
 
 # SSH keys
