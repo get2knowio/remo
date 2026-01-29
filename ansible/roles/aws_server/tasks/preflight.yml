@@ -68,12 +68,20 @@
 - name: Verify AWS credentials work
   delegate_to: localhost
   become: false
-  amazon.aws.sts_caller_identity:
-    access_key: "{{ aws_access_key_id }}"
-    secret_key: "{{ aws_secret_access_key }}"
-    region: "{{ aws_region }}"
-  register: caller_identity
+  ansible.builtin.command:
+    cmd: >
+      {{ ansible_playbook_python }} -c "
+      import boto3
+      sts = boto3.client('sts',
+        aws_access_key_id='{{ aws_access_key_id }}',
+        aws_secret_access_key='{{ aws_secret_access_key }}',
+        region_name='{{ aws_region }}')
+      identity = sts.get_caller_identity()
+      print(identity['Account'] + ':' + identity['Arn'])
+      "
+  register: caller_identity_result
+  changed_when: false
 
 - name: Display AWS account info
   ansible.builtin.debug:
-    msg: "AWS Account: {{ caller_identity.account }} ({{ caller_identity.arn }})"
+    msg: "AWS Account: {{ caller_identity_result.stdout.split(':')[0] }} ({{ caller_identity_result.stdout.split(':')[1:] | join(':') }})"
