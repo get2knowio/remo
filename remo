@@ -31,6 +31,9 @@ YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Available tools for --only and --skip options
+ALL_TOOLS="docker user_setup nodejs devcontainers github_cli fzf zellij"
+
 # =============================================================================
 # UTILITY FUNCTIONS
 # =============================================================================
@@ -67,6 +70,36 @@ run_playbook() {
     shift
     cd "$ANSIBLE_DIR"
     ansible-playbook "$playbook" "$@"
+}
+
+# Build extra args for --only and --skip tool filtering
+# Usage: build_tool_args only_array skip_array
+# Sets TOOL_EXTRA_ARGS array as output
+build_tool_args() {
+    local -n only_ref=$1
+    local -n skip_ref=$2
+    TOOL_EXTRA_ARGS=()
+
+    # Handle --only: disable all tools except specified ones
+    if [ ${#only_ref[@]} -gt 0 ]; then
+        for tool in $ALL_TOOLS; do
+            local enabled="false"
+            for o in "${only_ref[@]}"; do
+                if [ "$tool" = "$o" ]; then
+                    enabled="true"
+                    break
+                fi
+            done
+            TOOL_EXTRA_ARGS+=(-e "configure_${tool}=$enabled")
+        done
+    fi
+
+    # Handle --skip: disable specified tools
+    if [ ${#skip_ref[@]} -gt 0 ]; then
+        for s in "${skip_ref[@]}"; do
+            TOOL_EXTRA_ARGS+=(-e "configure_${s}=false")
+        done
+    fi
 }
 
 # =============================================================================
@@ -152,12 +185,12 @@ EOF
 # =============================================================================
 
 handle_init() {
-    local force=false
+    local force="false"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --force)
-                force=true
+                force="true"
                 shift
                 ;;
             --help|-h)
@@ -181,10 +214,10 @@ handle_init() {
     echo ""
 
     # Step 1: Create virtual environment
-    if [ -d "$VENV_DIR" ] && [ "$force" = false ]; then
+    if [ -d "$VENV_DIR" ] && [ "$force" = "false" ]; then
         print_success "✓ Virtual environment already exists (.venv)"
     else
-        if [ "$force" = true ] && [ -d "$VENV_DIR" ]; then
+        if [ "$force" = "true" ] && [ -d "$VENV_DIR" ]; then
             print_info "Removing existing virtual environment..."
             rm -rf "$VENV_DIR"
         fi
@@ -326,12 +359,14 @@ CREATE OPTIONS:
     --location <loc>    Datacenter location (default: hel1)
 
 UPDATE OPTIONS:
+    --name <name>       Server name (default: remote-coding-server)
     --only <tool>       Only update specified tool (can repeat)
     --skip <tool>       Skip specified tool (can repeat)
 
     Available tools: docker, user_setup, nodejs, devcontainers, github_cli, fzf, zellij
 
 DESTROY OPTIONS:
+    --name <name>       Server name (default: remote-coding-server)
     --yes, -y           Skip confirmation prompt
     --remove-volume     Also remove the persistent volume (DESTROYS DATA!)
 
@@ -343,9 +378,9 @@ EXAMPLES:
     remo hetzner create
     remo hetzner create --name my-server --type cx32
     remo hetzner update
-    remo hetzner update --only zellij
+    remo hetzner update --name my-server --only zellij
     remo hetzner destroy --yes
-    remo hetzner destroy --yes --remove-volume
+    remo hetzner destroy --name my-server --yes --remove-volume
 EOF
 }
 
@@ -539,12 +574,12 @@ incus_destroy() {
 
 incus_list() {
     echo ""
-    printf "%-20s %-20s %s\n" "NAME" "HOST" "SSH COMMAND"
-    printf "%-20s %-20s %s\n" "----" "----" "-----------"
+    printf "%-25s %-25s %s\n" "NAME" "HOST" "SSH COMMAND"
+    printf "%-25s %-25s %s\n" "----" "----" "-----------"
 
     while IFS=: read -r type name host user; do
         [ "$type" != "incus" ] && continue
-        printf "%-20s %-20s %s\n" "$name" "$host" "ssh ${user}@${host}"
+        printf "%-25s %-25s %s\n" "$name" "$host" "ssh ${user}@${host}"
     done < <(get_known_hosts "incus")
 
     local count
@@ -609,9 +644,6 @@ incus_update() {
     local skip=()
     local extra_args=()
 
-    # Available tools for --only and --skip
-    local all_tools="docker user_setup nodejs devcontainers github_cli fzf zellij"
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --host)
@@ -674,26 +706,8 @@ incus_update() {
 
     extra_args+=(-e "container_ip=$container_ip")
 
-    # Handle --only: disable all tools except specified ones
-    if [ ${#only[@]} -gt 0 ]; then
-        for tool in $all_tools; do
-            local enabled="false"
-            for o in "${only[@]}"; do
-                if [ "$tool" = "$o" ]; then
-                    enabled="true"
-                    break
-                fi
-            done
-            extra_args+=(-e "configure_${tool}=$enabled")
-        done
-    fi
-
-    # Handle --skip: disable specified tools
-    if [ ${#skip[@]} -gt 0 ]; then
-        for s in "${skip[@]}"; do
-            extra_args+=(-e "configure_${s}=false")
-        done
-    fi
+    build_tool_args only skip
+    extra_args+=("${TOOL_EXTRA_ARGS[@]}")
 
     run_playbook incus_configure.yml "${extra_args[@]}"
 }
@@ -778,8 +792,8 @@ for r in releases:
 
 handle_self_update() {
     local version=""
-    local pre_release=false
-    local check_only=false
+    local pre_release="false"
+    local check_only="false"
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -788,11 +802,11 @@ handle_self_update() {
                 shift 2
                 ;;
             --pre-release)
-                pre_release=true
+                pre_release="true"
                 shift
                 ;;
             --check)
-                check_only=true
+                check_only="true"
                 shift
                 ;;
             --help|-h)
@@ -931,12 +945,17 @@ hetzner_create() {
 }
 
 hetzner_destroy() {
+    local name=""
     local auto_confirm="false"
     local remove_volume="false"
     local extra_args=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --name)
+                name="$2"
+                shift 2
+                ;;
             --yes|-y)
                 auto_confirm="true"
                 shift
@@ -957,32 +976,36 @@ hetzner_destroy() {
         esac
     done
 
+    local server_name="${name:-remote-coding-server}"
+
     if [ "$remove_volume" = "true" ]; then
         print_warning "WARNING: --remove-volume will destroy all data on the persistent volume!"
     fi
 
-    print_info "Destroying Hetzner VM..."
+    print_info "Destroying Hetzner VM '$server_name'..."
 
+    [ -n "$name" ] && extra_args+=(-e "hetzner_server_name=$name")
     extra_args+=(-e "auto_confirm=$auto_confirm")
     extra_args+=(-e "remove_volume=$remove_volume")
 
     run_playbook hetzner_teardown.yml "${extra_args[@]}"
 
-    # Remove from known_hosts (use default name if not specified)
-    local server_name="remote-coding-server"
+    # Remove from known_hosts
     remove_known_host "hetzner" "$server_name"
 }
 
 hetzner_update() {
+    local name=""
     local only=()
     local skip=()
     local extra_args=()
 
-    # Available tools for --only and --skip
-    local all_tools="docker user_setup nodejs devcontainers github_cli fzf zellij"
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --name)
+                name="$2"
+                shift 2
+                ;;
             --only)
                 only+=("$2")
                 shift 2
@@ -1003,6 +1026,8 @@ hetzner_update() {
         esac
     done
 
+    local server_name="${name:-remote-coding-server}"
+
     # Get server IP from DuckDNS domain
     local domain="${DUCKDNS_DOMAIN:-}"
     if [ -z "$domain" ]; then
@@ -1011,40 +1036,22 @@ hetzner_update() {
     fi
 
     local server_host="${domain}.duckdns.org"
-    print_info "Updating Hetzner VM at $server_host..."
+    print_info "Updating Hetzner VM '$server_name' at $server_host..."
 
-    # Handle --only: disable all tools except specified ones
-    if [ ${#only[@]} -gt 0 ]; then
-        for tool in $all_tools; do
-            local enabled="false"
-            for o in "${only[@]}"; do
-                if [ "$tool" = "$o" ]; then
-                    enabled="true"
-                    break
-                fi
-            done
-            extra_args+=(-e "configure_${tool}=$enabled")
-        done
-    fi
-
-    # Handle --skip: disable specified tools
-    if [ ${#skip[@]} -gt 0 ]; then
-        for s in "${skip[@]}"; do
-            extra_args+=(-e "configure_${s}=false")
-        done
-    fi
+    build_tool_args only skip
+    extra_args+=("${TOOL_EXTRA_ARGS[@]}")
 
     run_playbook hetzner_configure.yml -i "${server_host}," -e "ansible_user=remo" "${extra_args[@]}"
 }
 
 hetzner_list() {
     echo ""
-    printf "%-25s %-30s %s\n" "NAME" "HOST" "SSH COMMAND"
-    printf "%-25s %-30s %s\n" "----" "----" "-----------"
+    printf "%-25s %-25s %s\n" "NAME" "HOST" "SSH COMMAND"
+    printf "%-25s %-25s %s\n" "----" "----" "-----------"
 
     while IFS=: read -r type name host user; do
         [ "$type" != "hetzner" ] && continue
-        printf "%-25s %-30s %s\n" "$name" "$host" "ssh ${user}@${host}"
+        printf "%-25s %-25s %s\n" "$name" "$host" "ssh ${user}@${host}"
     done < <(get_known_hosts "hetzner")
 
     local count
@@ -1421,9 +1428,6 @@ aws_update() {
     local skip=()
     local extra_args=()
 
-    # Available tools for --only and --skip
-    local all_tools="docker user_setup nodejs devcontainers github_cli fzf zellij"
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
@@ -1497,38 +1501,23 @@ EOF
 
     print_info "Updating AWS instance at $instance_ip..."
 
-    # Handle --only: disable all tools except specified ones
-    if [ ${#only[@]} -gt 0 ]; then
-        for tool in $all_tools; do
-            local enabled="false"
-            for o in "${only[@]}"; do
-                if [ "$tool" = "$o" ]; then
-                    enabled="true"
-                    break
-                fi
-            done
-            extra_args+=(-e "configure_${tool}=$enabled")
-        done
-    fi
+    # Update known_hosts with current IP (may have changed, especially for spot instances)
+    save_known_host "aws" "$resource_name" "$instance_ip" "remo"
 
-    # Handle --skip: disable specified tools
-    if [ ${#skip[@]} -gt 0 ]; then
-        for s in "${skip[@]}"; do
-            extra_args+=(-e "configure_${s}=false")
-        done
-    fi
+    build_tool_args only skip
+    extra_args+=("${TOOL_EXTRA_ARGS[@]}")
 
     run_playbook aws_configure.yml -e "instance_ip=$instance_ip" "${extra_args[@]}"
 }
 
 aws_list() {
     echo ""
-    printf "%-20s %-18s %s\n" "NAME" "HOST" "SSH COMMAND"
-    printf "%-20s %-18s %s\n" "----" "----" "-----------"
+    printf "%-25s %-25s %s\n" "NAME" "HOST" "SSH COMMAND"
+    printf "%-25s %-25s %s\n" "----" "----" "-----------"
 
     while IFS=: read -r type name host user; do
         [ "$type" != "aws" ] && continue
-        printf "%-20s %-18s %s\n" "$name" "$host" "ssh ${user}@${host}"
+        printf "%-25s %-25s %s\n" "$name" "$host" "ssh ${user}@${host}"
     done < <(get_known_hosts "aws")
 
     local count
