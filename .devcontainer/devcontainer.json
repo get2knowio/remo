@@ -15,16 +15,10 @@
   },
   "workspaceFolder": "/workspaces/remote-coding",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/remote-coding,type=bind,consistency=cached",
-  "postCreateCommand": "sudo mkdir -p /workspaces/worktrees-${containerWorkspaceFolder##*/} && sudo chown -R vscode:vscode /workspaces/worktrees-${containerWorkspaceFolder##*/}",
   "initializeCommand": "docker pull ghcr.io/get2knowio/devcontainer:latest",
   "mounts": [
-    "source=${localEnv:HOME}/.codex,target=/home/vscode/.codex,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.config/opencode,target=/home/vscode/.config/opencode,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.coderabbit,target=/home/vscode/.coderabbit,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.local/bin,target=/home/vscode/.host-local/bin,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.config/git,target=/home/vscode/.config/git,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached"
   ]
 }

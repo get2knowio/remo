@@ -6,8 +6,8 @@
   become: false
   amazon.aws.efs_info:
     profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
     region: "{{ aws_region }}"
     tags:
       Name: "{{ aws_efs_name }}"
@@ -18,8 +18,8 @@
   become: false
   community.aws.efs:
     profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
     region: "{{ aws_region }}"
     name: "{{ aws_efs_name }}"
     throughput_mode: "{{ aws_efs_throughput_mode }}"
@@ -50,8 +50,8 @@
   become: false
   amazon.aws.efs_info:
     profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
     region: "{{ aws_region }}"
     id: "{{ aws_efs_id }}"
   register: efs_status
@@ -68,8 +68,8 @@
     vpc_id: "{{ aws_vpc_id }}"
     region: "{{ aws_region }}"
     profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
     rules:
       - proto: tcp
         ports:
@@ -92,8 +92,8 @@
   become: false
   amazon.aws.ec2_vpc_subnet_info:
     profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
     region: "{{ aws_region }}"
     filters:
       vpc-id: "{{ aws_vpc_id }}"
@@ -105,8 +105,8 @@
   become: false
   community.aws.efs_info:
     profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
     region: "{{ aws_region }}"
     id: "{{ aws_efs_id }}"
   register: efs_info_with_targets
@@ -120,8 +120,8 @@
   become: false
   community.aws.efs:
     profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-    secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
     region: "{{ aws_region }}"
     id: "{{ aws_efs_id }}"
     targets:

@@ -60,8 +60,8 @@
     - name: Get EC2 instance info
       amazon.aws.ec2_instance_info:
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         region: "{{ aws_region }}"
         filters:
           "tag:Name": "{{ aws_instance_name }}"
@@ -77,8 +77,8 @@
     - name: Get Elastic IP info
       amazon.aws.ec2_eip_info:
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         region: "{{ aws_region }}"
         filters:
           "tag:Name": "{{ aws_instance_name }}-eip"
@@ -88,8 +88,8 @@
     - name: Release Elastic IP
       amazon.aws.ec2_eip:
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         region: "{{ aws_region }}"
         public_ip: "{{ existing_eip.addresses[0].public_ip }}"
         state: absent
@@ -105,8 +105,8 @@
     - name: Terminate EC2 instance
       amazon.aws.ec2_instance:
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         region: "{{ aws_region }}"
         instance_ids:
           - "{{ existing_instance.instances[0].instance_id }}"
@@ -130,8 +130,8 @@
     - name: Get EFS info
       amazon.aws.efs_info:
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         region: "{{ aws_region }}"
         tags:
           Name: "{{ aws_efs_name }}"
@@ -141,8 +141,8 @@
     - name: Delete EFS mount targets first
       community.aws.efs:
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         region: "{{ aws_region }}"
         id: "{{ existing_efs.efs[0].file_system_id }}"
         state: absent
@@ -166,8 +166,8 @@
         name: "{{ aws_efs_name }}-sg"
         region: "{{ aws_region }}"
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         state: absent
       register: efs_sg_delete_result
       when: remove_efs | bool
@@ -183,8 +183,8 @@
         name: "{{ aws_security_group_name }}"
         region: "{{ aws_region }}"
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         state: absent
       register: sg_delete_result
       retries: 5
@@ -202,8 +202,8 @@
         name: "{{ aws_key_name }}"
         region: "{{ aws_region }}"
         profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ aws_access_key_id if (aws_access_key_id and not aws_profile) else omit }}"
-        secret_key: "{{ aws_secret_access_key if (aws_secret_access_key and not aws_profile) else omit }}"
+        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
+        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         state: absent
       register: key_delete_result
 
