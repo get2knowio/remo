@@ -129,6 +129,12 @@ See platform-specific docs for full options:
 - [AWS](docs/aws.md)
 - [Incus Containers](docs/incus.md)
 
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `REMO_HOME` | Config directory for remo state (default: `<install-dir>/.remo`) |
+
 ---
 
 ## Troubleshooting

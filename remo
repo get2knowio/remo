@@ -16,6 +16,9 @@ ENV_FILE="$SCRIPT_DIR/.env"
 ANSIBLE_DIR="$SCRIPT_DIR/ansible"
 VENV_DIR="$SCRIPT_DIR/.venv"
 
+# Config directory - can be overridden with REMO_HOME
+REMO_HOME="${REMO_HOME:-$SCRIPT_DIR/.remo}"
+
 # Activate virtual environment if it exists
 if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
     source "$VENV_DIR/bin/activate"
@@ -85,6 +88,9 @@ COMMANDS:
     hetzner     Manage Hetzner Cloud VMs
     aws         Manage AWS EC2 instances with EFS storage
     self-update Update remo to a newer version
+
+ENVIRONMENT:
+    REMO_HOME   Config directory (default: <install-dir>/.remo)
 
 EXAMPLES:
     remo shell
@@ -347,11 +353,11 @@ EOF
 # KNOWN HOSTS MANAGEMENT
 # =============================================================================
 
-KNOWN_HOSTS_FILE="$SCRIPT_DIR/.remo/known_hosts"
+KNOWN_HOSTS_FILE="$REMO_HOME/known_hosts"
 
-# Ensure .remo directory exists
+# Ensure config directory exists
 ensure_remo_dir() {
-    mkdir -p "$SCRIPT_DIR/.remo"
+    mkdir -p "$REMO_HOME"
 }
 
 # Save a host entry
