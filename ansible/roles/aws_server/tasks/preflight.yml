@@ -68,9 +68,9 @@
 - name: Verify AWS credentials work
   delegate_to: localhost
   become: false
-  ansible.builtin.command:
-    cmd: >
-      {{ ansible_playbook_python }} -c "
+  ansible.builtin.shell:
+    cmd: |
+      {{ ansible_playbook_python }} << 'PYTHON'
       import boto3
       sts = boto3.client('sts',
         aws_access_key_id='{{ aws_access_key_id }}',
@@ -78,7 +78,7 @@
         region_name='{{ aws_region }}')
       identity = sts.get_caller_identity()
       print(identity['Account'] + ':' + identity['Arn'])
-      "
+      PYTHON
   register: caller_identity_result
   changed_when: false
 
