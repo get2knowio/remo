@@ -1,0 +1,108 @@
+---
+# EBS - Elastic Block Store for persistent home directory
+# Creates a persistent EBS volume that survives instance termination
+
+- name: Check if EBS volume already exists
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_vol_info:
+    region: "{{ aws_region }}"
+    filters:
+      "tag:Name": "{{ aws_ebs_name }}"
+      "tag:remo": "true"
+      status: available
+  register: existing_ebs
+
+- name: Get instance availability zone
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_instance_info:
+    region: "{{ aws_region }}"
+    instance_ids:
+      - "{{ aws_instance_id }}"
+  register: instance_az_info
+
+- name: Set instance AZ fact
+  ansible.builtin.set_fact:
+    aws_instance_az: "{{ instance_az_info.instances[0].placement.availability_zone }}"
+
+- name: Display instance AZ
+  ansible.builtin.debug:
+    msg: "Instance availability zone: {{ aws_instance_az }}"
+
+- name: Create EBS volume for home directory
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_vol:
+    region: "{{ aws_region }}"
+    zone: "{{ aws_instance_az }}"
+    volume_size: "{{ aws_ebs_size }}"
+    volume_type: "{{ aws_ebs_type }}"
+    name: "{{ aws_ebs_name }}"
+    tags:
+      Name: "{{ aws_ebs_name }}"
+      remo: "true"
+      remo_resource_name: "{{ aws_resource_name }}"
+    state: present
+  register: ebs_create_result
+  when: existing_ebs.volumes | default([]) | length == 0
+
+- name: Set EBS volume ID fact (new volume)
+  ansible.builtin.set_fact:
+    aws_ebs_volume_id: "{{ ebs_create_result.volume_id }}"
+  when: existing_ebs.volumes | default([]) | length == 0
+
+- name: Set EBS volume ID fact (existing volume)
+  ansible.builtin.set_fact:
+    aws_ebs_volume_id: "{{ existing_ebs.volumes[0].id }}"
+  when: existing_ebs.volumes | default([]) | length > 0
+
+- name: Display EBS info
+  ansible.builtin.debug:
+    msg: "EBS volume: {{ aws_ebs_name }} ({{ aws_ebs_volume_id }})"
+
+- name: Check if volume is already attached
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_vol_info:
+    region: "{{ aws_region }}"
+    filters:
+      volume-id: "{{ aws_ebs_volume_id }}"
+  register: ebs_attach_status
+
+- name: Set volume attachment status
+  ansible.builtin.set_fact:
+    ebs_already_attached: "{{ (ebs_attach_status.volumes[0].attachments | default([]) | length > 0) and (ebs_attach_status.volumes[0].attachments[0].instance_id == aws_instance_id) }}"
+
+- name: Attach EBS volume to instance
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_vol:
+    id: "{{ aws_ebs_volume_id }}"
+    instance: "{{ aws_instance_id }}"
+    device_name: "{{ aws_ebs_device_name }}"
+    region: "{{ aws_region }}"
+    state: present
+  register: ebs_attach_result
+  when: not ebs_already_attached
+
+- name: Wait for volume to be attached
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_vol_info:
+    region: "{{ aws_region }}"
+    filters:
+      volume-id: "{{ aws_ebs_volume_id }}"
+  register: ebs_wait_result
+  until: (ebs_wait_result.volumes[0].attachments | default([]) | length > 0) and (ebs_wait_result.volumes[0].attachments[0].state == 'attached')
+  retries: 30
+  delay: 5
+  when: not ebs_already_attached
+
+- name: Set EBS device path fact
+  ansible.builtin.set_fact:
+    aws_ebs_device_path: "{{ aws_ebs_device_name }}"
+
+- name: Display EBS attachment info
+  ansible.builtin.debug:
+    msg: "EBS volume {{ aws_ebs_volume_id }} attached as {{ aws_ebs_device_path }}"

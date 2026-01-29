@@ -1,29 +1,48 @@
 ---
 # Volume setup must happen BEFORE creating the user
-- name: Check if volume device exists
+# Note: On AWS NVMe instances, /dev/xvdf may appear as /dev/nvme1n1
+- name: Check if specified volume device exists
   ansible.builtin.stat:
     path: "{{ remo_volume_device }}"
   register: volume_device_stat
   when: remo_volume_device | length > 0
 
+- name: Check for NVMe device as alternative (AWS)
+  ansible.builtin.stat:
+    path: /dev/nvme1n1
+  register: nvme_device_stat
+  when:
+    - remo_volume_device | length > 0
+    - not (volume_device_stat.stat.exists | default(false))
+
+- name: Set actual volume device path
+  ansible.builtin.set_fact:
+    actual_volume_device: "{{ remo_volume_device if (volume_device_stat.stat.exists | default(false)) else ('/dev/nvme1n1' if (nvme_device_stat.stat.exists | default(false)) else '') }}"
+  when: remo_volume_device | length > 0
+
+- name: Display volume device info
+  ansible.builtin.debug:
+    msg: "Using volume device: {{ actual_volume_device | default('none') }} (requested: {{ remo_volume_device }})"
+  when: remo_volume_device | length > 0
+
 - name: Check if volume is already formatted
   ansible.builtin.command:
-    cmd: "blkid {{ remo_volume_device }}"
+    cmd: "blkid {{ actual_volume_device }}"
   register: volume_blkid
   changed_when: false
   failed_when: false
   when:
     - remo_volume_device | length > 0
-    - volume_device_stat.stat.exists | default(false)
+    - actual_volume_device | default('') | length > 0
 
 - name: Format volume with ext4 filesystem
   ansible.builtin.filesystem:
     fstype: ext4
-    dev: "{{ remo_volume_device }}"
+    dev: "{{ actual_volume_device }}"
   when:
     - remo_volume_device | length > 0
-    - volume_device_stat.stat.exists | default(false)
-    - volume_blkid.rc != 0
+    - actual_volume_device | default('') | length > 0
+    - volume_blkid.rc | default(1) != 0
 
 - name: Create temporary mount point for home directory
   ansible.builtin.file:
@@ -32,27 +51,27 @@
     mode: '0755'
   when:
     - remo_volume_device | length > 0
-    - volume_device_stat.stat.exists | default(false)
+    - actual_volume_device | default('') | length > 0
 
 - name: Mount volume as user home directory
   ansible.posix.mount:
     path: "/home/{{ remo_user }}"
-    src: "{{ remo_volume_device }}"
+    src: "{{ actual_volume_device }}"
     fstype: ext4
     opts: defaults,nofail
     state: mounted
   when:
     - remo_volume_device | length > 0
-    - volume_device_stat.stat.exists | default(false)
+    - actual_volume_device | default('') | length > 0
 
 - name: Resize filesystem if volume was resized
   ansible.builtin.command:
-    cmd: "resize2fs {{ remo_volume_device }}"
+    cmd: "resize2fs {{ actual_volume_device }}"
   register: resize_result
   changed_when: "'Nothing to do' not in resize_result.stderr"
   when:
     - remo_volume_device | length > 0
-    - volume_device_stat.stat.exists | default(false)
+    - actual_volume_device | default('') | length > 0
 
 # EFS Setup (AWS) - alternative to block volume
 - name: Install NFS utilities for EFS mounting

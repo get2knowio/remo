@@ -1,8 +1,8 @@
 ---
 # AWS Teardown Playbook - Destroys AWS resources
 # Usage:
-#   ./run.sh aws_teardown.yml                        # Destroy instance only (keep EFS)
-#   ./run.sh aws_teardown.yml -e remove_efs=true     # Destroy instance AND EFS
+#   ./run.sh aws_teardown.yml                           # Destroy instance only (keep storage)
+#   ./run.sh aws_teardown.yml -e remove_storage=true    # Destroy instance AND storage (EBS/EFS)
 
 - name: Tear down AWS Resources
   hosts: localhost
@@ -10,14 +10,16 @@
   vars:
     # Use remo venv Python which has boto3 installed
     ansible_python_interpreter: "{{ lookup('env', 'HOME') }}/.remo/.venv/bin/python"
-    # By default, keep EFS to preserve data
-    remove_efs: false
+    # By default, keep storage to preserve data
+    remove_storage: false
+    remove_efs: "{{ remove_storage }}"  # Backward compatibility
     auto_confirm: false
 
     # Resource naming
     aws_resource_name: "{{ lookup('env', 'USER') | default('remo', true) }}"
     aws_key_name: "remo-{{ aws_resource_name }}-key"
     aws_security_group_name: "remo-{{ aws_resource_name }}-sg"
+    aws_ebs_name: "remo-{{ aws_resource_name }}-home"
     aws_efs_name: "remo-{{ aws_resource_name }}-home"
     aws_instance_name: "remo-{{ aws_resource_name }}"
 
@@ -43,10 +45,11 @@
           - Elastic IP: {{ aws_instance_name }}-eip
           - Security Group: {{ aws_security_group_name }}
           - Key Pair: {{ aws_key_name }}
-          {% if remove_efs | bool %}
-          - EFS: {{ aws_efs_name }} (ALL DATA WILL BE LOST!)
+          {% if remove_storage | bool %}
+          - EBS Volume: {{ aws_ebs_name }} (ALL DATA WILL BE LOST!)
+          - EFS (if exists): {{ aws_efs_name }} (ALL DATA WILL BE LOST!)
           {% else %}
-          - EFS: {{ aws_efs_name }} (will be PRESERVED)
+          - Storage (EBS/EFS) will be PRESERVED
           {% endif %}
 
     - name: Confirm teardown
@@ -120,7 +123,47 @@
         msg: "EC2 instance '{{ aws_instance_name }}' was not found (already terminated or never created)"
       when: existing_instance.instances | default([]) | length == 0
 
-    # Delete EFS if requested
+    # Delete EBS volume if requested
+    - name: Get EBS volume info
+      amazon.aws.ec2_vol_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ aws_ebs_name }}"
+          "tag:remo": "true"
+      register: existing_ebs
+      when: remove_storage | bool
+
+    - name: Wait for EBS volume to detach
+      amazon.aws.ec2_vol_info:
+        region: "{{ aws_region }}"
+        filters:
+          volume-id: "{{ existing_ebs.volumes[0].id }}"
+      register: ebs_detach_status
+      until: (ebs_detach_status.volumes[0].attachments | default([]) | length == 0) or (ebs_detach_status.volumes[0].status == 'available')
+      retries: 30
+      delay: 10
+      when:
+        - remove_storage | bool
+        - existing_ebs.volumes | default([]) | length > 0
+
+    - name: Delete EBS volume
+      amazon.aws.ec2_vol:
+        id: "{{ existing_ebs.volumes[0].id }}"
+        region: "{{ aws_region }}"
+        state: absent
+      when:
+        - remove_storage | bool
+        - existing_ebs.volumes | default([]) | length > 0
+      register: ebs_delete_result
+
+    - name: Display EBS deletion result
+      ansible.builtin.debug:
+        msg: "EBS volume '{{ aws_ebs_name }}' deleted successfully - ALL DATA HAS BEEN REMOVED"
+      when:
+        - remove_storage | bool
+        - ebs_delete_result is changed | default(false)
+
+    # Delete EFS if requested (legacy or if using EFS storage type)
     - name: Get EFS info
       community.aws.efs_info:
         region: "{{ aws_region }}"
@@ -191,14 +234,14 @@
         msg: "Key pair '{{ aws_key_name }}' deleted successfully"
       when: key_delete_result is changed | default(false)
 
-    - name: Display EFS preserved message
+    - name: Display storage preserved message
       ansible.builtin.debug:
         msg: |
-          EFS '{{ aws_efs_name }}' has been PRESERVED.
+          Storage has been PRESERVED.
           Your data in /home/remo will be available when you provision a new instance.
-          To remove the EFS and all data, run:
-            remo aws destroy --remove-efs
-      when: not (remove_efs | bool)
+          To remove all storage and data, run:
+            remo aws destroy --remove-storage
+      when: not (remove_storage | bool)
 
     - name: Display completion message
       ansible.builtin.debug:
@@ -210,15 +253,16 @@
           - Elastic IP: {{ aws_instance_name }}-eip
           - Security Group: {{ aws_security_group_name }}
           - Key Pair: {{ aws_key_name }}
-          {% if remove_efs | bool %}
-          - EFS: {{ aws_efs_name }}
+          {% if remove_storage | bool %}
+          - EBS Volume: {{ aws_ebs_name }} (if existed)
+          - EFS: {{ aws_efs_name }} (if existed)
           {% endif %}
 
-          {% if not remove_efs | bool %}
+          {% if not remove_storage | bool %}
           Preserved resources:
-          - EFS: {{ aws_efs_name }}
+          - EBS Volume / EFS: {{ aws_ebs_name }}
 
-          To reprovision the instance with the same EFS:
+          To reprovision the instance with the same storage:
             remo aws create
           {% else %}
           All resources have been removed. To start fresh:

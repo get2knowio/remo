@@ -34,8 +34,19 @@ aws_ssh_private_key_path: "~/.ssh/id_rsa"
 # Security group - SSH allowed CIDR (auto-detected if empty)
 aws_allowed_ssh_cidr: ""
 
-# EFS configuration
-aws_create_efs: true
+# Storage configuration - EBS (block storage) or EFS (network filesystem)
+# EBS is simpler and faster for single-instance use
+# EFS allows sharing across instances but has DNS/mounting complexity
+aws_storage_type: "ebs"  # "ebs" or "efs"
+
+# EBS configuration (used when aws_storage_type is "ebs")
+aws_ebs_name: "remo-{{ aws_resource_name }}-home"
+aws_ebs_size: 50  # Size in GB
+aws_ebs_type: "gp3"  # gp3 is the best general-purpose option
+aws_ebs_device_name: "/dev/xvdf"  # Device name when attached
+
+# EFS configuration (used when aws_storage_type is "efs")
+aws_create_efs: false  # Deprecated: use aws_storage_type instead
 aws_efs_lifecycle_policy: "AFTER_7_DAYS"  # Move to IA after 7 days
 aws_efs_throughput_mode: "bursting"  # bursting or provisioned
 

@@ -1346,15 +1346,15 @@ UPDATE OPTIONS:
 
 DESTROY OPTIONS:
     --yes, -y           Skip confirmation prompt
-    --remove-efs        Also remove the EFS filesystem (DESTROYS DATA!)
+    --remove-storage    Also remove the storage volume (DESTROYS DATA!)
     --name <name>       Resource namespace (default: $USER)
 
 UPDATE-IP OPTIONS:
     --name <name>       Resource namespace (default: $USER)
 
 NOTES:
-    Requires AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in .env file.
-    The EFS filesystem is preserved by default on destroy.
+    Requires AWS credentials (via AWS_PROFILE, AWS_ACCESS_KEY_ID, or SSO).
+    The storage volume is preserved by default on destroy.
     Resources are namespaced by --name to support multiple users.
 
 SSH ACCESS:
@@ -1372,7 +1372,7 @@ EXAMPLES:
     remo aws update
     remo aws update --only zellij
     remo aws destroy --yes
-    remo aws destroy --yes --remove-efs
+    remo aws destroy --yes --remove-storage
     remo aws update-ip
     remo aws info
 EOF
@@ -1474,7 +1474,7 @@ EOF
 
 aws_destroy() {
     local auto_confirm="false"
-    local remove_efs="false"
+    local remove_storage="false"
     local name=""
     local extra_args=()
 
@@ -1484,8 +1484,8 @@ aws_destroy() {
                 auto_confirm="true"
                 shift
                 ;;
-            --remove-efs)
-                remove_efs="true"
+            --remove-storage|--remove-efs)
+                remove_storage="true"
                 shift
                 ;;
             --name)
@@ -1504,8 +1504,8 @@ aws_destroy() {
         esac
     done
 
-    if [ "$remove_efs" = "true" ]; then
-        print_warning "WARNING: --remove-efs will destroy all data on the EFS filesystem!"
+    if [ "$remove_storage" = "true" ]; then
+        print_warning "WARNING: --remove-storage will destroy all data on the storage volume!"
     fi
 
     print_info "Destroying AWS EC2 instance..."
@@ -1514,7 +1514,7 @@ aws_destroy() {
 
     [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
     extra_args+=(-e "auto_confirm=$auto_confirm")
-    extra_args+=(-e "remove_efs=$remove_efs")
+    extra_args+=(-e "remove_storage=$remove_storage")
 
     run_playbook aws_teardown.yml "${extra_args[@]}"
 

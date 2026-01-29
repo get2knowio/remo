@@ -24,7 +24,10 @@
   become: true
   gather_facts: true
   vars:
-    # Pass EFS info from localhost to the provisioned host
+    # Pass storage info from localhost to the provisioned host
+    # EBS (block storage) - simpler and faster for single instance
+    remo_volume_device: "{{ hostvars['localhost']['aws_ebs_device_path'] | default('') }}"
+    # EFS (network filesystem) - only used when aws_storage_type is 'efs'
     remo_efs_id: "{{ hostvars['localhost']['aws_efs_id'] | default('') }}"
     remo_efs_region: "{{ hostvars['localhost']['aws_region'] | default('us-west-2') }}"
 
@@ -70,7 +73,7 @@
           Server Information:
           - Instance: {{ hostvars['localhost']['aws_instance_name'] | default('N/A') }}
           - IP Address: {{ ansible_host }}
-          - EFS: {{ remo_efs_id | default('none') }}
+          - Storage: {{ 'EBS ' + hostvars['localhost']['aws_ebs_volume_id'] | default('') if remo_volume_device else 'EFS ' + remo_efs_id | default('none') }}
           - Region: {{ remo_efs_region }}
 
           Installed:
@@ -95,7 +98,7 @@
           - All other ports - blocked
 
           Storage:
-          - /home/remo is mounted on EFS
+          - /home/remo is mounted on {{ 'EBS (block storage)' if remo_volume_device else 'EFS (network filesystem)' }}
           - Data persists when instance is terminated
 
           Connect using:

@@ -1,6 +1,6 @@
 ---
 # AWS Server Role - Main Task Entry Point
-# Creates EC2 instance with EFS storage, security group, and Elastic IP
+# Creates EC2 instance with EBS storage, security group, and Elastic IP
 
 - name: Run preflight checks
   ansible.builtin.include_tasks: preflight.yml
@@ -8,12 +8,16 @@
 - name: Create security group
   ansible.builtin.include_tasks: security_group.yml
 
-- name: Create EFS filesystem
-  ansible.builtin.include_tasks: efs.yml
-  when: aws_create_efs | bool
-
 - name: Create EC2 instance
   ansible.builtin.include_tasks: ec2.yml
+
+- name: Create and attach EBS volume
+  ansible.builtin.include_tasks: ebs.yml
+  when: aws_storage_type | default('ebs') == 'ebs'
+
+- name: Create EFS filesystem
+  ansible.builtin.include_tasks: efs.yml
+  when: aws_storage_type | default('ebs') == 'efs'
 
 - name: Create Elastic IP
   ansible.builtin.include_tasks: elastic_ip.yml
