@@ -107,7 +107,7 @@
   delegate_to: localhost
   become: false
   community.aws.efs:
-
+    name: "{{ aws_efs_name }}"
     region: "{{ aws_region }}"
     id: "{{ aws_efs_id }}"
     targets:
