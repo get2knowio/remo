@@ -1431,15 +1431,12 @@ try:
 except ImportError:
     sys.exit(0)
 
-region = os.environ.get('AWS_REGION', '${region:-us-west-2}')
-access_key = os.environ.get('AWS_ACCESS_KEY_ID', '')
-secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
-
-if not access_key or not secret_key:
-    sys.exit(0)
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region:-us-west-2}'))
 
 try:
-    ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+    # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
+    session = boto3.Session(region_name=region)
+    ec2 = session.client('ec2')
     response = ec2.describe_instances(
         Filters=[
             {'Name': 'tag:Name', 'Values': ['remo-${resource_name}']},
@@ -1575,15 +1572,11 @@ except ImportError:
     print("Error: boto3 is not installed. Run 'remo init' first.", file=sys.stderr)
     sys.exit(1)
 
-region = os.environ.get('AWS_REGION', 'us-west-2')
-access_key = os.environ.get('AWS_ACCESS_KEY_ID', '')
-secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
 
-if not access_key or not secret_key:
-    print("Error: AWS credentials not set. Configure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.", file=sys.stderr)
-    sys.exit(1)
-
-ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+# Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
+session = boto3.Session(region_name=region)
+ec2 = session.client('ec2')
 
 instance_name = "remo-${resource_name}"
 
@@ -1676,14 +1669,11 @@ try:
 except ImportError:
     sys.exit(1)
 
-region = os.environ.get('AWS_REGION', 'us-west-2')
-access_key = os.environ.get('AWS_ACCESS_KEY_ID', '')
-secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
 
-if not access_key or not secret_key:
-    sys.exit(1)
-
-ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+# Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
+session = boto3.Session(region_name=region)
+ec2 = session.client('ec2')
 
 response = ec2.describe_instances(
     Filters=[
@@ -1741,14 +1731,7 @@ aws_list() {
 aws_sync() {
     print_info "Discovering AWS instances..."
 
-    local region="${AWS_REGION:-us-west-2}"
-    local access_key="${AWS_ACCESS_KEY_ID:-}"
-    local secret_key="${AWS_SECRET_ACCESS_KEY:-}"
-
-    if [ -z "$access_key" ] || [ -z "$secret_key" ]; then
-        print_error "AWS credentials not set. Configure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
-        exit 1
-    fi
+    local region="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}"
 
     # Query AWS for remo instances
     local result
@@ -1763,12 +1746,12 @@ except ImportError:
     print('{"error": "boto3 not installed"}')
     sys.exit(0)
 
-region = "${region}"
-access_key = os.environ.get('AWS_ACCESS_KEY_ID', '${access_key}')
-secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', '${secret_key}')
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region}'))
 
 try:
-    ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+    # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
+    session = boto3.Session(region_name=region)
+    ec2 = session.client('ec2')
     response = ec2.describe_instances(
         Filters=[
             {'Name': 'tag:remo', 'Values': ['true']},
