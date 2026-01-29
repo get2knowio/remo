@@ -666,16 +666,20 @@ incus_sync() {
         fi
         containers=$(incus list -f csv -c n 2>&1)
     else
-        # Test SSH connection first
-        if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "true" 2>/dev/null; then
-            print_error "Cannot connect to '$ssh_target'. Check SSH access or specify --user."
+        # Test SSH connection and incus access
+        print_info "Connecting as: $ssh_target"
+        local test_result
+        test_result=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "incus list -f csv -c n" 2>&1)
+        local ssh_exit=$?
+
+        if [ $ssh_exit -eq 255 ]; then
+            print_error "SSH connection failed to '$ssh_target'. Check hostname or specify --user."
+            return 1
+        elif [ $ssh_exit -ne 0 ]; then
+            print_error "Failed to run incus on '$host': $test_result"
             return 1
         fi
-        containers=$(ssh "$ssh_target" "incus list -f csv -c n" 2>&1)
-        if [ $? -ne 0 ]; then
-            print_error "Failed to run incus on '$host': $containers"
-            return 1
-        fi
+        containers="$test_result"
     fi
 
     # Clear existing entries for this host and replace with discovered ones
@@ -683,6 +687,7 @@ incus_sync() {
 
     if [ -z "$containers" ]; then
         print_warning "No Incus containers found on '$host'."
+        print_info "Hint: You may need to specify --user if connecting as wrong user."
         return 0
     fi
 
