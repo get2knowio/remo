@@ -122,7 +122,7 @@
 
     # Delete EFS if requested
     - name: Get EFS info
-      amazon.aws.efs_info:
+      community.aws.efs_info:
         region: "{{ aws_region }}"
         tags:
           Name: "{{ aws_efs_name }}"
