@@ -73,19 +73,28 @@ run_playbook() {
 }
 
 # Build extra args for --only and --skip tool filtering
-# Usage: build_tool_args only_array skip_array
+# Usage: build_tool_args only_array_name skip_array_name
 # Sets TOOL_EXTRA_ARGS array as output
 build_tool_args() {
-    local -n only_ref=$1
-    local -n skip_ref=$2
+    local only_name=$1
+    local skip_name=$2
     TOOL_EXTRA_ARGS=()
 
+    # Get array sizes using eval (compatible with bash 3.2)
+    local only_size
+    local skip_size
+    eval "only_size=\${#${only_name}[@]}"
+    eval "skip_size=\${#${skip_name}[@]}"
+
     # Handle --only: disable all tools except specified ones
-    if [ ${#only_ref[@]} -gt 0 ]; then
+    if [ "$only_size" -gt 0 ]; then
         for tool in $ALL_TOOLS; do
             local enabled="false"
-            for o in "${only_ref[@]}"; do
-                if [ "$tool" = "$o" ]; then
+            local i
+            for ((i=0; i<only_size; i++)); do
+                local val
+                eval "val=\${${only_name}[$i]}"
+                if [ "$tool" = "$val" ]; then
                     enabled="true"
                     break
                 fi
@@ -95,9 +104,12 @@ build_tool_args() {
     fi
 
     # Handle --skip: disable specified tools
-    if [ ${#skip_ref[@]} -gt 0 ]; then
-        for s in "${skip_ref[@]}"; do
-            TOOL_EXTRA_ARGS+=(-e "configure_${s}=false")
+    if [ "$skip_size" -gt 0 ]; then
+        local i
+        for ((i=0; i<skip_size; i++)); do
+            local val
+            eval "val=\${${skip_name}[$i]}"
+            TOOL_EXTRA_ARGS+=(-e "configure_${val}=false")
         done
     fi
 }
