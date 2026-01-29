@@ -1432,10 +1432,11 @@ except ImportError:
     sys.exit(0)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region:-us-west-2}'))
+profile = os.environ.get('AWS_PROFILE')
 
 try:
     # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
-    session = boto3.Session(region_name=region)
+    session = boto3.Session(region_name=region, profile_name=profile)
     ec2 = session.client('ec2')
     response = ec2.describe_instances(
         Filters=[
@@ -1573,9 +1574,10 @@ except ImportError:
     sys.exit(1)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+profile = os.environ.get('AWS_PROFILE')
 
 # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
-session = boto3.Session(region_name=region)
+session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
 
 instance_name = "remo-${resource_name}"
@@ -1670,9 +1672,10 @@ except ImportError:
     sys.exit(1)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+profile = os.environ.get('AWS_PROFILE')
 
 # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
-session = boto3.Session(region_name=region)
+session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
 
 response = ec2.describe_instances(
@@ -1747,10 +1750,11 @@ except ImportError:
     sys.exit(0)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region}'))
+profile = os.environ.get('AWS_PROFILE')
 
 try:
     # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
-    session = boto3.Session(region_name=region)
+    session = boto3.Session(region_name=region, profile_name=profile)
     ec2 = session.client('ec2')
     response = ec2.describe_instances(
         Filters=[
