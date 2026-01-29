@@ -6,6 +6,8 @@
   hosts: localhost
   gather_facts: false
   vars:
+    # Use remo venv Python which has boto3 installed
+    ansible_python_interpreter: "{{ lookup('env', 'HOME') }}/.remo/.venv/bin/python"
     # Resource naming
     aws_resource_name: "{{ lookup('env', 'USER') | default('remo', true) }}"
     aws_security_group_name: "remo-{{ aws_resource_name }}-sg"
