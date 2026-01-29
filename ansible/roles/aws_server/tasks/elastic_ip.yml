@@ -5,9 +5,7 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_eip_info:
-    profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
-    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
+
     region: "{{ aws_region }}"
     filters:
       "tag:Name": "{{ aws_instance_name }}-eip"
@@ -18,9 +16,7 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_eip:
-    profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
-    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
+
     region: "{{ aws_region }}"
     device_id: "{{ aws_instance_id }}"
     in_vpc: true
@@ -36,9 +32,7 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_eip:
-    profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
-    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
+
     region: "{{ aws_region }}"
     device_id: "{{ aws_instance_id }}"
     public_ip: "{{ existing_eip.addresses[0].public_ip }}"
@@ -77,9 +71,7 @@
   delegate_to: localhost
   become: false
   amazon.aws.ec2_instance_info:
-    profile: "{{ aws_profile if aws_profile else omit }}"
-    access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
-    secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
+
     region: "{{ aws_region }}"
     instance_ids:
       - "{{ aws_instance_id }}"

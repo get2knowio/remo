@@ -12,11 +12,17 @@
     aws_resource_name: "{{ lookup('env', 'USER') | default('remo', true) }}"
     aws_security_group_name: "remo-{{ aws_resource_name }}-sg"
 
-    # AWS credentials - supports SSO via AWS_PROFILE or explicit credentials
+    # AWS credentials
     aws_profile: "{{ lookup('env', 'AWS_PROFILE') | default('', true) }}"
     aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') | default('', true) }}"
     aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default('', true) }}"
     aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
+
+  environment:
+    AWS_PROFILE: "{{ aws_profile | default('') }}"
+    AWS_ACCESS_KEY_ID: "{{ '' if aws_profile else (aws_access_key_id | default('')) }}"
+    AWS_SECRET_ACCESS_KEY: "{{ '' if aws_profile else (aws_secret_access_key | default('')) }}"
+    AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
 
   tasks:
 
@@ -36,9 +42,6 @@
 
     - name: Get default VPC info
       amazon.aws.ec2_vpc_net_info:
-        profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
-        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         region: "{{ aws_region }}"
         filters:
           isDefault: "true"
@@ -55,9 +58,6 @@
         description: "SSH access for remo dev environment ({{ aws_resource_name }})"
         vpc_id: "{{ default_vpc_result.vpcs[0].vpc_id }}"
         region: "{{ aws_region }}"
-        profile: "{{ aws_profile if aws_profile else omit }}"
-        access_key: "{{ omit if aws_profile else (aws_access_key_id if aws_access_key_id else omit) }}"
-        secret_key: "{{ omit if aws_profile else (aws_secret_access_key if aws_secret_access_key else omit) }}"
         rules:
           - proto: tcp
             ports:
