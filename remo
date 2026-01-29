@@ -232,14 +232,15 @@ handle_init() {
 
     # Step 2: Install Python packages
     # Use uv if available (faster), otherwise use pip
+    # Note: amazon.aws collection 8.x requires Ansible 2.16+
     print_info "Installing Python packages (ansible, hcloud, boto3)..."
     if command -v uv &> /dev/null; then
-        uv pip install --quiet --python "$python" ansible hcloud boto3 botocore
+        uv pip install --quiet --python "$python" "ansible>=2.16,<3.0" hcloud boto3 botocore
     else
         # Ensure pip is available
         "$python" -m ensurepip --quiet 2>/dev/null || true
         "$python" -m pip install --quiet --upgrade pip
-        "$python" -m pip install --quiet ansible hcloud boto3 botocore
+        "$python" -m pip install --quiet "ansible>=2.16,<3.0" hcloud boto3 botocore
     fi
     print_success "✓ Installed ansible, hcloud, and boto3"
 
@@ -872,6 +873,7 @@ USAGE:
 
 OPTIONS:
     --version <version>   Update to specific version (e.g., v1.0.0)
+    --branch <branch>     Update to latest commit on branch (for development)
     --pre-release         Update to latest pre-release version
     --check               Check for updates without installing
     --help                Show this help message
@@ -880,6 +882,7 @@ EXAMPLES:
     remo self-update                    # Update to latest stable
     remo self-update --pre-release      # Update to latest pre-release
     remo self-update --version v1.0.0   # Update to specific version
+    remo self-update --branch main      # Update to latest main branch
     remo self-update --check            # Check for available updates
 EOF
 }
@@ -908,6 +911,7 @@ for r in releases:
 
 handle_self_update() {
     local version=""
+    local branch=""
     local pre_release="false"
     local check_only="false"
 
@@ -915,6 +919,10 @@ handle_self_update() {
         case "$1" in
             --version)
                 version="$2"
+                shift 2
+                ;;
+            --branch)
+                branch="$2"
                 shift 2
                 ;;
             --pre-release)
@@ -948,6 +956,37 @@ handle_self_update() {
     fi
 
     print_info "Current version: ${current_version:-unknown}"
+
+    # Handle branch update separately
+    if [ -n "$branch" ]; then
+        if [ "$check_only" = "true" ]; then
+            print_error "--check is not supported with --branch"
+            exit 1
+        fi
+
+        echo ""
+        print_info "Updating remo to branch: $branch"
+        echo ""
+
+        cd "$SCRIPT_DIR"
+
+        print_info "Fetching updates..."
+        git fetch origin 2>/dev/null
+
+        print_info "Checking out origin/$branch..."
+        git checkout "origin/$branch" 2>/dev/null
+
+        # Re-run init to update dependencies
+        print_info "Updating dependencies..."
+        ./remo init
+
+        echo ""
+        print_success "=============================================="
+        print_success "  remo updated to branch: $branch"
+        print_success "=============================================="
+        echo ""
+        return 0
+    fi
 
     # Determine target version
     local target_version=""

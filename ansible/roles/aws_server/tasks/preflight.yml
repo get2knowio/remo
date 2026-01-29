@@ -68,7 +68,7 @@
 - name: Verify AWS credentials work
   delegate_to: localhost
   become: false
-  amazon.aws.aws_caller_identity_info:
+  amazon.aws.sts_caller_identity:
     access_key: "{{ aws_access_key_id }}"
     secret_key: "{{ aws_secret_access_key }}"
     region: "{{ aws_region }}"
