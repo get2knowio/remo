@@ -302,6 +302,7 @@ COMMANDS:
     destroy <name>      Destroy an existing container
     update <name>       Update dev tools on an existing container
     list                List registered containers
+    sync                Discover containers and update registry
     bootstrap           Initialize Incus host (network, storage)
 
 CREATE OPTIONS:
@@ -328,11 +329,16 @@ BOOTSTRAP OPTIONS:
     --user <user>       SSH user for remote host
     -v, --verbose       Show detailed output
 
+SYNC OPTIONS:
+    --host <host>       Remote Incus host (default: localhost)
+    --user <user>       SSH user for remote host
+
 EXAMPLES:
     remo incus create dev1
     remo incus create dev1 --domain int.get2know.io
     remo incus create dev1 --host 192.168.1.100 --user admin
     remo incus list
+    remo incus sync --host 192.168.1.100 --user admin
     remo incus update dev1 --only zellij
     remo incus update dev1 --skip docker --skip nodejs
     remo incus destroy dev1 --yes
@@ -352,6 +358,7 @@ COMMANDS:
     update              Update dev tools on an existing VM
     destroy             Tear down a Hetzner VM
     list                List registered Hetzner VMs
+    sync                Discover VMs and update registry
 
 CREATE OPTIONS:
     --name <name>       Server name (default: remote-coding-server)
@@ -377,6 +384,7 @@ NOTES:
 EXAMPLES:
     remo hetzner create
     remo hetzner create --name my-server --type cx32
+    remo hetzner sync
     remo hetzner update
     remo hetzner update --name my-server --only zellij
     remo hetzner destroy --yes
@@ -591,6 +599,61 @@ incus_list() {
     fi
 }
 
+incus_sync() {
+    local host="localhost"
+    local user=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --host)
+                host="$2"
+                shift 2
+                ;;
+            --user)
+                user="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo incus --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    print_info "Discovering Incus containers..."
+
+    local containers
+    if [ "$host" = "localhost" ]; then
+        containers=$(incus list -f csv -c n 2>/dev/null || true)
+    else
+        local ssh_target="$host"
+        [ -n "$user" ] && ssh_target="${user}@${host}"
+        containers=$(ssh "$ssh_target" "incus list -f csv -c n" 2>/dev/null || true)
+    fi
+
+    if [ -z "$containers" ]; then
+        print_warning "No Incus containers found."
+        return 0
+    fi
+
+    local count=0
+    while IFS= read -r name; do
+        [ -z "$name" ] && continue
+        # Container name is also the hostname for SSH access
+        save_known_host "incus" "$name" "$name" "remo"
+        print_success "  Registered: $name"
+        ((count++)) || true
+    done <<< "$containers"
+
+    echo ""
+    print_success "Synced $count Incus container(s) to known_hosts."
+}
+
 incus_bootstrap() {
     local host="localhost"
     local user=""
@@ -728,6 +791,9 @@ handle_incus() {
             ;;
         list)
             incus_list "$@"
+            ;;
+        sync)
+            incus_sync "$@"
             ;;
         bootstrap)
             incus_bootstrap "$@"
@@ -1063,6 +1129,54 @@ hetzner_list() {
     fi
 }
 
+hetzner_sync() {
+    print_info "Discovering Hetzner VMs..."
+
+    local token="${HETZNER_API_TOKEN:-}"
+    if [ -z "$token" ]; then
+        print_error "HETZNER_API_TOKEN not set. Cannot query Hetzner API."
+        exit 1
+    fi
+
+    local domain="${DUCKDNS_DOMAIN:-}"
+    if [ -z "$domain" ]; then
+        print_error "DUCKDNS_DOMAIN not set. Cannot determine server addresses."
+        exit 1
+    fi
+
+    # Query Hetzner API for servers with remo label
+    local servers
+    servers=$(curl -fsSL -H "Authorization: Bearer $token" \
+        "https://api.hetzner.cloud/v1/servers?label_selector=remo" 2>/dev/null || true)
+
+    if [ -z "$servers" ]; then
+        print_warning "Could not query Hetzner API."
+        return 1
+    fi
+
+    local count=0
+    while IFS= read -r name; do
+        [ -z "$name" ] && continue
+        local host="${domain}.duckdns.org"
+        save_known_host "hetzner" "$name" "$host" "remo"
+        print_success "  Registered: $name -> $host"
+        ((count++)) || true
+    done < <(echo "$servers" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for server in data.get('servers', []):
+    print(server.get('name', ''))
+" 2>/dev/null || true)
+
+    if [ "$count" -eq 0 ]; then
+        print_warning "No Hetzner VMs found with 'remo' label."
+        return 0
+    fi
+
+    echo ""
+    print_success "Synced $count Hetzner VM(s) to known_hosts."
+}
+
 handle_hetzner() {
     local command="${1:-}"
     shift || true
@@ -1079,6 +1193,9 @@ handle_hetzner() {
             ;;
         list)
             hetzner_list "$@"
+            ;;
+        sync)
+            hetzner_sync "$@"
             ;;
         --help|-h|"")
             show_hetzner_help
@@ -1109,6 +1226,7 @@ COMMANDS:
     update-ip           Update security group with current IP
     info                Show instance information
     list                List registered AWS instances
+    sync                Discover instances and update registry
 
 CREATE OPTIONS:
     --name <name>       Resource namespace (default: $USER)
@@ -1148,6 +1266,7 @@ EXAMPLES:
     remo aws create --spot
     remo aws create --name alice --type t3.large
     remo aws create --dns
+    remo aws sync
     remo aws update
     remo aws update --only zellij
     remo aws destroy --yes
@@ -1529,6 +1648,97 @@ aws_list() {
     fi
 }
 
+aws_sync() {
+    print_info "Discovering AWS instances..."
+
+    local region="${AWS_REGION:-us-west-2}"
+    local access_key="${AWS_ACCESS_KEY_ID:-}"
+    local secret_key="${AWS_SECRET_ACCESS_KEY:-}"
+
+    if [ -z "$access_key" ] || [ -z "$secret_key" ]; then
+        print_error "AWS credentials not set. Configure AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
+        exit 1
+    fi
+
+    # Query AWS for remo instances
+    local result
+    result=$(python3 << EOF
+import os
+import sys
+import json
+
+try:
+    import boto3
+except ImportError:
+    print('{"error": "boto3 not installed"}')
+    sys.exit(0)
+
+region = "${region}"
+access_key = os.environ.get('AWS_ACCESS_KEY_ID', '${access_key}')
+secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY', '${secret_key}')
+
+try:
+    ec2 = boto3.client('ec2', region_name=region, aws_access_key_id=access_key, aws_secret_access_key=secret_key)
+    response = ec2.describe_instances(
+        Filters=[
+            {'Name': 'tag:remo', 'Values': ['true']},
+            {'Name': 'instance-state-name', 'Values': ['running']}
+        ]
+    )
+
+    instances = []
+    for reservation in response.get('Reservations', []):
+        for instance in reservation.get('Instances', []):
+            name = ''
+            for tag in instance.get('Tags', []):
+                if tag['Key'] == 'Name':
+                    name = tag['Value']
+                    break
+            ip = instance.get('PublicIpAddress', '')
+            if name and ip:
+                # Strip 'remo-' prefix if present for the resource name
+                resource_name = name[5:] if name.startswith('remo-') else name
+                instances.append({'name': resource_name, 'ip': ip})
+
+    print(json.dumps({'instances': instances}))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+EOF
+)
+
+    if echo "$result" | grep -q '"error"'; then
+        local error
+        error=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','Unknown error'))" 2>/dev/null)
+        print_error "Failed to query AWS: $error"
+        return 1
+    fi
+
+    local count=0
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local name ip
+        name=$(echo "$line" | cut -d'|' -f1)
+        ip=$(echo "$line" | cut -d'|' -f2)
+        [ -z "$name" ] || [ -z "$ip" ] && continue
+        save_known_host "aws" "$name" "$ip" "remo"
+        print_success "  Registered: $name -> $ip"
+        ((count++)) || true
+    done < <(echo "$result" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for inst in data.get('instances', []):
+    print(f\"{inst['name']}|{inst['ip']}\")
+" 2>/dev/null || true)
+
+    if [ "$count" -eq 0 ]; then
+        print_warning "No running AWS instances found with 'remo' tag."
+        return 0
+    fi
+
+    echo ""
+    print_success "Synced $count AWS instance(s) to known_hosts."
+}
+
 handle_aws() {
     local command="${1:-}"
     shift || true
@@ -1551,6 +1761,9 @@ handle_aws() {
             ;;
         list)
             aws_list "$@"
+            ;;
+        sync)
+            aws_sync "$@"
             ;;
         --help|-h|"")
             show_aws_help
