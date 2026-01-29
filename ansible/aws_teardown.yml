@@ -192,14 +192,14 @@
         - remove_efs | bool
         - efs_delete_result is changed | default(false)
 
-    # Delete EFS security group
+    # Delete EFS security group (always try - it references main SG so must be deleted first)
     - name: Delete EFS security group
       amazon.aws.ec2_security_group:
         name: "{{ aws_efs_name }}-sg"
         region: "{{ aws_region }}"
         state: absent
       register: efs_sg_delete_result
-      when: remove_efs | bool
+      failed_when: false
 
     # Delete security group (may need to wait for instance to fully terminate)
     - name: Wait for instance to fully terminate
