@@ -669,8 +669,8 @@ incus_sync() {
         # Test SSH connection and incus access
         print_info "Connecting as: $ssh_target"
         local test_result
-        test_result=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "incus list -f csv -c n" 2>&1)
-        local ssh_exit=$?
+        local ssh_exit
+        test_result=$(ssh -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "incus list -f csv -c n" 2>&1) && ssh_exit=0 || ssh_exit=$?
 
         if [ $ssh_exit -eq 255 ]; then
             print_error "SSH connection failed to '$ssh_target'. Check hostname or specify --user."
