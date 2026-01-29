@@ -656,12 +656,26 @@ incus_sync() {
     print_info "Discovering Incus containers on '$host'..."
 
     local containers
+    local ssh_target="$host"
+    [ -n "$user" ] && ssh_target="${user}@${host}"
+
     if [ "$host" = "localhost" ]; then
-        containers=$(incus list -f csv -c n 2>/dev/null || true)
+        if ! command -v incus &> /dev/null; then
+            print_error "incus command not found on localhost"
+            return 1
+        fi
+        containers=$(incus list -f csv -c n 2>&1)
     else
-        local ssh_target="$host"
-        [ -n "$user" ] && ssh_target="${user}@${host}"
-        containers=$(ssh "$ssh_target" "incus list -f csv -c n" 2>/dev/null || true)
+        # Test SSH connection first
+        if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$ssh_target" "true" 2>/dev/null; then
+            print_error "Cannot connect to '$ssh_target'. Check SSH access or specify --user."
+            return 1
+        fi
+        containers=$(ssh "$ssh_target" "incus list -f csv -c n" 2>&1)
+        if [ $? -ne 0 ]; then
+            print_error "Failed to run incus on '$host': $containers"
+            return 1
+        fi
     fi
 
     # Clear existing entries for this host and replace with discovered ones
