@@ -7,6 +7,7 @@
 - name: Tear down AWS Resources
   hosts: localhost
   gather_facts: false
+  become: false
   vars:
     # Use remo venv Python which has boto3 installed
     ansible_python_interpreter: "{{ lookup('env', 'HOME') }}/.remo/.venv/bin/python"
