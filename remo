@@ -1455,13 +1455,13 @@ import sys
 try:
     import boto3
 except ImportError:
+    print('ERROR: boto3 not available', file=sys.stderr)
     sys.exit(0)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region:-us-west-2}'))
-profile = os.environ.get('AWS_PROFILE')
+profile = os.environ.get('AWS_PROFILE') or None or None
 
 try:
-    # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
     session = boto3.Session(region_name=region, profile_name=profile)
     ec2 = session.client('ec2')
     response = ec2.describe_instances(
@@ -1477,12 +1477,14 @@ try:
             if ip:
                 print(ip)
                 break
-except Exception:
-    pass
+except Exception as e:
+    print(f'ERROR: {e}', file=sys.stderr)
 EOF
 )
     if [ -n "$instance_ip" ]; then
         save_known_host "aws" "$resource_name" "$instance_ip" "remo"
+    else
+        print_warning "Could not detect instance IP. Run 'remo aws info' to register the host."
     fi
 }
 
@@ -1600,7 +1602,7 @@ except ImportError:
     sys.exit(1)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
-profile = os.environ.get('AWS_PROFILE')
+profile = os.environ.get('AWS_PROFILE') or None
 
 # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
 session = boto3.Session(region_name=region, profile_name=profile)
@@ -1698,7 +1700,7 @@ except ImportError:
     sys.exit(1)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
-profile = os.environ.get('AWS_PROFILE')
+profile = os.environ.get('AWS_PROFILE') or None
 
 # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
 session = boto3.Session(region_name=region, profile_name=profile)
@@ -1776,7 +1778,7 @@ except ImportError:
     sys.exit(0)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region}'))
-profile = os.environ.get('AWS_PROFILE')
+profile = os.environ.get('AWS_PROFILE') or None
 
 try:
     # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
