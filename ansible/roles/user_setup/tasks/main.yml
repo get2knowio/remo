@@ -141,28 +141,18 @@
     group: "{{ remo_user }}"
     mode: '0700'
 
-- name: Check if root has authorized_keys (Hetzner injects keys to root)
-  ansible.builtin.stat:
-    path: /root/.ssh/authorized_keys
-  register: root_authorized_keys
-
 - name: Check if ubuntu user has authorized_keys (AWS EC2 injects keys to ubuntu)
   ansible.builtin.stat:
     path: /home/ubuntu/.ssh/authorized_keys
   register: ubuntu_authorized_keys
 
-- name: Copy authorized_keys from root to remo user
-  ansible.builtin.copy:
-    src: /root/.ssh/authorized_keys
-    dest: "/home/{{ remo_user }}/.ssh/authorized_keys"
-    remote_src: true
-    owner: "{{ remo_user }}"
-    group: "{{ remo_user }}"
-    mode: '0600'
-  when:
-    - root_authorized_keys.stat.exists | default(false)
-    - root_authorized_keys.stat.size | default(0) > 0
+- name: Check if root has authorized_keys (Hetzner injects keys to root)
+  ansible.builtin.stat:
+    path: /root/.ssh/authorized_keys
+  register: root_authorized_keys
 
+# Prefer ubuntu's keys over root's - on EC2 root's authorized_keys contains
+# a forced command that rejects login, while ubuntu's has the actual key
 - name: Copy authorized_keys from ubuntu to remo user (AWS EC2)
   ansible.builtin.copy:
     src: /home/ubuntu/.ssh/authorized_keys
@@ -172,8 +162,21 @@
     group: "{{ remo_user }}"
     mode: '0600'
   when:
-    - not (root_authorized_keys.stat.exists | default(false)) or (root_authorized_keys.stat.size | default(0) == 0)
     - ubuntu_authorized_keys.stat.exists | default(false)
+    - ubuntu_authorized_keys.stat.size | default(0) > 0
+
+- name: Copy authorized_keys from root to remo user (Hetzner)
+  ansible.builtin.copy:
+    src: /root/.ssh/authorized_keys
+    dest: "/home/{{ remo_user }}/.ssh/authorized_keys"
+    remote_src: true
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0600'
+  when:
+    - not (ubuntu_authorized_keys.stat.exists | default(false)) or (ubuntu_authorized_keys.stat.size | default(0) == 0)
+    - root_authorized_keys.stat.exists | default(false)
+    - root_authorized_keys.stat.size | default(0) > 0
     - ubuntu_authorized_keys.stat.size | default(0) > 0
 
 - name: Add remo user to docker group
