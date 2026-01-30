@@ -111,9 +111,40 @@
     state: present
     update_cache: true
 
-- name: Create remo user
+- name: Check if UID 1000 is taken by another user
+  ansible.builtin.command:
+    cmd: id -nu 1000
+  register: uid_1000_user
+  changed_when: false
+  failed_when: false
+
+- name: Move existing UID 1000 user to UID 1001 (so remo gets 1000)
+  ansible.builtin.command:
+    cmd: usermod -u 1001 -o {{ uid_1000_user.stdout }}
+  when:
+    - uid_1000_user.rc == 0
+    - uid_1000_user.stdout | default('') != remo_user
+
+- name: Update group for displaced user
+  ansible.builtin.command:
+    cmd: groupmod -g 1001 {{ uid_1000_user.stdout }}
+  when:
+    - uid_1000_user.rc == 0
+    - uid_1000_user.stdout | default('') != remo_user
+  failed_when: false
+
+- name: Fix file ownership for displaced user
+  ansible.builtin.command:
+    cmd: find /home/{{ uid_1000_user.stdout }} -user 1000 -exec chown 1001 {} +
+  when:
+    - uid_1000_user.rc == 0
+    - uid_1000_user.stdout | default('') != remo_user
+  failed_when: false
+
+- name: Create remo user with UID 1000 (matches devcontainer vscode user)
   ansible.builtin.user:
     name: "{{ remo_user }}"
+    uid: 1000
     shell: /bin/bash
     create_home: true
     state: present
