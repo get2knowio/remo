@@ -231,11 +231,41 @@ show_menu() {
         --bind="x:pos($((project_count + 2)))+accept"
 }
 
+# Ensure GitHub CLI is authenticated, prompting login if needed
+ensure_gh_auth() {
+    if ! command -v gh &> /dev/null; then
+        return 1
+    fi
+
+    if gh auth status &>/dev/null; then
+        return 0
+    fi
+
+    echo "" >&2
+    echo "GitHub CLI is not authenticated." >&2
+    echo "Logging in lets you clone private repos and push changes." >&2
+    echo "" >&2
+
+    if gh auth login >&2; then
+        echo "" >&2
+        echo "GitHub authentication successful!" >&2
+        echo "" >&2
+        return 0
+    else
+        echo "GitHub login skipped or failed. Public repos can still be cloned." >&2
+        echo "" >&2
+        return 1
+    fi
+}
+
 # Handle cloning a new repo
 # Note: User-facing messages go to stderr, only repo name goes to stdout
 handle_clone() {
     local repo_url
     local repo_name
+
+    # Prompt gh login if not authenticated (non-blocking - clone can still work for public repos)
+    ensure_gh_auth
 
     echo "" >&2
     echo -n "Enter GitHub repo (owner/repo or URL): " >&2
