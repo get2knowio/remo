@@ -140,7 +140,7 @@
         filters:
           volume-id: "{{ existing_ebs.volumes[0].id }}"
       register: ebs_detach_status
-      until: (ebs_detach_status.volumes[0].attachments | default([]) | length == 0) or (ebs_detach_status.volumes[0].status == 'available')
+      until: (ebs_detach_status.volumes[0].attachment_set | default([]) | length == 0) or (ebs_detach_status.volumes[0].status == 'available')
       retries: 30
       delay: 10
       when:

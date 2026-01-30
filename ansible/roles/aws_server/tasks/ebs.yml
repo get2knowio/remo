@@ -85,7 +85,7 @@
 
 - name: Set volume attachment status
   ansible.builtin.set_fact:
-    ebs_already_attached: "{{ (ebs_attach_status.volumes[0].attachments | default([]) | length > 0) and (ebs_attach_status.volumes[0].attachments[0].instance_id == aws_instance_id) }}"
+    ebs_already_attached: "{{ (ebs_attach_status.volumes[0].attachment_set | default([]) | length > 0) and (ebs_attach_status.volumes[0].attachment_set[0].instance_id == aws_instance_id) }}"
 
 - name: Attach EBS volume to instance
   delegate_to: localhost
@@ -107,7 +107,7 @@
     filters:
       volume-id: "{{ aws_ebs_volume_id }}"
   register: ebs_wait_result
-  until: (ebs_wait_result.volumes[0].attachments | default([]) | length > 0) and (ebs_wait_result.volumes[0].attachments[0].state == 'attached')
+  until: (ebs_wait_result.volumes[0].attachment_set | default([]) | length > 0) and (ebs_wait_result.volumes[0].attachment_set[0].status == 'attached')
   retries: 30
   delay: 5
   when: not ebs_already_attached
