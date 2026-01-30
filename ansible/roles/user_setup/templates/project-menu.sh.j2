@@ -259,11 +259,20 @@ handle_clone() {
 
     echo "Cloning $repo_url to $target_dir..." >&2
 
-    # Use gh for better auth handling, redirect output to stderr
-    if command -v gh &> /dev/null; then
-        gh repo clone "$repo_url" "$target_dir" >&2
-    else
-        git clone "$repo_url" "$target_dir" >&2
+    # Try gh first (better auth), fall back to git clone
+    local clone_ok=false
+    if command -v gh &> /dev/null && gh auth status &>/dev/null; then
+        if gh repo clone "$repo_url" "$target_dir" >&2; then
+            clone_ok=true
+        fi
+    fi
+
+    if [ "$clone_ok" = false ]; then
+        if ! git clone "$repo_url" "$target_dir" >&2; then
+            echo "Error: Clone failed" >&2
+            sleep 2
+            return 1
+        fi
     fi
 
     echo "Cloned successfully!" >&2
