@@ -101,9 +101,9 @@
       - "{{ aws_security_group_id }}"
     vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
     region: "{{ aws_region }}"
-
-    network:
-      assign_public_ip: true
+    network_interfaces:
+      - assign_public_ip: true
+        device_index: 0
     volumes:
       - device_name: /dev/sda1
         ebs:
@@ -134,9 +134,9 @@
       - "{{ aws_security_group_id }}"
     vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
     region: "{{ aws_region }}"
-
-    network:
-      assign_public_ip: true
+    network_interfaces:
+      - assign_public_ip: true
+        device_index: 0
     volumes:
       - device_name: /dev/sda1
         ebs:
