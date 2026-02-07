@@ -1431,11 +1431,13 @@ try:
 
     # Find roles with AmazonSSMManagedInstanceCore policy
     ssm_policy_arn = 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+    list_error = None
     try:
         resp = iam.list_entities_for_policy(PolicyArn=ssm_policy_arn, EntityFilter='Role')
         roles = [r['RoleName'] for r in resp.get('PolicyRoles', [])]
-    except Exception:
+    except Exception as e:
         roles = []
+        list_error = f"{type(e).__name__}: {e}"
 
     # Find instance profiles for each role
     profiles = []
@@ -1451,7 +1453,10 @@ try:
         except Exception:
             pass
 
-    print(json.dumps({'profiles': profiles}))
+    result = {'profiles': profiles}
+    if list_error:
+        result['error'] = f"Failed to list SSM IAM roles: {list_error}"
+    print(json.dumps(result))
 except Exception as e:
     print(json.dumps({'error': str(e)}))
 PYEOF
