@@ -287,7 +287,7 @@
     cmd: >
       ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
       -o ConnectTimeout=10 -o BatchMode=yes
-      -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+      -o ProxyCommand="aws ssm start-session --region {{ aws_region }} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
       -i {{ aws_ssh_private_key_path | expanduser }}
       ubuntu@{{ aws_instance_id }}
       'cloud-init status --wait || true'
@@ -322,7 +322,7 @@
     cmd: >
       ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
       -o ConnectTimeout=10 -o BatchMode=yes
-      -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+      -o ProxyCommand="aws ssm start-session --region {{ aws_region }} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
       -i {{ aws_ssh_private_key_path | expanduser }}
       ubuntu@{{ aws_instance_id }}
       'echo SSH connection successful'
@@ -352,6 +352,6 @@
     ansible_host: "{{ aws_instance_id }}"
     ansible_user: ubuntu
     ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
-    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="aws ssm start-session --region {{ aws_region }} --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
     groups: provisioned
   when: aws_access_mode == 'ssm'
