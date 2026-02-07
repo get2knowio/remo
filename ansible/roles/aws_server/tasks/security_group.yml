@@ -30,15 +30,16 @@
   become: false
   amazon.aws.ec2_security_group:
     name: "{{ aws_security_group_name }}"
-    description: "SSH access for remo dev environment ({{ aws_resource_name }})"
+    description: "{{ 'SSM access for remo dev environment' if aws_access_mode == 'ssm' else 'SSH access for remo dev environment' }} ({{ aws_resource_name }})"
     vpc_id: "{{ aws_vpc_id }}"
     region: "{{ aws_region }}"
-    rules:
-      - proto: tcp
-        ports:
-          - 22
-        cidr_ip: "{{ aws_allowed_ssh_cidr }}"
-        rule_desc: "SSH from {{ aws_allowed_ssh_cidr }}"
+    rules: >-
+      {{
+        []
+        if aws_access_mode == 'ssm'
+        else
+        [{'proto': 'tcp', 'ports': [22], 'cidr_ip': aws_allowed_ssh_cidr, 'rule_desc': 'SSH from ' + aws_allowed_ssh_cidr}]
+      }}
     rules_egress:
       - proto: all
         cidr_ip: "0.0.0.0/0"

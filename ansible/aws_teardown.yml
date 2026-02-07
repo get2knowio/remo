@@ -46,6 +46,7 @@
           - Elastic IP: {{ aws_instance_name }}-eip
           - Security Group: {{ aws_security_group_name }}
           - Key Pair: {{ aws_key_name }}
+          - IAM Role/Profile: remo-{{ aws_resource_name }}-ssm-role/profile (if remo-created)
           {% if remove_storage | bool %}
           - EBS Volume: {{ aws_ebs_name }} (ALL DATA WILL BE LOST!)
           - EFS (if exists): {{ aws_efs_name }} (ALL DATA WILL BE LOST!)
@@ -235,6 +236,68 @@
         msg: "Key pair '{{ aws_key_name }}' deleted successfully"
       when: key_delete_result is changed | default(false)
 
+    # Clean up remo-created IAM resources (role + instance profile)
+    # ec2_instance_info returns tags as a flat dict: {'remo_iam_created': 'true', ...}
+    - name: Check if instance had remo-created IAM resources
+      ansible.builtin.set_fact:
+        remo_iam_was_created: >-
+          {{
+            (existing_instance.instances | default([]) | length > 0) and
+            ((existing_instance.instances[0].tags | default({}))['remo_iam_created'] | default('false')) == 'true'
+          }}
+
+    - name: Clean up remo-created IAM resources
+      delegate_to: localhost
+      become: false
+      ansible.builtin.shell: |
+        python3 << 'PYEOF'
+        import boto3, sys, os
+        region = os.environ.get('AWS_DEFAULT_REGION', '{{ aws_region }}')
+        profile = os.environ.get('AWS_PROFILE') or None
+        session = boto3.Session(region_name=region, profile_name=profile)
+        iam = session.client('iam')
+        role_name = 'remo-{{ aws_resource_name }}-ssm-role'
+        profile_name = 'remo-{{ aws_resource_name }}-ssm-profile'
+        errors = []
+        # Remove role from instance profile
+        try:
+            iam.remove_role_from_instance_profile(InstanceProfileName=profile_name, RoleName=role_name)
+            print(f'Removed role {role_name} from profile {profile_name}')
+        except Exception as e:
+            errors.append(f'remove_role_from_profile: {e}')
+        # Delete instance profile
+        try:
+            iam.delete_instance_profile(InstanceProfileName=profile_name)
+            print(f'Deleted instance profile {profile_name}')
+        except Exception as e:
+            errors.append(f'delete_profile: {e}')
+        # Detach managed policy from role
+        try:
+            iam.detach_role_policy(RoleName=role_name, PolicyArn='arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore')
+            print(f'Detached SSM policy from role {role_name}')
+        except Exception as e:
+            errors.append(f'detach_policy: {e}')
+        # Delete role
+        try:
+            iam.delete_role(RoleName=role_name)
+            print(f'Deleted role {role_name}')
+        except Exception as e:
+            errors.append(f'delete_role: {e}')
+        if errors:
+            print(f'Non-fatal errors during IAM cleanup: {errors}', file=sys.stderr)
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: iam_cleanup_result
+      changed_when: "'Deleted' in iam_cleanup_result.stdout | default('')"
+      failed_when: false
+      when: remo_iam_was_created | default(false) | bool
+
+    - name: Display IAM cleanup result
+      ansible.builtin.debug:
+        msg: "{{ iam_cleanup_result.stdout | default('No IAM cleanup needed') }}"
+      when: remo_iam_was_created | default(false) | bool
+
     - name: Display storage preserved message
       ansible.builtin.debug:
         msg: |
@@ -254,6 +317,10 @@
           - Elastic IP: {{ aws_instance_name }}-eip
           - Security Group: {{ aws_security_group_name }}
           - Key Pair: {{ aws_key_name }}
+          {% if remo_iam_was_created | default(false) | bool %}
+          - IAM Role: remo-{{ aws_resource_name }}-ssm-role
+          - IAM Instance Profile: remo-{{ aws_resource_name }}-ssm-profile
+          {% endif %}
           {% if remove_storage | bool %}
           - EBS Volume: {{ aws_ebs_name }} (if existed)
           - EFS: {{ aws_efs_name }} (if existed)

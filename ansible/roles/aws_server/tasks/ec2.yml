@@ -101,6 +101,7 @@
       - "{{ aws_security_group_id }}"
     vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
     region: "{{ aws_region }}"
+    iam_instance_profile: "{{ aws_iam_instance_profile if aws_access_mode == 'ssm' and aws_iam_instance_profile else omit }}"
     network_interfaces:
       - assign_public_ip: true
         device_index: 0
@@ -114,6 +115,8 @@
       Name: "{{ aws_instance_name }}"
       remo: "true"
       remo_resource_name: "{{ aws_resource_name }}"
+      remo_access_mode: "{{ aws_access_mode | default('direct') }}"
+      remo_iam_created: "{{ aws_iam_created | default('false') }}"
     state: running
     wait: true
     wait_timeout: 300
@@ -134,6 +137,7 @@
       - "{{ aws_security_group_id }}"
     vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
     region: "{{ aws_region }}"
+    iam_instance_profile: "{{ aws_iam_instance_profile if aws_access_mode == 'ssm' and aws_iam_instance_profile else omit }}"
     network_interfaces:
       - assign_public_ip: true
         device_index: 0
@@ -152,6 +156,8 @@
       Name: "{{ aws_instance_name }}"
       remo: "true"
       remo_resource_name: "{{ aws_resource_name }}"
+      remo_access_mode: "{{ aws_access_mode | default('direct') }}"
+      remo_iam_created: "{{ aws_iam_created | default('false') }}"
     state: running
     wait: true
     wait_timeout: 300
@@ -217,6 +223,35 @@
   ansible.builtin.debug:
     msg: "EC2 instance: {{ aws_instance_name }} ({{ aws_instance_id }}) - IP: {{ aws_instance_public_ip }}"
 
+- name: Wait for SSM agent to register
+  delegate_to: localhost
+  become: false
+  ansible.builtin.shell: |
+    python3 << 'PYEOF'
+    import boto3, time, sys, os
+    region = os.environ.get('AWS_DEFAULT_REGION', '{{ aws_region }}')
+    profile = os.environ.get('AWS_PROFILE') or None
+    session = boto3.Session(region_name=region, profile_name=profile)
+    ssm = session.client('ssm')
+    instance_id = '{{ aws_instance_id }}'
+    for attempt in range(60):
+        resp = ssm.describe_instance_information(
+            Filters=[{'Key': 'InstanceIds', 'Values': [instance_id]}]
+        )
+        info = resp.get('InstanceInformationList', [])
+        if info and info[0].get('PingStatus') == 'Online':
+            print(f'SSM agent online after {(attempt+1)*5}s')
+            sys.exit(0)
+        time.sleep(5)
+    print('Timed out waiting for SSM agent', file=sys.stderr)
+    sys.exit(1)
+    PYEOF
+  args:
+    executable: /bin/bash
+  register: ssm_wait_result
+  changed_when: false
+  when: aws_access_mode == 'ssm'
+
 - name: Wait for SSH port to become available
   delegate_to: localhost
   become: false
@@ -226,8 +261,9 @@
     delay: 10
     timeout: 300
     state: started
+  when: aws_access_mode != 'ssm'
 
-- name: Wait for cloud-init to complete
+- name: Wait for cloud-init to complete (direct)
   delegate_to: localhost
   become: false
   ansible.builtin.command:
@@ -242,8 +278,27 @@
   retries: 6
   delay: 10
   until: cloud_init_result.rc == 0
+  when: aws_access_mode != 'ssm'
 
-- name: Verify SSH connection is stable
+- name: Wait for cloud-init to complete (SSM)
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    cmd: >
+      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=10 -o BatchMode=yes
+      -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+      -i {{ aws_ssh_private_key_path | expanduser }}
+      ubuntu@{{ aws_instance_id }}
+      'cloud-init status --wait || true'
+  register: cloud_init_ssm_result
+  changed_when: false
+  retries: 6
+  delay: 10
+  until: cloud_init_ssm_result.rc == 0
+  when: aws_access_mode == 'ssm'
+
+- name: Verify SSH connection is stable (direct)
   delegate_to: localhost
   become: false
   ansible.builtin.command:
@@ -258,8 +313,27 @@
   retries: 3
   delay: 5
   until: ssh_test_result.rc == 0
+  when: aws_access_mode != 'ssm'
 
-- name: Add new instance to inventory
+- name: Verify SSH connection is stable (SSM)
+  delegate_to: localhost
+  become: false
+  ansible.builtin.command:
+    cmd: >
+      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+      -o ConnectTimeout=10 -o BatchMode=yes
+      -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+      -i {{ aws_ssh_private_key_path | expanduser }}
+      ubuntu@{{ aws_instance_id }}
+      'echo SSH connection successful'
+  register: ssh_test_ssm_result
+  changed_when: false
+  retries: 3
+  delay: 5
+  until: ssh_test_ssm_result.rc == 0
+  when: aws_access_mode == 'ssm'
+
+- name: Add new instance to inventory (direct)
   delegate_to: localhost
   become: false
   ansible.builtin.add_host:
@@ -268,3 +342,16 @@
     ansible_user: ubuntu
     ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
     groups: provisioned
+  when: aws_access_mode != 'ssm'
+
+- name: Add new instance to inventory (SSM)
+  delegate_to: localhost
+  become: false
+  ansible.builtin.add_host:
+    name: aws_server
+    ansible_host: "{{ aws_instance_id }}"
+    ansible_user: ubuntu
+    ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
+    groups: provisioned
+  when: aws_access_mode == 'ssm'

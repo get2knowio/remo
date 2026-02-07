@@ -425,11 +425,17 @@ save_known_host() {
     local name="$2"   # instance/container name
     local host="$3"   # hostname or IP to connect to
     local user="$4"   # SSH user (usually remo)
+    local instance_id="${5:-}"   # optional: cloud instance ID (e.g., i-abc123)
+    local access_mode="${6:-}"   # optional: access mode (direct, ssm)
 
     ensure_remo_dir
     touch "$KNOWN_HOSTS_FILE"
 
     local entry="${type}:${name}:${host}:${user}"
+    # Append optional fields only when provided
+    if [ -n "$instance_id" ] || [ -n "$access_mode" ]; then
+        entry="${entry}:${instance_id:-}:${access_mode:-direct}"
+    fi
 
     # Remove existing entry for this type:name, then add new one
     grep -v "^${type}:${name}:" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
@@ -1344,6 +1350,7 @@ CREATE OPTIONS:
     --spot              Use spot instance (cheaper but can be interrupted)
     --dns               Also create Route53 DNS record
     --volume-size <GB>  Persistent home volume size in GB (default: 50)
+    --access <mode>     Access mode: 'direct' (default) or 'ssm'
 
 UPDATE OPTIONS:
     --only <tool>       Only update specified tool (can repeat)
@@ -1365,16 +1372,28 @@ NOTES:
     The storage volume is preserved by default on destroy.
     Resources are namespaced by --name to support multiple users.
 
-SSH ACCESS:
+CONNECTION:
     After provisioning, connect using:
-        ssh remo-aws
+        remo shell
 
-    SSH config is automatically updated in ~/.ssh/config
+SSM ACCESS (--access ssm):
+    Uses AWS SSM Session Manager instead of direct SSH.
+    No inbound ports are opened — the SSM agent phones home over HTTPS.
+
+    Prerequisites:
+      - session-manager-plugin installed locally
+      - IAM instance profile with AmazonSSMManagedInstanceCore policy
+        (select existing or let remo create one)
+
+    SSM mode skips:
+      - Security group SSH rule (no inbound ports needed)
+      - update-ip command (not applicable)
 
 EXAMPLES:
     remo aws create
     remo aws create --spot
     remo aws create --name alice --type t3.large
+    remo aws create --access ssm
     remo aws create --dns
     remo aws sync
     remo aws update
@@ -1386,6 +1405,217 @@ EXAMPLES:
 EOF
 }
 
+select_ssm_instance_profile() {
+    local resource_name="$1"
+    local region="${2:-us-west-2}"
+
+    # Find IAM instance profiles with SSM policy attached
+    local result
+    result=$(python3 << PYEOF
+import os
+import sys
+import json
+
+try:
+    import boto3
+except ImportError:
+    print(json.dumps({"error": "boto3 not installed"}))
+    sys.exit(0)
+
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region}'))
+profile_name = os.environ.get('AWS_PROFILE') or None
+
+try:
+    session = boto3.Session(region_name=region, profile_name=profile_name)
+    iam = session.client('iam')
+
+    # Find roles with AmazonSSMManagedInstanceCore policy
+    ssm_policy_arn = 'arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+    try:
+        resp = iam.list_entities_for_policy(PolicyArn=ssm_policy_arn, EntityFilter='Role')
+        roles = [r['RoleName'] for r in resp.get('PolicyRoles', [])]
+    except Exception:
+        roles = []
+
+    # Find instance profiles for each role
+    profiles = []
+    for role in roles:
+        try:
+            resp = iam.list_instance_profiles_for_role(RoleName=role)
+            for ip in resp.get('InstanceProfiles', []):
+                profiles.append({
+                    'name': ip['InstanceProfileName'],
+                    'role': role,
+                    'arn': ip['Arn']
+                })
+        except Exception:
+            pass
+
+    print(json.dumps({'profiles': profiles}))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+PYEOF
+)
+
+    if echo "$result" | grep -q '"error"'; then
+        local error
+        error=$(echo "$result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','Unknown'))" 2>/dev/null)
+        print_warning "Could not list IAM profiles: $error"
+    fi
+
+    local profiles_json
+    profiles_json=$(echo "$result" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+for p in data.get('profiles', []):
+    print(f\"{p['name']}|{p['role']}\")
+" 2>/dev/null || true)
+
+    local profile_count=0
+    local options=()
+    while IFS='|' read -r pname prole; do
+        [ -z "$pname" ] && continue
+        options+=("$pname (role: $prole)")
+        ((profile_count++)) || true
+    done <<< "$profiles_json"
+
+    # Add "Create new" option
+    options+=("Create new SSM role and profile")
+
+    local selected_profile=""
+    local iam_created="false"
+
+    if [ "$profile_count" -eq 1 ]; then
+        # Auto-select the only existing profile
+        local auto_choice="${options[0]}"
+        local auto_name
+        auto_name=$(echo "$auto_choice" | cut -d' ' -f1)
+        print_info "Auto-selected IAM instance profile: $auto_name"
+        selected_profile="$auto_name"
+    elif [ "$profile_count" -eq 0 ]; then
+        # No existing profiles, go straight to create
+        print_info "No existing SSM instance profiles found. Creating one..."
+        selected_profile="__create__"
+    else
+        # Use fzf to pick
+        if ! command -v fzf &> /dev/null; then
+            print_error "Multiple IAM profiles found but fzf is not installed."
+            echo "Available profiles:"
+            printf '  %s\n' "${options[@]}"
+            exit 1
+        fi
+
+        local choice
+        choice=$(printf '%s\n' "${options[@]}" | fzf --prompt="Select IAM instance profile: " --height=10 --reverse)
+
+        if [ -z "$choice" ]; then
+            echo "No selection made."
+            exit 0
+        fi
+
+        if [[ "$choice" == "Create new SSM role and profile" ]]; then
+            selected_profile="__create__"
+        else
+            selected_profile=$(echo "$choice" | cut -d' ' -f1)
+        fi
+    fi
+
+    if [ "$selected_profile" = "__create__" ]; then
+        print_info "Creating IAM role and instance profile for SSM..."
+        local create_result
+        create_result=$(python3 << PYEOF
+import os
+import sys
+import json
+import time
+
+try:
+    import boto3
+except ImportError:
+    print(json.dumps({"error": "boto3 not installed"}))
+    sys.exit(1)
+
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region}'))
+profile_name = os.environ.get('AWS_PROFILE') or None
+resource_name = '${resource_name}'
+
+try:
+    session = boto3.Session(region_name=region, profile_name=profile_name)
+    iam = session.client('iam')
+
+    role_name = f'remo-{resource_name}-ssm-role'
+    ip_name = f'remo-{resource_name}-ssm-profile'
+
+    # Create role with EC2 assume role policy
+    assume_role_policy = json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "ec2.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    })
+
+    iam.create_role(
+        RoleName=role_name,
+        AssumeRolePolicyDocument=assume_role_policy,
+        Description='remo SSM Session Manager access role',
+        Tags=[
+            {'Key': 'remo', 'Value': 'true'},
+            {'Key': 'remo_resource_name', 'Value': resource_name}
+        ]
+    )
+
+    # Attach SSM managed policy
+    iam.attach_role_policy(
+        RoleName=role_name,
+        PolicyArn='arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+    )
+
+    # Create instance profile
+    iam.create_instance_profile(
+        InstanceProfileName=ip_name,
+        Tags=[
+            {'Key': 'remo', 'Value': 'true'},
+            {'Key': 'remo_resource_name', 'Value': resource_name}
+        ]
+    )
+
+    # Add role to instance profile
+    iam.add_role_to_instance_profile(
+        InstanceProfileName=ip_name,
+        RoleName=role_name
+    )
+
+    # Wait for instance profile to propagate
+    time.sleep(10)
+
+    print(json.dumps({'profile_name': ip_name, 'role_name': role_name}))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+    sys.exit(1)
+PYEOF
+)
+        if echo "$create_result" | grep -q '"error"'; then
+            local error
+            error=$(echo "$create_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','Unknown'))" 2>/dev/null)
+            print_error "Failed to create IAM resources: $error"
+            echo ""
+            echo "You may need to create an IAM instance profile manually with the"
+            echo "AmazonSSMManagedInstanceCore policy attached, then re-run with --access ssm."
+            exit 1
+        fi
+
+        selected_profile=$(echo "$create_result" | python3 -c "import sys,json; print(json.load(sys.stdin)['profile_name'])" 2>/dev/null)
+        iam_created="true"
+        print_success "Created IAM role and instance profile: $selected_profile"
+    fi
+
+    # Return values via globals
+    SSM_INSTANCE_PROFILE="$selected_profile"
+    SSM_IAM_CREATED="$iam_created"
+}
+
 aws_create() {
     local name=""
     local instance_type=""
@@ -1393,6 +1623,7 @@ aws_create() {
     local volume_size=""
     local use_spot="false"
     local create_dns="false"
+    local access_mode="direct"
     local extra_args=()
 
     while [[ $# -gt 0 ]]; do
@@ -1421,6 +1652,14 @@ aws_create() {
                 create_dns="true"
                 shift
                 ;;
+            --access)
+                access_mode="$2"
+                if [[ "$access_mode" != "direct" && "$access_mode" != "ssm" ]]; then
+                    print_error "Invalid access mode: $access_mode (must be 'direct' or 'ssm')"
+                    exit 1
+                fi
+                shift 2
+                ;;
             -*)
                 print_error "Unknown option: $1"
                 echo "Run 'remo aws --help' for usage."
@@ -1437,6 +1676,25 @@ aws_create() {
 
     local resource_name="${name:-$USER}"
 
+    # SSM pre-checks
+    if [ "$access_mode" = "ssm" ]; then
+        if ! command -v session-manager-plugin &> /dev/null; then
+            print_error "session-manager-plugin is not installed."
+            echo ""
+            echo "Install it from:"
+            echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
+            echo ""
+            echo "On macOS:  brew install --cask session-manager-plugin"
+            echo "On Ubuntu: see AWS docs for .deb package"
+            exit 1
+        fi
+
+        select_ssm_instance_profile "$resource_name" "${region:-us-west-2}"
+        extra_args+=(-e "aws_access_mode=ssm")
+        extra_args+=(-e "aws_iam_instance_profile=$SSM_INSTANCE_PROFILE")
+        extra_args+=(-e "aws_iam_created=$SSM_IAM_CREATED")
+    fi
+
     [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
     [ -n "$instance_type" ] && extra_args+=(-e "aws_instance_type=$instance_type")
     [ -n "$region" ] && extra_args+=(-e "aws_region=$region")
@@ -1446,20 +1704,21 @@ aws_create() {
 
     run_playbook aws_site.yml "${extra_args[@]}"
 
-    # Save to known_hosts on success - get the instance IP
-    local instance_ip
-    instance_ip=$(python3 << EOF
+    # Save to known_hosts on success - get the instance IP and ID
+    local instance_info_json
+    instance_info_json=$(python3 << EOF
 import os
 import sys
+import json
 
 try:
     import boto3
 except ImportError:
-    print('ERROR: boto3 not available', file=sys.stderr)
+    print('{}', file=sys.stderr)
     sys.exit(0)
 
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region:-us-west-2}'))
-profile = os.environ.get('AWS_PROFILE') or None or None
+profile = os.environ.get('AWS_PROFILE') or None
 
 try:
     session = boto3.Session(region_name=region, profile_name=profile)
@@ -1474,15 +1733,20 @@ try:
     for reservation in response.get('Reservations', []):
         for instance in reservation.get('Instances', []):
             ip = instance.get('PublicIpAddress', '')
-            if ip:
-                print(ip)
+            instance_id = instance.get('InstanceId', '')
+            if ip or instance_id:
+                print(json.dumps({'ip': ip, 'instance_id': instance_id}))
                 break
 except Exception as e:
     print(f'ERROR: {e}', file=sys.stderr)
 EOF
 )
-    if [ -n "$instance_ip" ]; then
-        save_known_host "aws" "$resource_name" "$instance_ip" "remo"
+    local instance_ip instance_id
+    instance_ip=$(echo "$instance_info_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ip',''))" 2>/dev/null || true)
+    instance_id=$(echo "$instance_info_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('instance_id',''))" 2>/dev/null || true)
+
+    if [ -n "$instance_ip" ] || [ -n "$instance_id" ]; then
+        save_known_host "aws" "$resource_name" "${instance_ip:-$instance_id}" "remo" "$instance_id" "$access_mode"
     else
         print_warning "Could not detect instance IP. Run 'remo aws info' to register the host."
     fi
@@ -1560,6 +1824,20 @@ aws_update_ip() {
         esac
     done
 
+    local resource_name="${name:-$USER}"
+
+    # Check if this instance uses SSM - update-ip is not needed
+    local entry
+    entry=$(get_known_hosts "aws" | grep "^aws:${resource_name}:" || true)
+    if [ -n "$entry" ]; then
+        local _t _n _h _u _iid access_mode
+        IFS=: read -r _t _n _h _u _iid access_mode <<< "$entry"
+        if [ "${access_mode:-}" = "ssm" ]; then
+            print_info "SSM mode — update-ip is not needed (no inbound ports are open)."
+            return 0
+        fi
+    fi
+
     print_info "Updating AWS security group with current IP..."
 
     [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
@@ -1635,6 +1913,9 @@ public_ip = instance.get('PublicIpAddress', 'N/A')
 public_dns = instance.get('PublicDnsName', 'N/A')
 launch_time = instance.get('LaunchTime', 'unknown')
 
+tags = {t['Key']: t['Value'] for t in instance.get('Tags', [])}
+access_mode = tags.get('remo_access_mode', 'direct')
+
 print(f"""
 AWS Instance Information:
 ========================
@@ -1646,12 +1927,63 @@ Region:        {region}
 Public IP:     {public_ip}
 Public DNS:    {public_dns}
 Launch Time:   {launch_time}
+Access Mode:   {access_mode}
+""")
 
-SSH Connection:
-  ssh remo-aws
+if access_mode == 'ssm':
+    print(f"""Connect via SSM:
+  remo shell
+""")
+else:
+    print(f"""SSH Connection:
+  remo shell
   ssh remo@{public_ip}
 """)
 EOF
+
+    # Also check/update known_hosts with access mode info
+    local entry
+    entry=$(get_known_hosts "aws" | grep "^aws:${resource_name}:" || true)
+    if [ -z "$entry" ]; then
+        # Not registered yet - try to register from AWS info
+        local reg_info
+        reg_info=$(python3 << EOF
+import os, sys, json
+try:
+    import boto3
+except ImportError:
+    sys.exit(0)
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+response = ec2.describe_instances(
+    Filters=[
+        {'Name': 'tag:Name', 'Values': ['remo-${resource_name}']},
+        {'Name': 'tag:remo', 'Values': ['true']},
+        {'Name': 'instance-state-name', 'Values': ['running']}
+    ]
+)
+for r in response.get('Reservations', []):
+    for inst in r.get('Instances', []):
+        ip = inst.get('PublicIpAddress', '')
+        iid = inst.get('InstanceId', '')
+        tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+        am = tags.get('remo_access_mode', 'direct')
+        print(json.dumps({'ip': ip, 'instance_id': iid, 'access_mode': am}))
+        break
+EOF
+)
+        if [ -n "$reg_info" ]; then
+            local r_ip r_iid r_am
+            r_ip=$(echo "$reg_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ip',''))" 2>/dev/null || true)
+            r_iid=$(echo "$reg_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('instance_id',''))" 2>/dev/null || true)
+            r_am=$(echo "$reg_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_mode','direct'))" 2>/dev/null || true)
+            if [ -n "$r_ip" ] || [ -n "$r_iid" ]; then
+                save_known_host "aws" "$resource_name" "${r_ip:-$r_iid}" "remo" "$r_iid" "$r_am"
+            fi
+        fi
+    fi
 }
 
 aws_update() {
@@ -1686,13 +2018,13 @@ aws_update() {
         esac
     done
 
-    # Get instance IP using aws_info logic
+    # Get instance IP and access mode using boto3
     local resource_name="${name:-$USER}"
-    local instance_ip
-
-    instance_ip=$(python3 << EOF
+    local update_info
+    update_info=$(python3 << EOF
 import os
 import sys
+import json
 
 try:
     import boto3
@@ -1702,7 +2034,6 @@ except ImportError:
 region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
 profile = os.environ.get('AWS_PROFILE') or None
 
-# Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
 session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
 
@@ -1719,35 +2050,67 @@ for reservation in response.get('Reservations', []):
     instances.extend(reservation.get('Instances', []))
 
 if instances:
-    print(instances[0].get('PublicIpAddress', ''))
+    inst = instances[0]
+    tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+    print(json.dumps({
+        'ip': inst.get('PublicIpAddress', ''),
+        'instance_id': inst.get('InstanceId', ''),
+        'access_mode': tags.get('remo_access_mode', 'direct')
+    }))
 EOF
 )
 
-    if [ -z "$instance_ip" ]; then
+    if [ -z "$update_info" ]; then
         print_error "Could not find running AWS instance for '$resource_name'"
         echo "Run 'remo aws info --name $resource_name' to check instance status."
         exit 1
     fi
 
-    print_info "Updating AWS instance at $instance_ip..."
+    local instance_ip instance_id access_mode
+    instance_ip=$(echo "$update_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ip',''))" 2>/dev/null || true)
+    instance_id=$(echo "$update_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('instance_id',''))" 2>/dev/null || true)
+    access_mode=$(echo "$update_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_mode','direct'))" 2>/dev/null || true)
 
-    # Update known_hosts with current IP (may have changed, especially for spot instances)
-    save_known_host "aws" "$resource_name" "$instance_ip" "remo"
+    if [ -z "$instance_ip" ] && [ "$access_mode" != "ssm" ]; then
+        print_error "Could not find running AWS instance for '$resource_name'"
+        echo "Run 'remo aws info --name $resource_name' to check instance status."
+        exit 1
+    fi
+
+    # Update known_hosts with current info
+    save_known_host "aws" "$resource_name" "${instance_ip:-$instance_id}" "remo" "$instance_id" "$access_mode"
 
     build_tool_args only skip
     extra_args+=("${TOOL_EXTRA_ARGS[@]}")
 
-    run_playbook aws_configure.yml -e "instance_ip=$instance_ip" "${extra_args[@]}"
+    if [ "$access_mode" = "ssm" ]; then
+        print_info "Updating AWS instance $instance_id via SSM..."
+        run_playbook aws_configure.yml \
+            -e "aws_access_mode=ssm" \
+            -e "aws_instance_id=$instance_id" \
+            -e "instance_ip=$instance_id" \
+            "${extra_args[@]}"
+    else
+        print_info "Updating AWS instance at $instance_ip..."
+        run_playbook aws_configure.yml -e "instance_ip=$instance_ip" "${extra_args[@]}"
+    fi
 }
 
 aws_list() {
     echo ""
-    printf "%-25s %-25s %s\n" "NAME" "HOST" "SSH COMMAND"
-    printf "%-25s %-25s %s\n" "----" "----" "-----------"
+    printf "%-20s %-20s %-8s %s\n" "NAME" "HOST" "ACCESS" "CONNECT"
+    printf "%-20s %-20s %-8s %s\n" "----" "----" "------" "-------"
 
-    while IFS=: read -r type name host user; do
+    while IFS=: read -r type name host user instance_id access_mode; do
         [ "$type" != "aws" ] && continue
-        printf "%-25s %-25s %s\n" "$name" "$host" "ssh ${user}@${host}"
+        local mode="${access_mode:-direct}"
+        local connect_cmd
+        if [ "$mode" = "ssm" ]; then
+            connect_cmd="remo shell"
+        else
+            connect_cmd="ssh ${user}@${host}"
+        fi
+        printf "%-20s %-20s %-8s %s\n" "$name" "$host" "$mode" "$connect_cmd"
     done < <(get_known_hosts "aws")
 
     local count
@@ -1794,16 +2157,20 @@ try:
     instances = []
     for reservation in response.get('Reservations', []):
         for instance in reservation.get('Instances', []):
-            name = ''
-            for tag in instance.get('Tags', []):
-                if tag['Key'] == 'Name':
-                    name = tag['Value']
-                    break
+            tags = {t['Key']: t['Value'] for t in instance.get('Tags', [])}
+            name = tags.get('Name', '')
             ip = instance.get('PublicIpAddress', '')
-            if name and ip:
+            instance_id = instance.get('InstanceId', '')
+            access_mode = tags.get('remo_access_mode', 'direct')
+            if name and (ip or instance_id):
                 # Strip 'remo-' prefix if present for the resource name
                 resource_name = name[5:] if name.startswith('remo-') else name
-                instances.append({'name': resource_name, 'ip': ip})
+                instances.append({
+                    'name': resource_name,
+                    'ip': ip or instance_id,
+                    'instance_id': instance_id,
+                    'access_mode': access_mode
+                })
 
     print(json.dumps({'instances': instances}))
 except Exception as e:
@@ -1824,18 +2191,22 @@ EOF
     local count=0
     while IFS= read -r line; do
         [ -z "$line" ] && continue
-        local name ip
-        name=$(echo "$line" | cut -d'|' -f1)
-        ip=$(echo "$line" | cut -d'|' -f2)
-        [ -z "$name" ] || [ -z "$ip" ] && continue
-        save_known_host "aws" "$name" "$ip" "remo"
-        print_success "  Registered: $name -> $ip"
+        local s_name s_ip s_instance_id s_access_mode
+        s_name=$(echo "$line" | cut -d'|' -f1)
+        s_ip=$(echo "$line" | cut -d'|' -f2)
+        s_instance_id=$(echo "$line" | cut -d'|' -f3)
+        s_access_mode=$(echo "$line" | cut -d'|' -f4)
+        [ -z "$s_name" ] || [ -z "$s_ip" ] && continue
+        save_known_host "aws" "$s_name" "$s_ip" "remo" "$s_instance_id" "$s_access_mode"
+        local mode_label=""
+        [ "${s_access_mode:-direct}" = "ssm" ] && mode_label=" (SSM)"
+        print_success "  Registered: $s_name -> ${s_ip}${mode_label}"
         ((count++)) || true
     done < <(echo "$result" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 for inst in data.get('instances', []):
-    print(f\"{inst['name']}|{inst['ip']}\")
+    print(f\"{inst['name']}|{inst['ip']}|{inst['instance_id']}|{inst['access_mode']}\")
 " 2>/dev/null || true)
 
     if [ "$count" -eq 0 ]; then
@@ -1940,7 +2311,7 @@ shell_connect() {
 
         # Build picker options
         local options=""
-        while IFS=: read -r type name host user; do
+        while IFS=: read -r type name host user instance_id access_mode; do
             local display_name="$name"
             # For incus, show container name without host prefix
             if [ "$type" = "incus" ]; then
@@ -1948,7 +2319,11 @@ shell_connect() {
                 local container="${name#*/}"
                 display_name="${container} (on ${incus_host})"
             fi
-            options+="${type}: ${display_name} (${host})"$'\n'
+            local ssm_indicator=""
+            if [ "${access_mode:-}" = "ssm" ]; then
+                ssm_indicator=" [SSM]"
+            fi
+            options+="${type}: ${display_name}${ssm_indicator} (${host})"$'\n'
         done <<< "$hosts"
 
         local choice
@@ -1960,15 +2335,15 @@ shell_connect() {
         fi
 
         # Find the matching environment by extracting SSH host from choice
-        # Format is "type: display_name (ssh_host)"
+        # Format is "type: display_name [SSM] (ssh_host)"
         local choice_type choice_host
         choice_type=$(echo "$choice" | cut -d: -f1)
         # Extract the last parenthesized value (SSH host)
         choice_host=$(echo "$choice" | grep -oE '\([^)]+\)$' | tr -d '()')
 
-        while IFS=: read -r type name host user; do
+        while IFS=: read -r type name host user _inst_id _acc_mode; do
             if [ "$type" = "$choice_type" ] && [ "$host" = "$choice_host" ]; then
-                selected="${type}:${name}:${host}:${user}"
+                selected="${type}:${name}:${host}:${user}:${_inst_id:-}:${_acc_mode:-}"
                 break
             fi
         done <<< "$hosts"
@@ -1979,12 +2354,29 @@ shell_connect() {
         exit 1
     fi
 
-    # Parse selected environment
-    local type name host user
-    IFS=: read -r type name host user <<< "$selected"
+    # Parse selected environment (supports both 4-field and 6-field formats)
+    local type name host user instance_id access_mode
+    IFS=: read -r type name host user instance_id access_mode <<< "$selected"
 
-    print_info "Connecting to $type: $name ($host)..."
-    exec ssh "${user}@${host}"
+    if [ "${access_mode:-}" = "ssm" ]; then
+        if ! command -v session-manager-plugin &> /dev/null; then
+            print_error "session-manager-plugin is not installed."
+            echo ""
+            echo "Install it from:"
+            echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
+            echo ""
+            echo "On macOS:  brew install --cask session-manager-plugin"
+            echo "On Ubuntu: see AWS docs for .deb package"
+            exit 1
+        fi
+        print_info "Connecting to $type: $name via SSM (${instance_id})..."
+        exec ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
+            "${user}@${instance_id}"
+    else
+        print_info "Connecting to $type: $name ($host)..."
+        exec ssh "${user}@${host}"
+    fi
 }
 
 handle_shell() {

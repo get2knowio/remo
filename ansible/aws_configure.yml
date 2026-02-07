@@ -29,7 +29,7 @@
         msg: "Required variable 'instance_ip' is not defined. Use -e instance_ip=<ip>"
       when: instance_ip is not defined
 
-    - name: Add instance to in-memory inventory
+    - name: Add instance to in-memory inventory (direct)
       ansible.builtin.add_host:
         name: aws_instance
         ansible_host: "{{ instance_ip }}"
@@ -37,6 +37,18 @@
         ansible_ssh_private_key_file: "{{ ssh_private_key_path | default('~/.ssh/id_rsa') }}"
         groups:
           - provisioned
+      when: (aws_access_mode | default('direct')) != 'ssm'
+
+    - name: Add instance to in-memory inventory (SSM)
+      ansible.builtin.add_host:
+        name: aws_instance
+        ansible_host: "{{ aws_instance_id }}"
+        ansible_user: "{{ instance_user | default('remo') }}"
+        ansible_ssh_private_key_file: "{{ ssh_private_key_path | default('~/.ssh/id_rsa') }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
+        groups:
+          - provisioned
+      when: (aws_access_mode | default('direct')) == 'ssm'
 
 - name: Configure AWS EC2 instance with development tools
   hosts: aws_instance

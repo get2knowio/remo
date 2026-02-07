@@ -57,6 +57,9 @@ remo aws create --spot
 # Create with custom options
 remo aws create --name alice --type t3.large --region us-east-1
 
+# Create with SSM Session Manager access (no inbound SSH port)
+remo aws create --access ssm
+
 # Create with Route53 DNS record
 remo aws create --dns
 
@@ -94,6 +97,7 @@ remo aws destroy --yes --remove-efs
 | `--region <region>` | `us-west-2` | AWS region |
 | `--spot` | (off) | Use spot instance for cost savings |
 | `--dns` | (off) | Create Route53 DNS record |
+| `--access <mode>` | `direct` | Access mode: `direct` (SSH) or `ssm` (SSM Session Manager) |
 
 ### Update Options
 
@@ -122,6 +126,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **Elastic IP** | Stable public IP that survives instance stop/start |
 | **Spot Instances** | Optional spot pricing for ~70% cost savings |
 | **Multi-user** | Resources namespaced by `--name` for shared AWS accounts |
+| **SSM Access** | Optional zero-inbound-port access via AWS SSM Session Manager |
 
 ## Instance Types
 
@@ -226,6 +231,62 @@ This creates `<name>.<domain>` (e.g., `alice.example.com`) pointing to your Elas
 
 Requires `AWS_ROUTE53_ZONE_ID` and `AWS_ROUTE53_ZONE_DOMAIN` in `.env`.
 
+## SSM Session Manager Access
+
+For environments where direct SSH over the internet is restricted, use SSM Session Manager:
+
+```bash
+remo aws create --access ssm
+```
+
+### How It Works
+
+The SSM agent on the EC2 instance phones home to AWS over outbound HTTPS. No inbound ports are opened in the security group. SSH connections are tunneled through the SSM session using a ProxyCommand.
+
+### Prerequisites
+
+1. **AWS Session Manager Plugin** — must be installed locally:
+   - macOS: `brew install --cask session-manager-plugin`
+   - Linux: Download from [AWS docs](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+
+2. **IAM Instance Profile** — an instance profile with the `AmazonSSMManagedInstanceCore` managed policy. During `remo aws create --access ssm`, you can:
+   - Select an existing profile (auto-detected from your account)
+   - Let remo create one (`remo-<name>-ssm-role` / `remo-<name>-ssm-profile`)
+
+### Connecting
+
+```bash
+# Interactive picker (shows [SSM] indicator)
+remo shell
+
+# Check instance details
+remo aws info
+```
+
+### SSM vs Direct
+
+| Feature | Direct (default) | SSM |
+|---------|-----------------|-----|
+| Inbound ports | SSH (22) from your IP | None |
+| IP changes | Run `remo aws update-ip` | Not needed |
+| Requires | SSH key | SSH key + session-manager-plugin + IAM role |
+| Connection | `ssh remo@<ip>` | Via SSM ProxyCommand tunnel |
+
+### Port Forwarding via SSM
+
+To forward a port through SSM (e.g., for a web server on port 8080):
+
+```bash
+aws ssm start-session \
+  --target <instance-id> \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters '{"portNumber":["8080"],"localPortNumber":["8080"]}'
+```
+
+### Cleanup
+
+When you run `remo aws destroy`, IAM resources created by remo (role and instance profile) are automatically cleaned up. User-selected IAM profiles are left untouched.
+
 ## Troubleshooting
 
 **"AWS credentials not configured"?**
@@ -245,3 +306,9 @@ Ensure the instance and EFS are in the same region and the security groups allow
 
 **boto3 not found?**
 Run `remo init` to install Python dependencies.
+
+**SSM agent not coming online?**
+The SSM agent may take 2-5 minutes to register after instance launch. Ensure the IAM instance profile has the `AmazonSSMManagedInstanceCore` policy and the instance has outbound HTTPS access.
+
+**"session-manager-plugin is not installed"?**
+Install the AWS Session Manager Plugin. On macOS: `brew install --cask session-manager-plugin`. See [AWS docs](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) for other platforms.

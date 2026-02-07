@@ -57,7 +57,7 @@
   ansible.builtin.set_fact:
     aws_instance_public_ip: "{{ aws_elastic_ip }}"
 
-- name: Update inventory with Elastic IP
+- name: Update inventory with Elastic IP (direct)
   delegate_to: localhost
   become: false
   ansible.builtin.add_host:
@@ -66,6 +66,19 @@
     ansible_user: ubuntu
     ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
     groups: provisioned
+  when: aws_access_mode != 'ssm'
+
+- name: Update inventory with Elastic IP (SSM)
+  delegate_to: localhost
+  become: false
+  ansible.builtin.add_host:
+    name: aws_server
+    ansible_host: "{{ aws_instance_id }}"
+    ansible_user: ubuntu
+    ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
+    groups: provisioned
+  when: aws_access_mode == 'ssm'
 
 - name: Get instance public DNS after EIP assignment
   delegate_to: localhost
@@ -94,3 +107,4 @@
     delay: 5
     timeout: 60
     state: started
+  when: aws_access_mode != 'ssm'

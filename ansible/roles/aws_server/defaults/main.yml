@@ -58,3 +58,12 @@ aws_route53_record_name: "{{ aws_resource_name }}"  # Creates <name>.<domain>
 
 # Elastic IP
 aws_create_eip: true
+
+# Access mode: 'direct' (SSH over internet) or 'ssm' (AWS SSM Session Manager)
+aws_access_mode: "direct"
+
+# IAM instance profile name (required when aws_access_mode is 'ssm')
+aws_iam_instance_profile: ""
+
+# Whether remo created the IAM role/profile (used by teardown to decide cleanup)
+aws_iam_created: "false"

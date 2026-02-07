@@ -73,7 +73,9 @@
 
           Server Information:
           - Instance: {{ hostvars['localhost']['aws_instance_name'] | default('N/A') }}
-          - IP Address: {{ ansible_host }}
+          - Instance ID: {{ hostvars['localhost']['aws_instance_id'] | default('N/A') }}
+          - IP Address: {{ hostvars['localhost']['aws_instance_public_ip'] | default(ansible_host) }}
+          - Access Mode: {{ hostvars['localhost']['aws_access_mode'] | default('direct') }}
           - Storage: {{ 'EBS ' + hostvars['localhost']['aws_ebs_volume_id'] | default('') if remo_volume_device else 'EFS ' + remo_efs_id | default('none') }}
           - Region: {{ remo_efs_region }}
 
@@ -95,8 +97,12 @@
           - Non-devcontainer projects use zellij sessions
 
           Security:
+          {% if hostvars['localhost']['aws_access_mode'] | default('direct') == 'ssm' %}
+          - SSM Session Manager - no inbound ports open
+          {% else %}
           - SSH (port 22) - allowed from your current IP
           - All other ports - blocked
+          {% endif %}
 
           Storage:
           - /home/remo is mounted on {{ 'EBS (block storage)' if remo_volume_device else 'EFS (network filesystem)' }}
@@ -104,7 +110,9 @@
 
           Connect using:
             remo shell
-            ssh remo@{{ ansible_host }}
+          {% if hostvars['localhost']['aws_access_mode'] | default('direct') != 'ssm' %}
+            ssh remo@{{ hostvars['localhost']['aws_instance_public_ip'] | default(ansible_host) }}
+          {% endif %}
 
     - name: Reboot server if required by package updates
       ansible.builtin.reboot:
