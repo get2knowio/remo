@@ -25,6 +25,36 @@
   ansible.builtin.debug:
     msg: "Using VPC: {{ aws_vpc_id }}"
 
+- name: Get default security group (SSM)
+  delegate_to: localhost
+  become: false
+  amazon.aws.ec2_security_group_info:
+    region: "{{ aws_region }}"
+    filters:
+      vpc-id: "{{ aws_vpc_id }}"
+      group-name: "default"
+  register: default_security_group
+  when: (aws_access_mode | default('ssm')) == 'ssm'
+
+- name: Fail if no default security group exists (SSM)
+  ansible.builtin.fail:
+    msg: |
+      No default security group found in VPC {{ aws_vpc_id }}.
+      Please create a default security group or specify a custom one.
+  when:
+    - (aws_access_mode | default('ssm')) == 'ssm'
+    - default_security_group.security_groups | default([]) | length == 0
+
+- name: Set security group ID fact (default)
+  ansible.builtin.set_fact:
+    aws_security_group_id: "{{ (default_security_group.security_groups | default([]) | first | default({})).group_id | default('') }}"
+  when: (aws_access_mode | default('ssm')) == 'ssm'
+
+- name: Display security group info (default)
+  ansible.builtin.debug:
+    msg: "Using default security group: {{ aws_security_group_id }}"
+  when: (aws_access_mode | default('ssm')) == 'ssm'
+
 - name: Create security group for SSH access
   delegate_to: localhost
   become: false
@@ -50,11 +80,14 @@
       remo: "true"
       remo_resource_name: "{{ aws_resource_name }}"
   register: security_group_result
+  when: (aws_access_mode | default('ssm')) != 'ssm'
 
 - name: Set security group ID fact
   ansible.builtin.set_fact:
-    aws_security_group_id: "{{ security_group_result.group_id }}"
+    aws_security_group_id: "{{ security_group_result.group_id | default('') }}"
+  when: (aws_access_mode | default('ssm')) != 'ssm'
 
 - name: Display security group info
   ansible.builtin.debug:
     msg: "Security group: {{ aws_security_group_name }} ({{ aws_security_group_id }})"
+  when: (aws_access_mode | default('ssm')) != 'ssm'

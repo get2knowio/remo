@@ -27,8 +27,8 @@ remo self-update
 | **Type** | Cloud VM | Cloud VM | Local container |
 | **Location** | EU/US datacenters | Global regions | Your hardware |
 | **Cost** | ~€4/month | ~$30/month | Your electricity |
-| **Storage** | Block volume | EFS (elastic) | Host mounts |
-| **Access** | DuckDNS domain | Elastic IP / Route53 | LAN hostname |
+| **Storage** | Block volume | Block volume | Host mounts |
+| **Access** | DuckDNS domain | SSM (default) / Elastic IP | LAN hostname |
 | **Best for** | EU, budget hosting | US, enterprise, elastic storage | Local dev, homelab |
 
 All platforms give you the same dev workflow and tooling described below.
@@ -103,11 +103,11 @@ remo hetzner update                 # Update dev tools
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
 # AWS
-remo aws create [--spot]            # Provision EC2 + EFS
+remo aws create [--spot]            # Provision EC2 (SSM by default)
 remo aws list                       # List registered instances
 remo aws sync                       # Discover existing instances
 remo aws update                     # Update dev tools
-remo aws destroy [--yes]            # Tear down (keeps EFS)
+remo aws destroy [--yes]            # Tear down (keeps EBS if created)
 remo aws update-ip                  # Update security group with current IP
 remo aws info                       # Show instance info
 

@@ -12,8 +12,3 @@ zellij_session_name: "main"
 
 # Volume device for persistent home directory (set by hetzner_server role)
 remo_volume_device: ""
-
-# EFS configuration for AWS (set by aws_server role)
-# When set, EFS is mounted instead of block volume
-remo_efs_id: ""
-remo_efs_region: ""

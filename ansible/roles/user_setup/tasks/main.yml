@@ -73,38 +73,6 @@
     - remo_volume_device | length > 0
     - actual_volume_device | default('') | length > 0
 
-# EFS Setup (AWS) - alternative to block volume
-- name: Install NFS utilities for EFS mounting
-  ansible.builtin.apt:
-    name:
-      - nfs-common
-      - binutils
-    state: present
-    update_cache: true
-  when: remo_efs_id | default('') | length > 0
-
-- name: Install amazon-efs-utils (with stunnel for TLS)
-  ansible.builtin.apt:
-    name: stunnel4
-    state: present
-  when: remo_efs_id | default('') | length > 0
-
-- name: Create temporary mount point for EFS home directory
-  ansible.builtin.file:
-    path: "/home/{{ remo_user }}"
-    state: directory
-    mode: '0755'
-  when: remo_efs_id | default('') | length > 0
-
-- name: Mount EFS as user home directory
-  ansible.posix.mount:
-    path: "/home/{{ remo_user }}"
-    src: "{{ remo_efs_id }}.efs.{{ remo_efs_region }}.amazonaws.com:/"
-    fstype: nfs4
-    opts: "nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport,_netdev"
-    state: mounted
-  when: remo_efs_id | default('') | length > 0
-
 - name: Install figlet for ASCII banners
   ansible.builtin.apt:
     name: figlet

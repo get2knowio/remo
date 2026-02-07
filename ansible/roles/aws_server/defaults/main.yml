@@ -7,7 +7,6 @@ aws_resource_name: "{{ lookup('env', 'USER') | default('remo', true) }}"
 # Derived resource names
 aws_key_name: "remo-{{ aws_resource_name }}-key"
 aws_security_group_name: "remo-{{ aws_resource_name }}-sg"
-aws_efs_name: "remo-{{ aws_resource_name }}-home"
 aws_instance_name: "remo-{{ aws_resource_name }}"
 
 # AWS credentials and region
@@ -34,21 +33,12 @@ aws_ssh_private_key_path: "~/.ssh/id_rsa"
 # Security group - SSH allowed CIDR (auto-detected if empty)
 aws_allowed_ssh_cidr: ""
 
-# Storage configuration - EBS (block storage) or EFS (network filesystem)
-# EBS is simpler and faster for single-instance use
-# EFS allows sharing across instances but has DNS/mounting complexity
-aws_storage_type: "ebs"  # "ebs" or "efs"
-
-# EBS configuration (used when aws_storage_type is "ebs")
+# Storage configuration - EBS (block storage)
+# For SSM access, no extra volume is created and /home/remo stays on the root volume.
 aws_ebs_name: "remo-{{ aws_resource_name }}-home"
 aws_ebs_size: 50  # Size in GB
 aws_ebs_type: "gp3"  # gp3 is the best general-purpose option
 aws_ebs_device_name: "/dev/xvdf"  # Device name when attached
-
-# EFS configuration (used when aws_storage_type is "efs")
-aws_create_efs: false  # Deprecated: use aws_storage_type instead
-aws_efs_lifecycle_policy: "AFTER_7_DAYS"  # Move to IA after 7 days
-aws_efs_throughput_mode: "bursting"  # bursting or provisioned
 
 # Route53 configuration (optional)
 aws_create_dns: false
@@ -59,8 +49,8 @@ aws_route53_record_name: "{{ aws_resource_name }}"  # Creates <name>.<domain>
 # Elastic IP
 aws_create_eip: true
 
-# Access mode: 'direct' (SSH over internet) or 'ssm' (AWS SSM Session Manager)
-aws_access_mode: "direct"
+# Access mode: 'ssm' (AWS SSM Session Manager) or 'direct' (SSH over internet)
+aws_access_mode: "ssm"
 
 # IAM instance profile name (required when aws_access_mode is 'ssm')
 aws_iam_instance_profile: ""

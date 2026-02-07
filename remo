@@ -131,7 +131,7 @@ COMMANDS:
     init        Initialize remo (install dependencies, create .env)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
-    aws         Manage AWS EC2 instances with EFS storage
+    aws         Manage AWS EC2 instances with EBS storage
     self-update Update remo to a newer version
 
 ENVIRONMENT:
@@ -1329,7 +1329,7 @@ handle_hetzner() {
 
 show_aws_help() {
     cat << 'EOF'
-remo aws - Manage AWS EC2 instances with EFS storage
+remo aws - Manage AWS EC2 instances with EBS storage
 
 USAGE:
     remo aws <command> [options]
@@ -1350,7 +1350,7 @@ CREATE OPTIONS:
     --spot              Use spot instance (cheaper but can be interrupted)
     --dns               Also create Route53 DNS record
     --volume-size <GB>  Persistent home volume size in GB (default: 50)
-    --access <mode>     Access mode: 'direct' (default) or 'ssm'
+    --access <mode>     Access mode: 'ssm' (default) or 'direct'
 
 UPDATE OPTIONS:
     --only <tool>       Only update specified tool (can repeat)
@@ -1377,7 +1377,7 @@ CONNECTION:
         remo shell
 
 SSM ACCESS (--access ssm):
-    Uses AWS SSM Session Manager instead of direct SSH.
+    Uses AWS SSM Session Manager instead of direct SSH (default).
     No inbound ports are opened — the SSM agent phones home over HTTPS.
 
     Prerequisites:
@@ -1388,6 +1388,8 @@ SSM ACCESS (--access ssm):
     SSM mode skips:
       - Security group SSH rule (no inbound ports needed)
       - update-ip command (not applicable)
+      - Elastic IP and Route53 DNS
+      - EBS home volume (uses root volume instead)
 
 EXAMPLES:
     remo aws create
@@ -1637,7 +1639,7 @@ aws_create() {
     local volume_size=""
     local use_spot="false"
     local create_dns="false"
-    local access_mode="direct"
+    local access_mode="ssm"
     local extra_args=()
 
     while [[ $# -gt 0 ]]; do
@@ -1707,6 +1709,8 @@ aws_create() {
         extra_args+=(-e "aws_access_mode=ssm")
         extra_args+=(-e "aws_iam_instance_profile=$SSM_INSTANCE_PROFILE")
         extra_args+=(-e "aws_iam_created=$SSM_IAM_CREATED")
+    else
+        extra_args+=(-e "aws_access_mode=direct")
     fi
 
     [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
@@ -1778,7 +1782,7 @@ aws_destroy() {
                 auto_confirm="true"
                 shift
                 ;;
-            --remove-storage|--remove-efs)
+            --remove-storage)
                 remove_storage="true"
                 shift
                 ;;

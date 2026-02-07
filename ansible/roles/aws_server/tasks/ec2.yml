@@ -103,7 +103,7 @@
     region: "{{ aws_region }}"
     iam_instance_profile: "{{ aws_iam_instance_profile if aws_access_mode == 'ssm' and aws_iam_instance_profile else omit }}"
     network_interfaces:
-      - assign_public_ip: true
+      - assign_public_ip: "{{ (aws_access_mode | default('ssm')) != 'ssm' }}"
         device_index: 0
     volumes:
       - device_name: /dev/sda1
@@ -115,7 +115,7 @@
       Name: "{{ aws_instance_name }}"
       remo: "true"
       remo_resource_name: "{{ aws_resource_name }}"
-      remo_access_mode: "{{ aws_access_mode | default('direct') }}"
+      remo_access_mode: "{{ aws_access_mode | default('ssm') }}"
       remo_iam_created: "{{ aws_iam_created | default('false') }}"
     state: running
     wait: true
@@ -139,7 +139,7 @@
     region: "{{ aws_region }}"
     iam_instance_profile: "{{ aws_iam_instance_profile if aws_access_mode == 'ssm' and aws_iam_instance_profile else omit }}"
     network_interfaces:
-      - assign_public_ip: true
+      - assign_public_ip: "{{ (aws_access_mode | default('ssm')) != 'ssm' }}"
         device_index: 0
     volumes:
       - device_name: /dev/sda1
@@ -156,7 +156,7 @@
       Name: "{{ aws_instance_name }}"
       remo: "true"
       remo_resource_name: "{{ aws_resource_name }}"
-      remo_access_mode: "{{ aws_access_mode | default('direct') }}"
+      remo_access_mode: "{{ aws_access_mode | default('ssm') }}"
       remo_iam_created: "{{ aws_iam_created | default('false') }}"
     state: running
     wait: true

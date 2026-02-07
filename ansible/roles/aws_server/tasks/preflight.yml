@@ -29,16 +29,21 @@
     url: "https://checkip.amazonaws.com"
     return_content: true
   register: current_ip_result
-  when: aws_allowed_ssh_cidr | default('') | length == 0
+  when:
+    - (aws_access_mode | default('ssm')) != 'ssm'
+    - aws_allowed_ssh_cidr | default('') | length == 0
 
 - name: Set SSH allowed CIDR from detected IP
   ansible.builtin.set_fact:
     aws_allowed_ssh_cidr: "{{ current_ip_result.content | trim }}/32"
-  when: aws_allowed_ssh_cidr | default('') | length == 0
+  when:
+    - (aws_access_mode | default('ssm')) != 'ssm'
+    - aws_allowed_ssh_cidr | default('') | length == 0
 
 - name: Display detected IP
   ansible.builtin.debug:
     msg: "SSH will be allowed from: {{ aws_allowed_ssh_cidr }}"
+  when: (aws_access_mode | default('ssm')) != 'ssm'
 
 - name: Validate SSH public key exists
   delegate_to: localhost

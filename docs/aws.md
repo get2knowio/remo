@@ -1,6 +1,6 @@
 # AWS Setup
 
-Spin up an EC2 instance with EFS storage for persistent home directories.
+Spin up an EC2 instance with EBS storage for persistent home directories.
 
 ## Prerequisites
 
@@ -48,7 +48,7 @@ AWS_ROUTE53_ZONE_DOMAIN=example.com
 ## CLI Commands
 
 ```bash
-# Create instance with defaults
+# Create instance with defaults (SSM access, no public IP/EBS home volume)
 remo aws create
 
 # Create with spot instance (cheaper, can be interrupted)
@@ -81,11 +81,11 @@ remo aws info
 # Update security group with current IP (after IP change)
 remo aws update-ip
 
-# Destroy instance (keeps EFS storage)
+# Destroy instance (keeps EBS storage)
 remo aws destroy --yes
 
-# Destroy instance AND EFS (removes all data)
-remo aws destroy --yes --remove-efs
+# Destroy instance AND EBS (removes all data)
+remo aws destroy --yes --remove-storage
 ```
 
 ### Create Options
@@ -97,7 +97,7 @@ remo aws destroy --yes --remove-efs
 | `--region <region>` | `us-west-2` | AWS region |
 | `--spot` | (off) | Use spot instance for cost savings |
 | `--dns` | (off) | Create Route53 DNS record |
-| `--access <mode>` | `direct` | Access mode: `direct` (SSH) or `ssm` (SSM Session Manager) |
+| `--access <mode>` | `ssm` | Access mode: `ssm` (SSM Session Manager) or `direct` (SSH) |
 
 ### Update Options
 
@@ -114,19 +114,19 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | Option | Description |
 |--------|-------------|
 | `--yes`, `-y` | Skip confirmation prompt |
-| `--remove-efs` | Also delete the EFS filesystem (destroys all data) |
+| `--remove-storage` | Also delete the EBS volume (destroys all data) |
 | `--name <name>` | Resource namespace (default: `$USER`) |
 
 ## Features
 
 | Feature | Description |
 |---------|-------------|
-| **EFS Storage** | `/home/remo` on elastic filesystem, persists across instance termination |
-| **Auto IP Detection** | SSH allowed only from your current public IP |
-| **Elastic IP** | Stable public IP that survives instance stop/start |
+| **EBS Storage** | `/home/remo` on block volume, persists across instance termination (direct only) |
+| **Auto IP Detection** | SSH allowed only from your current public IP (direct only) |
+| **Elastic IP** | Stable public IP that survives instance stop/start (direct only) |
 | **Spot Instances** | Optional spot pricing for ~70% cost savings |
 | **Multi-user** | Resources namespaced by `--name` for shared AWS accounts |
-| **SSM Access** | Optional zero-inbound-port access via AWS SSM Session Manager |
+| **SSM Access** | Default zero-inbound-port access via AWS SSM Session Manager |
 
 ## Instance Types
 
@@ -150,15 +150,14 @@ Prices vary by region. See [EC2 pricing](https://aws.amazon.com/ec2/pricing/).
 | `eu-central-1` | Frankfurt |
 | `ap-northeast-1` | Tokyo |
 
-## EFS Storage
+## EBS Storage
 
-Your home directory (`/home/remo`) is stored on Amazon EFS:
+Your home directory (`/home/remo`) is stored on an EBS volume:
 
-- **Elastic**: Grows and shrinks automatically
 - **Persistent**: Survives instance termination
-- **Cost-optimized**: Files unused for 7 days move to Infrequent Access tier (~$0.016/GB vs $0.30/GB)
+- **Fast**: Local block storage for single-instance use
 
-To check EFS usage:
+To check usage:
 ```bash
 df -h /home/remo
 ```
@@ -167,7 +166,7 @@ df -h /home/remo
 
 ### IP-based Access
 
-SSH access is restricted to your current public IP when you run `remo aws create`. If your IP changes:
+SSH access is restricted to your current public IP when you run `remo aws create --access direct`. If your IP changes:
 
 ```bash
 remo aws update-ip
@@ -183,8 +182,9 @@ This updates the security group to allow SSH from your new IP.
 | Security Group | `remo-<name>-sg` | SSH from your IP only |
 | Key Pair | `remo-<name>-key` | Your SSH public key |
 | Elastic IP | `remo-<name>-eip` | Stable public IP |
-| EFS | `remo-<name>-home` | Persistent home directory |
-| EFS Security Group | `remo-<name>-home-sg` | NFS access from EC2 |
+| EBS Volume | `remo-<name>-home` | Persistent home directory |
+
+In SSM mode, remo uses the default security group and does not create an Elastic IP or the extra EBS home volume.
 
 ## Multi-user Support
 
@@ -198,7 +198,7 @@ remo aws create --name alice
 remo aws create --name bob
 ```
 
-Each user gets isolated resources (instance, EFS, security group).
+Each user gets isolated resources (instance, EBS volume, security group).
 
 ## Spot Instances
 
@@ -217,7 +217,7 @@ Not recommended for:
 - Long-running processes without checkpointing
 - Production workloads
 
-If interrupted, the instance stops (not terminates), preserving your EFS data.
+If interrupted, the instance stops (not terminates), preserving your EBS data.
 
 ## Route53 DNS (Optional)
 
@@ -233,7 +233,7 @@ Requires `AWS_ROUTE53_ZONE_ID` and `AWS_ROUTE53_ZONE_DOMAIN` in `.env`.
 
 ## SSM Session Manager Access
 
-For environments where direct SSH over the internet is restricted, use SSM Session Manager:
+SSM Session Manager is the default access mode. Use direct SSH only if you need a public IP/EBS home volume:
 
 ```bash
 remo aws create --access ssm
@@ -241,7 +241,7 @@ remo aws create --access ssm
 
 ### How It Works
 
-The SSM agent on the EC2 instance phones home to AWS over outbound HTTPS. No inbound ports are opened in the security group. SSH connections are tunneled through the SSM session using a ProxyCommand.
+The SSM agent on the EC2 instance phones home to AWS over outbound HTTPS. No inbound ports are opened in the security group. SSH connections are tunneled through the SSM session using a ProxyCommand. In SSM mode, remo does not allocate a public IP/Elastic IP and skips the extra EBS home volume, so /home/remo stays on the root volume and the instance must have outbound HTTPS access (for example via a NAT gateway or VPC endpoints).
 
 ### Prerequisites
 
@@ -265,12 +265,14 @@ remo aws info
 
 ### SSM vs Direct
 
-| Feature | Direct (default) | SSM |
+| Feature | Direct | SSM (default) |
 |---------|-----------------|-----|
 | Inbound ports | SSH (22) from your IP | None |
 | IP changes | Run `remo aws update-ip` | Not needed |
 | Requires | SSH key | SSH key + session-manager-plugin + IAM role |
 | Connection | `ssh remo@<ip>` | Via SSM ProxyCommand tunnel |
+| Public IP / EIP | Elastic IP by default | None |
+| Home volume | EBS `/home/remo` | Root volume only |
 
 ### Port Forwarding via SSM
 
@@ -295,14 +297,11 @@ Verify `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are set in `~/.remo/.env`
 **"No default VPC found"?**
 Create a default VPC in the AWS Console: VPC → Your VPCs → Actions → Create default VPC.
 
-**SSH connection refused after IP change?**
+**SSH connection refused after IP change (direct mode)?**
 Run `remo aws update-ip` to update the security group with your current IP.
 
 **Spot instance terminated?**
-Spot instances can be interrupted by AWS. Your EFS data is preserved. Run `remo aws create --spot` again.
-
-**EFS mount fails?**
-Ensure the instance and EFS are in the same region and the security groups allow NFS traffic.
+Spot instances can be interrupted by AWS. Your EBS data is preserved. Run `remo aws create --spot` again.
 
 **boto3 not found?**
 Run `remo init` to install Python dependencies.
