@@ -820,16 +820,26 @@ incus_update() {
     # Get container IP from Incus host
     print_info "Looking up container '$name'..."
     local container_ip
+    local ssh_err
     if [ "$host" = "localhost" ]; then
         container_ip=$(incus list "$name" -f csv -c 4 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
     else
         local ssh_target="$host"
         [ -n "$user" ] && ssh_target="${user}@${host}"
+        ssh_err=$(ssh -o ConnectTimeout=10 "$ssh_target" "incus list '$name' -f csv -c 4" 2>&1 >/dev/null) || {
+            print_error "SSH to '$ssh_target' failed: $ssh_err"
+            if [ -z "$user" ]; then
+                print_warning "Try specifying --user, e.g.: remo incus update --host $host --user <username> $name"
+            fi
+            exit 1
+        }
         container_ip=$(ssh "$ssh_target" "incus list '$name' -f csv -c 4" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
     fi
 
     if [ -z "$container_ip" ]; then
         print_error "Could not find IP for container '$name'"
+        print_warning "Container may not exist, may be stopped, or may not have an IP yet"
+        print_warning "Check with: ssh ${ssh_target:-localhost} 'incus list $name'"
         exit 1
     fi
 
