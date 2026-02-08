@@ -199,6 +199,8 @@ build_menu_options() {
     # Special options
     options+=("[Clone new repo]")
     options+=("[Exit to shell]")
+    options+=("")
+    options+=("$(printf '\033[1;34mLegend:  ● changes  ⇡ push  ⇣ pull  ⚡ active\033[0m')")
 
     printf '%s\n' "${options[@]}"
 }
@@ -227,17 +229,17 @@ show_menu() {
     local header
     options=$(build_menu_options)
     
-    # Count the number of project entries (excluding Clone and Exit options)
+    # Count the number of project entries (excluding special options, blank lines, legend)
     local project_count
-    project_count=$(echo "$options" | grep -c -v '^\[' || true)
+    project_count=$(echo "$options" | grep -cEv '^\[|^$|Legend:' || true)
     
     # Build header with banner and version display
     local version_display
     version_display=$(get_version_display)
     if [ -n "$version_display" ]; then
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):' "$(get_banner)" "$version_display")
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):\n' "$(get_banner)" "$version_display")
     else
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):' "$(get_banner)")
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):\n' "$(get_banner)")
     fi
 
     echo "$options" | fzf --reverse --no-info \
@@ -246,8 +248,6 @@ show_menu() {
         --prompt="" \
         --color="header:bold" \
         --ansi \
-        --preview 'printf "\n  \033[33m●\033[0m changes  \033[36m⇡\033[0m push  \033[35m⇣\033[0m pull  \033[32m⚡\033[0m active\n"' \
-        --preview-window 'bottom,2,border-none' \
         --bind="1:pos(1)+accept,2:pos(2)+accept,3:pos(3)+accept,4:pos(4)+accept,5:pos(5)+accept" \
         --bind="6:pos(6)+accept,7:pos(7)+accept,8:pos(8)+accept,9:pos(9)+accept" \
         --bind="c:pos($((project_count + 1)))+accept" \
@@ -399,6 +399,10 @@ main() {
                 echo ""
                 echo "Exiting to shell. Run 'project-menu' to return."
                 exit 0
+                ;;
+            ""|*Legend:*)
+                # Blank separator or legend line selected, ignore
+                continue
                 ;;
             *)
                 # Extract project name (strip ANSI codes and status indicators)
