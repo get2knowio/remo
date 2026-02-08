@@ -55,9 +55,18 @@
 - name: Configure AWS EC2 instance with development tools
   hosts: aws_instance
   become: true
-  gather_facts: true
+  gather_facts: false
 
   pre_tasks:
+    - name: Wait for SSH connection to stabilize
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        delay: 10
+        sleep: 5
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
     - name: Wait for apt to be ready
       ansible.builtin.shell: |
         while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
