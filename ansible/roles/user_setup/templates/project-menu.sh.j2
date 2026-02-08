@@ -166,6 +166,9 @@ build_menu_options() {
         [ -n "$session" ] && active_map["$session"]=1
     done
 
+    # Blank separator (rendered as non-selectable header line by fzf --header-lines)
+    options+=("")
+
     # Build options: show projects with git status and active indicators
     for dir in "${project_dirs[@]}"; do
         local indicators=""
@@ -200,7 +203,7 @@ build_menu_options() {
     options+=("[Clone new repo]")
     options+=("[Exit to shell]")
     options+=("")
-    options+=("$(printf '\033[1;34mLegend:  ● changes  ⇡ push  ⇣ pull  ⚡ active\033[0m')")
+    options+=("$(printf '\033[36mLegend:  \033[33m●\033[36m changes  \033[36m⇡\033[36m push  \033[35m⇣\033[36m pull  \033[32m⚡\033[36m active\033[0m')")
 
     printf '%s\n' "${options[@]}"
 }
@@ -237,13 +240,14 @@ show_menu() {
     local version_display
     version_display=$(get_version_display)
     if [ -n "$version_display" ]; then
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):\n' "$(get_banner)" "$version_display")
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):' "$(get_banner)" "$version_display")
     else
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):\n' "$(get_banner)")
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):' "$(get_banner)")
     fi
 
     echo "$options" | fzf --reverse --no-info \
         --header="$header" \
+        --header-lines 1 \
         --pointer=">" \
         --prompt="" \
         --color="header:bold" \
