@@ -122,6 +122,14 @@ get_git_status_indicators() {
         indicators="${indicators}⇡"
     fi
 
+    # Check for unpulled commits (behind upstream)
+    local behind
+    behind=$(git -C "$project_dir" rev-list --count HEAD..@{upstream} 2>/dev/null || echo "0")
+    if [ "$behind" -gt 0 ]; then
+        [ -n "$indicators" ] && indicators="$indicators "
+        indicators="${indicators}⇣"
+    fi
+
     echo "$indicators"
 }
 
@@ -163,11 +171,12 @@ build_menu_options() {
 
         # Build display name with colored indicators
         if [ -n "$indicators" ]; then
-            # Color the indicators: ● yellow, ⇡ cyan, ⚡ green
+            # Color the indicators: ● yellow, ⇡ cyan, ⇣ magenta, ⚡ green
             local colored
             colored=$(echo "$indicators" | sed \
                 -e 's/●/\\033[33m●\\033[0m/g' \
                 -e 's/⇡/\\033[36m⇡\\033[0m/g' \
+                -e 's/⇣/\\033[35m⇣\\033[0m/g' \
                 -e 's/⚡/\\033[32m⚡\\033[0m/g')
             options+=("$(printf '%s %b' "$dir" "$colored")")
         else
@@ -213,10 +222,11 @@ show_menu() {
     # Build header with banner and version display
     local version_display
     version_display=$(get_version_display)
+    local legend='\n\n  \033[33m●\033[0m changes  \033[36m⇡\033[0m push  \033[35m⇣\033[0m pull  \033[32m⚡\033[0m active'
     if [ -n "$version_display" ]; then
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):' "$(get_banner)" "$version_display")
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):'"$legend" "$(get_banner)" "$version_display")
     else
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):' "$(get_banner)")
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):'"$legend" "$(get_banner)")
     fi
 
     echo "$options" | fzf --reverse --no-info \
@@ -381,7 +391,7 @@ main() {
                 # Extract project name (strip ANSI codes and status indicators)
                 local project_name
                 # Remove ANSI escape codes, then strip trailing indicators (● ⇡ ⚡ and spaces)
-                project_name=$(echo "$selection" | sed 's/\x1b\[[0-9;]*m//g' | sed -E 's/ [●⇡⚡ ]+$//')
+                project_name=$(echo "$selection" | sed 's/\x1b\[[0-9;]*m//g' | sed -E 's/ [●⇡⇣⚡ ]+$//')
                 launch_session "$project_name"
                 ;;
         esac
