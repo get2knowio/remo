@@ -921,20 +921,33 @@ get_latest_release() {
 
     releases=$(curl -fsSL "https://api.github.com/repos/get2knowio/remo/releases?per_page=20" 2>/dev/null)
 
-    if [ "$include_prerelease" = "true" ]; then
-        echo "$releases" | grep -o '"tag_name": "[^"]*"' | head -1 | cut -d'"' -f4
-    else
-        echo "$releases" | python3 -c "
-import sys, json
+    echo "$releases" | python3 -c "
+import sys, json, re
 releases = json.load(sys.stdin)
+
+def version_key(tag):
+    \"\"\"Parse version tag into sortable tuple.\"\"\"
+    m = re.match(r'v?(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?', tag)
+    if not m:
+        return (0, 0, 0, 0)
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4) or 0))
+
+include_pre = '$include_prerelease' == 'true'
+best = None
 for r in releases:
-    if not r.get('prerelease', False) and not r.get('draft', False):
-        tag = r.get('tag_name', '')
-        if '-rc' not in tag and '-beta' not in tag and '-alpha' not in tag:
-            print(tag)
-            break
+    if r.get('draft', False):
+        continue
+    tag = r.get('tag_name', '')
+    if not include_pre:
+        if r.get('prerelease', False):
+            continue
+        if '-rc' in tag or '-beta' in tag or '-alpha' in tag:
+            continue
+    if best is None or version_key(tag) > version_key(best):
+        best = tag
+if best:
+    print(best)
 " 2>/dev/null || echo ""
-    fi
 }
 
 handle_self_update() {
