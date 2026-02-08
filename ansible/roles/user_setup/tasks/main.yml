@@ -86,28 +86,31 @@
   changed_when: false
   failed_when: false
 
-- name: Move existing UID 1000 user to UID 1001 (so remo gets 1000)
-  ansible.builtin.command:
-    cmd: usermod -u 1001 -o {{ uid_1000_user.stdout }}
+- name: Reassign UID 1000 to remo user
+  ansible.builtin.shell: |
+    target_user="{{ uid_1000_user.stdout }}"
+    new_user="{{ remo_user }}"
+    # Change UID from 1000 to 1001 for the existing user
+    awk -F: -v OFS=: -v user="$target_user" '$1 == user && $3 == "1000" { $3 = "1001" } 1' /etc/passwd > /etc/passwd.tmp
+    cat /etc/passwd.tmp > /etc/passwd
+    rm -f /etc/passwd.tmp
+    # Update primary group
+    groupmod -g 1001 "$target_user" 2>/dev/null || true
+    # Create remo user with UID 1000 immediately so sudo keeps working
+    useradd -u 1000 -m -s /bin/bash "$new_user"
+    # Grant sudo immediately so the Ansible connection (now seen as remo) can escalate
+    echo "$new_user ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/$new_user"
+    chmod 440 "/etc/sudoers.d/$new_user"
+    # Fix file ownership for displaced user
+    find "/home/$target_user" -user 1000 -exec chown 1001 {} + 2>/dev/null || true
+  args:
+    executable: /bin/bash
   when:
     - uid_1000_user.rc == 0
     - uid_1000_user.stdout | default('') != remo_user
 
-- name: Update group for displaced user
-  ansible.builtin.command:
-    cmd: groupmod -g 1001 {{ uid_1000_user.stdout }}
-  when:
-    - uid_1000_user.rc == 0
-    - uid_1000_user.stdout | default('') != remo_user
-  failed_when: false
-
-- name: Fix file ownership for displaced user
-  ansible.builtin.command:
-    cmd: find /home/{{ uid_1000_user.stdout }} -user 1000 -exec chown 1001 {} +
-  when:
-    - uid_1000_user.rc == 0
-    - uid_1000_user.stdout | default('') != remo_user
-  failed_when: false
+- name: Reconnect after UID reassignment
+  ansible.builtin.meta: reset_connection
 
 - name: Create remo user with UID 1000 (matches devcontainer vscode user)
   ansible.builtin.user:

@@ -30,8 +30,8 @@
 
   environment:
     AWS_PROFILE: "{{ aws_profile | default('') }}"
-    AWS_ACCESS_KEY_ID: "{{ '' if aws_profile else (aws_access_key_id | default('')) }}"
-    AWS_SECRET_ACCESS_KEY: "{{ '' if aws_profile else (aws_secret_access_key | default('')) }}"
+    AWS_ACCESS_KEY_ID: "{{ '' if (aws_profile | default('')) else (aws_access_key_id | default('')) }}"
+    AWS_SECRET_ACCESS_KEY: "{{ '' if (aws_profile | default('')) else (aws_secret_access_key | default('')) }}"
     AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
 
   tasks:
