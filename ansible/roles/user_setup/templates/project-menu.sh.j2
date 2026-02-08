@@ -148,6 +148,18 @@ build_menu_options() {
     # Get all project directories
     mapfile -t project_dirs < <(get_project_dirs)
 
+    # Fetch upstream for all git repos in parallel (so behind-count is fresh)
+    local fetch_pids=()
+    for dir in "${project_dirs[@]}"; do
+        if [ -d "$PROJECTS_DIR/$dir/.git" ]; then
+            timeout 10 git -C "$PROJECTS_DIR/$dir" fetch --quiet 2>/dev/null &
+            fetch_pids+=($!)
+        fi
+    done
+    for pid in "${fetch_pids[@]}"; do
+        wait "$pid" 2>/dev/null || true
+    done
+
     # Create associative array for quick lookup of active sessions
     declare -A active_map
     for session in "${active_sessions[@]}"; do
@@ -222,11 +234,10 @@ show_menu() {
     # Build header with banner and version display
     local version_display
     version_display=$(get_version_display)
-    local legend='\n\n  \033[33m●\033[0m changes  \033[36m⇡\033[0m push  \033[35m⇣\033[0m pull  \033[32m⚡\033[0m active'
     if [ -n "$version_display" ]; then
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):'"$legend" "$(get_banner)" "$version_display")
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):' "$(get_banner)" "$version_display")
     else
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):'"$legend" "$(get_banner)")
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, x=exit):' "$(get_banner)")
     fi
 
     echo "$options" | fzf --reverse --no-info \
@@ -235,6 +246,8 @@ show_menu() {
         --prompt="" \
         --color="header:bold" \
         --ansi \
+        --preview 'printf "\n  \033[33m●\033[0m changes  \033[36m⇡\033[0m push  \033[35m⇣\033[0m pull  \033[32m⚡\033[0m active\n"' \
+        --preview-window 'bottom,2,border-none' \
         --bind="1:pos(1)+accept,2:pos(2)+accept,3:pos(3)+accept,4:pos(4)+accept,5:pos(5)+accept" \
         --bind="6:pos(6)+accept,7:pos(7)+accept,8:pos(8)+accept,9:pos(9)+accept" \
         --bind="c:pos($((project_count + 1)))+accept" \
