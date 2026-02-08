@@ -1351,6 +1351,7 @@ CREATE OPTIONS:
     --dns               Also create Route53 DNS record
     --volume-size <GB>  Persistent home volume size in GB (default: 50)
     --access <mode>     Access mode: 'ssm' (default) or 'direct'
+    --iam-profile <name> Use existing IAM instance profile for SSM (skips discovery)
 
 UPDATE OPTIONS:
     --only <tool>       Only update specified tool (can repeat)
@@ -1396,6 +1397,7 @@ EXAMPLES:
     remo aws create --spot
     remo aws create --name alice --type t3.large
     remo aws create --access ssm
+    remo aws create --iam-profile MyCustomSSMProfile
     remo aws create --dns
     remo aws sync
     remo aws update
@@ -1640,6 +1642,7 @@ aws_create() {
     local use_spot="false"
     local create_dns="false"
     local access_mode="ssm"
+    local iam_profile=""
     local extra_args=()
 
     while [[ $# -gt 0 ]]; do
@@ -1676,6 +1679,10 @@ aws_create() {
                 fi
                 shift 2
                 ;;
+            --iam-profile)
+                iam_profile="$2"
+                shift 2
+                ;;
             -*)
                 print_error "Unknown option: $1"
                 echo "Run 'remo aws --help' for usage."
@@ -1705,7 +1712,13 @@ aws_create() {
             exit 1
         fi
 
-        select_ssm_instance_profile "$resource_name" "${region:-us-west-2}"
+        if [ -n "$iam_profile" ]; then
+            print_info "Using provided IAM instance profile: $iam_profile"
+            SSM_INSTANCE_PROFILE="$iam_profile"
+            SSM_IAM_CREATED="false"
+        else
+            select_ssm_instance_profile "$resource_name" "${region:-us-west-2}"
+        fi
         extra_args+=(-e "aws_access_mode=ssm")
         extra_args+=(-e "aws_iam_instance_profile=$SSM_INSTANCE_PROFILE")
         extra_args+=(-e "aws_iam_created=$SSM_IAM_CREATED")
