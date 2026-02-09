@@ -328,7 +328,7 @@ handle_delete() {
     # Display deletion summary
     printf '\033[1m  Delete project: %s\033[0m\n' "$project_name"
     echo ""
-    if [ ${#warnings[@]} -gt 0 ]; then
+    if [ {{ '${#' }}warnings[@]} -gt 0 ]; then
         for w in "${warnings[@]}"; do
             printf '%b\n' "$w"
         done
