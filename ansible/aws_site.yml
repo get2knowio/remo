@@ -42,22 +42,65 @@
           ansible_ssh_extra_args: "{{ ansible_ssh_extra_args | default('NOT SET') }}"
           env_AWS_PROFILE: "{{ lookup('env', 'AWS_PROFILE') | default('NOT SET', true) }}"
 
-    - name: "DEBUG: Test SSM ProxyCommand directly"
+    - name: "DEBUG: Check SSM agent status via AWS API"
       delegate_to: localhost
       become: false
       ansible.builtin.shell: |
-        echo "=== Environment ==="
+        python3 << 'PYEOF'
+        import boto3, json, os
+        region = os.environ.get('AWS_DEFAULT_REGION', '{{ hostvars["localhost"]["aws_region"] | default("us-west-2") }}')
+        profile = os.environ.get('AWS_PROFILE') or None
+        session = boto3.Session(region_name=region, profile_name=profile)
+        ssm = session.client('ssm')
+        instance_id = '{{ ansible_host }}'
+
+        # Check if agent is registered and online
+        resp = ssm.describe_instance_information(
+            Filters=[{'Key': 'InstanceIds', 'Values': [instance_id]}]
+        )
+        info = resp.get('InstanceInformationList', [])
+        if info:
+            agent = info[0]
+            print(json.dumps({
+                'PingStatus': agent.get('PingStatus'),
+                'AgentVersion': agent.get('AgentVersion'),
+                'IsLatestVersion': agent.get('IsLatestVersion'),
+                'PlatformName': agent.get('PlatformName'),
+                'LastPingDateTime': str(agent.get('LastPingDateTime')),
+                'IPAddress': agent.get('IPAddress'),
+                'ResourceType': agent.get('ResourceType'),
+            }, indent=2))
+        else:
+            print('NO INSTANCE FOUND in SSM inventory!')
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: ssm_agent_status
+      changed_when: false
+      failed_when: false
+
+    - name: "DEBUG: Show SSM agent status"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg: "{{ ssm_agent_status.stdout | default('no stdout') }}\nSTDERR: {{ ssm_agent_status.stderr | default('none') }}"
+
+    - name: "DEBUG: Test SSM start-session directly"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.shell: |
         echo "AWS_PROFILE=$AWS_PROFILE"
-        echo "HOME=$HOME"
-        echo "PATH=$PATH"
-        echo ""
-        echo "=== Testing SSM start-session ==="
-        aws ssm start-session --region {{ hostvars['localhost']['aws_region'] | default('us-west-2') }} --target {{ ansible_host }} --document-name AWS-StartSSHSession --parameters "portNumber=22" &
+        echo "Testing aws ssm start-session..."
+        aws ssm start-session \
+          --region {{ hostvars['localhost']['aws_region'] | default('us-west-2') }} \
+          --target {{ ansible_host }} \
+          --document-name AWS-StartSSHSession \
+          --parameters "portNumber=22" &
         SSM_PID=$!
         sleep 5
         kill $SSM_PID 2>/dev/null || true
         wait $SSM_PID 2>/dev/null || true
-        echo "=== SSM test exit code: $? ==="
+        echo "SSM exit code: $?"
       args:
         executable: /bin/bash
       register: ssm_debug_result
@@ -68,7 +111,36 @@
       delegate_to: localhost
       become: false
       ansible.builtin.debug:
-        msg: "{{ ssm_debug_result.stdout | default('no stdout') }}\n{{ ssm_debug_result.stderr | default('no stderr') }}"
+        msg: "STDOUT: {{ ssm_debug_result.stdout | default('none') }}\nSTDERR: {{ ssm_debug_result.stderr | default('none') }}"
+
+    - name: "DEBUG: Wait 30s then retry SSM (agent recovery test)"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.shell: |
+        echo "Waiting 30 seconds for potential agent recovery..."
+        sleep 30
+        echo "Retrying SSM start-session..."
+        aws ssm start-session \
+          --region {{ hostvars['localhost']['aws_region'] | default('us-west-2') }} \
+          --target {{ ansible_host }} \
+          --document-name AWS-StartSSHSession \
+          --parameters "portNumber=22" &
+        SSM_PID=$!
+        sleep 5
+        kill $SSM_PID 2>/dev/null || true
+        wait $SSM_PID 2>/dev/null || true
+        echo "SSM exit code after 30s wait: $?"
+      args:
+        executable: /bin/bash
+      register: ssm_retry_result
+      changed_when: false
+      failed_when: false
+
+    - name: "DEBUG: Show SSM retry result"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg: "STDOUT: {{ ssm_retry_result.stdout | default('none') }}\nSTDERR: {{ ssm_retry_result.stderr | default('none') }}"
     # --- END TEMPORARY DEBUG ---
 
     - name: Wait for SSH connection to stabilize
