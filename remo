@@ -54,6 +54,22 @@ print_warning() {
     echo -e "${YELLOW}$1${NC}"
 }
 
+get_current_version() {
+    # Prefer git tag (accurate after self-update checks out a tag)
+    local git_version
+    git_version=$(git -C "$SCRIPT_DIR" describe --tags --exact-match 2>/dev/null)
+    if [ -n "$git_version" ]; then
+        echo "${git_version#v}"
+        return
+    fi
+    # Fall back to VERSION file
+    if [ -f "$SCRIPT_DIR/VERSION" ]; then
+        cat "$SCRIPT_DIR/VERSION"
+        return
+    fi
+    echo "unknown"
+}
+
 load_env() {
     if [ -f "$ENV_FILE" ]; then
         while IFS='=' read -r key value; do
@@ -917,16 +933,18 @@ EOF
 
 get_latest_release() {
     local include_prerelease="$1"
-    local releases
+    local result=""
 
+    # Primary: GitHub Releases API with semver parsing
+    local releases
     releases=$(curl -fsSL "https://api.github.com/repos/get2knowio/remo/releases?per_page=20" 2>/dev/null)
 
-    echo "$releases" | python3 -c "
+    if [ -n "$releases" ]; then
+        result=$(echo "$releases" | python3 -c "
 import sys, json, re
 releases = json.load(sys.stdin)
 
 def version_key(tag):
-    \"\"\"Parse version tag into sortable tuple.\"\"\"
     m = re.match(r'v?(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?', tag)
     if not m:
         return (0, 0, 0, 0)
@@ -947,7 +965,27 @@ for r in releases:
         best = tag
 if best:
     print(best)
-" 2>/dev/null || echo ""
+" 2>/dev/null)
+    fi
+
+    # Fallback: git tags (in case API is unavailable or parsing fails)
+    if [ -z "$result" ]; then
+        git -C "$SCRIPT_DIR" fetch --tags origin 2>/dev/null || true
+        result=$(git -C "$SCRIPT_DIR" tag -l 'v[0-9]*' 2>/dev/null | python3 -c "
+import sys, re
+def vkey(t):
+    m = re.match(r'v?(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?\s*$', t)
+    return (int(m.group(1)),int(m.group(2)),int(m.group(3)),int(m.group(4) or 0)) if m else (0,0,0,0)
+include_pre = '$include_prerelease' == 'true'
+tags = [t.strip() for t in sys.stdin if t.strip()]
+if not include_pre:
+    tags = [t for t in tags if '-rc' not in t and '-beta' not in t and '-alpha' not in t]
+if tags:
+    print(max(tags, key=vkey))
+" 2>/dev/null)
+    fi
+
+    echo "$result"
 }
 
 handle_self_update() {
@@ -991,10 +1029,8 @@ handle_self_update() {
     done
 
     # Get current version
-    local current_version=""
-    if [ -f "$SCRIPT_DIR/VERSION" ]; then
-        current_version=$(cat "$SCRIPT_DIR/VERSION")
-    fi
+    local current_version
+    current_version=$(get_current_version)
 
     print_info "Current version: ${current_version:-unknown}"
 
@@ -2489,11 +2525,7 @@ main() {
             show_main_help
             ;;
         --version|-v)
-            if [ -f "$SCRIPT_DIR/VERSION" ]; then
-                echo "remo $(cat "$SCRIPT_DIR/VERSION")"
-            else
-                echo "remo (version unknown)"
-            fi
+            echo "remo $(get_current_version)"
             ;;
         *)
             print_error "Unknown command: $provider"
