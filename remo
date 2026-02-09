@@ -254,20 +254,20 @@ handle_init() {
 
     # Step 2: Install Python packages
     # Use uv if available (faster), otherwise use pip
-    print_info "Installing Python packages (ansible, hcloud, boto3)..."
+    print_info "Installing Python packages (ansible-core, hcloud, boto3)..."
     if command -v uv &> /dev/null; then
-        uv pip install --quiet --python "$python" ansible hcloud boto3 botocore
+        uv pip install --quiet --python "$python" "ansible-core>=2.18.0,<2.19.0" hcloud boto3 botocore
     else
         # Ensure pip is available
         "$python" -m ensurepip --quiet 2>/dev/null || true
         "$python" -m pip install --quiet --upgrade pip
-        "$python" -m pip install --quiet ansible hcloud boto3 botocore
+        "$python" -m pip install --quiet "ansible-core>=2.18.0,<2.19.0" hcloud boto3 botocore
     fi
-    print_success "✓ Installed ansible, hcloud, and boto3"
+    print_success "✓ Installed ansible-core, hcloud, and boto3"
 
     # Step 3: Install Ansible collections
     print_info "Installing Ansible collections..."
-    "$ansible_galaxy" collection install -r "$ANSIBLE_DIR/requirements.yml" > /dev/null
+    "$ansible_galaxy" collection install --upgrade -r "$ANSIBLE_DIR/requirements.yml" > /dev/null
     print_success "✓ Installed Ansible collections"
 
     # Step 4: Create .env file
