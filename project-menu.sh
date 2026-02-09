@@ -134,6 +134,11 @@ launch_session() {
     # If it has a devcontainer, the shell inside will handle starting it
     cd "$project_dir"
     zellij attach --create "$project_name"
+
+    # Reset terminal state after zellij detach — zellij can leave the tty in
+    # raw mode and bracketed paste enabled, breaking arrow keys and paste
+    stty sane 2>/dev/null
+    printf '\e[?2004l'
 }
 
 # Main menu loop

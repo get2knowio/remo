@@ -373,6 +373,11 @@ launch_session() {
         # Retry creating a fresh session
         zellij attach --create "$project_name"
     fi
+
+    # Reset terminal state after zellij detach — zellij can leave the tty in
+    # raw mode and bracketed paste enabled, breaking arrow keys and paste
+    stty sane 2>/dev/null
+    printf '\e[?2004l'
 }
 
 # Main menu loop
