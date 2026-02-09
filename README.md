@@ -27,9 +27,9 @@ remo self-update
 | **Type** | Cloud VM | Cloud VM | Local container |
 | **Location** | EU/US datacenters | Global regions | Your hardware |
 | **Cost** | ~€4/month | ~$30/month | Your electricity |
-| **Storage** | Block volume | Block volume | Host mounts |
+| **Storage** | Block volume | Root volume (SSM) / EBS (direct) | Host mounts |
 | **Access** | DuckDNS domain | SSM (default) / Elastic IP | LAN hostname |
-| **Best for** | EU, budget hosting | US, enterprise, elastic storage | Local dev, homelab |
+| **Best for** | EU, budget hosting | US, enterprise, spot instances | Local dev, homelab |
 
 All platforms give you the same dev workflow and tooling described below.
 
@@ -102,13 +102,15 @@ remo hetzner sync                   # Discover existing VMs
 remo hetzner update                 # Update dev tools
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
-# AWS
-remo aws create [--spot]            # Provision EC2 (SSM by default)
+# AWS (SSM access by default — no inbound ports)
+remo aws create                     # Provision EC2 via SSM
+remo aws create --spot              # Use spot instance (~70% savings)
+remo aws create --access direct     # Use direct SSH instead of SSM
 remo aws list                       # List registered instances
 remo aws sync                       # Discover existing instances
 remo aws update                     # Update dev tools
-remo aws destroy [--yes]            # Tear down (keeps EBS if created)
-remo aws update-ip                  # Update security group with current IP
+remo aws destroy [--yes]            # Tear down (keeps storage)
+remo aws update-ip                  # Update security group IP (direct only)
 remo aws info                       # Show instance info
 
 # Incus Containers
@@ -164,6 +166,33 @@ See troubleshooting sections in:
 - [Hetzner troubleshooting](docs/hetzner.md#troubleshooting)
 - [AWS troubleshooting](docs/aws.md#troubleshooting)
 - [Incus troubleshooting](docs/incus.md#troubleshooting)
+
+---
+
+## Uninstalling
+
+To fully remove remo from your machine:
+
+```bash
+# 1. Remove the remo installation (cloned repo + venv)
+rm -rf ~/.remo
+
+# 2. Remove the symlink
+rm -f ~/.local/bin/remo
+
+# 3. Remove remo config and state (known_hosts registry)
+rm -rf ~/.config/remo
+```
+
+| Path | Contents |
+|------|----------|
+| `~/.remo/` | Cloned repo, Python venv (`.venv/`), Ansible collections, `.env` credentials |
+| `~/.local/bin/remo` | Symlink to `~/.remo/remo` |
+| `~/.config/remo/` | Runtime state: `known_hosts` (environment registry) |
+
+These paths can be customized during install via `REMO_INSTALL_DIR`, `REMO_BIN_DIR`, and `REMO_HOME` environment variables.
+
+**Note:** Uninstalling remo does not destroy any cloud resources (EC2 instances, Hetzner VMs, Incus containers). Run `remo <platform> destroy` first if you want to tear those down.
 
 ---
 
