@@ -65,7 +65,8 @@ show_menu() {
     project_count=$(echo "$options" | grep -c -v '^\[' || true)
 
     echo "$options" | fzf --reverse --no-info \
-        --header="Select a project (1-9, up/down, Enter | c=clone, x=exit):" \
+        --expect=d \
+        --header="Select a project (1-9, up/down, Enter | c=clone, d=delete, x=exit):" \
         --pointer=">" \
         --prompt="" \
         --color="header:bold" \
@@ -116,6 +117,97 @@ handle_clone() {
     echo "$repo_name"
 }
 
+# Handle deleting a project
+handle_delete() {
+    local project_name="$1"
+    local project_dir="$PROJECTS_DIR/$project_name"
+    local warnings=()
+
+    echo ""
+
+    if [ ! -d "$project_dir" ]; then
+        echo "  Not a project directory, skipping."
+        sleep 1
+        return 1
+    fi
+
+    # Check for uncommitted changes
+    if [ -d "$project_dir/.git" ]; then
+        local uncommitted
+        uncommitted=$(git -C "$project_dir" status --porcelain 2>/dev/null)
+        if [ -n "$uncommitted" ]; then
+            local change_count
+            change_count=$(echo "$uncommitted" | wc -l | tr -d ' ')
+            warnings+=("$(printf '\033[33m  ⚠ %s uncommitted change(s)\033[0m' "$change_count")")
+        fi
+
+        # Check for unpushed commits
+        local ahead
+        ahead=$(git -C "$project_dir" rev-list --count @{upstream}..HEAD 2>/dev/null || echo "0")
+        if [ "$ahead" -gt 0 ]; then
+            warnings+=("$(printf '\033[33m  ⚠ %s unpushed commit(s)\033[0m' "$ahead")")
+        fi
+    fi
+
+    # Check for active zellij session
+    local has_session=false
+    if zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -v 'EXITED' | grep -q "^${project_name}\b"; then
+        has_session=true
+        warnings+=("$(printf '\033[32m  ⚡ Active zellij session (will be killed)\033[0m')")
+    fi
+
+    # Check for running devcontainer
+    local container_id=""
+    if command -v docker &>/dev/null; then
+        container_id=$(docker ps -q --filter "label=devcontainer.local_folder=$project_dir" 2>/dev/null)
+    fi
+    if [ -n "$container_id" ]; then
+        warnings+=("$(printf '\033[36m  🐳 Running devcontainer (will be stopped and removed)\033[0m')")
+    fi
+
+    # Display deletion summary
+    printf '\033[1m  Delete project: %s\033[0m\n' "$project_name"
+    echo ""
+    if [ ${#warnings[@]} -gt 0 ]; then
+        for w in "${warnings[@]}"; do
+            printf '%b\n' "$w"
+        done
+        echo ""
+    fi
+    printf '  This will permanently delete %s\n' "$project_dir"
+    echo ""
+    printf '  Type "delete" to confirm: '
+    read -r confirm
+
+    if [ "$confirm" != "delete" ]; then
+        echo "  Cancelled."
+        sleep 1
+        return 1
+    fi
+
+    echo ""
+
+    # Stop and remove devcontainer if running
+    if [ -n "$container_id" ]; then
+        echo "  Stopping devcontainer..."
+        docker rm -f "$container_id" &>/dev/null || true
+    fi
+
+    # Kill zellij session if active
+    if [ "$has_session" = true ]; then
+        echo "  Killing zellij session..."
+        zellij kill-session "$project_name" &>/dev/null || true
+        zellij delete-session "$project_name" &>/dev/null || true
+    fi
+
+    # Remove project directory
+    echo "  Removing $project_dir..."
+    rm -rf "$project_dir"
+
+    printf '\033[32m  ✓ Deleted %s\033[0m\n' "$project_name"
+    sleep 1
+}
+
 # Launch or attach to a zellij session for a project
 launch_session() {
     local project_name="$1"
@@ -156,13 +248,27 @@ main() {
     echo ""
 
     while true; do
-        local selection
-        selection=$(show_menu) || {
+        # show_menu outputs two lines due to --expect=d:
+        # line 1 = key pressed ("d" or empty for normal accept)
+        # line 2 = selected item
+        local fzf_output
+        fzf_output=$(show_menu) || {
             # User pressed Ctrl+C or Escape
             echo ""
             echo "Exiting to shell. Run 'project-menu' to return."
             break
         }
+        local key="${fzf_output%%$'\n'*}"
+        local selection="${fzf_output#*$'\n'}"
+
+        # Handle delete key
+        if [ "$key" = "d" ]; then
+            local project_name="${selection% - active}"
+            if [[ "$project_name" != \[* ]] && [ -n "$project_name" ]; then
+                handle_delete "$project_name"
+            fi
+            continue
+        fi
 
         case "$selection" in
             "[Clone new repo]")
