@@ -1006,6 +1006,50 @@ if tags:
     echo "$result"
 }
 
+# Passive update check with 24-hour cache (non-blocking)
+check_for_updates_passive() {
+    local current_version
+    current_version=$(get_current_version)
+
+    # Skip for dev/branch installs
+    [ "$current_version" = "unknown" ] && return 0
+
+    local cache_file="$REMO_HOME/latest_version_cache"
+    local cache_ttl=86400  # 24 hours
+
+    # If cache exists and is fresh, check for update hint
+    if [ -f "$cache_file" ]; then
+        local now file_mtime cache_age
+        now=$(date +%s)
+        # macOS stat -f %m, Linux stat -c %Y
+        file_mtime=$(stat -f %m "$cache_file" 2>/dev/null || stat -c %Y "$cache_file" 2>/dev/null || echo 0)
+        cache_age=$((now - file_mtime))
+
+        if [ "$cache_age" -lt "$cache_ttl" ]; then
+            # Cache is fresh — show hint if newer version available
+            local cached_version
+            cached_version=$(cat "$cache_file" 2>/dev/null)
+            cached_version="${cached_version#v}"
+            if [ -n "$cached_version" ] && [ "$cached_version" != "$current_version" ]; then
+                echo ""
+                print_info "Update available: v${current_version} → v${cached_version}. Run 'remo self-update' to upgrade."
+            fi
+            return 0
+        fi
+    fi
+
+    # Cache is stale or missing — refresh in background
+    (
+        local latest
+        latest=$(get_latest_release false)
+        if [ -n "$latest" ]; then
+            ensure_remo_dir
+            echo "$latest" > "$cache_file"
+        fi
+    ) &>/dev/null &
+    disown 2>/dev/null
+}
+
 handle_self_update() {
     local version=""
     local branch=""
@@ -1080,6 +1124,7 @@ handle_self_update() {
         print_success "  remo updated to branch: $branch"
         print_success "=============================================="
         echo ""
+        rm -f "$REMO_HOME/latest_version_cache"
         return 0
     fi
 
@@ -1140,6 +1185,45 @@ handle_self_update() {
     print_success "  remo updated to $target_version"
     print_success "=============================================="
     echo ""
+
+    # Clear version cache so passive check doesn't show stale hint
+    rm -f "$REMO_HOME/latest_version_cache"
+
+    # Offer to update all known remote hosts
+    local hosts
+    hosts=$(get_known_hosts)
+    if [ -n "$hosts" ]; then
+        echo "Known remote hosts:"
+        echo ""
+        while IFS=: read -r type name _rest; do
+            echo "  - ${type}:${name}"
+        done <<< "$hosts"
+        echo ""
+        printf "Update all remote hosts? [y/N] "
+        read -r confirm
+        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+            echo ""
+            while IFS=: read -r type name _rest; do
+                print_info "Updating ${type}:${name}..."
+                case "$type" in
+                    aws)
+                        aws_update --name "$name" || print_error "Failed to update ${type}:${name}"
+                        ;;
+                    hetzner)
+                        hetzner_update --name "$name" || print_error "Failed to update ${type}:${name}"
+                        ;;
+                    incus)
+                        incus_update "$name" || print_error "Failed to update ${type}:${name}"
+                        ;;
+                    *)
+                        print_warning "Unknown host type: $type (skipping ${name})"
+                        ;;
+                esac
+                echo ""
+            done <<< "$hosts"
+            print_success "Remote host updates complete."
+        fi
+    fi
 }
 
 # =============================================================================
@@ -2910,6 +2994,12 @@ main() {
             echo "Run 'remo --help' for available commands."
             exit 1
             ;;
+    esac
+
+    # Passive update hint (skip for commands where it's noise)
+    case "$provider" in
+        self-update|--version|-v|--help|-h|"") ;;
+        *) check_for_updates_passive ;;
     esac
 }
 

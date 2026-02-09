@@ -10,67 +10,6 @@ REMO_VERSION="{{ remo_version }}"
 {% else %}
 REMO_VERSION=""
 {% endif %}
-UPDATE_CACHE_FILE="$HOME/.cache/remo/latest-version"
-UPDATE_CACHE_MAX_AGE=86400  # 24 hours in seconds
-
-# Refresh version cache in background (non-blocking)
-refresh_version_cache() {
-    local latest
-    latest=$(curl -fsSL --max-time 5 \
-        "https://api.github.com/repos/get2knowio/remo/releases?per_page=10" 2>/dev/null | \
-        python3 -c "
-import sys, json
-try:
-    releases = json.load(sys.stdin)
-    for r in releases:
-        if not r.get('prerelease') and not r.get('draft'):
-            tag = r.get('tag_name', '')
-            if '-rc' not in tag and '-beta' not in tag and '-alpha' not in tag:
-                print(tag.lstrip('v'))
-                break
-except: pass
-" 2>/dev/null)
-
-    [ -n "$latest" ] && echo "$latest" > "$UPDATE_CACHE_FILE"
-}
-
-# Get latest remo version from GitHub (cached)
-get_cached_latest_version() {
-    local cache_dir="$HOME/.cache/remo"
-    mkdir -p "$cache_dir"
-
-    # Check if cache exists and is fresh
-    if [ -f "$UPDATE_CACHE_FILE" ]; then
-        local cache_age=$(($(date +%s) - $(stat -c %Y "$UPDATE_CACHE_FILE" 2>/dev/null || echo 0)))
-        if [ "$cache_age" -lt "$UPDATE_CACHE_MAX_AGE" ]; then
-            cat "$UPDATE_CACHE_FILE"
-            return
-        fi
-    fi
-
-    # Cache is stale or missing - trigger background refresh
-    refresh_version_cache &
-
-    # Return cached value if exists (even if stale), otherwise empty
-    [ -f "$UPDATE_CACHE_FILE" ] && cat "$UPDATE_CACHE_FILE"
-}
-
-# Get version display string with optional update indicator
-get_version_display() {
-    local current="${REMO_VERSION:-}"
-
-    # If no version configured, return empty
-    [ -z "$current" ] && return
-
-    local latest
-    latest=$(get_cached_latest_version)
-
-    if [ -n "$latest" ] && [ "$latest" != "$current" ]; then
-        echo "v${current} → v${latest}"
-    else
-        echo "v${current}"
-    fi
-}
 
 # Get list of active zellij sessions (excludes EXITED sessions)
 get_active_sessions() {
@@ -237,10 +176,8 @@ show_menu() {
     project_count=$(echo "$options" | grep -cEv '^\[|^$|Legend:' || true)
     
     # Build header with banner and version display
-    local version_display
-    version_display=$(get_version_display)
-    if [ -n "$version_display" ]; then
-        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server %s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, d=delete, x=exit):' "$(get_banner)" "$version_display")
+    if [ -n "$REMO_VERSION" ]; then
+        header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server v%s ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, d=delete, x=exit):' "$(get_banner)" "$REMO_VERSION")
     else
         header=$(printf '\033[36m%s\033[0m\n\n  \033[90m[ Remote Coding Server ]\033[0m\n\nSelect a project (1-9, ↑↓, Enter | c=clone, d=delete, x=exit):' "$(get_banner)")
     fi
