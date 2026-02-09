@@ -22,7 +22,7 @@
   ansible.builtin.include_role:
     name: user_setup
   vars:
-    remo_version: "{{ lookup('file', playbook_dir + '/../VERSION', errors='ignore') | default('', true) | trim }}"
+    remo_version: "{{ lookup('pipe', 'git -C ' + playbook_dir + '/.. describe --tags --exact-match 2>/dev/null || echo \"\"') | regex_replace('^v', '') }}"
   when: configure_user_setup | default(true) | bool
 
 - name: Install Node.js

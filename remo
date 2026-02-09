@@ -55,16 +55,10 @@ print_warning() {
 }
 
 get_current_version() {
-    # Prefer git tag (accurate after self-update checks out a tag)
     local git_version
     git_version=$(git -C "$SCRIPT_DIR" describe --tags --exact-match 2>/dev/null)
     if [ -n "$git_version" ]; then
         echo "${git_version#v}"
-        return
-    fi
-    # Fall back to VERSION file
-    if [ -f "$SCRIPT_DIR/VERSION" ]; then
-        cat "$SCRIPT_DIR/VERSION"
         return
     fi
     echo "unknown"

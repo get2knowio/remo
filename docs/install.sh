@@ -230,11 +230,8 @@ install_remo() {
     echo ""
 
     local version
-    if [ -f "$INSTALL_DIR/VERSION" ]; then
-        version=$(cat "$INSTALL_DIR/VERSION")
-    else
-        version="$ref_value"
-    fi
+    version=$(git -C "$INSTALL_DIR" describe --tags --exact-match 2>/dev/null || echo "$ref_value")
+    version="${version#v}"
     echo "  Version:  $version"
     echo "  Location: $INSTALL_DIR"
     echo "  Binary:   $BIN_DIR/remo"

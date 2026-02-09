@@ -27,20 +27,12 @@ Releases are automated via GitHub Actions. When you push a tag, a release is cre
 For testing new features before stable release:
 
 ```bash
-# 1. Update VERSION file
-echo "0.3.0-rc.1" > VERSION
-
-# 2. Commit the version bump
-git add VERSION
-git commit -m "chore: bump version to 0.3.0-rc.1"
-
-# 3. Create and push tag
+# Create and push tag
 git tag v0.3.0-rc.1
 git push origin main v0.3.0-rc.1
 ```
 
 The release workflow will:
-- Validate VERSION matches the tag
 - Detect it's a pre-release (from `-rc` suffix)
 - Create a GitHub pre-release with auto-generated notes
 
@@ -54,14 +46,7 @@ curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-relea
 When ready to promote to stable:
 
 ```bash
-# 1. Update VERSION file (remove -rc suffix)
-echo "0.3.0" > VERSION
-
-# 2. Commit
-git add VERSION
-git commit -m "chore: release v0.3.0"
-
-# 3. Create and push tag
+# Create and push tag
 git tag v0.3.0
 git push origin main v0.3.0
 ```

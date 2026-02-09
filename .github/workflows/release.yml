@@ -21,18 +21,6 @@ jobs:
         id: tag
         run: echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
-      - name: Validate VERSION matches tag
-        run: |
-          VERSION_FILE=$(cat VERSION | tr -d '[:space:]')
-          TAG_VERSION="${{ steps.tag.outputs.tag }}"
-          TAG_VERSION="${TAG_VERSION#v}"  # Remove 'v' prefix
-
-          if [ "$VERSION_FILE" != "$TAG_VERSION" ]; then
-            echo "::error::VERSION file ($VERSION_FILE) does not match tag ($TAG_VERSION)"
-            exit 1
-          fi
-          echo "VERSION file matches tag: $VERSION_FILE"
-
       - name: Check if pre-release
         id: prerelease
         run: |
