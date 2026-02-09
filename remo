@@ -429,7 +429,7 @@ ensure_remo_dir() {
 }
 
 # Save a host entry
-# Format: TYPE:NAME:HOST:USER
+# Format: TYPE:NAME:HOST:USER[:INSTANCE_ID:ACCESS_MODE[:REGION]]
 save_known_host() {
     local type="$1"   # aws, hetzner, incus
     local name="$2"   # instance/container name
@@ -437,6 +437,7 @@ save_known_host() {
     local user="$4"   # SSH user (usually remo)
     local instance_id="${5:-}"   # optional: cloud instance ID (e.g., i-abc123)
     local access_mode="${6:-}"   # optional: access mode (direct, ssm)
+    local region="${7:-}"        # optional: AWS region (e.g., us-west-2)
 
     ensure_remo_dir
     touch "$KNOWN_HOSTS_FILE"
@@ -445,6 +446,9 @@ save_known_host() {
     # Append optional fields only when provided
     if [ -n "$instance_id" ] || [ -n "$access_mode" ]; then
         entry="${entry}:${instance_id:-}:${access_mode:-direct}"
+        if [ -n "$region" ]; then
+            entry="${entry}:${region}"
+        fi
     fi
 
     # Remove existing entry for this type:name, then add new one
@@ -462,6 +466,26 @@ remove_known_host() {
 
     grep -v "^${type}:${name}:" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
     mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
+}
+
+# Get the AWS region for a named instance
+# Reads from known_hosts 7th field, falls back to env vars, then us-west-2
+get_aws_region() {
+    local name="$1"
+    local entry region_field
+
+    if [ -f "$KNOWN_HOSTS_FILE" ]; then
+        entry=$(grep "^aws:${name}:" "$KNOWN_HOSTS_FILE" 2>/dev/null | head -1) || true
+        if [ -n "$entry" ]; then
+            region_field=$(echo "$entry" | cut -d: -f7)
+            if [ -n "$region_field" ]; then
+                echo "$region_field"
+                return
+            fi
+        fi
+    fi
+
+    echo "${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}"
 }
 
 # Clear all entries for a given type
@@ -1841,8 +1865,11 @@ EOF
     instance_ip=$(echo "$instance_info_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ip',''))" 2>/dev/null || true)
     instance_id=$(echo "$instance_info_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('instance_id',''))" 2>/dev/null || true)
 
+    # Compute effective region to store (what was actually used)
+    local effective_region="${region:-${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}}"
+
     if [ -n "$instance_ip" ] || [ -n "$instance_id" ]; then
-        save_known_host "aws" "$resource_name" "${instance_ip:-$instance_id}" "remo" "$instance_id" "$access_mode"
+        save_known_host "aws" "$resource_name" "${instance_ip:-$instance_id}" "remo" "$instance_id" "$access_mode" "$effective_region"
     else
         print_warning "Could not detect instance IP. Run 'remo aws info' to register the host."
     fi
@@ -1887,10 +1914,13 @@ aws_destroy() {
     print_info "Destroying AWS EC2 instance..."
 
     local resource_name="${name:-$USER}"
+    local region
+    region=$(get_aws_region "$resource_name")
 
     [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
     extra_args+=(-e "auto_confirm=$auto_confirm")
     extra_args+=(-e "remove_storage=$remove_storage")
+    extra_args+=(-e "aws_region=$region")
 
     run_playbook aws_teardown.yml "${extra_args[@]}"
 
@@ -1926,17 +1956,21 @@ aws_update_ip() {
     local entry
     entry=$(get_known_hosts "aws" | grep "^aws:${resource_name}:" || true)
     if [ -n "$entry" ]; then
-        local _t _n _h _u _iid access_mode
-        IFS=: read -r _t _n _h _u _iid access_mode <<< "$entry"
+        local _t _n _h _u _iid access_mode _region
+        IFS=: read -r _t _n _h _u _iid access_mode _region <<< "$entry"
         if [ "${access_mode:-}" = "ssm" ]; then
             print_info "SSM mode — update-ip is not needed (no inbound ports are open)."
             return 0
         fi
     fi
 
+    local region
+    region=$(get_aws_region "$resource_name")
+
     print_info "Updating AWS security group with current IP..."
 
     [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")
+    extra_args+=(-e "aws_region=$region")
 
     run_playbook aws_update_ip.yml "${extra_args[@]}"
 }
@@ -1964,6 +1998,8 @@ aws_info() {
 
     # Use Python with boto3 to get instance info
     local resource_name="${name:-$USER}"
+    local region
+    region=$(get_aws_region "$resource_name")
 
     python3 << EOF
 import os
@@ -1975,7 +2011,7 @@ except ImportError:
     print("Error: boto3 is not installed. Run 'remo init' first.", file=sys.stderr)
     sys.exit(1)
 
-region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+region = '${region}'
 profile = os.environ.get('AWS_PROFILE') or None
 
 # Use boto3's default credential chain (supports SSO, env vars, IAM roles, etc.)
@@ -2049,7 +2085,7 @@ try:
     import boto3
 except ImportError:
     sys.exit(0)
-region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+region = '${region}'
 profile = os.environ.get('AWS_PROFILE') or None
 session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
@@ -2076,7 +2112,7 @@ EOF
             r_iid=$(echo "$reg_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('instance_id',''))" 2>/dev/null || true)
             r_am=$(echo "$reg_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_mode','direct'))" 2>/dev/null || true)
             if [ -n "$r_ip" ] || [ -n "$r_iid" ]; then
-                save_known_host "aws" "$resource_name" "${r_ip:-$r_iid}" "remo" "$r_iid" "$r_am"
+                save_known_host "aws" "$resource_name" "${r_ip:-$r_iid}" "remo" "$r_iid" "$r_am" "$region"
             fi
         fi
     fi
@@ -2109,6 +2145,8 @@ aws_stop() {
     done
 
     local resource_name="${name:-$USER}"
+    local region
+    region=$(get_aws_region "$resource_name")
 
     # Get instance state
     local state_json
@@ -2120,7 +2158,7 @@ except ImportError:
     print(json.dumps({"error": "boto3 not installed. Run 'remo init' first."}))
     sys.exit(0)
 
-region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+region = '${region}'
 profile = os.environ.get('AWS_PROFILE') or None
 session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
@@ -2191,7 +2229,7 @@ except ImportError:
     print("Error: boto3 not installed.", file=sys.stderr)
     sys.exit(1)
 
-region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+region = '${region}'
 profile = os.environ.get('AWS_PROFILE') or None
 session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
@@ -2233,6 +2271,8 @@ aws_start() {
     done
 
     local resource_name="${name:-$USER}"
+    local region
+    region=$(get_aws_region "$resource_name")
 
     # Get instance state and access mode
     local state_json
@@ -2244,7 +2284,7 @@ except ImportError:
     print(json.dumps({"error": "boto3 not installed. Run 'remo init' first."}))
     sys.exit(0)
 
-region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+region = '${region}'
 profile = os.environ.get('AWS_PROFILE') or None
 session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
@@ -2308,7 +2348,7 @@ except ImportError:
     print(json.dumps({"error": "boto3 not installed"}))
     sys.exit(1)
 
-region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+region = '${region}'
 profile = os.environ.get('AWS_PROFILE') or None
 session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
@@ -2354,7 +2394,7 @@ EOF
     local new_ip
     new_ip=$(echo "$start_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ip',''))" 2>/dev/null || true)
 
-    save_known_host "aws" "$resource_name" "${new_ip:-$instance_id}" "remo" "$instance_id" "$access_mode"
+    save_known_host "aws" "$resource_name" "${new_ip:-$instance_id}" "remo" "$instance_id" "$access_mode" "$region"
 
     if [ "$access_mode" = "direct" ] && [ -n "$new_ip" ]; then
         print_info "New public IP: $new_ip"
@@ -2396,6 +2436,8 @@ aws_update() {
 
     # Get instance IP and access mode using boto3
     local resource_name="${name:-$USER}"
+    local region
+    region=$(get_aws_region "$resource_name")
     local update_info
     update_info=$(python3 << EOF
 import os
@@ -2407,7 +2449,7 @@ try:
 except ImportError:
     sys.exit(1)
 
-region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+region = '${region}'
 profile = os.environ.get('AWS_PROFILE') or None
 
 session = boto3.Session(region_name=region, profile_name=profile)
@@ -2454,7 +2496,7 @@ EOF
     fi
 
     # Update known_hosts with current info
-    save_known_host "aws" "$resource_name" "${instance_ip:-$instance_id}" "remo" "$instance_id" "$access_mode"
+    save_known_host "aws" "$resource_name" "${instance_ip:-$instance_id}" "remo" "$instance_id" "$access_mode" "$region"
 
     build_tool_args only skip
     extra_args+=("${TOOL_EXTRA_ARGS[@]}")
@@ -2477,7 +2519,7 @@ aws_list() {
     printf "%-20s %-20s %-8s %s\n" "NAME" "HOST" "ACCESS" "CONNECT"
     printf "%-20s %-20s %-8s %s\n" "----" "----" "------" "-------"
 
-    while IFS=: read -r type name host user instance_id access_mode; do
+    while IFS=: read -r type name host user instance_id access_mode region; do
         [ "$type" != "aws" ] && continue
         local mode="${access_mode:-direct}"
         local connect_cmd
@@ -2573,7 +2615,7 @@ EOF
         s_instance_id=$(echo "$line" | cut -d'|' -f3)
         s_access_mode=$(echo "$line" | cut -d'|' -f4)
         [ -z "$s_name" ] || [ -z "$s_ip" ] && continue
-        save_known_host "aws" "$s_name" "$s_ip" "remo" "$s_instance_id" "$s_access_mode"
+        save_known_host "aws" "$s_name" "$s_ip" "remo" "$s_instance_id" "$s_access_mode" "$region"
         local mode_label=""
         [ "${s_access_mode:-direct}" = "ssm" ] && mode_label=" (SSM)"
         print_success "  Registered: $s_name -> ${s_ip}${mode_label}"
@@ -2693,7 +2735,7 @@ shell_connect() {
 
         # Build picker options
         local options=""
-        while IFS=: read -r type name host user instance_id access_mode; do
+        while IFS=: read -r type name host user instance_id access_mode region; do
             local display_name="$name"
             # For incus, show container name without host prefix
             if [ "$type" = "incus" ]; then
@@ -2723,9 +2765,9 @@ shell_connect() {
         # Extract the last parenthesized value (SSH host)
         choice_host=$(echo "$choice" | grep -oE '\([^)]+\)$' | tr -d '()')
 
-        while IFS=: read -r type name host user _inst_id _acc_mode; do
+        while IFS=: read -r type name host user _inst_id _acc_mode _region; do
             if [ "$type" = "$choice_type" ] && [ "$host" = "$choice_host" ]; then
-                selected="${type}:${name}:${host}:${user}:${_inst_id:-}:${_acc_mode:-}"
+                selected="${type}:${name}:${host}:${user}:${_inst_id:-}:${_acc_mode:-}:${_region:-}"
                 break
             fi
         done <<< "$hosts"
@@ -2736,20 +2778,22 @@ shell_connect() {
         exit 1
     fi
 
-    # Parse selected environment (supports both 4-field and 6-field formats)
-    local type name host user instance_id access_mode
-    IFS=: read -r type name host user instance_id access_mode <<< "$selected"
+    # Parse selected environment (supports 4-field, 6-field, and 7-field formats)
+    local type name host user instance_id access_mode region
+    IFS=: read -r type name host user instance_id access_mode region <<< "$selected"
 
     # Auto-start stopped AWS instances
     if [ "$type" = "aws" ] && [ -n "${instance_id:-}" ]; then
         local inst_state
+        local _effective_region
+        _effective_region=$(get_aws_region "$name")
         inst_state=$(python3 << EOF
 import os, sys, json
 try:
     import boto3
 except ImportError:
     sys.exit(0)
-region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+region = '${_effective_region}'
 profile = os.environ.get('AWS_PROFILE') or None
 session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
@@ -2767,7 +2811,7 @@ EOF
             local updated_entry
             updated_entry=$(get_known_hosts "aws" | grep "^aws:${name}:" || true)
             if [ -n "$updated_entry" ]; then
-                IFS=: read -r type name host user instance_id access_mode <<< "$updated_entry"
+                IFS=: read -r type name host user instance_id access_mode region <<< "$updated_entry"
             fi
         elif [ "${inst_state:-}" = "stopping" ]; then
             print_error "Instance $instance_id is currently stopping. Please wait and try again."
@@ -2788,7 +2832,8 @@ EOF
         fi
         print_info "Connecting to $type: $name via SSM (${instance_id})..."
         local _profile="${AWS_PROFILE:-}"
-        local _region="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}"
+        local _region
+        _region=$(get_aws_region "$name")
         local _env_prefix=""
         if [ -n "$_profile" ]; then
             _env_prefix="env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY= AWS_PROFILE=${_profile} "
