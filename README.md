@@ -109,6 +109,8 @@ remo aws create --access direct     # Use direct SSH instead of SSM
 remo aws list                       # List registered instances
 remo aws sync                       # Discover existing instances
 remo aws update                     # Update dev tools
+remo aws stop [--yes]               # Stop instance (pause billing)
+remo aws start                      # Start a stopped instance
 remo aws destroy [--yes]            # Tear down (keeps storage)
 remo aws update-ip                  # Update security group IP (direct only)
 remo aws info                       # Show instance info

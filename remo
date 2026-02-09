@@ -1391,6 +1391,8 @@ COMMANDS:
     create              Provision a new AWS EC2 instance
     update              Update dev tools on an existing instance
     destroy             Tear down an AWS EC2 instance
+    stop                Stop instance (pause billing, keep storage)
+    start               Start a stopped instance
     update-ip           Update security group with current IP
     info                Show instance information
     list                List registered AWS instances
@@ -1416,6 +1418,13 @@ UPDATE OPTIONS:
 DESTROY OPTIONS:
     --yes, -y           Skip confirmation prompt
     --remove-storage    Also remove the storage volume (DESTROYS DATA!)
+    --name <name>       Resource namespace (default: $USER)
+
+STOP OPTIONS:
+    --yes, -y           Skip confirmation prompt
+    --name <name>       Resource namespace (default: $USER)
+
+START OPTIONS:
     --name <name>       Resource namespace (default: $USER)
 
 UPDATE-IP OPTIONS:
@@ -1455,6 +1464,9 @@ EXAMPLES:
     remo aws sync
     remo aws update
     remo aws update --only zellij
+    remo aws stop
+    remo aws stop --yes
+    remo aws start
     remo aws destroy --yes
     remo aws destroy --yes --remove-storage
     remo aws update-ip
@@ -2070,6 +2082,286 @@ EOF
     fi
 }
 
+aws_stop() {
+    local auto_confirm="false"
+    local name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y)
+                auto_confirm="true"
+                shift
+                ;;
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo aws --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    local resource_name="${name:-$USER}"
+
+    # Get instance state
+    local state_json
+    state_json=$(python3 << EOF
+import os, sys, json
+try:
+    import boto3
+except ImportError:
+    print(json.dumps({"error": "boto3 not installed. Run 'remo init' first."}))
+    sys.exit(0)
+
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+
+response = ec2.describe_instances(
+    Filters=[
+        {'Name': 'tag:Name', 'Values': ['remo-${resource_name}']},
+        {'Name': 'tag:remo', 'Values': ['true']},
+        {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
+    ]
+)
+instances = []
+for r in response.get('Reservations', []):
+    instances.extend(r.get('Instances', []))
+
+if not instances:
+    print(json.dumps({"error": "No AWS instance found with name: remo-${resource_name}"}))
+    sys.exit(0)
+
+inst = instances[0]
+state = inst['State']['Name']
+iid = inst['InstanceId']
+print(json.dumps({"state": state, "instance_id": iid}))
+EOF
+)
+
+    # Check for errors
+    local err
+    err=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || true)
+    if [ -n "$err" ]; then
+        print_error "$err"
+        return 1
+    fi
+
+    local state instance_id
+    state=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])" 2>/dev/null)
+    instance_id=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['instance_id'])" 2>/dev/null)
+
+    if [ "$state" = "stopped" ]; then
+        print_info "Instance $instance_id is already stopped."
+        return 0
+    fi
+
+    if [ "$state" = "stopping" ] || [ "$state" = "pending" ]; then
+        print_error "Instance $instance_id is in '$state' state. Wait for it to finish transitioning."
+        return 1
+    fi
+
+    # Confirm unless --yes
+    if [ "$auto_confirm" != "true" ]; then
+        echo "This will stop instance $instance_id (remo-${resource_name})."
+        echo "Compute billing will stop but EBS storage charges continue."
+        echo ""
+        read -r -p "Stop this instance? [y/N] " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            return 0
+        fi
+    fi
+
+    print_info "Stopping instance $instance_id..."
+
+    python3 << EOF
+import os, sys
+try:
+    import boto3
+except ImportError:
+    print("Error: boto3 not installed.", file=sys.stderr)
+    sys.exit(1)
+
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+
+ec2.stop_instances(InstanceIds=['${instance_id}'])
+print("Waiting for instance to stop...")
+waiter = ec2.get_waiter('instance_stopped')
+waiter.wait(InstanceIds=['${instance_id}'])
+print("Instance stopped.")
+EOF
+
+    if [ $? -eq 0 ]; then
+        print_success "Instance $instance_id stopped successfully."
+    else
+        print_error "Failed to stop instance $instance_id."
+        return 1
+    fi
+}
+
+aws_start() {
+    local name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo aws --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    local resource_name="${name:-$USER}"
+
+    # Get instance state and access mode
+    local state_json
+    state_json=$(python3 << EOF
+import os, sys, json
+try:
+    import boto3
+except ImportError:
+    print(json.dumps({"error": "boto3 not installed. Run 'remo init' first."}))
+    sys.exit(0)
+
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+
+response = ec2.describe_instances(
+    Filters=[
+        {'Name': 'tag:Name', 'Values': ['remo-${resource_name}']},
+        {'Name': 'tag:remo', 'Values': ['true']},
+        {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
+    ]
+)
+instances = []
+for r in response.get('Reservations', []):
+    instances.extend(r.get('Instances', []))
+
+if not instances:
+    print(json.dumps({"error": "No AWS instance found with name: remo-${resource_name}"}))
+    sys.exit(0)
+
+inst = instances[0]
+state = inst['State']['Name']
+iid = inst['InstanceId']
+tags = {t['Key']: t['Value'] for t in inst.get('Tags', [])}
+access_mode = tags.get('remo_access_mode', 'direct')
+print(json.dumps({"state": state, "instance_id": iid, "access_mode": access_mode}))
+EOF
+)
+
+    # Check for errors
+    local err
+    err=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || true)
+    if [ -n "$err" ]; then
+        print_error "$err"
+        return 1
+    fi
+
+    local state instance_id access_mode
+    state=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])" 2>/dev/null)
+    instance_id=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['instance_id'])" 2>/dev/null)
+    access_mode=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_mode'])" 2>/dev/null)
+
+    if [ "$state" = "running" ]; then
+        print_info "Instance $instance_id is already running."
+        return 0
+    fi
+
+    if [ "$state" = "stopping" ] || [ "$state" = "pending" ]; then
+        print_error "Instance $instance_id is in '$state' state. Wait for it to finish transitioning."
+        return 1
+    fi
+
+    print_info "Starting instance $instance_id..."
+
+    # Start instance and get new IP
+    local start_json
+    start_json=$(python3 << EOF
+import os, sys, json, time
+try:
+    import boto3
+except ImportError:
+    print(json.dumps({"error": "boto3 not installed"}))
+    sys.exit(1)
+
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+
+ec2.start_instances(InstanceIds=['${instance_id}'])
+print("Waiting for instance to start...", file=sys.stderr)
+waiter = ec2.get_waiter('instance_running')
+waiter.wait(InstanceIds=['${instance_id}'])
+
+# For SSM mode, wait for SSM agent to come online
+access_mode = '${access_mode}'
+if access_mode == 'ssm':
+    print("Waiting for SSM agent...", file=sys.stderr)
+    ssm = session.client('ssm')
+    for i in range(30):
+        resp = ssm.describe_instance_information(
+            Filters=[{'Key': 'InstanceIds', 'Values': ['${instance_id}']}]
+        )
+        info_list = resp.get('InstanceInformationList', [])
+        if info_list and info_list[0].get('PingStatus') == 'Online':
+            print("SSM agent online.", file=sys.stderr)
+            break
+        time.sleep(2)
+    else:
+        print("WARNING: SSM agent did not come online within 60s. It may need more time.", file=sys.stderr)
+
+# Re-describe to get new public IP
+response = ec2.describe_instances(InstanceIds=['${instance_id}'])
+inst = response['Reservations'][0]['Instances'][0]
+ip = inst.get('PublicIpAddress', '')
+print(json.dumps({"ip": ip, "instance_id": "${instance_id}", "access_mode": access_mode}))
+EOF
+)
+
+    if [ $? -ne 0 ]; then
+        print_error "Failed to start instance $instance_id."
+        return 1
+    fi
+
+    print_success "Instance $instance_id started successfully."
+
+    # Update known_hosts with new IP
+    local new_ip
+    new_ip=$(echo "$start_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('ip',''))" 2>/dev/null || true)
+
+    save_known_host "aws" "$resource_name" "${new_ip:-$instance_id}" "remo" "$instance_id" "$access_mode"
+
+    if [ "$access_mode" = "direct" ] && [ -n "$new_ip" ]; then
+        print_info "New public IP: $new_ip"
+        print_warning "Run 'remo aws update-ip --name $resource_name' to update the security group."
+    fi
+}
+
 aws_update() {
     local name=""
     local only=()
@@ -2315,6 +2607,12 @@ handle_aws() {
         destroy)
             aws_destroy "$@"
             ;;
+        stop)
+            aws_stop "$@"
+            ;;
+        start)
+            aws_start "$@"
+            ;;
         update-ip)
             aws_update_ip "$@"
             ;;
@@ -2441,6 +2739,41 @@ shell_connect() {
     # Parse selected environment (supports both 4-field and 6-field formats)
     local type name host user instance_id access_mode
     IFS=: read -r type name host user instance_id access_mode <<< "$selected"
+
+    # Auto-start stopped AWS instances
+    if [ "$type" = "aws" ] && [ -n "${instance_id:-}" ]; then
+        local inst_state
+        inst_state=$(python3 << EOF
+import os, sys, json
+try:
+    import boto3
+except ImportError:
+    sys.exit(0)
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', 'us-west-2'))
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+response = ec2.describe_instances(InstanceIds=['${instance_id}'])
+for r in response.get('Reservations', []):
+    for inst in r.get('Instances', []):
+        print(inst['State']['Name'])
+        break
+EOF
+        )
+        if [ "${inst_state:-}" = "stopped" ]; then
+            print_warning "Instance $instance_id is stopped. Starting it..."
+            aws_start --name "$name"
+            # Re-read known_hosts for updated IP
+            local updated_entry
+            updated_entry=$(get_known_hosts "aws" | grep "^aws:${name}:" || true)
+            if [ -n "$updated_entry" ]; then
+                IFS=: read -r type name host user instance_id access_mode <<< "$updated_entry"
+            fi
+        elif [ "${inst_state:-}" = "stopping" ]; then
+            print_error "Instance $instance_id is currently stopping. Please wait and try again."
+            exit 1
+        fi
+    fi
 
     if [ "${access_mode:-}" = "ssm" ]; then
         if ! command -v session-manager-plugin &> /dev/null; then

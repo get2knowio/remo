@@ -81,6 +81,12 @@ remo aws info
 # Update security group with current IP (after IP change)
 remo aws update-ip
 
+# Stop instance (pause billing, keep storage)
+remo aws stop
+
+# Start a stopped instance
+remo aws start
+
 # Destroy instance (keeps EBS storage)
 remo aws destroy --yes
 
@@ -117,6 +123,19 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `--remove-storage` | Also delete the EBS volume (destroys all data) |
 | `--name <name>` | Resource namespace (default: `$USER`) |
 
+### Stop Options
+
+| Option | Description |
+|--------|-------------|
+| `--yes`, `-y` | Skip confirmation prompt |
+| `--name <name>` | Resource namespace (default: `$USER`) |
+
+### Start Options
+
+| Option | Description |
+|--------|-------------|
+| `--name <name>` | Resource namespace (default: `$USER`) |
+
 ## Features
 
 | Feature | Description |
@@ -124,6 +143,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **EBS Storage** | `/home/remo` on block volume, persists across instance termination (direct only) |
 | **Auto IP Detection** | SSH allowed only from your current public IP (direct only) |
 | **Elastic IP** | Stable public IP that survives instance stop/start (direct only) |
+| **Stop/Start** | Pause compute billing without destroying the instance; `remo shell` auto-starts stopped instances |
 | **Spot Instances** | Optional spot pricing for ~70% cost savings |
 | **Multi-user** | Resources namespaced by `--name` for shared AWS accounts |
 | **SSM Access** | Default zero-inbound-port access via AWS SSM Session Manager |
