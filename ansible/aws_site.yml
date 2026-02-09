@@ -24,13 +24,6 @@
   hosts: provisioned
   become: true
   gather_facts: false
-  environment:
-    # Mirror Play 1's credential handling: clear any stale access keys
-    # so the AWS CLI falls through to AWS_PROFILE for SSM ProxyCommand
-    AWS_PROFILE: "{{ hostvars['localhost']['aws_profile'] | default('') }}"
-    AWS_ACCESS_KEY_ID: ""
-    AWS_SECRET_ACCESS_KEY: ""
-    AWS_DEFAULT_REGION: "{{ hostvars['localhost']['aws_region'] | default('us-west-2') }}"
   vars:
     # Pass storage info from localhost to the provisioned host
     # EBS (block storage) - used for direct access

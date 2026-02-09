@@ -59,13 +59,6 @@
   hosts: aws_instance
   become: true
   gather_facts: false
-  environment:
-    # Clear any stale access keys so the AWS CLI falls through to AWS_PROFILE
-    # for SSM ProxyCommand authentication (access keys take precedence over profile)
-    AWS_PROFILE: "{{ hostvars['localhost']['aws_profile'] | default(lookup('env', 'AWS_PROFILE') | default('', true), true) }}"
-    AWS_ACCESS_KEY_ID: ""
-    AWS_SECRET_ACCESS_KEY: ""
-    AWS_DEFAULT_REGION: "{{ hostvars['localhost']['aws_region'] | default(lookup('env', 'AWS_REGION') | default('us-west-2', true), true) }}"
 
   pre_tasks:
     - name: Wait for SSH connection to stabilize
