@@ -85,62 +85,138 @@
       ansible.builtin.debug:
         msg: "{{ ssm_agent_status.stdout | default('no stdout') }}\nSTDERR: {{ ssm_agent_status.stderr | default('none') }}"
 
-    - name: "DEBUG: Test SSM start-session directly"
+    - name: "DEBUG: Get EC2 console output (instance-side activity)"
       delegate_to: localhost
       become: false
       ansible.builtin.shell: |
-        echo "AWS_PROFILE=$AWS_PROFILE"
-        echo "Testing aws ssm start-session..."
+        python3 << 'PYEOF'
+        import boto3, os
+        region = os.environ.get('AWS_DEFAULT_REGION', '{{ hostvars["localhost"]["aws_region"] | default("us-west-2") }}')
+        profile = os.environ.get('AWS_PROFILE') or None
+        session = boto3.Session(region_name=region, profile_name=profile)
+        ec2 = session.client('ec2')
+        resp = ec2.get_console_output(InstanceId='{{ ansible_host }}', Latest=True)
+        output = resp.get('Output', 'NO CONSOLE OUTPUT AVAILABLE')
+        # Print last 100 lines (most relevant)
+        lines = output.split('\n')
+        for line in lines[-100:]:
+            print(line)
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: console_output
+      changed_when: false
+      failed_when: false
+
+    - name: "DEBUG: Show console output (last 100 lines)"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg: "{{ console_output.stdout | default('none') }}"
+
+    - name: "DEBUG: Check caller IAM identity and test StartSession with --debug"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.shell: |
+        echo "=== Caller Identity ==="
+        aws sts get-caller-identity --region {{ hostvars['localhost']['aws_region'] | default('us-west-2') }} 2>&1
+
+        echo ""
+        echo "=== StartSession attempt (with debug) ==="
         aws ssm start-session \
           --region {{ hostvars['localhost']['aws_region'] | default('us-west-2') }} \
           --target {{ ansible_host }} \
           --document-name AWS-StartSSHSession \
-          --parameters "portNumber=22" &
+          --parameters "portNumber=22" \
+          --debug 2>&1 &
+        SSM_PID=$!
+        sleep 8
+        kill $SSM_PID 2>/dev/null || true
+        wait $SSM_PID 2>/dev/null || true
+
+        echo ""
+        echo "=== Try basic StartSession (no document) ==="
+        aws ssm start-session \
+          --region {{ hostvars['localhost']['aws_region'] | default('us-west-2') }} \
+          --target {{ ansible_host }} 2>&1 &
         SSM_PID=$!
         sleep 5
         kill $SSM_PID 2>/dev/null || true
         wait $SSM_PID 2>/dev/null || true
-        echo "SSM exit code: $?"
       args:
         executable: /bin/bash
       register: ssm_debug_result
       changed_when: false
       failed_when: false
 
-    - name: "DEBUG: Show SSM test result"
+    - name: "DEBUG: Show SSM debug output"
       delegate_to: localhost
       become: false
       ansible.builtin.debug:
-        msg: "STDOUT: {{ ssm_debug_result.stdout | default('none') }}\nSTDERR: {{ ssm_debug_result.stderr | default('none') }}"
+        msg: "{{ ssm_debug_result.stdout | default('none') }}"
 
-    - name: "DEBUG: Wait 30s then retry SSM (agent recovery test)"
+    - name: "DEBUG: Try SSM RunCommand (different channel than StartSession)"
       delegate_to: localhost
       become: false
       ansible.builtin.shell: |
-        echo "Waiting 30 seconds for potential agent recovery..."
-        sleep 30
-        echo "Retrying SSM start-session..."
-        aws ssm start-session \
-          --region {{ hostvars['localhost']['aws_region'] | default('us-west-2') }} \
-          --target {{ ansible_host }} \
-          --document-name AWS-StartSSHSession \
-          --parameters "portNumber=22" &
-        SSM_PID=$!
-        sleep 5
-        kill $SSM_PID 2>/dev/null || true
-        wait $SSM_PID 2>/dev/null || true
-        echo "SSM exit code after 30s wait: $?"
+        python3 << 'PYEOF'
+        import boto3, time, os, json
+        region = os.environ.get('AWS_DEFAULT_REGION', '{{ hostvars["localhost"]["aws_region"] | default("us-west-2") }}')
+        profile = os.environ.get('AWS_PROFILE') or None
+        session = boto3.Session(region_name=region, profile_name=profile)
+        ssm = session.client('ssm')
+        instance_id = '{{ ansible_host }}'
+
+        try:
+            resp = ssm.send_command(
+                InstanceIds=[instance_id],
+                DocumentName='AWS-RunShellScript',
+                Parameters={'commands': [
+                    'echo "=== SSM Agent Status ==="',
+                    'snap list amazon-ssm-agent 2>/dev/null || dpkg -l amazon-ssm-agent 2>/dev/null || echo "agent package not found"',
+                    'systemctl status snap.amazon-ssm-agent.amazon-ssm-agent.service 2>/dev/null || systemctl status amazon-ssm-agent 2>/dev/null || echo "agent service not found"',
+                    'echo "=== Network connectivity to ssmmessages ==="',
+                    'curl -s -o /dev/null -w "HTTP %{http_code}" https://ssmmessages.{{ hostvars["localhost"]["aws_region"] | default("us-west-2") }}.amazonaws.com 2>&1 || echo "FAILED to reach ssmmessages endpoint"',
+                    'echo ""',
+                    'echo "=== Instance IAM role ==="',
+                    'curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/ 2>&1 || echo "IMDS not available"',
+                    'echo ""',
+                    'echo "=== Recent SSM agent logs ==="',
+                    'journalctl -u snap.amazon-ssm-agent.amazon-ssm-agent.service --no-pager -n 20 2>/dev/null || tail -20 /var/log/amazon/ssm/amazon-ssm-agent.log 2>/dev/null || echo "no agent logs found"',
+                ]},
+                TimeoutSeconds=30,
+            )
+            command_id = resp['Command']['CommandId']
+            print(f'RunCommand sent: {command_id}')
+
+            # Wait for result
+            for _ in range(15):
+                time.sleep(2)
+                result = ssm.get_command_invocation(
+                    CommandId=command_id,
+                    InstanceId=instance_id,
+                )
+                if result['Status'] in ('Success', 'Failed', 'TimedOut', 'Cancelled'):
+                    print(f"Status: {result['Status']}")
+                    print(f"STDOUT:\n{result.get('StandardOutputContent', 'none')}")
+                    print(f"STDERR:\n{result.get('StandardErrorContent', 'none')}")
+                    break
+            else:
+                print('RunCommand timed out waiting for result')
+        except Exception as e:
+            print(f'RunCommand failed: {e}')
+        PYEOF
       args:
         executable: /bin/bash
-      register: ssm_retry_result
+      register: run_command_result
       changed_when: false
       failed_when: false
 
-    - name: "DEBUG: Show SSM retry result"
+    - name: "DEBUG: Show RunCommand result"
       delegate_to: localhost
       become: false
       ansible.builtin.debug:
-        msg: "STDOUT: {{ ssm_retry_result.stdout | default('none') }}\nSTDERR: {{ ssm_retry_result.stderr | default('none') }}"
+        msg: "{{ run_command_result.stdout | default('none') }}\nSTDERR: {{ run_command_result.stderr | default('none') }}"
     # --- END TEMPORARY DEBUG ---
 
     - name: Wait for SSH connection to stabilize
