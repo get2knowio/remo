@@ -71,12 +71,15 @@
 - name: Update inventory with Elastic IP (SSM)
   delegate_to: localhost
   become: false
+  vars:
+    _aws_profile: "{{ aws_profile | default(lookup('env', 'AWS_PROFILE') | default('', true), true) }}"
+    _proxy_env: "{{ 'env AWS_PROFILE=' + _aws_profile + ' ' if _aws_profile else '' }}"
   ansible.builtin.add_host:
     name: aws_server
     ansible_host: "{{ aws_instance_id }}"
     ansible_user: ubuntu
     ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
-    ansible_ssh_args: '-C -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ProxyCommand="aws ssm start-session --region {{ aws_region }} --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
+    ansible_ssh_args: '-C -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ProxyCommand="{{ _proxy_env }}aws ssm start-session --region {{ aws_region }} --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
     groups: provisioned
   when: aws_access_mode == 'ssm'
 
