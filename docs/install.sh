@@ -90,11 +90,19 @@ check_requirements() {
     command -v git &>/dev/null || missing+=("git")
     command -v curl &>/dev/null || missing+=("curl")
     command -v python3 &>/dev/null || missing+=("python3")
+    command -v ssh &>/dev/null || missing+=("ssh")
 
     if [ ${#missing[@]} -gt 0 ]; then
         print_error "Missing required tools: ${missing[*]}"
         echo "Please install them and try again."
         exit 1
+    fi
+
+    # Optional but recommended
+    if ! command -v fzf &>/dev/null; then
+        print_warning "Optional: 'fzf' not found — needed for interactive environment picker (remo shell)"
+        echo "  Install: https://github.com/junegunn/fzf#installation"
+        echo ""
     fi
 }
 
