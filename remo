@@ -1006,6 +1006,19 @@ if tags:
     echo "$result"
 }
 
+# Compare two semver strings, returns 0 if $1 > $2 (i.e. $1 is newer)
+version_is_newer() {
+    python3 -c "
+import sys, re
+def vkey(v):
+    m = re.match(r'v?(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?', v)
+    if not m: return (0,0,0,0)
+    # rc versions sort below release: rc.N -> N, release -> 999999
+    return (int(m.group(1)),int(m.group(2)),int(m.group(3)),int(m.group(4)) if m.group(4) else 999999)
+sys.exit(0 if vkey('$1') > vkey('$2') else 1)
+" 2>/dev/null
+}
+
 # Passive update check with 24-hour cache (non-blocking)
 check_for_updates_passive() {
     local current_version
@@ -1013,6 +1026,12 @@ check_for_updates_passive() {
 
     # Skip for dev/branch installs
     [ "$current_version" = "unknown" ] && return 0
+
+    # Detect if user is on a pre-release track
+    local include_prerelease="false"
+    case "$current_version" in
+        *-rc*|*-beta*|*-alpha*) include_prerelease="true" ;;
+    esac
 
     local cache_file="$REMO_HOME/latest_version_cache"
     local cache_ttl=86400  # 24 hours
@@ -1026,11 +1045,11 @@ check_for_updates_passive() {
         cache_age=$((now - file_mtime))
 
         if [ "$cache_age" -lt "$cache_ttl" ]; then
-            # Cache is fresh — show hint if newer version available
+            # Cache is fresh — show hint only if cached version is actually newer
             local cached_version
             cached_version=$(cat "$cache_file" 2>/dev/null)
             cached_version="${cached_version#v}"
-            if [ -n "$cached_version" ] && [ "$cached_version" != "$current_version" ]; then
+            if [ -n "$cached_version" ] && version_is_newer "$cached_version" "$current_version"; then
                 echo ""
                 print_info "Update available: v${current_version} → v${cached_version}. Run 'remo self-update' to upgrade."
             fi
@@ -1041,7 +1060,7 @@ check_for_updates_passive() {
     # Cache is stale or missing — refresh in background
     (
         local latest
-        latest=$(get_latest_release false)
+        latest=$(get_latest_release "$include_prerelease")
         if [ -n "$latest" ]; then
             ensure_remo_dir
             echo "$latest" > "$cache_file"
