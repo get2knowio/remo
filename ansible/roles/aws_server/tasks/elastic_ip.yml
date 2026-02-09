@@ -73,7 +73,7 @@
   become: false
   vars:
     _aws_profile: "{{ aws_profile | default(lookup('env', 'AWS_PROFILE') | default('', true), true) }}"
-    _proxy_env: "{{ 'env AWS_PROFILE=' + _aws_profile + ' ' if _aws_profile else '' }}"
+    _proxy_env: "env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY={{ ' AWS_PROFILE=' + _aws_profile if _aws_profile else '' }} "
   ansible.builtin.add_host:
     name: aws_server
     ansible_host: "{{ aws_instance_id }}"
