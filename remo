@@ -79,7 +79,61 @@ run_playbook() {
     local playbook="$1"
     shift
     cd "$ANSIBLE_DIR"
-    ansible-playbook "$playbook" "$@"
+
+    # Verbose mode: pass through directly (current behavior)
+    if [ "${REMO_VERBOSE:-}" = "1" ]; then
+        ansible-playbook "$playbook" "$@"
+        return
+    fi
+
+    # Filtered mode: capture output, show PLAY/TASK names only
+    local log_file
+    log_file=$(mktemp /tmp/remo-playbook.XXXXXX)
+    local pid
+
+    ansible-playbook "$playbook" "$@" > "$log_file" 2>&1 &
+    pid=$!
+
+    # Cleanup on interrupt
+    trap 'kill $pid 2>/dev/null; rm -f "$log_file"; trap - INT TERM; exit 130' INT TERM
+
+    local last_line_count=0
+    while kill -0 "$pid" 2>/dev/null; do
+        local current_lines
+        current_lines=$(wc -l < "$log_file")
+        if [ "$current_lines" -gt "$last_line_count" ]; then
+            sed -n "$((last_line_count + 1)),\$p" "$log_file" | while IFS= read -r line; do
+                case "$line" in
+                    "PLAY ["*) echo ""; print_info "$line" ;;
+                    "TASK ["*) echo "  · $(echo "$line" | sed 's/TASK \[\(.*\)\] \*\*/\1/')" ;;
+                esac
+            done
+            last_line_count=$current_lines
+        fi
+        sleep 0.5
+    done
+
+    # Drain remaining output after process exits
+    sed -n "$((last_line_count + 1)),\$p" "$log_file" | while IFS= read -r line; do
+        case "$line" in
+            "PLAY ["*) echo ""; print_info "$line" ;;
+            "TASK ["*) echo "  · $(echo "$line" | sed 's/TASK \[\(.*\)\] \*\*/\1/')" ;;
+        esac
+    done
+
+    if ! wait "$pid"; then
+        echo ""
+        print_error "Playbook failed. Full output:"
+        echo "─────────────────────────────────────────────────"
+        cat "$log_file"
+        echo "─────────────────────────────────────────────────"
+        rm -f "$log_file"
+        trap - INT TERM
+        return 1
+    fi
+
+    rm -f "$log_file"
+    trap - INT TERM
 }
 
 # Build extra args for --only and --skip tool filtering
@@ -569,6 +623,10 @@ incus_create() {
                 user="$2"
                 shift 2
                 ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
+                ;;
             -*)
                 print_error "Unknown option: $1"
                 echo "Run 'remo incus --help' for usage."
@@ -633,6 +691,10 @@ incus_destroy() {
             --user)
                 user="$2"
                 shift 2
+                ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
                 ;;
             -*)
                 print_error "Unknown option: $1"
@@ -791,6 +853,7 @@ incus_bootstrap() {
                 shift 2
                 ;;
             -v|--verbose)
+                export REMO_VERBOSE=1
                 verbose="detailed"
                 shift
                 ;;
@@ -844,6 +907,10 @@ incus_update() {
             --skip)
                 skip+=("$2")
                 shift 2
+                ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
                 ;;
             -*)
                 print_error "Unknown option: $1"
@@ -1291,6 +1358,10 @@ hetzner_create() {
                 volume_size="$2"
                 shift 2
                 ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
+                ;;
             -*)
                 print_error "Unknown option: $1"
                 echo "Run 'remo hetzner --help' for usage."
@@ -1318,6 +1389,25 @@ hetzner_create() {
     if [ -n "$domain" ]; then
         save_known_host "hetzner" "$server_name" "${domain}.duckdns.org" "remo"
     fi
+
+    # Print post-create summary
+    echo ""
+    print_success "══════════════════════════════════════════════════"
+    print_success "  Hetzner server created successfully!"
+    print_success "══════════════════════════════════════════════════"
+    echo ""
+    echo "  Name:      ${server_name}"
+    echo "  Type:      ${server_type:-cx22}"
+    echo "  Location:  ${location:-hel1}"
+    echo "  Host:      ${domain:+${domain}.duckdns.org}${domain:-N/A}"
+    echo "  Storage:   ${volume_size:-10} GB persistent volume"
+    echo ""
+    echo "  Tip: To increase storage, resize the volume in"
+    echo "  the Hetzner Console, then run 'remo hetzner update'."
+    echo ""
+    echo "  Connect:  remo shell"
+    print_success "══════════════════════════════════════════════════"
+    echo ""
 }
 
 hetzner_destroy() {
@@ -1338,6 +1428,10 @@ hetzner_destroy() {
                 ;;
             --remove-volume)
                 remove_volume="true"
+                shift
+                ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
                 shift
                 ;;
             -*)
@@ -1389,6 +1483,10 @@ hetzner_update() {
             --skip)
                 skip+=("$2")
                 shift 2
+                ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
                 ;;
             -*)
                 print_error "Unknown option: $1"
@@ -1892,6 +1990,10 @@ aws_create() {
                 iam_profile="$2"
                 shift 2
                 ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
+                ;;
             -*)
                 print_error "Unknown option: $1"
                 echo "Run 'remo aws --help' for usage."
@@ -1993,6 +2095,26 @@ EOF
     else
         print_warning "Could not detect instance IP. Run 'remo aws info' to register the host."
     fi
+
+    # Print post-create summary
+    echo ""
+    print_success "══════════════════════════════════════════════════"
+    print_success "  AWS instance created successfully!"
+    print_success "══════════════════════════════════════════════════"
+    echo ""
+    echo "  Name:       remo-${resource_name}"
+    echo "  Instance:   ${instance_type:-t3.medium}${instance_id:+ ($instance_id)}"
+    echo "  Region:     ${effective_region}"
+    echo "  IP:         ${instance_ip:-N/A}"
+    echo "  Access:     ${access_mode:-ssm}"
+    echo "  Storage:    ${volume_size:-50} GB EBS (gp3)"
+    echo ""
+    echo "  Tip: To increase storage, use the AWS Console to"
+    echo "  modify the EBS volume, then run 'remo aws update'."
+    echo ""
+    echo "  Connect:  remo shell"
+    print_success "══════════════════════════════════════════════════"
+    echo ""
 }
 
 aws_destroy() {
@@ -2014,6 +2136,10 @@ aws_destroy() {
             --name)
                 name="$2"
                 shift 2
+                ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
                 ;;
             -*)
                 print_error "Unknown option: $1"
@@ -2057,6 +2183,10 @@ aws_update_ip() {
             --name)
                 name="$2"
                 shift 2
+                ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
                 ;;
             -*)
                 print_error "Unknown option: $1"
@@ -2541,6 +2671,10 @@ aws_update() {
             --skip)
                 skip+=("$2")
                 shift 2
+                ;;
+            -v|--verbose)
+                export REMO_VERBOSE=1
+                shift
                 ;;
             -*)
                 print_error "Unknown option: $1"
