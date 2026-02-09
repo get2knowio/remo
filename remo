@@ -2788,12 +2788,13 @@ EOF
         fi
         print_info "Connecting to $type: $name via SSM (${instance_id})..."
         local _profile="${AWS_PROFILE:-}"
+        local _region="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-west-2}}"
         local _env_prefix=""
         if [ -n "$_profile" ]; then
             _env_prefix="env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY= AWS_PROFILE=${_profile} "
         fi
         exec ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ProxyCommand="${_env_prefix}aws ssm start-session --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
+            -o ProxyCommand="${_env_prefix}aws ssm start-session --region ${_region} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
             "${user}@${instance_id}"
     else
         print_info "Connecting to $type: $name ($host)..."
