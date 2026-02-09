@@ -30,6 +30,47 @@
     remo_volume_device: "{{ hostvars['localhost']['aws_ebs_device_path'] | default('') }}"
 
   pre_tasks:
+    # --- TEMPORARY DEBUG: remove after diagnosing SSM 403 ---
+    - name: "DEBUG: Show SSH connection args for this host"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg:
+          ansible_host: "{{ ansible_host | default('NOT SET') }}"
+          ansible_ssh_args: "{{ ansible_ssh_args | default('NOT SET') }}"
+          ansible_ssh_common_args: "{{ ansible_ssh_common_args | default('NOT SET') }}"
+          ansible_ssh_extra_args: "{{ ansible_ssh_extra_args | default('NOT SET') }}"
+          env_AWS_PROFILE: "{{ lookup('env', 'AWS_PROFILE') | default('NOT SET', true) }}"
+
+    - name: "DEBUG: Test SSM ProxyCommand directly"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.shell: |
+        echo "=== Environment ==="
+        echo "AWS_PROFILE=$AWS_PROFILE"
+        echo "HOME=$HOME"
+        echo "PATH=$PATH"
+        echo ""
+        echo "=== Testing SSM start-session ==="
+        aws ssm start-session --region {{ hostvars['localhost']['aws_region'] | default('us-west-2') }} --target {{ ansible_host }} --document-name AWS-StartSSHSession --parameters "portNumber=22" &
+        SSM_PID=$!
+        sleep 5
+        kill $SSM_PID 2>/dev/null || true
+        wait $SSM_PID 2>/dev/null || true
+        echo "=== SSM test exit code: $? ==="
+      args:
+        executable: /bin/bash
+      register: ssm_debug_result
+      changed_when: false
+      failed_when: false
+
+    - name: "DEBUG: Show SSM test result"
+      delegate_to: localhost
+      become: false
+      ansible.builtin.debug:
+        msg: "{{ ssm_debug_result.stdout | default('no stdout') }}\n{{ ssm_debug_result.stderr | default('no stderr') }}"
+    # --- END TEMPORARY DEBUG ---
+
     - name: Wait for SSH connection to stabilize
       ansible.builtin.wait_for_connection:
         timeout: 120
