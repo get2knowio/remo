@@ -776,7 +776,7 @@ incus_create() {
 incus_destroy() {
     local name=""
     local auto_confirm="false"
-    local host="localhost"
+    local host=""
     local user=""
     local extra_args=()
 
@@ -823,6 +823,24 @@ incus_destroy() {
         exit 1
     fi
     validate_name "$name" "container name"
+
+    # If --host not specified, look up container in known_hosts
+    if [ -z "$host" ]; then
+        local known_entry
+        known_entry=$(get_known_hosts "incus" | awk -F: -v n="$name" '$2 ~ "/" n "$"' | head -1)
+        if [ -n "$known_entry" ]; then
+            local known_name
+            known_name=$(echo "$known_entry" | cut -d: -f2)
+            host="${known_name%%/*}"
+            if [ -z "$user" ]; then
+                local known_host_user
+                known_host_user=$(echo "$known_entry" | cut -d: -f5)
+                [ -n "$known_host_user" ] && user="$known_host_user"
+            fi
+        else
+            host="localhost"
+        fi
+    fi
 
     print_info "Destroying Incus container '$name'..."
 
@@ -993,7 +1011,7 @@ incus_bootstrap() {
 
 incus_update() {
     local name=""
-    local host="localhost"
+    local host=""
     local user=""
     local only=()
     local skip=()
@@ -1048,6 +1066,24 @@ incus_update() {
         exit 1
     fi
     validate_name "$name" "container name"
+
+    # If --host not specified, look up container in known_hosts
+    if [ -z "$host" ]; then
+        local known_entry
+        known_entry=$(get_known_hosts "incus" | awk -F: -v n="$name" '$2 ~ "/" n "$"' | head -1)
+        if [ -n "$known_entry" ]; then
+            local known_name
+            known_name=$(echo "$known_entry" | cut -d: -f2)
+            host="${known_name%%/*}"
+            if [ -z "$user" ]; then
+                local known_host_user
+                known_host_user=$(echo "$known_entry" | cut -d: -f5)
+                [ -n "$known_host_user" ] && user="$known_host_user"
+            fi
+        else
+            host="localhost"
+        fi
+    fi
 
     # Get container IP from Incus host
     print_info "Looking up container '$name'..."
