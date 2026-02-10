@@ -47,7 +47,7 @@
     executable: /bin/bash
   register: root_disk_space_gb
   changed_when: false
-  failed_when: root_disk_space_gb.rc != 0 or root_disk_space_gb.stdout == ""
+  failed_when: root_disk_space_gb.rc | default(1) != 0 or root_disk_space_gb.stdout | default('') == ""
   tags:
     - preflight
     - validation
@@ -374,7 +374,7 @@
     name: "{{ incus_user }}"
     groups: "{{ incus_admin_group }}"
     append: true
-  when: incus_admin_group not in user_groups_output.stdout.split()
+  when: incus_admin_group not in (user_groups_output.stdout | default('')).split()
   tags:
     - permissions
     - incus_users
@@ -446,7 +446,7 @@
     - not incus_skip_init
     - incus_storage_list.stdout | length == 0
   register: incus_init_result
-  changed_when: incus_init_result.rc == 0
+  changed_when: incus_init_result.rc | default(1) == 0
   tags:
     - incus_init
     - storage
@@ -562,7 +562,7 @@
 - name: Remove network device from default profile before deletion
   ansible.builtin.command: incus profile device remove default eth0
   register: incus_profile_remove
-  changed_when: incus_profile_remove.rc == 0
+  changed_when: incus_profile_remove.rc | default(1) == 0
   failed_when: false
   when: incus_needs_network_conversion | bool
   tags:
@@ -573,7 +573,7 @@
   ansible.builtin.command: incus network delete {{ incus_network_name }}
   when: incus_needs_network_conversion | bool
   register: incus_network_delete
-  changed_when: incus_network_delete.rc == 0
+  changed_when: incus_network_delete.rc | default(1) == 0
   tags:
     - incus_init
     - network
@@ -588,7 +588,7 @@
     - incus_network_type == "macvlan"
     - incus_network_check.rc | default(1) != 0 or incus_network_delete is changed
   register: incus_macvlan_create
-  changed_when: incus_macvlan_create.rc == 0
+  changed_when: incus_macvlan_create.rc | default(1) == 0
   tags:
     - incus_init
     - network
@@ -601,7 +601,7 @@
     - incus_network_type == "macvlan"
     - incus_macvlan_create is changed or incus_profile_remove is changed
   register: incus_profile_add
-  changed_when: incus_profile_add.rc == 0
+  changed_when: incus_profile_add.rc | default(1) == 0
   tags:
     - incus_init
     - network

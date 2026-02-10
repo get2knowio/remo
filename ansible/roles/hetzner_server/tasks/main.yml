@@ -23,7 +23,7 @@
     name: hcloud
     state: present
     executable: "{{ ansible_playbook_python | dirname }}/pip"
-  when: hcloud_check.rc != 0
+  when: hcloud_check.rc | default(1) != 0
 
 - name: Create SSH key in Hetzner Cloud
   delegate_to: localhost
@@ -135,7 +135,7 @@
   changed_when: false
   retries: 6
   delay: 10
-  until: cloud_init_result.rc == 0
+  until: cloud_init_result.rc | default(1) == 0
 
 - name: Verify SSH connection is stable
   delegate_to: localhost
@@ -151,7 +151,7 @@
   changed_when: false
   retries: 3
   delay: 5
-  until: ssh_test_result.rc == 0
+  until: ssh_test_result.rc | default(1) == 0
 
 - name: Add new server to inventory
   delegate_to: localhost

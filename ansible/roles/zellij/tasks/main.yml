@@ -13,18 +13,18 @@
   register: zellij_current_version
   changed_when: false
   failed_when: false
-  when: zellij_which_result.rc == 0
+  when: zellij_which_result.rc | default(1) == 0
 
 - name: Set zellij installed version fact
   ansible.builtin.set_fact:
     zellij_installed_version: >-
       {{ (zellij_current_version.stdout | default('zellij 0.0.0')).split(' ')[1] | default('0.0.0') }}
-  when: zellij_which_result.rc == 0
+  when: zellij_which_result.rc | default(1) == 0
 
 - name: Set zellij not installed fact
   ansible.builtin.set_fact:
     zellij_installed_version: "0.0.0"
-  when: zellij_which_result.rc != 0
+  when: zellij_which_result.rc | default(1) != 0
 
 - name: Install zellij via apt
   when: zellij_install_method in ['auto', 'apt']
@@ -39,7 +39,7 @@
       ansible.builtin.set_fact:
         zellij_apt_version: >-
           {{ zellij_apt_policy.stdout | regex_search('Candidate: ([0-9]+\.[0-9]+\.[0-9]+)', '\1') | first | default('0.0.0') }}
-      when: zellij_apt_policy.rc == 0 and 'Candidate:' in zellij_apt_policy.stdout
+      when: zellij_apt_policy.rc | default(1) == 0 and 'Candidate:' in zellij_apt_policy.stdout
 
     - name: Set apt version to 0 if not available
       ansible.builtin.set_fact:

@@ -68,7 +68,7 @@
   ansible.builtin.command:
     cmd: "resize2fs {{ actual_volume_device }}"
   register: resize_result
-  changed_when: "'Nothing to do' not in resize_result.stderr"
+  changed_when: "'Nothing to do' not in (resize_result.stderr | default(''))"
   when:
     - remo_volume_device | length > 0
     - actual_volume_device | default('') | length > 0
@@ -106,7 +106,7 @@
   args:
     executable: /bin/bash
   when:
-    - uid_1000_user.rc == 0
+    - uid_1000_user.rc | default(1) == 0
     - uid_1000_user.stdout | default('') != remo_user
 
 - name: Reconnect after UID reassignment
@@ -179,7 +179,6 @@
     - not (ubuntu_authorized_keys.stat.exists | default(false)) or (ubuntu_authorized_keys.stat.size | default(0) == 0)
     - root_authorized_keys.stat.exists | default(false)
     - root_authorized_keys.stat.size | default(0) > 0
-    - ubuntu_authorized_keys.stat.size | default(0) > 0
 
 - name: Add remo user to docker group
   ansible.builtin.user:
@@ -363,24 +362,16 @@
     path: "/home/{{ remo_user }}/.bash_profile"
     marker: "# {mark} ANSIBLE MANAGED BLOCK - BASHRC"
     block: |
-      # Debug logging for SSH login
-      echo "[DEBUG] .bash_profile starting" >> /tmp/shell-debug.log
-      echo "[DEBUG] TERM=$TERM" >> /tmp/shell-debug.log
-      
       # Fallback for unknown terminal types (e.g., xterm-ghostty)
       # This MUST happen before sourcing .bashrc or any interactive commands
       if ! infocmp "$TERM" &>/dev/null 2>&1; then
-          echo "[DEBUG] TERM '$TERM' not recognized, falling back to xterm-256color" >> /tmp/shell-debug.log
           export TERM=xterm-256color
       fi
-      echo "[DEBUG] TERM after fix=$TERM" >> /tmp/shell-debug.log
-      
+
       # Source .bashrc for interactive login shells (like SSH)
       if [ -f "$HOME/.bashrc" ]; then
-          echo "[DEBUG] Sourcing .bashrc" >> /tmp/shell-debug.log
           source "$HOME/.bashrc"
       fi
-      echo "[DEBUG] .bash_profile done" >> /tmp/shell-debug.log
     create: true
     owner: "{{ remo_user }}"
     group: "{{ remo_user }}"

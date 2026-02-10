@@ -54,6 +54,30 @@ print_warning() {
     echo -e "${YELLOW}$1${NC}"
 }
 
+validate_name() {
+    local value="$1"
+    local label="${2:-name}"
+    if [[ ! "$value" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+        print_error "Invalid ${label}: '${value}'. Must start with alphanumeric and contain only alphanumeric, dots, hyphens, or underscores."
+        exit 1
+    fi
+}
+
+validate_region() {
+    local value="$1"
+    if [[ ! "$value" =~ ^[a-zA-Z0-9-]+$ ]]; then
+        print_error "Invalid region: '${value}'. Must contain only alphanumeric characters and hyphens."
+        exit 1
+    fi
+}
+
+require_arg() {
+    if [ -z "${2:-}" ]; then
+        print_error "Option $1 requires a value"
+        exit 1
+    fi
+}
+
 get_current_version() {
     local git_version
     git_version=$(git -C "$SCRIPT_DIR" describe --tags --exact-match 2>/dev/null)
@@ -91,11 +115,18 @@ run_playbook() {
     log_file=$(mktemp /tmp/remo-playbook.XXXXXX)
     local pid
 
-    ansible-playbook "$playbook" "$@" > "$log_file" 2>&1 &
+    # Disable color so ANSI codes don't break TASK/PLAY line matching
+    ANSIBLE_NOCOLOR=1 ansible-playbook "$playbook" "$@" > "$log_file" 2>&1 &
     pid=$!
 
-    # Cleanup on interrupt
-    trap 'kill $pid 2>/dev/null; rm -f "$log_file"; trap - INT TERM; exit 130' INT TERM
+    # Cleanup on interrupt or unexpected exit (set -e)
+    cleanup_playbook() {
+        kill "$pid" 2>/dev/null
+        rm -f "$log_file"
+        trap - INT TERM EXIT
+    }
+    trap 'cleanup_playbook; exit 130' INT TERM
+    trap 'cleanup_playbook' EXIT
 
     local last_line_count=0
     while kill -0 "$pid" 2>/dev/null; do
@@ -128,12 +159,24 @@ run_playbook() {
         cat "$log_file"
         echo "─────────────────────────────────────────────────"
         rm -f "$log_file"
-        trap - INT TERM
+        trap - INT TERM EXIT
         return 1
     fi
 
     rm -f "$log_file"
-    trap - INT TERM
+    trap - INT TERM EXIT
+}
+
+# Validate a tool name against ALL_TOOLS
+validate_tool_name() {
+    local tool="$1"
+    local flag="$2"  # --only or --skip, for error message
+    local valid_tool
+    for valid_tool in $ALL_TOOLS; do
+        [ "$tool" = "$valid_tool" ] && return 0
+    done
+    print_error "Unknown tool '${tool}' for ${flag}. Valid tools: ${ALL_TOOLS}"
+    exit 1
 }
 
 # Build extra args for --only and --skip tool filtering
@@ -150,13 +193,22 @@ build_tool_args() {
     eval "only_size=\${#${only_name}[@]}"
     eval "skip_size=\${#${skip_name}[@]}"
 
+    # Validate all tool names up front
+    local i val
+    for ((i=0; i<only_size; i++)); do
+        eval "val=\${${only_name}[$i]}"
+        validate_tool_name "$val" "--only"
+    done
+    for ((i=0; i<skip_size; i++)); do
+        eval "val=\${${skip_name}[$i]}"
+        validate_tool_name "$val" "--skip"
+    done
+
     # Handle --only: disable all tools except specified ones
     if [ "$only_size" -gt 0 ]; then
         for tool in $ALL_TOOLS; do
             local enabled="false"
-            local i
             for ((i=0; i<only_size; i++)); do
-                local val
                 eval "val=\${${only_name}[$i]}"
                 if [ "$tool" = "$val" ]; then
                     enabled="true"
@@ -169,9 +221,7 @@ build_tool_args() {
 
     # Handle --skip: disable specified tools
     if [ "$skip_size" -gt 0 ]; then
-        local i
         for ((i=0; i<skip_size; i++)); do
-            local val
             eval "val=\${${skip_name}[$i]}"
             TOOL_EXTRA_ARGS+=(-e "configure_${val}=false")
         done
@@ -523,7 +573,7 @@ save_known_host() {
     fi
 
     # Remove existing entry for this type:name, then add new one
-    grep -v "^${type}:${name}:" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
+    awk -F: -v t="$type" -v n="$name" '$1!=t || $2!=n' "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
     mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
     echo "$entry" >> "$KNOWN_HOSTS_FILE"
 }
@@ -535,7 +585,7 @@ remove_known_host() {
 
     [ ! -f "$KNOWN_HOSTS_FILE" ] && return 0
 
-    grep -v "^${type}:${name}:" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
+    awk -F: -v t="$type" -v n="$name" '$1!=t || $2!=n' "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
     mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
 }
 
@@ -546,7 +596,7 @@ get_aws_region() {
     local entry region_field
 
     if [ -f "$KNOWN_HOSTS_FILE" ]; then
-        entry=$(grep "^aws:${name}:" "$KNOWN_HOSTS_FILE" 2>/dev/null | head -1) || true
+        entry=$(awk -F: -v n="$name" '$1=="aws" && $2==n' "$KNOWN_HOSTS_FILE" 2>/dev/null | head -1) || true
         if [ -n "$entry" ]; then
             region_field=$(echo "$entry" | cut -d: -f7)
             if [ -n "$region_field" ]; then
@@ -565,7 +615,7 @@ clear_known_hosts_by_type() {
 
     [ ! -f "$KNOWN_HOSTS_FILE" ] && return 0
 
-    grep -v "^${type}:" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
+    awk -F: -v t="$type" '$1!=t' "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
     mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
 }
 
@@ -576,7 +626,7 @@ clear_known_hosts_by_prefix() {
 
     [ ! -f "$KNOWN_HOSTS_FILE" ] && return 0
 
-    grep -v "^${type}:${prefix}" "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
+    awk -F: -v t="$type" -v p="$prefix" '$1==t && index($2,p)==1 {next} {print}' "$KNOWN_HOSTS_FILE" > "${KNOWN_HOSTS_FILE}.tmp" 2>/dev/null || true
     mv "${KNOWN_HOSTS_FILE}.tmp" "$KNOWN_HOSTS_FILE"
 }
 
@@ -587,7 +637,7 @@ get_known_hosts() {
     [ ! -f "$KNOWN_HOSTS_FILE" ] && return 0
 
     if [ -n "$filter_type" ]; then
-        grep "^${filter_type}:" "$KNOWN_HOSTS_FILE" 2>/dev/null || true
+        awk -F: -v t="$filter_type" '$1==t' "$KNOWN_HOSTS_FILE" 2>/dev/null || true
     else
         cat "$KNOWN_HOSTS_FILE" 2>/dev/null || true
     fi
@@ -608,18 +658,22 @@ incus_create() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --domain)
+                require_arg "$1" "${2:-}"
                 domain="$2"
                 shift 2
                 ;;
             --image)
+                require_arg "$1" "${2:-}"
                 image="$2"
                 shift 2
                 ;;
             --host)
+                require_arg "$1" "${2:-}"
                 host="$2"
                 shift 2
                 ;;
             --user)
+                require_arg "$1" "${2:-}"
                 user="$2"
                 shift 2
                 ;;
@@ -649,6 +703,7 @@ incus_create() {
         echo "Usage: remo incus create <name> [options]"
         exit 1
     fi
+    validate_name "$name" "container name"
 
     print_info "Creating Incus container '$name'..."
 
@@ -685,10 +740,12 @@ incus_destroy() {
                 shift
                 ;;
             --host)
+                require_arg "$1" "${2:-}"
                 host="$2"
                 shift 2
                 ;;
             --user)
+                require_arg "$1" "${2:-}"
                 user="$2"
                 shift 2
                 ;;
@@ -718,6 +775,7 @@ incus_destroy() {
         echo "Usage: remo incus destroy <name> [options]"
         exit 1
     fi
+    validate_name "$name" "container name"
 
     print_info "Destroying Incus container '$name'..."
 
@@ -766,10 +824,12 @@ incus_sync() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --host)
+                require_arg "$1" "${2:-}"
                 host="$2"
                 shift 2
                 ;;
             --user)
+                require_arg "$1" "${2:-}"
                 user="$2"
                 shift 2
                 ;;
@@ -845,10 +905,12 @@ incus_bootstrap() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --host)
+                require_arg "$1" "${2:-}"
                 host="$2"
                 shift 2
                 ;;
             --user)
+                require_arg "$1" "${2:-}"
                 user="$2"
                 shift 2
                 ;;
@@ -893,18 +955,22 @@ incus_update() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --host)
+                require_arg "$1" "${2:-}"
                 host="$2"
                 shift 2
                 ;;
             --user)
+                require_arg "$1" "${2:-}"
                 user="$2"
                 shift 2
                 ;;
             --only)
+                require_arg "$1" "${2:-}"
                 only+=("$2")
                 shift 2
                 ;;
             --skip)
+                require_arg "$1" "${2:-}"
                 skip+=("$2")
                 shift 2
                 ;;
@@ -934,6 +1000,7 @@ incus_update() {
         echo "Usage: remo incus update <name> [options]"
         exit 1
     fi
+    validate_name "$name" "container name"
 
     # Get container IP from Incus host
     print_info "Looking up container '$name'..."
@@ -1162,10 +1229,12 @@ handle_self_update() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --version)
+                require_arg "$1" "${2:-}"
                 version="$2"
                 shift 2
                 ;;
             --branch)
+                require_arg "$1" "${2:-}"
                 branch="$2"
                 shift 2
                 ;;
@@ -1316,7 +1385,14 @@ handle_self_update() {
                         hetzner_update --name "$name" || print_error "Failed to update ${type}:${name}"
                         ;;
                     incus)
-                        incus_update "$name" || print_error "Failed to update ${type}:${name}"
+                        # name is in format: host/container
+                        local incus_host="${name%%/*}"
+                        local incus_container="${name#*/}"
+                        if [ "$incus_host" = "localhost" ]; then
+                            incus_update "$incus_container" || print_error "Failed to update ${type}:${name}"
+                        else
+                            incus_update "$incus_container" --host "$incus_host" || print_error "Failed to update ${type}:${name}"
+                        fi
                         ;;
                     *)
                         print_warning "Unknown host type: $type (skipping ${name})"
@@ -1343,18 +1419,22 @@ hetzner_create() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
             --type)
+                require_arg "$1" "${2:-}"
                 server_type="$2"
                 shift 2
                 ;;
             --location)
+                require_arg "$1" "${2:-}"
                 location="$2"
                 shift 2
                 ;;
             --volume-size)
+                require_arg "$1" "${2:-}"
                 volume_size="$2"
                 shift 2
                 ;;
@@ -1373,6 +1453,8 @@ hetzner_create() {
                 ;;
         esac
     done
+
+    [ -n "$name" ] && validate_name "$name" "server name"
 
     print_info "Creating Hetzner VM..."
 
@@ -1419,6 +1501,7 @@ hetzner_destroy() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
@@ -1446,6 +1529,7 @@ hetzner_destroy() {
         esac
     done
 
+    [ -n "$name" ] && validate_name "$name" "server name"
     local server_name="${name:-remote-coding-server}"
 
     if [ "$remove_volume" = "true" ]; then
@@ -1473,14 +1557,17 @@ hetzner_update() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
             --only)
+                require_arg "$1" "${2:-}"
                 only+=("$2")
                 shift 2
                 ;;
             --skip)
+                require_arg "$1" "${2:-}"
                 skip+=("$2")
                 shift 2
                 ;;
@@ -1500,6 +1587,7 @@ hetzner_update() {
         esac
     done
 
+    [ -n "$name" ] && validate_name "$name" "server name"
     local server_name="${name:-remote-coding-server}"
 
     # Get server IP from DuckDNS domain
@@ -1562,22 +1650,34 @@ hetzner_sync() {
         return 1
     fi
 
-    # Clear existing Hetzner entries and replace with discovered ones
-    clear_known_hosts_by_type "hetzner"
-
-    local count=0
-    while IFS= read -r name; do
-        [ -z "$name" ] && continue
-        local host="${domain}.duckdns.org"
-        save_known_host "hetzner" "$name" "$host" "remo"
-        print_success "  Registered: $name -> $host"
-        ((count++)) || true
-    done < <(echo "$servers" | python3 -c "
+    # Collect discovered servers first, then atomically replace entries
+    local discovered
+    discovered=$(echo "$servers" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 for server in data.get('servers', []):
-    print(server.get('name', ''))
+    name = server.get('name', '')
+    ip = server.get('public_net', {}).get('ipv4', {}).get('ip', '')
+    if name:
+        print(f'{name}\t{ip}')
 " 2>/dev/null || true)
+
+    clear_known_hosts_by_type "hetzner"
+
+    local count=0
+    while IFS=$'\t' read -r name ip; do
+        [ -z "$name" ] && continue
+        # Use DuckDNS hostname for the default server, direct IP for others
+        local host
+        if [ -n "$domain" ] && [ "$count" -eq 0 ]; then
+            host="${domain}.duckdns.org"
+        else
+            host="$ip"
+        fi
+        save_known_host "hetzner" "$name" "$host" "remo"
+        print_success "  Registered: $name -> $host"
+        ((count++)) || true
+    done <<< "$discovered"
 
     if [ "$count" -eq 0 ]; then
         print_warning "No Hetzner VMs found with 'remo' label."
@@ -1955,18 +2055,22 @@ aws_create() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
             --type)
+                require_arg "$1" "${2:-}"
                 instance_type="$2"
                 shift 2
                 ;;
             --region)
+                require_arg "$1" "${2:-}"
                 region="$2"
                 shift 2
                 ;;
             --volume-size)
+                require_arg "$1" "${2:-}"
                 volume_size="$2"
                 shift 2
                 ;;
@@ -1979,6 +2083,7 @@ aws_create() {
                 shift
                 ;;
             --access)
+                require_arg "$1" "${2:-}"
                 access_mode="$2"
                 if [[ "$access_mode" != "direct" && "$access_mode" != "ssm" ]]; then
                     print_error "Invalid access mode: $access_mode (must be 'direct' or 'ssm')"
@@ -1987,6 +2092,7 @@ aws_create() {
                 shift 2
                 ;;
             --iam-profile)
+                require_arg "$1" "${2:-}"
                 iam_profile="$2"
                 shift 2
                 ;;
@@ -2005,6 +2111,9 @@ aws_create() {
                 ;;
         esac
     done
+
+    [ -n "$name" ] && validate_name "$name" "instance name"
+    [ -n "$region" ] && validate_region "$region"
 
     print_info "Creating AWS EC2 instance..."
 
@@ -2134,6 +2243,7 @@ aws_destroy() {
                 shift
                 ;;
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
@@ -2152,6 +2262,8 @@ aws_destroy() {
                 ;;
         esac
     done
+
+    [ -n "$name" ] && validate_name "$name" "instance name"
 
     if [ "$remove_storage" = "true" ]; then
         print_warning "WARNING: --remove-storage will destroy all data on the storage volume!"
@@ -2181,6 +2293,7 @@ aws_update_ip() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
@@ -2200,6 +2313,7 @@ aws_update_ip() {
         esac
     done
 
+    [ -n "$name" ] && validate_name "$name" "instance name"
     local resource_name="${name:-$USER}"
 
     # Check if this instance uses SSM - update-ip is not needed
@@ -2231,6 +2345,7 @@ aws_info() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
@@ -2245,6 +2360,8 @@ aws_info() {
                 ;;
         esac
     done
+
+    [ -n "$name" ] && validate_name "$name" "instance name"
 
     # Use Python with boto3 to get instance info
     local resource_name="${name:-$USER}"
@@ -2379,6 +2496,7 @@ aws_stop() {
                 shift
                 ;;
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
@@ -2394,6 +2512,7 @@ aws_stop() {
         esac
     done
 
+    [ -n "$name" ] && validate_name "$name" "instance name"
     local resource_name="${name:-$USER}"
     local region
     region=$(get_aws_region "$resource_name")
@@ -2471,7 +2590,7 @@ EOF
 
     print_info "Stopping instance $instance_id..."
 
-    python3 << EOF
+    if ! python3 << EOF
 import os, sys
 try:
     import boto3
@@ -2490,13 +2609,12 @@ waiter = ec2.get_waiter('instance_stopped')
 waiter.wait(InstanceIds=['${instance_id}'])
 print("Instance stopped.")
 EOF
-
-    if [ $? -eq 0 ]; then
-        print_success "Instance $instance_id stopped successfully."
-    else
+    then
         print_error "Failed to stop instance $instance_id."
         return 1
     fi
+
+    print_success "Instance $instance_id stopped successfully."
 }
 
 aws_start() {
@@ -2505,6 +2623,7 @@ aws_start() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
@@ -2520,6 +2639,7 @@ aws_start() {
         esac
     done
 
+    [ -n "$name" ] && validate_name "$name" "instance name"
     local resource_name="${name:-$USER}"
     local region
     region=$(get_aws_region "$resource_name")
@@ -2590,7 +2710,7 @@ EOF
 
     # Start instance and get new IP
     local start_json
-    start_json=$(python3 << EOF
+    if ! start_json=$(python3 << EOF
 import os, sys, json, time
 try:
     import boto3
@@ -2631,9 +2751,7 @@ inst = response['Reservations'][0]['Instances'][0]
 ip = inst.get('PublicIpAddress', '')
 print(json.dumps({"ip": ip, "instance_id": "${instance_id}", "access_mode": access_mode}))
 EOF
-)
-
-    if [ $? -ne 0 ]; then
+    ); then
         print_error "Failed to start instance $instance_id."
         return 1
     fi
@@ -2661,14 +2779,17 @@ aws_update() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --name)
+                require_arg "$1" "${2:-}"
                 name="$2"
                 shift 2
                 ;;
             --only)
+                require_arg "$1" "${2:-}"
                 only+=("$2")
                 shift 2
                 ;;
             --skip)
+                require_arg "$1" "${2:-}"
                 skip+=("$2")
                 shift 2
                 ;;
@@ -2688,6 +2809,7 @@ aws_update() {
         esac
     done
 
+    [ -n "$name" ] && validate_name "$name" "instance name"
     # Get instance IP and access mode using boto3
     local resource_name="${name:-$USER}"
     local region
@@ -3012,19 +3134,22 @@ shell_connect() {
             exit 0
         fi
 
-        # Find the matching environment by extracting SSH host from choice
-        # Format is "type: display_name [SSM] (ssh_host)"
-        local choice_type choice_host
-        choice_type=$(echo "$choice" | cut -d: -f1)
-        # Extract the last parenthesized value (SSH host)
-        choice_host=$(echo "$choice" | grep -oE '\([^)]+\)$' | tr -d '()')
-
-        while IFS=: read -r type name host user _inst_id _acc_mode _region; do
-            if [ "$type" = "$choice_type" ] && [ "$host" = "$choice_host" ]; then
-                selected="${type}:${name}:${host}:${user}:${_inst_id:-}:${_acc_mode:-}:${_region:-}"
+        # Match selection back to known_hosts entry using line index
+        # fzf options are built 1:1 with known_hosts lines, so the selected
+        # line number in the options corresponds to the same line in hosts
+        local line_num=1
+        local match_line=""
+        while IFS= read -r opt_line; do
+            if [ "$opt_line" = "$choice" ]; then
+                match_line=$(echo "$hosts" | sed -n "${line_num}p")
                 break
             fi
-        done <<< "$hosts"
+            ((line_num++)) || true
+        done <<< "$options"
+
+        if [ -n "$match_line" ]; then
+            selected="$match_line"
+        fi
     fi
 
     if [ -z "$selected" ]; then

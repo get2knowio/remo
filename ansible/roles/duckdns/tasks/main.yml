@@ -17,6 +17,7 @@
 - name: Update DuckDNS with server IP
   delegate_to: localhost
   become: false
+  no_log: true
   ansible.builtin.uri:
     url: "https://www.duckdns.org/update?domains={{ duckdns_domain }}&token={{ duckdns_token }}&ip={{ hetzner_server_ip }}"
     method: GET
