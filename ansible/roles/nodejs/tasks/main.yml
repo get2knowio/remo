@@ -24,7 +24,7 @@
     dest: /tmp/nodesource.gpg.key
     mode: '0644'
 
-- name: Dearmor NodeSource GPG key
+- name: De-armor NodeSource GPG key
   ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource.gpg.key
   args:
     creates: /etc/apt/keyrings/nodesource.gpg

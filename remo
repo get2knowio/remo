@@ -129,16 +129,19 @@ run_playbook() {
 
     # awk filter: buffer task names, only print non-skipped, strip decorations.
     # Each line is fed exactly once to this single awk process so state is correct.
+    # Every output line starts with \r to reset cursor to column 0, because
+    # ansible.builtin.pause writes countdown text directly to /dev/tty with \r,
+    # which can leave the cursor mid-line.
     local awk_filter='
         /^PLAY \[/ {
-            if (pending != "") { printf "  · %s\n", pending; pending = "" }
+            if (pending != "") { printf "\r  · %s\n", pending; pending = "" }
             sub(/ \*{2,}$/, "")
-            printf "\n\033[0;34m%s\033[0m\n", $0
+            printf "\r\n\r\033[0;34m%s\033[0m\n", $0
             fflush("")
             next
         }
         /^PLAY RECAP/ {
-            if (pending != "") { printf "  · %s\n", pending; pending = "" }
+            if (pending != "") { printf "\r  · %s\n", pending; pending = "" }
             fflush("")
             next
         }
@@ -153,14 +156,14 @@ run_playbook() {
         /^skipping:/ { pending = ""; next }
         /^ok:|^changed:|^fatal:|^failed:|^included:|^RUNNING HANDLER|^FAILED - RETRYING:/ {
             if (pending != "") {
-                printf "  · %s\n", pending
+                printf "\r  · %s\n", pending
                 fflush("")
                 pending = ""
             }
         }
         END {
             if (pending != "") {
-                printf "  · %s\n", pending
+                printf "\r  · %s\n", pending
                 fflush("")
             }
         }
@@ -766,8 +769,8 @@ incus_create() {
     run_playbook incus_site.yml "${extra_args[@]}"
 
     # Save to known_hosts on success
-    # Format: incus:HOST/CONTAINER:CONTAINER:remo
-    save_known_host "incus" "${host}/${name}" "$name" "remo"
+    # Format: incus:HOST/CONTAINER:CONTAINER:remo:HOST_USER
+    save_known_host "incus" "${host}/${name}" "$name" "remo" "$user"
 }
 
 incus_destroy() {
@@ -930,8 +933,8 @@ incus_sync() {
     local count=0
     while IFS= read -r name; do
         [ -z "$name" ] && continue
-        # Format: incus:HOST/CONTAINER:CONTAINER:remo
-        save_known_host "incus" "${host}/${name}" "$name" "remo"
+        # Format: incus:HOST/CONTAINER:CONTAINER:remo:HOST_USER
+        save_known_host "incus" "${host}/${name}" "$name" "remo" "$user"
         print_success "  Registered: $name"
         ((count++)) || true
     done <<< "$containers"
@@ -1419,7 +1422,7 @@ handle_self_update() {
         read -r confirm
         if [[ "$confirm" =~ ^[Yy]$ ]]; then
             echo ""
-            while IFS=: read -r type name _rest; do
+            while IFS=: read -r type name host user host_user _rest; do
                 print_info "Updating ${type}:${name}..."
                 case "$type" in
                     aws)
@@ -1435,7 +1438,9 @@ handle_self_update() {
                         if [ "$incus_host" = "localhost" ]; then
                             incus_update "$incus_container" || print_error "Failed to update ${type}:${name}"
                         else
-                            incus_update "$incus_container" --host "$incus_host" || print_error "Failed to update ${type}:${name}"
+                            local incus_args=("$incus_container" --host "$incus_host")
+                            [ -n "$host_user" ] && incus_args+=(--user "$host_user")
+                            incus_update "${incus_args[@]}" || print_error "Failed to update ${type}:${name}"
                         fi
                         ;;
                     *)
