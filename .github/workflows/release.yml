@@ -36,7 +36,18 @@ jobs:
       - name: Get previous tag
         id: prev_tag
         run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          TAG="${{ steps.tag.outputs.tag }}"
+          IS_PRE="${{ steps.prerelease.outputs.is_prerelease }}"
+
+          if [ "$IS_PRE" == "true" ]; then
+            # Pre-release: compare against immediately previous tag
+            PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          else
+            # Stable release: find the previous stable tag (skip rc/beta/alpha)
+            PREV_TAG=$(git tag -l | grep -v -E '(-rc|-beta|-alpha)' | grep -v "^${TAG}$" | sort -V | tail -1)
+            PREV_TAG="${PREV_TAG:-}"
+          fi
+
           echo "prev_tag=$PREV_TAG" >> $GITHUB_OUTPUT
 
       - name: Generate release notes
@@ -75,15 +86,29 @@ jobs:
 
           # Add changes section
           echo "" >> release_notes.md
-          echo "## Changes" >> release_notes.md
-          echo "" >> release_notes.md
 
-          if [ -n "$PREV_TAG" ]; then
-            # List commits since previous tag
+          if [ "${{ steps.prerelease.outputs.is_prerelease }}" == "true" ] && [ -n "$PREV_TAG" ]; then
+            # Pre-release: list commits since previous tag
+            echo "## Changes" >> release_notes.md
+            echo "" >> release_notes.md
             git log --pretty=format:"- %s" ${PREV_TAG}..HEAD >> release_notes.md
             echo "" >> release_notes.md
             echo "" >> release_notes.md
             echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...$TAG" >> release_notes.md
+          elif [ "${{ steps.prerelease.outputs.is_prerelease }}" == "false" ]; then
+            # Stable release: use the curated tag annotation message
+            TAG_MSG=$(git tag -l --format='%(contents)' "$TAG" | tail -n +2)
+            if [ -n "$TAG_MSG" ]; then
+              echo "$TAG_MSG" >> release_notes.md
+            elif [ -n "$PREV_TAG" ]; then
+              echo "## Changes" >> release_notes.md
+              echo "" >> release_notes.md
+              git log --pretty=format:"- %s" ${PREV_TAG}..HEAD >> release_notes.md
+            fi
+            echo "" >> release_notes.md
+            if [ -n "$PREV_TAG" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...$TAG" >> release_notes.md
+            fi
           else
             echo "Initial release" >> release_notes.md
           fi
