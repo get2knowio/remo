@@ -40,7 +40,7 @@
     name: github_cli
   when: configure_github_cli | default(true) | bool
 
-- name: Install fzf
+- name: Configure fzf
   ansible.builtin.include_role:
     name: fzf
   when: configure_fzf | default(true) | bool
