@@ -113,11 +113,10 @@ run_playbook() {
     # Filtered mode: capture output, show PLAY/TASK names only
     local log_file
     log_file=$(mktemp /tmp/remo-playbook.XXXXXX)
-    local pid
 
     # Disable color so ANSI codes don't break TASK/PLAY line matching
     ANSIBLE_NOCOLOR=1 ansible-playbook "$playbook" "$@" > "$log_file" 2>&1 &
-    pid=$!
+    local pid=$!
 
     # Cleanup on interrupt or unexpected exit (set -e)
     cleanup_playbook() {
@@ -128,12 +127,19 @@ run_playbook() {
     trap 'cleanup_playbook; exit 130' INT TERM
     trap 'cleanup_playbook' EXIT
 
-    # awk filter: buffer task names, only print non-skipped, strip decorations
+    # awk filter: buffer task names, only print non-skipped, strip decorations.
+    # Each line is fed exactly once to this single awk process so state is correct.
     local awk_filter='
         /^PLAY \[/ {
+            if (pending != "") { printf "  · %s\n", pending; pending = "" }
             sub(/ \*{2,}$/, "")
-            printf "\n"
-            printf "  \033[0;34m%s\033[0m\n", $0
+            printf "\n\033[0;34m%s\033[0m\n", $0
+            fflush("")
+            next
+        }
+        /^PLAY RECAP/ {
+            if (pending != "") { printf "  · %s\n", pending; pending = "" }
+            fflush("")
             next
         }
         /^TASK \[/ {
@@ -145,37 +151,47 @@ run_playbook() {
             next
         }
         /^skipping:/ { pending = ""; next }
-        /^ok:|^changed:|^fatal:|^failed:|^included:|^RUNNING HANDLER/ {
+        /^ok:|^changed:|^fatal:|^failed:|^included:|^RUNNING HANDLER|^FAILED - RETRYING:/ {
             if (pending != "") {
                 printf "  · %s\n", pending
+                fflush("")
                 pending = ""
+            }
+        }
+        END {
+            if (pending != "") {
+                printf "  · %s\n", pending
+                fflush("")
             }
         }
     '
 
-    # Poll log file and re-filter from start each pass (awk is stateful and fast)
-    # Track how many lines of filtered output we've already shown
-    local shown_lines=0
-    while kill -0 "$pid" 2>/dev/null; do
+    # Feed new log lines incrementally to a single awk process.
+    # This ensures each line is processed exactly once and awk maintains
+    # its pending-task state correctly across all input.
+    (
+        local lines_read=0
+        while kill -0 "$pid" 2>/dev/null; do
+            if [ -s "$log_file" ]; then
+                local total_lines
+                total_lines=$(wc -l < "$log_file" | tr -d ' ')
+                if [ "$total_lines" -gt "$lines_read" ]; then
+                    tail -n +"$((lines_read + 1))" "$log_file" | head -n "$((total_lines - lines_read))"
+                    lines_read=$total_lines
+                fi
+            fi
+            sleep 0.5
+        done
+        # Final flush after ansible exits
+        sleep 0.2
         if [ -s "$log_file" ]; then
-            local filtered total_lines
-            filtered=$(awk "$awk_filter" "$log_file")
-            total_lines=$(echo "$filtered" | wc -l)
-            if [ "$total_lines" -gt "$shown_lines" ]; then
-                echo "$filtered" | tail -n +"$((shown_lines + 1))"
-                shown_lines=$total_lines
+            local total_lines
+            total_lines=$(wc -l < "$log_file" | tr -d ' ')
+            if [ "$total_lines" -gt "$lines_read" ]; then
+                tail -n +"$((lines_read + 1))" "$log_file"
             fi
         fi
-        sleep 0.5
-    done
-
-    # Final pass to catch any remaining output
-    local filtered total_lines
-    filtered=$(awk "$awk_filter" "$log_file")
-    total_lines=$(echo "$filtered" | wc -l)
-    if [ "$total_lines" -gt "$shown_lines" ]; then
-        echo "$filtered" | tail -n +"$((shown_lines + 1))"
-    fi
+    ) | awk "$awk_filter"
 
     local rc=0
     wait "$pid" || rc=$?
@@ -1512,8 +1528,8 @@ hetzner_create() {
     echo "  Host:      ${domain:+${domain}.duckdns.org}${domain:-N/A}"
     echo "  Storage:   ${volume_size:-10} GB persistent volume"
     echo ""
-    echo "  Tip: To increase storage, resize the volume in"
-    echo "  the Hetzner Console, then run 'remo hetzner update'."
+    echo "  Tip: To increase storage, re-run create with a larger size:"
+    echo "  remo hetzner create --volume-size <GB>"
     echo ""
     echo "  Connect:  remo shell"
     print_success "══════════════════════════════════════════════════"
@@ -2246,8 +2262,8 @@ EOF
     echo "  Access:     ${access_mode:-ssm}"
     echo "  Storage:    ${volume_size:-50} GB EBS (gp3)"
     echo ""
-    echo "  Tip: To increase storage, use the AWS Console to"
-    echo "  modify the EBS volume, then run 'remo aws update'."
+    echo "  Tip: To increase storage, re-run create with a larger size:"
+    echo "  remo aws create --volume-size <GB>"
     echo ""
     echo "  Connect:  remo shell"
     print_success "══════════════════════════════════════════════════"
