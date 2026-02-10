@@ -111,10 +111,8 @@ run_playbook() {
     fi
 
     # Filtered mode: capture output, show PLAY/TASK names only
-    local log_file state_file
+    local log_file
     log_file=$(mktemp /tmp/remo-playbook.XXXXXX)
-    state_file=$(mktemp /tmp/remo-state.XXXXXX)
-    echo "" > "$state_file"  # pending task name (empty = none)
     local pid
 
     # Disable color so ANSI codes don't break TASK/PLAY line matching
@@ -124,80 +122,65 @@ run_playbook() {
     # Cleanup on interrupt or unexpected exit (set -e)
     cleanup_playbook() {
         kill "$pid" 2>/dev/null
-        rm -f "$log_file" "$state_file"
+        rm -f "$log_file"
         trap - INT TERM EXIT
     }
     trap 'cleanup_playbook; exit 130' INT TERM
     trap 'cleanup_playbook' EXIT
 
-    filter_output() {
-        while IFS= read -r line; do
-            case "$line" in
-                "PLAY ["*)
-                    # Flush any pending task before the new play
-                    local pending
-                    pending=$(cat "$state_file")
-                    if [ -n "$pending" ]; then
-                        echo "  · $pending"
-                    fi
-                    echo "" > "$state_file"
-                    # Strip trailing asterisks and whitespace
-                    local play_name
-                    play_name=$(echo "$line" | sed 's/ \*\{2,\}$//')
-                    echo ""
-                    print_info "$play_name"
-                    ;;
-                "TASK ["*)
-                    # Flush any pending task (it wasn't skipped)
-                    local pending
-                    pending=$(cat "$state_file")
-                    if [ -n "$pending" ]; then
-                        echo "  · $pending"
-                    fi
-                    # Buffer this task name (strip TASK [...], trailing asterisks, and role prefix)
-                    local task_name
-                    task_name=$(echo "$line" | sed 's/^TASK \[\(.*\)\] \*\{2,\}$/\1/; s/^[a-zA-Z_]* : //')
-                    echo "$task_name" > "$state_file"
-                    ;;
-                "skipping:"*|"TASK ["*": skipping"*)
-                    # Task was skipped — discard the buffered name
-                    echo "" > "$state_file"
-                    ;;
-                "ok:"*|"changed:"*|"fatal:"*|"failed:"*|"included:"*|"RUNNING HANDLER"*)
-                    # Task produced a result — flush the buffered name
-                    local pending
-                    pending=$(cat "$state_file")
-                    if [ -n "$pending" ]; then
-                        echo "  · $pending"
-                    fi
-                    echo "" > "$state_file"
-                    ;;
-            esac
-        done
-        # Flush any remaining pending task
-        local pending
-        pending=$(cat "$state_file")
-        if [ -n "$pending" ]; then
-            echo "  · $pending"
-        fi
-    }
+    # awk filter: buffer task names, only print non-skipped, strip decorations
+    local awk_filter='
+        /^PLAY \[/ {
+            sub(/ \*{2,}$/, "")
+            printf "\n"
+            printf "  \033[0;34m%s\033[0m\n", $0
+            next
+        }
+        /^TASK \[/ {
+            task = $0
+            sub(/^TASK \[/, "", task)
+            sub(/\] \*{2,}$/, "", task)
+            sub(/^[a-zA-Z_]+ : /, "", task)
+            pending = task
+            next
+        }
+        /^skipping:/ { pending = ""; next }
+        /^ok:|^changed:|^fatal:|^failed:|^included:|^RUNNING HANDLER/ {
+            if (pending != "") {
+                printf "  · %s\n", pending
+                pending = ""
+            }
+        }
+    '
 
-    local last_line_count=0
+    # Poll log file and re-filter from start each pass (awk is stateful and fast)
+    # Track how many lines of filtered output we've already shown
+    local shown_lines=0
     while kill -0 "$pid" 2>/dev/null; do
-        local current_lines
-        current_lines=$(wc -l < "$log_file")
-        if [ "$current_lines" -gt "$last_line_count" ]; then
-            sed -n "$((last_line_count + 1)),\$p" "$log_file" | filter_output
-            last_line_count=$current_lines
+        if [ -s "$log_file" ]; then
+            local filtered total_lines
+            filtered=$(awk "$awk_filter" "$log_file")
+            total_lines=$(echo "$filtered" | wc -l)
+            if [ "$total_lines" -gt "$shown_lines" ]; then
+                echo "$filtered" | tail -n +"$((shown_lines + 1))"
+                shown_lines=$total_lines
+            fi
         fi
         sleep 0.5
     done
 
-    # Drain remaining output after process exits
-    sed -n "$((last_line_count + 1)),\$p" "$log_file" | filter_output
-    rm -f "$state_file"
+    # Final pass to catch any remaining output
+    local filtered total_lines
+    filtered=$(awk "$awk_filter" "$log_file")
+    total_lines=$(echo "$filtered" | wc -l)
+    if [ "$total_lines" -gt "$shown_lines" ]; then
+        echo "$filtered" | tail -n +"$((shown_lines + 1))"
+    fi
 
-    if ! wait "$pid"; then
+    local rc=0
+    wait "$pid" || rc=$?
+
+    if [ "$rc" -ne 0 ]; then
         echo ""
         print_error "Playbook failed. Full output:"
         echo "─────────────────────────────────────────────────"
