@@ -150,6 +150,7 @@ run_playbook() {
             sub(/^TASK \[/, "", task)
             sub(/\] \*{2,}$/, "", task)
             sub(/^[a-zA-Z_]+ : /, "", task)
+            if (task ~ /^Display /) { pending = ""; next }
             pending = task
             next
         }
