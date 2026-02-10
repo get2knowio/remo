@@ -111,8 +111,10 @@ run_playbook() {
     fi
 
     # Filtered mode: capture output, show PLAY/TASK names only
-    local log_file
+    local log_file state_file
     log_file=$(mktemp /tmp/remo-playbook.XXXXXX)
+    state_file=$(mktemp /tmp/remo-state.XXXXXX)
+    echo "" > "$state_file"  # pending task name (empty = none)
     local pid
 
     # Disable color so ANSI codes don't break TASK/PLAY line matching
@@ -122,35 +124,78 @@ run_playbook() {
     # Cleanup on interrupt or unexpected exit (set -e)
     cleanup_playbook() {
         kill "$pid" 2>/dev/null
-        rm -f "$log_file"
+        rm -f "$log_file" "$state_file"
         trap - INT TERM EXIT
     }
     trap 'cleanup_playbook; exit 130' INT TERM
     trap 'cleanup_playbook' EXIT
+
+    filter_output() {
+        while IFS= read -r line; do
+            case "$line" in
+                "PLAY ["*)
+                    # Flush any pending task before the new play
+                    local pending
+                    pending=$(cat "$state_file")
+                    if [ -n "$pending" ]; then
+                        echo "  · $pending"
+                    fi
+                    echo "" > "$state_file"
+                    # Strip trailing asterisks and whitespace
+                    local play_name
+                    play_name=$(echo "$line" | sed 's/ \*\{2,\}$//')
+                    echo ""
+                    print_info "$play_name"
+                    ;;
+                "TASK ["*)
+                    # Flush any pending task (it wasn't skipped)
+                    local pending
+                    pending=$(cat "$state_file")
+                    if [ -n "$pending" ]; then
+                        echo "  · $pending"
+                    fi
+                    # Buffer this task name (strip TASK [...], trailing asterisks, and role prefix)
+                    local task_name
+                    task_name=$(echo "$line" | sed 's/^TASK \[\(.*\)\] \*\{2,\}$/\1/; s/^[a-zA-Z_]* : //')
+                    echo "$task_name" > "$state_file"
+                    ;;
+                "skipping:"*|"TASK ["*": skipping"*)
+                    # Task was skipped — discard the buffered name
+                    echo "" > "$state_file"
+                    ;;
+                "ok:"*|"changed:"*|"fatal:"*|"failed:"*|"included:"*|"RUNNING HANDLER"*)
+                    # Task produced a result — flush the buffered name
+                    local pending
+                    pending=$(cat "$state_file")
+                    if [ -n "$pending" ]; then
+                        echo "  · $pending"
+                    fi
+                    echo "" > "$state_file"
+                    ;;
+            esac
+        done
+        # Flush any remaining pending task
+        local pending
+        pending=$(cat "$state_file")
+        if [ -n "$pending" ]; then
+            echo "  · $pending"
+        fi
+    }
 
     local last_line_count=0
     while kill -0 "$pid" 2>/dev/null; do
         local current_lines
         current_lines=$(wc -l < "$log_file")
         if [ "$current_lines" -gt "$last_line_count" ]; then
-            sed -n "$((last_line_count + 1)),\$p" "$log_file" | while IFS= read -r line; do
-                case "$line" in
-                    "PLAY ["*) echo ""; print_info "$line" ;;
-                    "TASK ["*) echo "  · $(echo "$line" | sed 's/TASK \[\(.*\)\] \*\*/\1/')" ;;
-                esac
-            done
+            sed -n "$((last_line_count + 1)),\$p" "$log_file" | filter_output
             last_line_count=$current_lines
         fi
         sleep 0.5
     done
 
     # Drain remaining output after process exits
-    sed -n "$((last_line_count + 1)),\$p" "$log_file" | while IFS= read -r line; do
-        case "$line" in
-            "PLAY ["*) echo ""; print_info "$line" ;;
-            "TASK ["*) echo "  · $(echo "$line" | sed 's/TASK \[\(.*\)\] \*\*/\1/')" ;;
-        esac
-    done
+    sed -n "$((last_line_count + 1)),\$p" "$log_file" | filter_output
+    rm -f "$state_file"
 
     if ! wait "$pid"; then
         echo ""
