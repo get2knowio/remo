@@ -91,6 +91,10 @@ Every remo environment includes:
 ```bash
 # Connect to environment
 remo shell                          # Auto-connect (or picker if multiple)
+remo shell -L 8080                  # Shell + forward remote :8080 to local :8080
+remo shell -L 9000:8080             # Shell + forward remote :8080 to local :9000
+remo shell -L 8080 -L 3000          # Shell + forward multiple ports
+remo shell -L 8080 --no-open        # Skip auto-opening browser
 
 # Setup
 remo init                           # Install dependencies, create .env
