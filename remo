@@ -290,6 +290,7 @@ USAGE:
 
 COMMANDS:
     shell       Connect to a remo environment (auto-detects or picker)
+    tunnel      Forward a port from a remo environment to localhost
     init        Initialize remo (install dependencies, create .env)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
@@ -301,6 +302,8 @@ ENVIRONMENT:
 
 EXAMPLES:
     remo shell
+    remo tunnel 8080
+    remo tunnel 9000:8080 --no-open
 
     remo incus create dev1
     remo incus list
@@ -3167,7 +3170,11 @@ EXAMPLES:
 EOF
 }
 
-shell_connect() {
+# Resolve a remo host from known_hosts with optional fzf picker and AWS auto-start.
+# Sets these variables in the caller's scope:
+#   REMO_TYPE, REMO_NAME, REMO_HOST, REMO_USER,
+#   REMO_INSTANCE_ID, REMO_ACCESS_MODE, REMO_REGION
+resolve_remo_host() {
     local hosts
     hosts=$(get_known_hosts)
 
@@ -3244,14 +3251,13 @@ shell_connect() {
     fi
 
     # Parse selected environment (supports 4-field, 6-field, and 7-field formats)
-    local type name host user instance_id access_mode region
-    IFS=: read -r type name host user instance_id access_mode region <<< "$selected"
+    IFS=: read -r REMO_TYPE REMO_NAME REMO_HOST REMO_USER REMO_INSTANCE_ID REMO_ACCESS_MODE REMO_REGION <<< "$selected"
 
     # Auto-start stopped AWS instances
-    if [ "$type" = "aws" ] && [ -n "${instance_id:-}" ]; then
+    if [ "$REMO_TYPE" = "aws" ] && [ -n "${REMO_INSTANCE_ID:-}" ]; then
         local inst_state
         local _effective_region
-        _effective_region=$(get_aws_region "$name")
+        _effective_region=$(get_aws_region "$REMO_NAME")
         inst_state=$(python3 << EOF
 import os, sys, json
 try:
@@ -3262,7 +3268,7 @@ region = '${_effective_region}'
 profile = os.environ.get('AWS_PROFILE') or None
 session = boto3.Session(region_name=region, profile_name=profile)
 ec2 = session.client('ec2')
-response = ec2.describe_instances(InstanceIds=['${instance_id}'])
+response = ec2.describe_instances(InstanceIds=['${REMO_INSTANCE_ID}'])
 for r in response.get('Reservations', []):
     for inst in r.get('Instances', []):
         print(inst['State']['Name'])
@@ -3270,21 +3276,25 @@ for r in response.get('Reservations', []):
 EOF
         )
         if [ "${inst_state:-}" = "stopped" ]; then
-            print_warning "Instance $instance_id is stopped. Starting it..."
-            aws_start --name "$name"
+            print_warning "Instance $REMO_INSTANCE_ID is stopped. Starting it..."
+            aws_start --name "$REMO_NAME"
             # Re-read known_hosts for updated IP
             local updated_entry
-            updated_entry=$(get_known_hosts "aws" | grep "^aws:${name}:" || true)
+            updated_entry=$(get_known_hosts "aws" | grep "^aws:${REMO_NAME}:" || true)
             if [ -n "$updated_entry" ]; then
-                IFS=: read -r type name host user instance_id access_mode region <<< "$updated_entry"
+                IFS=: read -r REMO_TYPE REMO_NAME REMO_HOST REMO_USER REMO_INSTANCE_ID REMO_ACCESS_MODE REMO_REGION <<< "$updated_entry"
             fi
         elif [ "${inst_state:-}" = "stopping" ]; then
-            print_error "Instance $instance_id is currently stopping. Please wait and try again."
+            print_error "Instance $REMO_INSTANCE_ID is currently stopping. Please wait and try again."
             exit 1
         fi
     fi
+}
 
-    if [ "${access_mode:-}" = "ssm" ]; then
+shell_connect() {
+    resolve_remo_host
+
+    if [ "${REMO_ACCESS_MODE:-}" = "ssm" ]; then
         if ! command -v session-manager-plugin &> /dev/null; then
             print_error "session-manager-plugin is not installed."
             echo ""
@@ -3295,20 +3305,20 @@ EOF
             echo "On Ubuntu: see AWS docs for .deb package"
             exit 1
         fi
-        print_info "Connecting to $type: $name via SSM (${instance_id})..."
+        print_info "Connecting to $REMO_TYPE: $REMO_NAME via SSM (${REMO_INSTANCE_ID})..."
         local _profile="${AWS_PROFILE:-}"
         local _region
-        _region=$(get_aws_region "$name")
+        _region=$(get_aws_region "$REMO_NAME")
         local _env_prefix=""
         if [ -n "$_profile" ]; then
             _env_prefix="env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY= AWS_PROFILE=${_profile} "
         fi
         exec ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -o ProxyCommand="${_env_prefix}aws ssm start-session --region ${_region} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
-            "${user}@${instance_id}"
+            "${REMO_USER}@${REMO_INSTANCE_ID}"
     else
-        print_info "Connecting to $type: $name ($host)..."
-        exec ssh "${user}@${host}"
+        print_info "Connecting to $REMO_TYPE: $REMO_NAME ($REMO_HOST)..."
+        exec ssh "${REMO_USER}@${REMO_HOST}"
     fi
 }
 
@@ -3335,6 +3345,188 @@ handle_shell() {
 }
 
 # =============================================================================
+# TUNNEL COMMAND
+# =============================================================================
+
+show_tunnel_help() {
+    cat << 'EOF'
+remo tunnel - Forward a port from a remo environment to localhost
+
+USAGE:
+    remo tunnel <port-spec> [options]
+
+DESCRIPTION:
+    Creates an SSH tunnel from a remote remo environment to your local machine.
+    Runs in the foreground (Ctrl+C to stop).
+
+    If exactly one environment exists, connects directly.
+    If multiple environments exist, shows an interactive picker.
+
+PORT FORMATS:
+    PORT                Remote localhost:PORT -> local PORT
+    LOCAL:REMOTE        Remote localhost:REMOTE -> local LOCAL
+    LOCAL:HOST:REMOTE   Remote HOST:REMOTE -> local LOCAL
+
+OPTIONS:
+    --no-open   Skip auto-opening browser
+    --help      Show this help message
+
+EXAMPLES:
+    remo tunnel 8080                    # remote :8080 -> local :8080
+    remo tunnel 9000:8080              # remote :8080 -> local :9000
+    remo tunnel 3306:db.internal:3306  # remote db.internal:3306 -> local :3306
+    remo tunnel 8080 --no-open         # skip browser auto-open
+EOF
+}
+
+tunnel_connect() {
+    local port_spec="$1"
+    local no_open="$2"
+
+    # Parse port spec into local_port, remote_host, remote_port
+    local local_port remote_host remote_port
+    case "$port_spec" in
+        *:*:*)
+            # LOCAL:HOST:REMOTE
+            local_port="${port_spec%%:*}"
+            local rest="${port_spec#*:}"
+            remote_host="${rest%:*}"
+            remote_port="${rest##*:}"
+            ;;
+        *:*)
+            # LOCAL:REMOTE
+            local_port="${port_spec%%:*}"
+            remote_host="localhost"
+            remote_port="${port_spec##*:}"
+            ;;
+        *)
+            # PORT only
+            local_port="$port_spec"
+            remote_host="localhost"
+            remote_port="$port_spec"
+            ;;
+    esac
+
+    # Validate ports are numeric and in range
+    if ! [[ "$local_port" =~ ^[0-9]+$ ]] || [ "$local_port" -lt 1 ] || [ "$local_port" -gt 65535 ]; then
+        print_error "Invalid local port: $local_port (must be 1-65535)"
+        exit 1
+    fi
+    if ! [[ "$remote_port" =~ ^[0-9]+$ ]] || [ "$remote_port" -lt 1 ] || [ "$remote_port" -gt 65535 ]; then
+        print_error "Invalid remote port: $remote_port (must be 1-65535)"
+        exit 1
+    fi
+
+    # Resolve host (picker + AWS auto-start)
+    resolve_remo_host
+
+    # Check if local port is already in use
+    if command -v ss &>/dev/null; then
+        if ss -tlnH "sport = :${local_port}" 2>/dev/null | grep -q .; then
+            print_error "Local port $local_port is already in use."
+            exit 1
+        fi
+    fi
+
+    # Set up clean exit trap
+    trap 'echo ""; print_info "Tunnel closed."; exit 0' INT TERM
+
+    # Print tunnel info
+    echo ""
+    print_info "Tunnel: localhost:${local_port} -> ${remote_host}:${remote_port} (via ${REMO_TYPE}: ${REMO_NAME})"
+    echo "Press Ctrl+C to stop."
+    echo ""
+
+    # Auto-open browser (unless --no-open)
+    if [ "$no_open" != "true" ]; then
+        if command -v xdg-open &>/dev/null; then
+            xdg-open "http://localhost:${local_port}" 2>/dev/null &
+        elif command -v open &>/dev/null; then
+            open "http://localhost:${local_port}" &
+        fi
+    fi
+
+    # Build and exec SSH tunnel command
+    local ssh_opts=(
+        -N
+        -L "${local_port}:${remote_host}:${remote_port}"
+        -o "ExitOnForwardFailure=yes"
+        -o "ServerAliveInterval=15"
+        -o "ServerAliveCountMax=3"
+    )
+
+    if [ "${REMO_ACCESS_MODE:-}" = "ssm" ]; then
+        if ! command -v session-manager-plugin &> /dev/null; then
+            print_error "session-manager-plugin is not installed."
+            echo ""
+            echo "Install it from:"
+            echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
+            echo ""
+            echo "On macOS:  brew install --cask session-manager-plugin"
+            echo "On Ubuntu: see AWS docs for .deb package"
+            exit 1
+        fi
+        local _profile="${AWS_PROFILE:-}"
+        local _region
+        _region=$(get_aws_region "$REMO_NAME")
+        local _env_prefix=""
+        if [ -n "$_profile" ]; then
+            _env_prefix="env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY= AWS_PROFILE=${_profile} "
+        fi
+        ssh_opts+=(
+            -o "StrictHostKeyChecking=no"
+            -o "UserKnownHostsFile=/dev/null"
+            -o "ProxyCommand=${_env_prefix}aws ssm start-session --region ${_region} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+        )
+        exec ssh "${ssh_opts[@]}" "${REMO_USER}@${REMO_INSTANCE_ID}"
+    else
+        exec ssh "${ssh_opts[@]}" "${REMO_USER}@${REMO_HOST}"
+    fi
+}
+
+handle_tunnel() {
+    local port_spec=""
+    local no_open="false"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                show_tunnel_help
+                return 0
+                ;;
+            --no-open)
+                no_open="true"
+                shift
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo tunnel --help' for usage."
+                exit 1
+                ;;
+            *)
+                if [ -n "$port_spec" ]; then
+                    print_error "Unexpected argument: $1"
+                    echo "Run 'remo tunnel --help' for usage."
+                    exit 1
+                fi
+                port_spec="$1"
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$port_spec" ]; then
+        print_error "Port specification required."
+        echo ""
+        echo "Usage: remo tunnel <port-spec> [--no-open]"
+        echo "Run 'remo tunnel --help' for details."
+        exit 1
+    fi
+
+    tunnel_connect "$port_spec" "$no_open"
+}
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 
@@ -3351,6 +3543,9 @@ main() {
             ;;
         shell)
             handle_shell "$@"
+            ;;
+        tunnel)
+            handle_tunnel "$@"
             ;;
         incus)
             handle_incus "$@"
