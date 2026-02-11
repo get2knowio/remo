@@ -290,7 +290,6 @@ USAGE:
 
 COMMANDS:
     shell       Connect to a remo environment (auto-detects or picker)
-    tunnel      Forward a port from a remo environment to localhost
     init        Initialize remo (install dependencies, create .env)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
@@ -302,8 +301,8 @@ ENVIRONMENT:
 
 EXAMPLES:
     remo shell
-    remo tunnel 8080
-    remo tunnel 9000:8080 --no-open
+    remo shell -L 8080
+    remo shell -L 9000:8080 --no-open
 
     remo incus create dev1
     remo incus list
@@ -2210,16 +2209,7 @@ aws_create() {
 
     # SSM pre-checks
     if [ "$access_mode" = "ssm" ]; then
-        if ! command -v session-manager-plugin &> /dev/null; then
-            print_error "session-manager-plugin is not installed."
-            echo ""
-            echo "Install it from:"
-            echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
-            echo ""
-            echo "On macOS:  brew install --cask session-manager-plugin"
-            echo "On Ubuntu: see AWS docs for .deb package"
-            exit 1
-        fi
+        require_session_manager_plugin
 
         if [ -n "$iam_profile" ]; then
             print_info "Using provided IAM instance profile: $iam_profile"
@@ -3144,6 +3134,56 @@ handle_aws() {
 }
 
 # =============================================================================
+# SSH HELPERS
+# =============================================================================
+
+# Check that session-manager-plugin is installed (required for SSM access mode).
+require_session_manager_plugin() {
+    if ! command -v session-manager-plugin &> /dev/null; then
+        print_error "session-manager-plugin is not installed."
+        echo ""
+        echo "Install it from:"
+        echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
+        echo ""
+        echo "On macOS:  brew install --cask session-manager-plugin"
+        echo "On Ubuntu: see AWS docs for .deb package"
+        exit 1
+    fi
+}
+
+# Build SSH options array and target string for the current remo host.
+# Sets in caller scope: SSH_OPTS (array), SSH_TARGET (string).
+# Usage: build_ssh_opts [--multiplex]
+build_ssh_opts() {
+    local use_multiplex=false
+    [ "${1:-}" = "--multiplex" ] && use_multiplex=true
+
+    SSH_OPTS=()
+    if [ "$use_multiplex" = true ]; then
+        SSH_OPTS+=(-o "ControlMaster=auto" -o "ControlPath=~/.ssh/remo-%r@%h-%p" -o "ControlPersist=60s")
+    fi
+
+    if [ "${REMO_ACCESS_MODE:-}" = "ssm" ]; then
+        require_session_manager_plugin
+        local _profile="${AWS_PROFILE:-}"
+        local _region
+        _region=$(get_aws_region "$REMO_NAME")
+        local _env_prefix=""
+        if [ -n "$_profile" ]; then
+            _env_prefix="env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY= AWS_PROFILE=${_profile} "
+        fi
+        SSH_OPTS+=(
+            -o "StrictHostKeyChecking=no"
+            -o "UserKnownHostsFile=/dev/null"
+            -o "ProxyCommand=${_env_prefix}aws ssm start-session --region ${_region} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
+        )
+        SSH_TARGET="${REMO_USER}@${REMO_INSTANCE_ID}"
+    else
+        SSH_TARGET="${REMO_USER}@${REMO_HOST}"
+    fi
+}
+
+# =============================================================================
 # SHELL COMMAND
 # =============================================================================
 
@@ -3152,7 +3192,7 @@ show_shell_help() {
 remo shell - Connect to a remo environment
 
 USAGE:
-    remo shell
+    remo shell [-L port-spec]... [--no-open]
 
 DESCRIPTION:
     Connects to a registered remo environment:
@@ -3162,12 +3202,237 @@ DESCRIPTION:
     Environments are registered when created with remo <platform> create.
     Use 'remo <platform> list' to see registered environments.
 
+    Drag-and-drop a file into the terminal to transfer it to the remote
+    environment's home directory. Requires python3 on the local machine.
+
+OPTIONS:
+    -L PORT           Forward remote PORT to the same local port
+    -L LOCAL:REMOTE   Forward remote REMOTE port to local LOCAL port
+    --no-open         Skip auto-opening browser for tunneled ports
+
 EXAMPLES:
-    remo shell              # Connect (or pick if multiple)
-    remo aws list           # List AWS instances
-    remo hetzner list       # List Hetzner VMs
-    remo incus list         # List Incus containers
+    remo shell                    # Connect (or pick if multiple)
+    remo shell -L 8080            # Shell + forward remote :8080 to local :8080
+    remo shell -L 9000:8080       # Shell + forward remote :8080 to local :9000
+    remo shell -L 8080 -L 3000    # Shell + forward multiple ports
+    remo shell -L 8080 --no-open  # Shell + forward, skip browser auto-open
 EOF
+}
+
+# Write the Python pty proxy script for shell drag-and-drop support.
+# The proxy intercepts bracketed paste events and transfers local files via rsync.
+# Env vars: REMO_SSH_TARGET, REMO_RSYNC_SSH (set by shell_connect before launch).
+_write_shell_proxy() {
+    local dest="$1"
+    cat > "$dest" << 'PROXY_EOF'
+#!/usr/bin/env python3
+"""remo shell proxy — intercepts drag-and-drop file paths, transfers via rsync."""
+import sys, os, signal, select, struct, fcntl, termios, pty, subprocess, re
+from urllib.parse import unquote as url_unquote
+
+BRACKETED_PASTE_ON  = b'\x1b[?2004h'
+BRACKETED_PASTE_OFF = b'\x1b[?2004l'
+PASTE_START = b'\x1b[200~'
+PASTE_END   = b'\x1b[201~'
+
+def set_nonblock(fd):
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+def get_winsize(fd):
+    try:
+        return struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\x00' * 8))
+    except Exception:
+        return (24, 80, 0, 0)
+
+def set_winsize(fd, rows, cols, xpix=0, ypix=0):
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, xpix, ypix))
+
+def resolve_path(raw):
+    """Resolve a potentially quoted/escaped/URI path to an absolute path, or None."""
+    p = raw.strip()
+    if not p:
+        return None
+    # file:// URI
+    if p.startswith('file://'):
+        p = url_unquote(p[7:])  # strip scheme, decode %xx
+    # Strip surrounding quotes
+    if (p.startswith("'") and p.endswith("'")) or (p.startswith('"') and p.endswith('"')):
+        p = p[1:-1]
+    # Unescape backslash-spaces
+    p = p.replace('\\ ', ' ')
+    # Expand ~ (shouldn't appear from drag-and-drop, but just in case)
+    p = os.path.expanduser(p)
+    if os.path.exists(p):
+        return os.path.abspath(p)
+    return None
+
+def transfer_file(path, ssh_target, rsync_ssh):
+    """Transfer a local file to remote ~/ via rsync. Returns remote path or None."""
+    basename = os.path.basename(path)
+    dest = f"{ssh_target}:~/"
+    cmd = ["rsync", "-az", "-e", rsync_ssh, path, dest]
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=300)
+        if r.returncode == 0:
+            return f"~/{basename}"
+    except Exception:
+        pass
+    return None
+
+def handle_paste(paste_bytes, master_fd, ssh_target, rsync_ssh):
+    """Process a bracketed paste. Transfer files or forward as-is."""
+    text = paste_bytes.decode('utf-8', errors='replace')
+    lines = text.splitlines()
+
+    # Check if every non-empty line is a valid local file path
+    paths = []
+    for line in lines:
+        if not line.strip():
+            continue
+        resolved = resolve_path(line)
+        if resolved is None:
+            # Not a file path — forward the original paste unchanged
+            os.write(master_fd, PASTE_START + paste_bytes + PASTE_END)
+            return
+        paths.append(resolved)
+
+    if not paths:
+        # Empty paste
+        os.write(master_fd, PASTE_START + paste_bytes + PASTE_END)
+        return
+
+    # Transfer each file and collect remote paths
+    remote_paths = []
+    for p in paths:
+        rp = transfer_file(p, ssh_target, rsync_ssh)
+        if rp is None:
+            # Transfer failed — forward original paste so user sees something
+            os.write(master_fd, PASTE_START + paste_bytes + PASTE_END)
+            return
+        remote_paths.append(rp)
+
+    # Send remote paths to the shell (inside a bracketed paste so shells handle it)
+    result = ' '.join(remote_paths)
+    os.write(master_fd, PASTE_START + result.encode() + PASTE_END)
+
+def main():
+    ssh_cmd = sys.argv[1:]
+    if not ssh_cmd:
+        print("Usage: proxy.py SSH_COMMAND...", file=sys.stderr)
+        sys.exit(1)
+
+    ssh_target = os.environ.get('REMO_SSH_TARGET', '')
+    rsync_ssh  = os.environ.get('REMO_RSYNC_SSH', 'ssh')
+
+    # Save original terminal settings
+    stdin_fd = sys.stdin.fileno()
+    old_attrs = termios.tcgetattr(stdin_fd)
+
+    # Fork a child with a pty
+    child_pid, master_fd = pty.fork()
+
+    if child_pid == 0:
+        # Child — exec SSH
+        os.execvp(ssh_cmd[0], ssh_cmd)
+        sys.exit(1)
+
+    # Parent — proxy I/O
+    try:
+        # Set terminal to raw mode
+        new_attrs = termios.tcgetattr(stdin_fd)
+        new_attrs[0] = 0          # iflag — no input processing
+        new_attrs[1] = 0          # oflag — no output processing
+        new_attrs[2] &= ~(termios.CSIZE | termios.PARENB)
+        new_attrs[2] |= termios.CS8
+        new_attrs[3] = 0          # lflag — no echo, no canonical
+        new_attrs[6][termios.VMIN]  = 1
+        new_attrs[6][termios.VTIME] = 0
+        termios.tcsetattr(stdin_fd, termios.TCSAFLUSH, new_attrs)
+
+        # Propagate initial window size
+        rows, cols, xpix, ypix = get_winsize(stdin_fd)
+        set_winsize(master_fd, rows, cols, xpix, ypix)
+
+        # Handle SIGWINCH
+        def on_winch(signum, frame):
+            r, c, xp, yp = get_winsize(stdin_fd)
+            set_winsize(master_fd, r, c, xp, yp)
+            os.kill(child_pid, signal.SIGWINCH)
+        signal.signal(signal.SIGWINCH, on_winch)
+
+        # Enable bracketed paste on the real terminal
+        os.write(stdin_fd, BRACKETED_PASTE_ON)
+
+        set_nonblock(master_fd)
+
+        paste_buf = None  # None = not in paste; bytes = accumulating paste content
+
+        while True:
+            try:
+                rlist, _, _ = select.select([stdin_fd, master_fd], [], [], 0.5)
+            except (select.error, InterruptedError):
+                continue
+
+            if stdin_fd in rlist:
+                try:
+                    data = os.read(stdin_fd, 65536)
+                except OSError:
+                    data = b''
+                if not data:
+                    break
+
+                # Process data for bracketed paste markers
+                i = 0
+                while i < len(data):
+                    if paste_buf is not None:
+                        # Inside a paste — look for end marker
+                        end_idx = data.find(PASTE_END, i)
+                        if end_idx == -1:
+                            paste_buf += data[i:]
+                            break
+                        else:
+                            paste_buf += data[i:end_idx]
+                            handle_paste(paste_buf, master_fd, ssh_target, rsync_ssh)
+                            paste_buf = None
+                            i = end_idx + len(PASTE_END)
+                    else:
+                        # Outside a paste — look for start marker
+                        start_idx = data.find(PASTE_START, i)
+                        if start_idx == -1:
+                            os.write(master_fd, data[i:])
+                            break
+                        else:
+                            # Forward everything before the marker
+                            if start_idx > i:
+                                os.write(master_fd, data[i:start_idx])
+                            paste_buf = b''
+                            i = start_idx + len(PASTE_START)
+
+            if master_fd in rlist:
+                try:
+                    data = os.read(master_fd, 65536)
+                except OSError:
+                    data = b''
+                if not data:
+                    break
+                os.write(stdin_fd, data)
+
+    finally:
+        # Restore terminal
+        os.write(stdin_fd, BRACKETED_PASTE_OFF)
+        termios.tcsetattr(stdin_fd, termios.TCSAFLUSH, old_attrs)
+
+    # Wait for child and propagate exit status
+    _, status = os.waitpid(child_pid, 0)
+    if os.WIFEXITED(status):
+        sys.exit(os.WEXITSTATUS(status))
+    sys.exit(1)
+
+if __name__ == '__main__':
+    main()
+PROXY_EOF
+    chmod +x "$dest"
 }
 
 # Resolve a remo host from known_hosts with optional fzf picker and AWS auto-start.
@@ -3292,42 +3557,103 @@ EOF
 }
 
 shell_connect() {
+    local -n _tunnels=$1
+    local no_open="$2"
+
     resolve_remo_host
+    build_ssh_opts --multiplex
 
     if [ "${REMO_ACCESS_MODE:-}" = "ssm" ]; then
-        if ! command -v session-manager-plugin &> /dev/null; then
-            print_error "session-manager-plugin is not installed."
-            echo ""
-            echo "Install it from:"
-            echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
-            echo ""
-            echo "On macOS:  brew install --cask session-manager-plugin"
-            echo "On Ubuntu: see AWS docs for .deb package"
-            exit 1
-        fi
         print_info "Connecting to $REMO_TYPE: $REMO_NAME via SSM (${REMO_INSTANCE_ID})..."
-        local _profile="${AWS_PROFILE:-}"
-        local _region
-        _region=$(get_aws_region "$REMO_NAME")
-        local _env_prefix=""
-        if [ -n "$_profile" ]; then
-            _env_prefix="env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY= AWS_PROFILE=${_profile} "
-        fi
-        exec ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            -o ProxyCommand="${_env_prefix}aws ssm start-session --region ${_region} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
-            "${REMO_USER}@${REMO_INSTANCE_ID}"
     else
         print_info "Connecting to $REMO_TYPE: $REMO_NAME ($REMO_HOST)..."
-        exec ssh "${REMO_USER}@${REMO_HOST}"
+    fi
+
+    local ssh_cmd=(ssh "${SSH_OPTS[@]}")
+
+    # Parse and add tunnel specs
+    local local_port remote_port
+    for spec in "${_tunnels[@]}"; do
+        case "$spec" in
+            *:*)
+                local_port="${spec%%:*}"
+                remote_port="${spec##*:}"
+                ;;
+            *)
+                local_port="$spec"
+                remote_port="$spec"
+                ;;
+        esac
+
+        # Validate ports
+        if ! [[ "$local_port" =~ ^[0-9]+$ ]] || [ "$local_port" -lt 1 ] || [ "$local_port" -gt 65535 ]; then
+            print_error "Invalid local port: $local_port (must be 1-65535)"
+            exit 1
+        fi
+        if ! [[ "$remote_port" =~ ^[0-9]+$ ]] || [ "$remote_port" -lt 1 ] || [ "$remote_port" -gt 65535 ]; then
+            print_error "Invalid remote port: $remote_port (must be 1-65535)"
+            exit 1
+        fi
+
+        # Check if local port is already in use
+        if command -v ss &>/dev/null; then
+            if ss -tlnH "sport = :${local_port}" 2>/dev/null | grep -q .; then
+                print_error "Local port $local_port is already in use."
+                exit 1
+            fi
+        fi
+
+        ssh_cmd+=(-L "${local_port}:localhost:${remote_port}")
+        print_info "Tunnel: localhost:${local_port} -> remote :${remote_port}"
+    done
+
+    ssh_cmd+=("$SSH_TARGET")
+
+    # Auto-open browser for first tunnel (unless --no-open)
+    if [ "${#_tunnels[@]}" -gt 0 ] && [ "$no_open" != "true" ]; then
+        local first_spec="${_tunnels[0]}"
+        local first_local="${first_spec%%:*}"
+        if command -v xdg-open &>/dev/null; then
+            xdg-open "http://localhost:${first_local}" 2>/dev/null &
+        elif command -v open &>/dev/null; then
+            open "http://localhost:${first_local}" &
+        fi
+    fi
+
+    if command -v python3 &>/dev/null; then
+        local _proxy
+        _proxy=$(mktemp /tmp/remo-shell-proxy.XXXXXX.py)
+        trap 'rm -f "$_proxy"' EXIT
+        _write_shell_proxy "$_proxy"
+        REMO_SSH_TARGET="$SSH_TARGET" REMO_RSYNC_SSH="ssh $(printf '%q ' "${SSH_OPTS[@]}")" \
+            python3 "$_proxy" "${ssh_cmd[@]}"
+    else
+        exec "${ssh_cmd[@]}"
     fi
 }
 
 handle_shell() {
+    local tunnels=()
+    local no_open="false"
+
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
                 show_shell_help
                 return 0
+                ;;
+            -L)
+                if [ -z "${2:-}" ]; then
+                    print_error "-L requires a port specification."
+                    echo "Run 'remo shell --help' for usage."
+                    exit 1
+                fi
+                tunnels+=("$2")
+                shift 2
+                ;;
+            --no-open)
+                no_open="true"
+                shift
                 ;;
             -*)
                 print_error "Unknown option: $1"
@@ -3341,189 +3667,7 @@ handle_shell() {
         esac
     done
 
-    shell_connect
-}
-
-# =============================================================================
-# TUNNEL COMMAND
-# =============================================================================
-
-show_tunnel_help() {
-    cat << 'EOF'
-remo tunnel - Forward a port from a remo environment to localhost
-
-USAGE:
-    remo tunnel <port-spec> [options]
-
-DESCRIPTION:
-    Creates an SSH tunnel from a remote remo environment to your local machine.
-    Runs in the foreground (Ctrl+C to stop).
-
-    If exactly one environment exists, connects directly.
-    If multiple environments exist, shows an interactive picker.
-
-PORT FORMATS:
-    PORT                Remote localhost:PORT -> local PORT
-    LOCAL:REMOTE        Remote localhost:REMOTE -> local LOCAL
-    LOCAL:HOST:REMOTE   Remote HOST:REMOTE -> local LOCAL
-
-OPTIONS:
-    --no-open   Skip auto-opening browser
-    --help      Show this help message
-
-EXAMPLES:
-    remo tunnel 8080                    # remote :8080 -> local :8080
-    remo tunnel 9000:8080              # remote :8080 -> local :9000
-    remo tunnel 3306:db.internal:3306  # remote db.internal:3306 -> local :3306
-    remo tunnel 8080 --no-open         # skip browser auto-open
-EOF
-}
-
-tunnel_connect() {
-    local port_spec="$1"
-    local no_open="$2"
-
-    # Parse port spec into local_port, remote_host, remote_port
-    local local_port remote_host remote_port
-    case "$port_spec" in
-        *:*:*)
-            # LOCAL:HOST:REMOTE
-            local_port="${port_spec%%:*}"
-            local rest="${port_spec#*:}"
-            remote_host="${rest%:*}"
-            remote_port="${rest##*:}"
-            ;;
-        *:*)
-            # LOCAL:REMOTE
-            local_port="${port_spec%%:*}"
-            remote_host="localhost"
-            remote_port="${port_spec##*:}"
-            ;;
-        *)
-            # PORT only
-            local_port="$port_spec"
-            remote_host="localhost"
-            remote_port="$port_spec"
-            ;;
-    esac
-
-    # Validate ports are numeric and in range
-    if ! [[ "$local_port" =~ ^[0-9]+$ ]] || [ "$local_port" -lt 1 ] || [ "$local_port" -gt 65535 ]; then
-        print_error "Invalid local port: $local_port (must be 1-65535)"
-        exit 1
-    fi
-    if ! [[ "$remote_port" =~ ^[0-9]+$ ]] || [ "$remote_port" -lt 1 ] || [ "$remote_port" -gt 65535 ]; then
-        print_error "Invalid remote port: $remote_port (must be 1-65535)"
-        exit 1
-    fi
-
-    # Resolve host (picker + AWS auto-start)
-    resolve_remo_host
-
-    # Check if local port is already in use
-    if command -v ss &>/dev/null; then
-        if ss -tlnH "sport = :${local_port}" 2>/dev/null | grep -q .; then
-            print_error "Local port $local_port is already in use."
-            exit 1
-        fi
-    fi
-
-    # Set up clean exit trap
-    trap 'echo ""; print_info "Tunnel closed."; exit 0' INT TERM
-
-    # Print tunnel info
-    echo ""
-    print_info "Tunnel: localhost:${local_port} -> ${remote_host}:${remote_port} (via ${REMO_TYPE}: ${REMO_NAME})"
-    echo "Press Ctrl+C to stop."
-    echo ""
-
-    # Auto-open browser (unless --no-open)
-    if [ "$no_open" != "true" ]; then
-        if command -v xdg-open &>/dev/null; then
-            xdg-open "http://localhost:${local_port}" 2>/dev/null &
-        elif command -v open &>/dev/null; then
-            open "http://localhost:${local_port}" &
-        fi
-    fi
-
-    # Build and exec SSH tunnel command
-    local ssh_opts=(
-        -N
-        -L "${local_port}:${remote_host}:${remote_port}"
-        -o "ExitOnForwardFailure=yes"
-        -o "ServerAliveInterval=15"
-        -o "ServerAliveCountMax=3"
-    )
-
-    if [ "${REMO_ACCESS_MODE:-}" = "ssm" ]; then
-        if ! command -v session-manager-plugin &> /dev/null; then
-            print_error "session-manager-plugin is not installed."
-            echo ""
-            echo "Install it from:"
-            echo "  https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html"
-            echo ""
-            echo "On macOS:  brew install --cask session-manager-plugin"
-            echo "On Ubuntu: see AWS docs for .deb package"
-            exit 1
-        fi
-        local _profile="${AWS_PROFILE:-}"
-        local _region
-        _region=$(get_aws_region "$REMO_NAME")
-        local _env_prefix=""
-        if [ -n "$_profile" ]; then
-            _env_prefix="env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY= AWS_PROFILE=${_profile} "
-        fi
-        ssh_opts+=(
-            -o "StrictHostKeyChecking=no"
-            -o "UserKnownHostsFile=/dev/null"
-            -o "ProxyCommand=${_env_prefix}aws ssm start-session --region ${_region} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'"
-        )
-        exec ssh "${ssh_opts[@]}" "${REMO_USER}@${REMO_INSTANCE_ID}"
-    else
-        exec ssh "${ssh_opts[@]}" "${REMO_USER}@${REMO_HOST}"
-    fi
-}
-
-handle_tunnel() {
-    local port_spec=""
-    local no_open="false"
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --help|-h)
-                show_tunnel_help
-                return 0
-                ;;
-            --no-open)
-                no_open="true"
-                shift
-                ;;
-            -*)
-                print_error "Unknown option: $1"
-                echo "Run 'remo tunnel --help' for usage."
-                exit 1
-                ;;
-            *)
-                if [ -n "$port_spec" ]; then
-                    print_error "Unexpected argument: $1"
-                    echo "Run 'remo tunnel --help' for usage."
-                    exit 1
-                fi
-                port_spec="$1"
-                shift
-                ;;
-        esac
-    done
-
-    if [ -z "$port_spec" ]; then
-        print_error "Port specification required."
-        echo ""
-        echo "Usage: remo tunnel <port-spec> [--no-open]"
-        echo "Run 'remo tunnel --help' for details."
-        exit 1
-    fi
-
-    tunnel_connect "$port_spec" "$no_open"
+    shell_connect tunnels "$no_open"
 }
 
 # =============================================================================
@@ -3543,9 +3687,6 @@ main() {
             ;;
         shell)
             handle_shell "$@"
-            ;;
-        tunnel)
-            handle_tunnel "$@"
             ;;
         incus)
             handle_incus "$@"
