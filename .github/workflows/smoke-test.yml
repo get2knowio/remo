@@ -1,0 +1,285 @@
+name: Smoke Tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'remo'
+      - 'ansible/**'
+      - '.github/workflows/smoke-test.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'remo'
+      - 'ansible/**'
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: 'Provider to test'
+        type: choice
+        default: 'all'
+        options: [all, aws-direct, aws-ssm, hetzner, incus]
+
+concurrency:
+  group: smoke-test-${{ github.ref }}
+  cancel-in-progress: false  # Never cancel — would orphan cloud resources
+
+jobs:
+  # ===========================================================================
+  # AWS EC2 — Direct SSH access
+  # ===========================================================================
+  aws-direct:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'aws-direct'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    timeout-minutes: 20
+    env:
+      INSTANCE_NAME: ci-${{ github.run_id }}-aws-direct
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          role-session-name: remo-ci-${{ github.run_id }}
+          aws-region: us-west-2
+
+      - name: Generate ephemeral SSH key
+        run: |
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "remo-ci"
+
+      - name: Install dependencies
+        run: |
+          ./remo init
+          printf '%s\n' \
+            "SSH_PRIVATE_KEY_PATH=~/.ssh/id_ed25519" \
+            "SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub" \
+            > .env
+
+      - name: Provision
+        run: ./remo aws create --name "$INSTANCE_NAME" --access direct
+
+      - name: Test SSH connectivity
+        run: |
+          ENTRY=$(grep "^aws:${INSTANCE_NAME}:" ~/.config/remo/known_hosts | tail -1)
+          HOST=$(echo "$ENTRY" | cut -d: -f3)
+          USER=$(echo "$ENTRY" | cut -d: -f4)
+          echo "Testing SSH to $USER@$HOST..."
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=30 -o BatchMode=yes \
+              -i ~/.ssh/id_ed25519 \
+              "$USER@$HOST" echo "connection-ok" | grep -q "connection-ok"
+          echo "SSH connectivity: PASS"
+
+      - name: Teardown
+        if: always()
+        run: |
+          ./remo aws destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
+
+  # ===========================================================================
+  # AWS EC2 — SSM access
+  # ===========================================================================
+  aws-ssm:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'aws-ssm'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    timeout-minutes: 20
+    env:
+      INSTANCE_NAME: ci-${{ github.run_id }}-aws-ssm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          role-session-name: remo-ci-${{ github.run_id }}
+          aws-region: us-west-2
+
+      - name: Install SSM plugin
+        run: |
+          curl -sL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" \
+            -o /tmp/ssm-plugin.deb
+          sudo dpkg -i /tmp/ssm-plugin.deb
+
+      - name: Generate ephemeral SSH key
+        run: |
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "remo-ci"
+
+      - name: Install dependencies
+        run: |
+          ./remo init
+          printf '%s\n' \
+            "SSH_PRIVATE_KEY_PATH=~/.ssh/id_ed25519" \
+            "SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub" \
+            > .env
+
+      - name: Provision
+        run: ./remo aws create --name "$INSTANCE_NAME" --access ssm
+
+      - name: Test SSM connectivity
+        run: |
+          ENTRY=$(grep "^aws:${INSTANCE_NAME}:" ~/.config/remo/known_hosts | tail -1)
+          USER=$(echo "$ENTRY" | cut -d: -f4)
+          INSTANCE_ID=$(echo "$ENTRY" | cut -d: -f5)
+          REGION=$(echo "$ENTRY" | cut -d: -f7)
+          REGION="${REGION:-us-west-2}"
+          echo "Testing SSH via SSM to $USER@$INSTANCE_ID..."
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=60 \
+              -o "ProxyCommand=aws ssm start-session --region ${REGION} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
+              -i ~/.ssh/id_ed25519 \
+              "$USER@$INSTANCE_ID" echo "connection-ok" | grep -q "connection-ok"
+          echo "SSM connectivity: PASS"
+
+      - name: Teardown
+        if: always()
+        run: |
+          ./remo aws destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
+
+  # ===========================================================================
+  # Hetzner Cloud
+  # ===========================================================================
+  hetzner:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'hetzner'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      INSTANCE_NAME: ci-${{ github.run_id }}-hetzner
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Generate ephemeral SSH key
+        run: |
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "remo-ci"
+
+      - name: Install dependencies
+        run: |
+          ./remo init
+          printf '%s\n' \
+            "HETZNER_API_TOKEN=${HETZNER_API_TOKEN}" \
+            "SSH_PRIVATE_KEY_PATH=~/.ssh/id_ed25519" \
+            "SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub" \
+            > .env
+        env:
+          HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+
+      - name: Provision
+        run: ./remo hetzner create --name "$INSTANCE_NAME"
+
+      - name: Test SSH connectivity
+        run: |
+          ENTRY=$(grep "^hetzner:${INSTANCE_NAME}:" ~/.config/remo/known_hosts | tail -1)
+          HOST=$(echo "$ENTRY" | cut -d: -f3)
+          USER=$(echo "$ENTRY" | cut -d: -f4)
+          echo "Testing SSH to $USER@$HOST..."
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=30 -o BatchMode=yes \
+              -i ~/.ssh/id_ed25519 \
+              "$USER@$HOST" echo "connection-ok" | grep -q "connection-ok"
+          echo "SSH connectivity: PASS"
+
+      - name: Teardown
+        if: always()
+        run: |
+          ./remo hetzner destroy --name "$INSTANCE_NAME" --yes --remove-volume || true
+
+  # ===========================================================================
+  # Incus / LXC (local on runner)
+  # ===========================================================================
+  incus:
+    if: >-
+      github.event_name != 'workflow_dispatch' ||
+      github.event.inputs.provider == 'all' ||
+      github.event.inputs.provider == 'incus'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CONTAINER_NAME: ci-test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Incus from Zabbly
+        run: |
+          curl -fsSL https://pkgs.zabbly.com/key.asc | \
+            sudo gpg --dearmor -o /etc/apt/keyrings/zabbly.gpg
+          CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
+          echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $CODENAME main" | \
+            sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
+          sudo apt-get update
+          sudo apt-get install -y incus
+
+      - name: Initialize Incus
+        run: |
+          sudo incus admin init --minimal
+          sudo usermod -aG incus-admin "$USER"
+
+      - name: Generate ephemeral SSH key
+        run: |
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "remo-ci"
+
+      - name: Install dependencies
+        run: |
+          ./remo init
+          printf '%s\n' \
+            "SSH_PRIVATE_KEY_PATH=~/.ssh/id_ed25519" \
+            "SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub" \
+            > .env
+
+      - name: Create container
+        run: |
+          # Run via sg to pick up incus-admin group without re-login
+          sg incus-admin -c "./remo incus create $CONTAINER_NAME"
+
+      - name: Test connectivity
+        run: |
+          ENTRY=$(grep "^incus:.*/${CONTAINER_NAME}:" ~/.config/remo/known_hosts | tail -1)
+          HOST=$(echo "$ENTRY" | cut -d: -f3)
+          USER=$(echo "$ENTRY" | cut -d: -f4)
+          echo "Testing SSH to $USER@$HOST..."
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=30 -o BatchMode=yes \
+              -i ~/.ssh/id_ed25519 \
+              "$USER@$HOST" echo "connection-ok" | grep -q "connection-ok"
+          echo "Incus connectivity: PASS"
+
+      - name: Teardown
+        if: always()
+        run: |
+          sg incus-admin -c "./remo incus destroy $CONTAINER_NAME --yes" || true

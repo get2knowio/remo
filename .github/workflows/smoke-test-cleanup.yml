@@ -1,0 +1,113 @@
+name: Cleanup Stale CI Resources
+
+# Safety net: finds and destroys cloud resources left behind by failed or
+# cancelled smoke test runs. Resources are identified by the "ci-" name prefix.
+
+on:
+  schedule:
+    - cron: '15 */4 * * *'  # Every 4 hours at :15
+  workflow_dispatch:
+
+jobs:
+  # ===========================================================================
+  # AWS — terminate stale EC2 instances
+  # ===========================================================================
+  cleanup-aws:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          role-session-name: remo-cleanup-${{ github.run_id }}
+          aws-region: us-west-2
+
+      - name: Terminate stale CI instances
+        run: |
+          CUTOFF=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S 2>/dev/null || \
+                   date -u -v-1H +%Y-%m-%dT%H:%M:%S)
+
+          echo "Looking for remo CI instances launched before $CUTOFF..."
+
+          INSTANCE_IDS=$(aws ec2 describe-instances \
+            --filters \
+              "Name=tag:Name,Values=ci-*" \
+              "Name=tag:remo,Values=true" \
+              "Name=instance-state-name,Values=running,stopped" \
+            --query "Reservations[].Instances[?LaunchTime<=\`${CUTOFF}\`].InstanceId" \
+            --output text)
+
+          if [ -z "$INSTANCE_IDS" ] || [ "$INSTANCE_IDS" = "None" ]; then
+            echo "No stale instances found."
+            exit 0
+          fi
+
+          for id in $INSTANCE_IDS; do
+            echo "Terminating stale instance: $id"
+            aws ec2 terminate-instances --instance-ids "$id"
+          done
+
+      - name: Clean up orphaned CI resources
+        run: |
+          # Delete key pairs with ci- prefix
+          aws ec2 describe-key-pairs \
+            --filters "Name=key-name,Values=ci-*" \
+            --query "KeyPairs[].KeyName" --output text | tr '\t' '\n' | \
+          while read -r name; do
+            [ -z "$name" ] && continue
+            echo "Deleting orphaned key pair: $name"
+            aws ec2 delete-key-pair --key-name "$name"
+          done
+
+          # Delete security groups with ci- prefix (ignore failures from in-use groups)
+          aws ec2 describe-security-groups \
+            --filters "Name=group-name,Values=ci-*" \
+            --query "SecurityGroups[].{Id:GroupId,Name:GroupName}" --output text | \
+          while read -r id name; do
+            [ -z "$id" ] && continue
+            echo "Deleting orphaned security group: $name ($id)"
+            aws ec2 delete-security-group --group-id "$id" 2>/dev/null || true
+          done
+
+  # ===========================================================================
+  # Hetzner — delete stale servers
+  # ===========================================================================
+  cleanup-hetzner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Setup hcloud CLI
+        uses: hetznercloud/setup-hcloud@v2
+
+      - name: Delete stale CI servers
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+        run: |
+          echo "Looking for stale Hetzner CI servers..."
+
+          hcloud server list -o noheader -o columns=id,name,created | \
+          while read -r id name created; do
+            [ -z "$id" ] && continue
+
+            # Only target servers with ci- prefix
+            case "$name" in ci-*) ;; *) continue ;; esac
+
+            age=$(( $(date +%s) - $(date -d "$created" +%s 2>/dev/null || echo 0) ))
+            if [ "$age" -gt 3600 ]; then
+              echo "Deleting stale server: $name ($id), age: ${age}s"
+              hcloud server delete "$id"
+            fi
+          done
+
+          # Also clean up SSH keys with ci- prefix
+          hcloud ssh-key list -o noheader -o columns=id,name | \
+          while read -r id name; do
+            [ -z "$id" ] && continue
+            case "$name" in ci-*) ;; *) continue ;; esac
+            echo "Deleting orphaned SSH key: $name ($id)"
+            hcloud ssh-key delete "$id" 2>/dev/null || true
+          done
