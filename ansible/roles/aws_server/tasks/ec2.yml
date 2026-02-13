@@ -27,6 +27,17 @@
   ansible.builtin.debug:
     msg: "EC2 key pair: {{ aws_key_name }}"
 
+- name: Detect instance architecture from type
+  ansible.builtin.set_fact:
+    _aws_is_arm: "{{ aws_instance_type is match('(a1|[a-z]+[0-9]+g[a-z]*)\\.') }}"
+
+- name: Resolve AMI search parameters
+  ansible.builtin.set_fact:
+    _ami_arch_filter: "{{ 'arm64' if _aws_is_arm | bool else 'x86_64' }}"
+    _ami_name_pattern: >-
+      {{ aws_ami_name_pattern if aws_ami_name_pattern | default('', true) | length > 0
+         else 'ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-' ~ ('arm64' if _aws_is_arm | bool else 'amd64') ~ '-server-*' }}
+
 - name: Find Ubuntu 24.04 AMI
   delegate_to: localhost
   become: false
@@ -34,8 +45,8 @@
     owners:
       - "{{ aws_ami_owner }}"
     filters:
-      name: "{{ aws_ami_name_pattern }}"
-      architecture: x86_64
+      name: "{{ _ami_name_pattern }}"
+      architecture: "{{ _ami_arch_filter }}"
       state: available
       virtualization-type: hvm
     region: "{{ aws_region }}"
@@ -45,7 +56,8 @@
 - name: Fail if no AMI found
   ansible.builtin.fail:
     msg: |
-      No Ubuntu 24.04 AMI found matching pattern: {{ aws_ami_name_pattern }}
+      No Ubuntu 24.04 AMI found matching pattern: {{ _ami_name_pattern }}
+      Architecture: {{ _ami_arch_filter }}
       Region: {{ aws_region }}
   when: ami_result.images | default([]) | length == 0
 
@@ -108,7 +120,7 @@
     volumes:
       - device_name: /dev/sda1
         ebs:
-          volume_size: 20
+          volume_size: 30
           volume_type: gp3
           delete_on_termination: true
     tags:
@@ -144,7 +156,7 @@
     volumes:
       - device_name: /dev/sda1
         ebs:
-          volume_size: 20
+          volume_size: 30
           volume_type: gp3
           delete_on_termination: true
     instance_market_options:

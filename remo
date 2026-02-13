@@ -1877,6 +1877,7 @@ COMMANDS:
     destroy             Tear down an AWS EC2 instance
     stop                Stop instance (pause billing, keep storage)
     start               Start a stopped instance
+    reboot              Reboot a running instance
     update-ip           Update security group with current IP
     info                Show instance information
     list                List registered AWS instances
@@ -1884,11 +1885,12 @@ COMMANDS:
 
 CREATE OPTIONS:
     --name <name>       Resource namespace (default: $USER)
-    --type <type>       Instance type (default: t3.medium)
+    --type <type>       Instance type (default: m6a.large)
+    --arm, --graviton   Use ARM/Graviton instance (m6g.large) for better price-perf
     --region <region>   AWS region (default: us-west-2)
     --spot              Use spot instance (cheaper but can be interrupted)
     --dns               Also create Route53 DNS record
-    --volume-size <GB>  Persistent home volume size in GB (default: 50)
+    --volume-size <GB>  Persistent home volume size in GB (default: 20)
     --access <mode>     Access mode: 'ssm' (default) or 'direct'
     --iam-profile <name> Use existing IAM instance profile for SSM (skips discovery)
 
@@ -1909,6 +1911,10 @@ STOP OPTIONS:
     --name <name>       Resource namespace (default: $USER)
 
 START OPTIONS:
+    --name <name>       Resource namespace (default: $USER)
+
+REBOOT OPTIONS:
+    --yes, -y           Skip confirmation prompt
     --name <name>       Resource namespace (default: $USER)
 
 UPDATE-IP OPTIONS:
@@ -1936,12 +1942,12 @@ SSM ACCESS (--access ssm):
       - Security group SSH rule (no inbound ports needed)
       - update-ip command (not applicable)
       - Elastic IP and Route53 DNS
-      - EBS home volume (uses root volume instead)
 
 EXAMPLES:
     remo aws create
+    remo aws create --arm
     remo aws create --spot
-    remo aws create --name alice --type t3.large
+    remo aws create --name alice --type m6a.xlarge
     remo aws create --access ssm
     remo aws create --iam-profile MyCustomSSMProfile
     remo aws create --dns
@@ -1951,6 +1957,7 @@ EXAMPLES:
     remo aws stop
     remo aws stop --yes
     remo aws start
+    remo aws reboot
     remo aws destroy --yes
     remo aws destroy --yes --remove-storage
     remo aws update-ip
@@ -2186,6 +2193,7 @@ PYEOF
 aws_create() {
     local name=""
     local instance_type=""
+    local use_arm="false"
     local region=""
     local volume_size=""
     local use_spot="false"
@@ -2215,6 +2223,10 @@ aws_create() {
                 require_arg "$1" "${2:-}"
                 volume_size="$2"
                 shift 2
+                ;;
+            --arm|--graviton)
+                use_arm="true"
+                shift
                 ;;
             --spot)
                 use_spot="true"
@@ -2256,6 +2268,11 @@ aws_create() {
 
     [ -n "$name" ] && validate_name "$name" "instance name"
     [ -n "$region" ] && validate_region "$region"
+
+    # --arm/--graviton sets default to m6g.large unless --type was explicitly given
+    if [ "$use_arm" = "true" ] && [ -z "$instance_type" ]; then
+        instance_type="m6g.large"
+    fi
 
     print_info "Creating AWS EC2 instance..."
 
@@ -2347,11 +2364,11 @@ EOF
     print_success "══════════════════════════════════════════════════"
     echo ""
     echo "  Name:       remo-${resource_name}"
-    echo "  Instance:   ${instance_type:-t3.medium}${instance_id:+ ($instance_id)}"
+    echo "  Instance:   ${instance_type:-m6a.large}${instance_id:+ ($instance_id)}"
     echo "  Region:     ${effective_region}"
     echo "  IP:         ${instance_ip:-N/A}"
     echo "  Access:     ${access_mode:-ssm}"
-    echo "  Storage:    ${volume_size:-50} GB EBS (gp3)"
+    echo "  Storage:    ${volume_size:-20} GB EBS (gp3)"
     echo ""
     echo "  Tip: To increase storage, re-run create with a larger size:"
     echo "  remo aws create --volume-size <GB>"
@@ -2905,6 +2922,134 @@ EOF
     fi
 }
 
+aws_reboot() {
+    local auto_confirm="false"
+    local name=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --yes|-y)
+                auto_confirm="true"
+                shift
+                ;;
+            --name)
+                require_arg "$1" "${2:-}"
+                name="$2"
+                shift 2
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo aws --help' for usage."
+                exit 1
+                ;;
+            *)
+                print_error "Unexpected argument: $1"
+                exit 1
+                ;;
+        esac
+    done
+
+    [ -n "$name" ] && validate_name "$name" "instance name"
+    local resource_name="${name:-$USER}"
+    local region
+    region=$(get_aws_region "$resource_name")
+
+    # Get instance state
+    local state_json
+    state_json=$(python3 << EOF
+import os, sys, json
+try:
+    import boto3
+except ImportError:
+    print(json.dumps({"error": "boto3 not installed. Run 'remo init' first."}))
+    sys.exit(0)
+
+region = '${region}'
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+
+response = ec2.describe_instances(
+    Filters=[
+        {'Name': 'tag:Name', 'Values': ['remo-${resource_name}']},
+        {'Name': 'tag:remo', 'Values': ['true']},
+        {'Name': 'instance-state-name', 'Values': ['pending', 'running', 'stopping', 'stopped']}
+    ]
+)
+instances = []
+for r in response.get('Reservations', []):
+    instances.extend(r.get('Instances', []))
+
+if not instances:
+    print(json.dumps({"error": "No AWS instance found with name: remo-${resource_name}"}))
+    sys.exit(0)
+
+inst = instances[0]
+state = inst['State']['Name']
+iid = inst['InstanceId']
+print(json.dumps({"state": state, "instance_id": iid}))
+EOF
+)
+
+    # Check for errors
+    local err
+    err=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error',''))" 2>/dev/null || true)
+    if [ -n "$err" ]; then
+        print_error "$err"
+        return 1
+    fi
+
+    local state instance_id
+    state=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['state'])" 2>/dev/null)
+    instance_id=$(echo "$state_json" | python3 -c "import sys,json; print(json.load(sys.stdin)['instance_id'])" 2>/dev/null)
+
+    if [ "$state" != "running" ]; then
+        print_error "Instance $instance_id is in '$state' state. It must be running to reboot."
+        return 1
+    fi
+
+    # Confirm unless --yes
+    if [ "$auto_confirm" != "true" ]; then
+        echo "This will reboot instance $instance_id (remo-${resource_name})."
+        echo ""
+        read -r -p "Reboot this instance? [y/N] " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            return 0
+        fi
+    fi
+
+    print_info "Rebooting instance $instance_id..."
+
+    if ! python3 << EOF
+import os, sys
+try:
+    import boto3
+except ImportError:
+    print("Error: boto3 not installed.", file=sys.stderr)
+    sys.exit(1)
+
+region = '${region}'
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+
+ec2.reboot_instances(InstanceIds=['${instance_id}'])
+print("Reboot initiated. Waiting for instance to become reachable...")
+
+# Wait for the instance to be running and reachable
+waiter = ec2.get_waiter('instance_status_ok')
+waiter.wait(InstanceIds=['${instance_id}'])
+print("Instance reachable.")
+EOF
+    then
+        print_error "Failed to reboot instance $instance_id."
+        return 1
+    fi
+
+    print_success "Instance $instance_id rebooted successfully."
+}
+
 aws_update() {
     local name=""
     local only=()
@@ -3167,6 +3312,9 @@ handle_aws() {
             ;;
         start)
             aws_start "$@"
+            ;;
+        reboot)
+            aws_reboot "$@"
             ;;
         update-ip)
             aws_update_ip "$@"
@@ -3689,13 +3837,17 @@ shell_connect() {
     if command -v python3 &>/dev/null; then
         local _proxy
         _proxy=$(mktemp /tmp/remo-shell-proxy.XXXXXX.py)
-        trap 'rm -f "$_proxy"' EXIT
+        trap 'rm -f "$_proxy"; stty sane 2>/dev/null' EXIT
         _write_shell_proxy "$_proxy"
         REMO_SSH_TARGET="$SSH_TARGET" REMO_RSYNC_SSH="ssh $(printf '%q ' "${SSH_OPTS[@]}")" \
             python3 "$_proxy" "${ssh_cmd[@]}"
     else
-        exec "${ssh_cmd[@]}"
+        "${ssh_cmd[@]}"
     fi
+
+    # Reset terminal to sane state — covers connection drops where the remote
+    # side vanishes and we fall through back to the local terminal.
+    stty sane 2>/dev/null
 }
 
 handle_shell() {

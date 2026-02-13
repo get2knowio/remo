@@ -13,7 +13,6 @@
 
 - name: Create and attach EBS volume
   ansible.builtin.include_tasks: ebs.yml
-  when: (aws_access_mode | default('ssm')) != 'ssm'
 
 - name: Create Elastic IP
   ansible.builtin.include_tasks: elastic_ip.yml

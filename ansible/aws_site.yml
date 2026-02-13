@@ -26,7 +26,6 @@
   gather_facts: false
   vars:
     # Pass storage info from localhost to the provisioned host
-    # EBS (block storage) - used for direct access
     remo_volume_device: "{{ hostvars['localhost']['aws_ebs_device_path'] | default('') }}"
 
   pre_tasks:
@@ -82,7 +81,7 @@
           - Instance ID: {{ hostvars['localhost']['aws_instance_id'] | default('N/A') }}
           - IP Address: {{ hostvars['localhost']['aws_instance_public_ip'] | default(ansible_host) }}
           - Access Mode: {{ hostvars['localhost']['aws_access_mode'] | default('ssm') }}
-          - Storage: {{ 'EBS ' + hostvars['localhost']['aws_ebs_volume_id'] | default('') if remo_volume_device else 'root volume' }}
+          - Storage: EBS {{ hostvars['localhost']['aws_ebs_volume_id'] | default('') }} ({{ hostvars['localhost']['aws_ebs_size'] | default('20') }}GB)
           - Region: {{ hostvars['localhost']['aws_region'] | default('us-west-2') }}
 
           Installed:
@@ -111,12 +110,8 @@
           {% endif %}
 
           Storage:
-          - /home/remo is on {{ 'EBS (block storage)' if remo_volume_device else 'the root volume' }}
-          {% if remo_volume_device %}
+          - /home/remo is on EBS (block storage)
           - Data persists when instance is terminated
-          {% else %}
-          - Data does not persist after instance termination
-          {% endif %}
 
           Connect using:
             remo shell

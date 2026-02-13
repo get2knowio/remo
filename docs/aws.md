@@ -99,7 +99,8 @@ remo aws destroy --yes --remove-storage
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--name <name>` | `$USER` | Resource namespace (for multi-user support) |
-| `--type <type>` | `t3.medium` | Instance type |
+| `--type <type>` | `m6a.large` | Instance type |
+| `--arm`, `--graviton` | (off) | Use ARM/Graviton instance (`m6g.large`) for better price-perf |
 | `--region <region>` | `us-west-2` | AWS region |
 | `--spot` | (off) | Use spot instance for cost savings |
 | `--dns` | (off) | Create Route53 DNS record |
@@ -140,7 +141,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 
 | Feature | Description |
 |---------|-------------|
-| **EBS Storage** | `/home/remo` on block volume, persists across instance termination (direct only) |
+| **EBS Storage** | `/home/remo` on persistent block volume, survives instance termination |
 | **Auto IP Detection** | SSH allowed only from your current public IP (direct only) |
 | **Elastic IP** | Stable public IP that survives instance stop/start (direct only) |
 | **Stop/Start** | Pause compute billing without destroying the instance; `remo shell` auto-starts stopped instances |
@@ -150,13 +151,15 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 
 ## Instance Types
 
-| Type | vCPU | RAM | Price (on-demand) | Price (spot) |
-|------|------|-----|-------------------|--------------|
-| `t3.medium` | 2 | 4 GB | ~$0.042/hr (~$30/mo) | ~$0.013/hr |
-| `t3.large` | 2 | 8 GB | ~$0.083/hr (~$60/mo) | ~$0.025/hr |
-| `t3.xlarge` | 4 | 16 GB | ~$0.166/hr (~$120/mo) | ~$0.050/hr |
-| `m5.large` | 2 | 8 GB | ~$0.096/hr (~$70/mo) | ~$0.040/hr |
+| Type | Arch | vCPU | RAM | Price (on-demand) | Price (spot) |
+|------|------|------|-----|-------------------|--------------|
+| `m6a.large` | x86 | 2 | 8 GB | ~$0.086/hr (~$63/mo) | ~$0.031/hr |
+| `m6a.xlarge` | x86 | 4 | 16 GB | ~$0.173/hr (~$126/mo) | ~$0.062/hr |
+| `m6g.large` | ARM | 2 | 8 GB | ~$0.077/hr (~$56/mo) | ~$0.028/hr |
+| `m6g.xlarge` | ARM | 4 | 16 GB | ~$0.154/hr (~$112/mo) | ~$0.055/hr |
+| `t3.medium` | x86 | 2 | 4 GB | ~$0.042/hr (~$30/mo) | ~$0.013/hr |
 
+Use `--arm` / `--graviton` for ARM instances, or `--type <type>` for any specific type.
 Prices vary by region. See [EC2 pricing](https://aws.amazon.com/ec2/pricing/).
 
 ## Regions
@@ -292,7 +295,7 @@ remo aws info
 | Requires | SSH key | SSH key + session-manager-plugin + IAM role |
 | Connection | `ssh remo@<ip>` | Via SSM ProxyCommand tunnel |
 | Public IP / EIP | Elastic IP by default | None |
-| Home volume | EBS `/home/remo` | Root volume only |
+| Home volume | EBS `/home/remo` (persistent) | EBS `/home/remo` (persistent) |
 
 ### Port Forwarding via SSM
 

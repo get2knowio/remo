@@ -261,8 +261,8 @@
     - name: Display storage preserved message
       ansible.builtin.debug:
         msg: |
-          Storage has been PRESERVED (if an EBS volume exists).
-          If you used SSM mode without an EBS volume, /home/remo data lived on the root volume and will not be preserved.
+          Storage has been PRESERVED.
+          The EBS home volume (/home/remo) persists and will be reattached on next create.
           To remove all storage and data, run:
             remo aws destroy --remove-storage
       when: not (remove_storage | bool)

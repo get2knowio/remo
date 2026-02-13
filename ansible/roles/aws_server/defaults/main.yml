@@ -18,13 +18,13 @@ aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') | default('', 
 aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
 
 # Instance configuration
-aws_instance_type: "t3.medium"  # 2 vCPU, 4GB RAM - good for dev
+aws_instance_type: "m6a.large"  # 2 vCPU, 8GB RAM - AMD, good for dev
 aws_use_spot: false
 aws_spot_max_price: ""  # Empty means on-demand price
 
-# AMI configuration - Ubuntu 24.04 LTS
+# AMI configuration - Ubuntu 24.04 LTS (architecture auto-detected from instance type)
 aws_ami_owner: "099720109477"  # Canonical's AWS account
-aws_ami_name_pattern: "ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"
+aws_ami_name_pattern: ""  # Auto-detected from instance type; override for custom AMI
 
 # SSH configuration
 aws_ssh_public_key_path: "~/.ssh/id_rsa.pub"
@@ -34,9 +34,9 @@ aws_ssh_private_key_path: "~/.ssh/id_rsa"
 aws_allowed_ssh_cidr: ""
 
 # Storage configuration - EBS (block storage)
-# For SSM access, no extra volume is created and /home/remo stays on the root volume.
+# Persistent home volume mounted at /home/remo, survives instance termination.
 aws_ebs_name: "remo-{{ aws_resource_name }}-home"
-aws_ebs_size: 50  # Size in GB
+aws_ebs_size: 20  # Size in GB
 aws_ebs_type: "gp3"  # gp3 is the best general-purpose option
 aws_ebs_device_name: "/dev/xvdf"  # Device name when attached
 
