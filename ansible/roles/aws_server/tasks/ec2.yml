@@ -277,7 +277,7 @@
   changed_when: false
   retries: 6
   delay: 10
-  until: cloud_init_result.rc == 0
+  until: cloud_init_result.rc | default(1) == 0
   when: aws_access_mode != 'ssm'
 
 - name: Wait for cloud-init to complete (SSM)
@@ -295,7 +295,7 @@
   changed_when: false
   retries: 6
   delay: 10
-  until: cloud_init_ssm_result.rc == 0
+  until: cloud_init_ssm_result.rc | default(1) == 0
   when: aws_access_mode == 'ssm'
 
 - name: Verify SSH connection is stable (direct)
@@ -312,7 +312,7 @@
   changed_when: false
   retries: 3
   delay: 5
-  until: ssh_test_result.rc == 0
+  until: ssh_test_result.rc | default(1) == 0
   when: aws_access_mode != 'ssm'
 
 - name: Verify SSH connection is stable (SSM)
@@ -330,7 +330,7 @@
   changed_when: false
   retries: 3
   delay: 5
-  until: ssh_test_ssm_result.rc == 0
+  until: ssh_test_ssm_result.rc | default(1) == 0
   when: aws_access_mode == 'ssm'
 
 - name: Add new instance to inventory (direct)

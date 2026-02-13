@@ -99,6 +99,52 @@ load_env() {
     fi
 }
 
+detect_timezone() {
+    # Detect local timezone in IANA format (e.g., America/New_York)
+    if [ -n "${TZ:-}" ] && [ "$TZ" != "UTC" ] && [[ "$TZ" == */* ]]; then
+        echo "$TZ"
+        return
+    fi
+    # timedatectl (systemd)
+    if command -v timedatectl &>/dev/null; then
+        local tz
+        tz=$(timedatectl show -p Timezone --value 2>/dev/null || true)
+        if [ -n "$tz" ] && [ "$tz" != "UTC" ]; then
+            echo "$tz"
+            return
+        fi
+    fi
+    # /etc/timezone (Debian/Ubuntu)
+    if [ -f /etc/timezone ]; then
+        local tz
+        tz=$(cat /etc/timezone 2>/dev/null)
+        if [ -n "$tz" ] && [ "$tz" != "UTC" ]; then
+            echo "$tz"
+            return
+        fi
+    fi
+    # /etc/localtime symlink (macOS and others)
+    if [ -L /etc/localtime ]; then
+        local target
+        target=$(readlink /etc/localtime 2>/dev/null || true)
+        local tz="${target##*/zoneinfo/}"
+        if [ -n "$tz" ] && [ "$tz" != "$target" ] && [ "$tz" != "UTC" ]; then
+            echo "$tz"
+            return
+        fi
+    fi
+    # macOS: read from systemsetup
+    if command -v systemsetup &>/dev/null; then
+        local tz
+        tz=$(systemsetup -gettimezone 2>/dev/null | sed 's/.*: //' || true)
+        if [ -n "$tz" ] && [ "$tz" != "UTC" ]; then
+            echo "$tz"
+            return
+        fi
+    fi
+    echo ""
+}
+
 run_playbook() {
     local playbook="$1"
     shift
@@ -769,6 +815,8 @@ incus_create() {
         [ -n "$user" ] && extra_args+=(-e "incus_host_user=$user")
     fi
 
+    local _tz; _tz=$(detect_timezone); [ -n "$_tz" ] && extra_args+=(-e "timezone=$_tz")
+
     run_playbook incus_site.yml "${extra_args[@]}"
 
     # Save to known_hosts on success
@@ -1121,6 +1169,8 @@ incus_update() {
 
     build_tool_args only skip
     extra_args+=("${TOOL_EXTRA_ARGS[@]}")
+
+    local _tz; _tz=$(detect_timezone); [ -n "$_tz" ] && extra_args+=(-e "timezone=$_tz")
 
     run_playbook incus_configure.yml "${extra_args[@]}"
 }
@@ -1551,6 +1601,8 @@ hetzner_create() {
     [ -n "$location" ] && extra_args+=(-e "hetzner_location=$location")
     [ -n "$volume_size" ] && extra_args+=(-e "hetzner_volume_size=$volume_size")
 
+    local _tz; _tz=$(detect_timezone); [ -n "$_tz" ] && extra_args+=(-e "timezone=$_tz")
+
     run_playbook hetzner_site.yml "${extra_args[@]}"
 
     # Save to known_hosts on success
@@ -1690,6 +1742,8 @@ hetzner_update() {
 
     build_tool_args only skip
     extra_args+=("${TOOL_EXTRA_ARGS[@]}")
+
+    local _tz; _tz=$(detect_timezone); [ -n "$_tz" ] && extra_args+=(-e "timezone=$_tz")
 
     run_playbook hetzner_configure.yml -i "${server_host}," -e "ansible_user=remo" "${extra_args[@]}"
 }
@@ -2231,6 +2285,8 @@ aws_create() {
     [ -n "$volume_size" ] && extra_args+=(-e "aws_ebs_size=$volume_size")
     [ "$use_spot" = "true" ] && extra_args+=(-e "aws_use_spot=true")
     [ "$create_dns" = "true" ] && extra_args+=(-e "aws_create_dns=true")
+
+    local _tz; _tz=$(detect_timezone); [ -n "$_tz" ] && extra_args+=(-e "timezone=$_tz")
 
     run_playbook aws_site.yml "${extra_args[@]}"
 
@@ -2956,6 +3012,8 @@ EOF
     build_tool_args only skip
     extra_args+=("${TOOL_EXTRA_ARGS[@]}")
 
+    local _tz; _tz=$(detect_timezone); [ -n "$_tz" ] && extra_args+=(-e "timezone=$_tz")
+
     if [ "$access_mode" = "ssm" ]; then
         print_info "Updating AWS instance $instance_id via SSM..."
         run_playbook aws_configure.yml \
@@ -3180,6 +3238,14 @@ build_ssh_opts() {
         SSH_TARGET="${REMO_USER}@${REMO_INSTANCE_ID}"
     else
         SSH_TARGET="${REMO_USER}@${REMO_HOST}"
+    fi
+
+    # Propagate local timezone to remote shell session
+    local _tz
+    _tz=$(detect_timezone)
+    if [ -n "$_tz" ]; then
+        export TZ="$_tz"
+        SSH_OPTS+=(-o "SendEnv=TZ")
     fi
 }
 

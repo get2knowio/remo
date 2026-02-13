@@ -50,4 +50,4 @@
   failed_when: false
   retries: 12
   delay: 10
-  until: dns_check.rc == 0
+  until: dns_check.rc | default(1) == 0

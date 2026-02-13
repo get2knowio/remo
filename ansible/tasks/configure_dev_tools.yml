@@ -13,6 +13,26 @@
 #   configure_fzf: false
 #   configure_zellij: false
 
+- name: Set system timezone
+  community.general.timezone:
+    name: "{{ timezone }}"
+  when: timezone | default('') | length > 0
+
+- name: Allow TZ environment variable via SSH
+  ansible.builtin.copy:
+    dest: /etc/ssh/sshd_config.d/accept-tz.conf
+    content: |
+      # Allow clients to propagate their timezone
+      AcceptEnv TZ
+    mode: '0644'
+  register: sshd_tz_config
+
+- name: Restart sshd to apply AcceptEnv TZ
+  ansible.builtin.service:
+    name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
+    state: restarted
+  when: sshd_tz_config.changed | default(false)
+
 - name: Install Docker
   ansible.builtin.include_role:
     name: docker
