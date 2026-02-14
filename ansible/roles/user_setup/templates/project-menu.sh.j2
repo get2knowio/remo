@@ -48,8 +48,7 @@ get_git_status_indicators() {
     [ -d "$project_dir/.git" ] || return
 
     # Check for uncommitted changes (modified, staged, or untracked)
-    if ! git -C "$project_dir" diff --quiet HEAD 2>/dev/null || \
-       [ -n "$(git -C "$project_dir" status --porcelain 2>/dev/null)" ]; then
+    if [ -n "$(git -C "$project_dir" status --porcelain 2>/dev/null)" ]; then
         indicators="●"
     fi
 
