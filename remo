@@ -2190,6 +2190,154 @@ PYEOF
     SSM_IAM_CREATED="$iam_created"
 }
 
+ensure_ssm_iam_profile() {
+    local resource_name="$1"
+    local region="$2"
+
+    local ip_name="remo-${resource_name}-ssm-profile"
+
+    # Check if profile already exists
+    local check_result
+    local check_status=0
+    check_result=$(python3 << PYEOF
+import os, sys, json
+try:
+    import boto3
+except ImportError:
+    print(json.dumps({"error": "boto3 not installed"}))
+    sys.exit(1)
+
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region}'))
+profile_name = os.environ.get('AWS_PROFILE') or None
+ip_name = '${ip_name}'
+
+try:
+    session = boto3.Session(region_name=region, profile_name=profile_name)
+    iam = session.client('iam')
+    iam.get_instance_profile(InstanceProfileName=ip_name)
+    print(json.dumps({'exists': True, 'profile_name': ip_name}))
+except iam.exceptions.NoSuchEntityException:
+    print(json.dumps({'exists': False}))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+    sys.exit(1)
+PYEOF
+) || check_status=$?
+
+    if [ "$check_status" -ne 0 ] && ! echo "$check_result" | grep -q '"error"'; then
+        print_error "Failed to check IAM profile (python exit code: $check_status)."
+        exit 1
+    fi
+    if echo "$check_result" | grep -q '"error"'; then
+        local error
+        error=$(echo "$check_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','Unknown'))" 2>/dev/null || true)
+        print_error "Failed to check IAM profile: ${error:-Unknown}"
+        exit 1
+    fi
+
+    local exists
+    exists=$(echo "$check_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('exists', False))" 2>/dev/null || true)
+
+    if [ "$exists" = "True" ]; then
+        print_info "Reusing existing IAM instance profile: $ip_name"
+        SSM_INSTANCE_PROFILE="$ip_name"
+        SSM_IAM_CREATED="false"
+        return
+    fi
+
+    # Create role + attach policy + create profile + add role
+    print_info "Creating IAM role and instance profile for Patch Manager..."
+    local create_result
+    local create_status=0
+    create_result=$(python3 << PYEOF
+import os, sys, json, time
+
+try:
+    import boto3
+except ImportError:
+    print(json.dumps({"error": "boto3 not installed"}))
+    sys.exit(1)
+
+region = os.environ.get('AWS_REGION', os.environ.get('AWS_DEFAULT_REGION', '${region}'))
+profile_name = os.environ.get('AWS_PROFILE') or None
+resource_name = '${resource_name}'
+
+try:
+    session = boto3.Session(region_name=region, profile_name=profile_name)
+    iam = session.client('iam')
+
+    role_name = f'remo-{resource_name}-ssm-role'
+    ip_name = f'remo-{resource_name}-ssm-profile'
+
+    assume_role_policy = json.dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": "ec2.amazonaws.com"},
+            "Action": "sts:AssumeRole"
+        }]
+    })
+
+    iam.create_role(
+        RoleName=role_name,
+        AssumeRolePolicyDocument=assume_role_policy,
+        Description='remo SSM Session Manager access role',
+        Tags=[
+            {'Key': 'remo', 'Value': 'true'},
+            {'Key': 'remo_resource_name', 'Value': resource_name}
+        ]
+    )
+
+    iam.attach_role_policy(
+        RoleName=role_name,
+        PolicyArn='arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'
+    )
+
+    iam.create_instance_profile(
+        InstanceProfileName=ip_name,
+        Tags=[
+            {'Key': 'remo', 'Value': 'true'},
+            {'Key': 'remo_resource_name', 'Value': resource_name}
+        ]
+    )
+
+    iam.add_role_to_instance_profile(
+        InstanceProfileName=ip_name,
+        RoleName=role_name
+    )
+
+    time.sleep(10)
+
+    print(json.dumps({'profile_name': ip_name, 'role_name': role_name}))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+    sys.exit(1)
+PYEOF
+) || create_status=$?
+
+    if [ "$create_status" -ne 0 ] && ! echo "$create_result" | grep -q '"error"'; then
+        print_error "Failed to create IAM resources (python exit code: $create_status)."
+        exit 1
+    fi
+    if echo "$create_result" | grep -q '"error"'; then
+        local error
+        error=$(echo "$create_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('error','Unknown'))" 2>/dev/null || true)
+        print_error "Failed to create IAM resources: ${error:-Unknown}"
+        exit 1
+    fi
+
+    local created_profile
+    created_profile=$(echo "$create_result" | python3 -c "import sys,json; print(json.load(sys.stdin).get('profile_name',''))" 2>/dev/null || true)
+    if [ -z "$created_profile" ]; then
+        print_error "Failed to determine IAM instance profile name."
+        exit 1
+    fi
+
+    SSM_INSTANCE_PROFILE="$created_profile"
+    SSM_IAM_CREATED="true"
+    print_success "Created IAM role and instance profile: $created_profile"
+}
+
 aws_create() {
     local name=""
     local instance_type=""
@@ -2294,6 +2442,14 @@ aws_create() {
         extra_args+=(-e "aws_iam_created=$SSM_IAM_CREATED")
     else
         extra_args+=(-e "aws_access_mode=direct")
+        if [ -n "$iam_profile" ]; then
+            SSM_INSTANCE_PROFILE="$iam_profile"
+            SSM_IAM_CREATED="false"
+        else
+            ensure_ssm_iam_profile "$resource_name" "${region:-us-west-2}"
+        fi
+        extra_args+=(-e "aws_iam_instance_profile=$SSM_INSTANCE_PROFILE")
+        extra_args+=(-e "aws_iam_created=$SSM_IAM_CREATED")
     fi
 
     [ -n "$name" ] && extra_args+=(-e "aws_resource_name=$name")

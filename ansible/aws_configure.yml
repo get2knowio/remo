@@ -93,6 +93,19 @@
         upgrade: dist
         autoremove: true
 
+    - name: Stop and disable unattended-upgrades
+      ansible.builtin.systemd:
+        name: unattended-upgrades
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove unattended-upgrades package
+      ansible.builtin.apt:
+        name: unattended-upgrades
+        state: absent
+        purge: true
+
     - name: Check if reboot is required
       ansible.builtin.stat:
         path: /var/run/reboot-required

@@ -295,3 +295,7 @@
           All resources have been removed. To start fresh:
             remo aws create
           {% endif %}
+
+          Note: Patch Manager State Manager associations (remo-patch-scan,
+          remo-patch-install) are per-region and shared across instances.
+          They are not deleted during teardown.

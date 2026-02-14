@@ -57,3 +57,11 @@ aws_iam_instance_profile: ""
 
 # Whether remo created the IAM role/profile (used by teardown to decide cleanup)
 aws_iam_created: "false"
+
+# Patch Manager: All remo instances are tagged PatchGroup=remo and managed by
+# AWS Systems Manager Patch Manager. Two State Manager associations are created
+# per region:
+#   remo-patch-scan    — daily compliance scan (6 AM UTC)
+#   remo-patch-install — weekly patch install with reboot (Sunday 4 AM UTC)
+# Uses the AWS-provided default patch baseline (all security patches).
+# unattended-upgrades is removed to avoid conflicts.

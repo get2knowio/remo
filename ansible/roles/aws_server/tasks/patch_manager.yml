@@ -1,0 +1,65 @@
+---
+# AWS Systems Manager Patch Manager - Create State Manager associations
+# Idempotently creates per-region associations for patch scanning and installation.
+# Uses PatchGroup tag to target remo instances.
+
+- name: Create Patch Manager State Manager associations
+  delegate_to: localhost
+  become: false
+  ansible.builtin.shell: |
+    python3 << 'PYEOF'
+    import boto3, json, sys, os
+
+    region = os.environ.get('AWS_DEFAULT_REGION', '{{ aws_region }}')
+    profile = os.environ.get('AWS_PROFILE') or None
+    session = boto3.Session(region_name=region, profile_name=profile)
+    ssm = session.client('ssm')
+
+    associations = [
+        {
+            'name': 'remo-patch-scan',
+            'document': 'AWS-RunPatchBaseline',
+            'schedule': 'cron(0 6 ? * * *)',
+            'parameters': {'Operation': ['Scan']},
+        },
+        {
+            'name': 'remo-patch-install',
+            'document': 'AWS-RunPatchBaseline',
+            'schedule': 'cron(0 4 ? * SUN *)',
+            'parameters': {'Operation': ['Install'], 'RebootOption': ['RebootIfNeeded']},
+        },
+    ]
+
+    targets = [{'Key': 'tag:PatchGroup', 'Values': ['remo']}]
+    created = []
+    skipped = []
+
+    for assoc in associations:
+        # Check if association already exists
+        existing = ssm.list_associations(
+            AssociationFilterList=[
+                {'key': 'AssociationName', 'value': assoc['name']}
+            ]
+        ).get('Associations', [])
+
+        if existing:
+            skipped.append(assoc['name'])
+            continue
+
+        ssm.create_association(
+            AssociationName=assoc['name'],
+            Name=assoc['document'],
+            Targets=targets,
+            ScheduleExpression=assoc['schedule'],
+            Parameters=assoc['parameters'],
+            ComplianceSeverity='MEDIUM',
+        )
+        created.append(assoc['name'])
+
+    print(json.dumps({'created': created, 'skipped': skipped}))
+    PYEOF
+  args:
+    executable: /bin/bash
+  register: patch_manager_result
+  changed_when: >-
+    (patch_manager_result.stdout | default('{}') | from_json).get('created', []) | length > 0

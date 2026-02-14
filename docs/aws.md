@@ -148,6 +148,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **Spot Instances** | Optional spot pricing for ~70% cost savings |
 | **Multi-user** | Resources namespaced by `--name` for shared AWS accounts |
 | **SSM Access** | Default zero-inbound-port access via AWS SSM Session Manager |
+| **Patch Manager** | Automatic OS security patching via AWS SSM Patch Manager — daily scan, weekly install (Sunday 4 AM UTC) with auto-reboot |
 
 ## Instance Types
 

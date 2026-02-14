@@ -113,7 +113,7 @@
       - "{{ aws_security_group_id }}"
     vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
     region: "{{ aws_region }}"
-    iam_instance_profile: "{{ aws_iam_instance_profile if aws_access_mode == 'ssm' and aws_iam_instance_profile else omit }}"
+    iam_instance_profile: "{{ aws_iam_instance_profile if aws_iam_instance_profile else omit }}"
     network_interfaces:
       - assign_public_ip: "{{ (aws_access_mode | default('ssm')) != 'ssm' }}"
         device_index: 0
@@ -129,6 +129,7 @@
       remo_resource_name: "{{ aws_resource_name }}"
       remo_access_mode: "{{ aws_access_mode | default('ssm') }}"
       remo_iam_created: "{{ aws_iam_created | default('false') }}"
+      PatchGroup: remo
     state: running
     wait: true
     wait_timeout: 300
@@ -149,7 +150,7 @@
       - "{{ aws_security_group_id }}"
     vpc_subnet_id: "{{ default_subnets_for_ec2.subnets[0].subnet_id }}"
     region: "{{ aws_region }}"
-    iam_instance_profile: "{{ aws_iam_instance_profile if aws_access_mode == 'ssm' and aws_iam_instance_profile else omit }}"
+    iam_instance_profile: "{{ aws_iam_instance_profile if aws_iam_instance_profile else omit }}"
     network_interfaces:
       - assign_public_ip: "{{ (aws_access_mode | default('ssm')) != 'ssm' }}"
         device_index: 0
@@ -170,6 +171,7 @@
       remo_resource_name: "{{ aws_resource_name }}"
       remo_access_mode: "{{ aws_access_mode | default('ssm') }}"
       remo_iam_created: "{{ aws_iam_created | default('false') }}"
+      PatchGroup: remo
     state: running
     wait: true
     wait_timeout: 300
