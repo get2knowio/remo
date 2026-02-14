@@ -11,10 +11,6 @@ hetzner_ssh_key_name: "remote-coding-key"
 hetzner_volume_name: "{{ hetzner_server_name }}-home"
 hetzner_volume_size: 20  # GB (minimum 10)
 
-# DuckDNS Configuration
-duckdns_token: "{{ lookup('env', 'DUCKDNS_TOKEN') }}"
-duckdns_domain: "{{ lookup('env', 'DUCKDNS_DOMAIN') }}"
-
 # AWS Configuration
 aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
 aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"

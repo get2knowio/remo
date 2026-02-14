@@ -3,7 +3,7 @@
 # Run this to update an already provisioned Hetzner server
 #
 # Usage:
-#   ./run.sh hetzner_configure.yml -i "server.duckdns.org," -e "ansible_user=remo"
+#   ./run.sh hetzner_configure.yml -i "<server-ip>," -e "ansible_user=remo"
 #
 # Optional variables:
 #   configure_docker: Enable/disable docker (default: true)

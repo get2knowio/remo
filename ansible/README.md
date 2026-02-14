@@ -9,7 +9,7 @@ This directory contains the Ansible automation for provisioning and configuring 
 | Playbook | Description |
 |----------|-------------|
 | `hetzner_site.yml` | Complete workflow: provision + configure |
-| `hetzner_provision.yml` | Create server and register with DuckDNS |
+| `hetzner_provision.yml` | Create server |
 | `hetzner_configure.yml` | Install dev tools on existing server |
 | `hetzner_teardown.yml` | Destroy server and optionally the volume |
 
@@ -67,7 +67,6 @@ Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task 
 | Role | Description |
 |------|-------------|
 | `hetzner_server` | Creates Hetzner Cloud server, firewall, volume, and SSH key |
-| `duckdns` | Updates DuckDNS with the server's IP address |
 | `incus_bootstrap` | Installs and configures Incus with storage and networking |
 | `incus_container` | Creates and configures an Incus container |
 | `incus_container_teardown` | Destroys an Incus container |
@@ -88,8 +87,6 @@ Set these in `.env` at the repository root:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `HETZNER_API_TOKEN` | Yes | Hetzner Cloud API token |
-| `DUCKDNS_TOKEN` | Yes | DuckDNS authentication token |
-| `DUCKDNS_DOMAIN` | Yes | Subdomain (without `.duckdns.org`) |
 | `SSH_PRIVATE_KEY_PATH` | No | Path to SSH private key (default: `~/.ssh/id_rsa`) |
 | `SSH_PUBLIC_KEY_PATH` | No | Path to SSH public key (default: `~/.ssh/id_rsa.pub`) |
 
@@ -120,7 +117,6 @@ ansible/
 │   └── configure_dev_tools.yml  # Shared dev tools configuration
 ├── roles/
 │   ├── hetzner_server/
-│   ├── duckdns/
 │   ├── incus_bootstrap/
 │   ├── incus_container/
 │   ├── incus_container_teardown/

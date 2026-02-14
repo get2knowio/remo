@@ -31,8 +31,6 @@ jobs:
       - name: Run teardown playbook (preserve volume)
         env:
           HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
-          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
-          DUCKDNS_DOMAIN: ${{ secrets.DUCKDNS_DOMAIN }}
         run: |
           cd ansible
           ansible-playbook hetzner_teardown.yml -e auto_confirm=true

@@ -183,7 +183,7 @@ As a developer, I want to access services running inside my Incus containers fro
 | Cost Model          | Pay-per-use cloud billing          | No additional cost (local)          |
 | Boot Time           | 1-2 minutes (VM + cloud-init)      | 5-30 seconds (container)            |
 | Isolation Level     | Full VM (hardware virtualization)  | Container (shared kernel)           |
-| DNS/Discovery       | DuckDNS integration                | Local /etc/hosts or mDNS            |
+| DNS/Discovery       | Direct IP (from Hetzner API)       | Local /etc/hosts or mDNS            |
 | Default User        | root (then remo)                   | remo (configurable)                 |
 
 **Key similarity**: With macvlan networking, the access pattern is identical to Hetzner - you SSH to containers from your workstation using their IP addresses. The Incus host is just the hypervisor (like Hetzner's infrastructure), not an access point.

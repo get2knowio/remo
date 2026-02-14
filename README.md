@@ -28,7 +28,7 @@ remo self-update
 | **Location** | EU/US datacenters | Global regions | Your hardware |
 | **Cost** | ~€4/month | ~$30/month | Your electricity |
 | **Storage** | Block volume | Root volume (SSM) / EBS (direct) | Host mounts |
-| **Access** | DuckDNS domain | SSM (default) / Elastic IP | LAN hostname |
+| **Access** | Server IP | SSM (default) / Elastic IP | LAN hostname |
 | **Best for** | EU, budget hosting | US, enterprise, spot instances | Local dev, homelab |
 
 All platforms give you the same dev workflow and tooling described below.

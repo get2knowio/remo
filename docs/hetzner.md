@@ -7,7 +7,6 @@ Spin up a cloud VM with full dev tooling and persistent storage.
 - Python 3.8+
 - SSH key pair (`~/.ssh/id_rsa`)
 - [Hetzner Cloud](https://www.hetzner.com/cloud) account + API token
-- [DuckDNS](https://www.duckdns.org/) account + token + subdomain
 
 ## Quick Start
 
@@ -15,7 +14,7 @@ Spin up a cloud VM with full dev tooling and persistent storage.
 # Install remo
 curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
-# Edit .env with your Hetzner and DuckDNS tokens
+# Edit .env with your Hetzner token
 vim ~/.remo/.env
 
 # Provision server
@@ -33,13 +32,6 @@ Add to your `~/.remo/.env` file:
 # Required - Hetzner Cloud API Token
 # Get from: https://console.hetzner.cloud/projects/<project-id>/security/tokens
 HETZNER_API_TOKEN=your-hetzner-api-token
-
-# Required - DuckDNS Token
-# Get from: https://www.duckdns.org/
-DUCKDNS_TOKEN=your-duckdns-token
-
-# Required - DuckDNS Subdomain (without .duckdns.org)
-DUCKDNS_DOMAIN=your-subdomain
 ```
 
 ## CLI Commands
@@ -100,7 +92,6 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 |---------|-------------|
 | **Persistent Volume** | `/home/remo` mounted on a separate volume that survives server teardown |
 | **Strict Firewall** | SSH-only access (port 22) |
-| **DuckDNS Domain** | Automatic DNS registration for easy access |
 | **Ubuntu 24.04** | Latest LTS with automatic security updates |
 
 ## Server Types
@@ -129,7 +120,6 @@ Fork this repo and use GitHub Actions to provision without local setup:
 
 1. **Add secrets** in Settings → Secrets → Actions:
    - `HETZNER_API_TOKEN`, `SSH_PRIVATE_KEY`, `SSH_PUBLIC_KEY`
-   - `DUCKDNS_TOKEN`, `DUCKDNS_DOMAIN`
 
 2. **Run**: Actions → Provision Server → Run workflow → type `yes`
 
@@ -137,12 +127,6 @@ Fork this repo and use GitHub Actions to provision without local setup:
 
 **Hetzner API errors?**
 Verify your API token has read/write permissions in the Hetzner Cloud Console.
-
-**DuckDNS not updating?**
-Check your token and domain are correct. Test manually:
-```bash
-curl "https://www.duckdns.org/update?domains=YOUR_DOMAIN&token=YOUR_TOKEN"
-```
 
 **SSH connection refused?**
 The server may still be initializing. Wait 1-2 minutes after provisioning.

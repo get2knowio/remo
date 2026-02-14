@@ -39,8 +39,6 @@ jobs:
       - name: Run provisioning playbook
         env:
           HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
-          DUCKDNS_TOKEN: ${{ secrets.DUCKDNS_TOKEN }}
-          DUCKDNS_DOMAIN: ${{ secrets.DUCKDNS_DOMAIN }}
           ANSIBLE_HOST_KEY_CHECKING: 'false'
         run: |
           cd ansible

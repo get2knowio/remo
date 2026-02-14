@@ -10,10 +10,6 @@
       ansible.builtin.include_role:
         name: hetzner_server
 
-    - name: Include DuckDNS role
-      ansible.builtin.include_role:
-        name: duckdns
-
 - name: Configure Hetzner Cloud Server
   hosts: provisioned
   become: true
@@ -62,7 +58,6 @@
 
           Server Information:
           - IP Address: {{ ansible_host }}
-          - DuckDNS Domain: {{ duckdns_domain }}.duckdns.org
           - Persistent Volume: {{ hostvars['localhost']['hetzner_volume_device'] | default('none') }}
 
           Installed:
@@ -91,7 +86,7 @@
           - Data persists when server is destroyed
 
           You can now SSH to the server as the remo user:
-          ssh remo@{{ duckdns_domain }}.duckdns.org
+          ssh remo@{{ ansible_host }}
 
     - name: Reboot server if required by package updates
       ansible.builtin.reboot:

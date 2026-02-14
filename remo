@@ -514,8 +514,6 @@ handle_init() {
         echo ""
         echo -e "  ${YELLOW}For Hetzner Cloud:${NC}"
         echo "    HETZNER_API_TOKEN  - Get from https://console.hetzner.cloud/"
-        echo "    DUCKDNS_TOKEN      - Get from https://www.duckdns.org/"
-        echo "    DUCKDNS_DOMAIN     - Your subdomain (without .duckdns.org)"
         echo ""
         echo -e "  ${YELLOW}For AWS:${NC}"
         echo "    AWS_ACCESS_KEY_ID      - Get from AWS IAM console"
@@ -1609,11 +1607,15 @@ hetzner_create() {
 
     run_playbook hetzner_site.yml "${extra_args[@]}"
 
-    # Save to known_hosts on success
+    # Save to known_hosts on success — query Hetzner API for server IP
     local server_name="${name:-remote-coding-server}"
-    local domain="${DUCKDNS_DOMAIN:-}"
-    if [ -n "$domain" ]; then
-        save_known_host "hetzner" "$server_name" "${domain}.duckdns.org" "remo"
+    local server_ip
+    server_ip=$(curl -fsSL -H "Authorization: Bearer ${HETZNER_API_TOKEN}" \
+        "https://api.hetzner.cloud/v1/servers?name=${server_name}&label_selector=remo" 2>/dev/null \
+        | python3 -c "import sys,json; servers=json.load(sys.stdin).get('servers',[]); print(servers[0]['public_net']['ipv4']['ip'] if servers else '')" 2>/dev/null || true)
+
+    if [ -n "$server_ip" ]; then
+        save_known_host "hetzner" "$server_name" "$server_ip" "remo"
     fi
 
     # Print post-create summary
@@ -1625,7 +1627,7 @@ hetzner_create() {
     echo "  Name:      ${server_name}"
     echo "  Type:      ${server_type:-cx22}"
     echo "  Location:  ${location:-hel1}"
-    echo "  Host:      ${domain:+${domain}.duckdns.org}${domain:-N/A}"
+    echo "  IP:        ${server_ip:-N/A}"
     echo "  Storage:   ${volume_size:-10} GB persistent volume"
     echo ""
     echo "  Tip: To increase storage, re-run create with a larger size:"
@@ -1734,14 +1736,14 @@ hetzner_update() {
     [ -n "$name" ] && validate_name "$name" "server name"
     local server_name="${name:-remote-coding-server}"
 
-    # Get server IP from DuckDNS domain
-    local domain="${DUCKDNS_DOMAIN:-}"
-    if [ -z "$domain" ]; then
-        print_error "DUCKDNS_DOMAIN not set. Cannot determine server address."
+    # Get server address from known_hosts
+    local server_host
+    server_host=$(get_known_hosts "hetzner" | awk -F: -v n="$server_name" '$2==n {print $3}')
+    if [ -z "$server_host" ]; then
+        print_error "Server '$server_name' not found in known_hosts."
+        echo "Run 'remo hetzner sync' or 'remo hetzner create' first."
         exit 1
     fi
-
-    local server_host="${domain}.duckdns.org"
     print_info "Updating Hetzner VM '$server_name' at $server_host..."
 
     build_tool_args only skip
@@ -1780,12 +1782,6 @@ hetzner_sync() {
         exit 1
     fi
 
-    local domain="${DUCKDNS_DOMAIN:-}"
-    if [ -z "$domain" ]; then
-        print_error "DUCKDNS_DOMAIN not set. Cannot determine server addresses."
-        exit 1
-    fi
-
     # Query Hetzner API for servers with remo label
     local servers
     servers=$(curl -fsSL -H "Authorization: Bearer $token" \
@@ -1813,15 +1809,8 @@ for server in data.get('servers', []):
     local count=0
     while IFS=$'\t' read -r name ip; do
         [ -z "$name" ] && continue
-        # Use DuckDNS hostname for the default server, direct IP for others
-        local host
-        if [ -n "$domain" ] && [ "$count" -eq 0 ]; then
-            host="${domain}.duckdns.org"
-        else
-            host="$ip"
-        fi
-        save_known_host "hetzner" "$name" "$host" "remo"
-        print_success "  Registered: $name -> $host"
+        save_known_host "hetzner" "$name" "$ip" "remo"
+        print_success "  Registered: $name -> $ip"
         ((count++)) || true
     done <<< "$discovered"
 
