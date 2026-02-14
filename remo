@@ -3577,9 +3577,6 @@ DESCRIPTION:
     Environments are registered when created with remo <platform> create.
     Use 'remo <platform> list' to see registered environments.
 
-    Drag-and-drop a file into the terminal to transfer it to the remote
-    environment's home directory. Requires python3 on the local machine.
-
 OPTIONS:
     -L PORT           Forward remote PORT to the same local port
     -L LOCAL:REMOTE   Forward remote REMOTE port to local LOCAL port
@@ -3592,222 +3589,6 @@ EXAMPLES:
     remo shell -L 8080 -L 3000    # Shell + forward multiple ports
     remo shell -L 8080 --no-open  # Shell + forward, skip browser auto-open
 EOF
-}
-
-# Write the Python pty proxy script for shell drag-and-drop support.
-# The proxy intercepts bracketed paste events and transfers local files via rsync.
-# Env vars: REMO_SSH_TARGET, REMO_RSYNC_SSH (set by shell_connect before launch).
-_write_shell_proxy() {
-    local dest="$1"
-    cat > "$dest" << 'PROXY_EOF'
-#!/usr/bin/env python3
-"""remo shell proxy — intercepts drag-and-drop file paths, transfers via rsync."""
-import sys, os, signal, select, struct, fcntl, termios, pty, subprocess, re
-from urllib.parse import unquote as url_unquote
-
-BRACKETED_PASTE_ON  = b'\x1b[?2004h'
-BRACKETED_PASTE_OFF = b'\x1b[?2004l'
-PASTE_START = b'\x1b[200~'
-PASTE_END   = b'\x1b[201~'
-
-def set_nonblock(fd):
-    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
-    fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
-
-def get_winsize(fd):
-    try:
-        return struct.unpack('HHHH', fcntl.ioctl(fd, termios.TIOCGWINSZ, b'\x00' * 8))
-    except Exception:
-        return (24, 80, 0, 0)
-
-def set_winsize(fd, rows, cols, xpix=0, ypix=0):
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, xpix, ypix))
-
-def resolve_path(raw):
-    """Resolve a potentially quoted/escaped/URI path to an absolute path, or None."""
-    p = raw.strip()
-    if not p:
-        return None
-    # file:// URI
-    if p.startswith('file://'):
-        p = url_unquote(p[7:])  # strip scheme, decode %xx
-    # Strip surrounding quotes
-    if (p.startswith("'") and p.endswith("'")) or (p.startswith('"') and p.endswith('"')):
-        p = p[1:-1]
-    # Unescape backslash-spaces
-    p = p.replace('\\ ', ' ')
-    # Expand ~ (shouldn't appear from drag-and-drop, but just in case)
-    p = os.path.expanduser(p)
-    if os.path.exists(p):
-        return os.path.abspath(p)
-    return None
-
-def transfer_file(path, ssh_target, rsync_ssh):
-    """Transfer a local file to remote ~/ via rsync. Returns remote path or None."""
-    basename = os.path.basename(path)
-    dest = f"{ssh_target}:~/"
-    cmd = ["rsync", "-az", "-e", rsync_ssh, path, dest]
-    try:
-        r = subprocess.run(cmd, capture_output=True, timeout=300)
-        if r.returncode == 0:
-            return f"~/{basename}"
-    except Exception:
-        pass
-    return None
-
-def handle_paste(paste_bytes, master_fd, ssh_target, rsync_ssh):
-    """Process a bracketed paste. Transfer files or forward as-is."""
-    text = paste_bytes.decode('utf-8', errors='replace')
-    lines = text.splitlines()
-
-    # Check if every non-empty line is a valid local file path
-    paths = []
-    for line in lines:
-        if not line.strip():
-            continue
-        resolved = resolve_path(line)
-        if resolved is None:
-            # Not a file path — forward the original paste unchanged
-            os.write(master_fd, PASTE_START + paste_bytes + PASTE_END)
-            return
-        paths.append(resolved)
-
-    if not paths:
-        # Empty paste
-        os.write(master_fd, PASTE_START + paste_bytes + PASTE_END)
-        return
-
-    # Transfer each file and collect remote paths
-    remote_paths = []
-    for p in paths:
-        rp = transfer_file(p, ssh_target, rsync_ssh)
-        if rp is None:
-            # Transfer failed — forward original paste so user sees something
-            os.write(master_fd, PASTE_START + paste_bytes + PASTE_END)
-            return
-        remote_paths.append(rp)
-
-    # Send remote paths to the shell (inside a bracketed paste so shells handle it)
-    result = ' '.join(remote_paths)
-    os.write(master_fd, PASTE_START + result.encode() + PASTE_END)
-
-def main():
-    ssh_cmd = sys.argv[1:]
-    if not ssh_cmd:
-        print("Usage: proxy.py SSH_COMMAND...", file=sys.stderr)
-        sys.exit(1)
-
-    ssh_target = os.environ.get('REMO_SSH_TARGET', '')
-    rsync_ssh  = os.environ.get('REMO_RSYNC_SSH', 'ssh')
-
-    # Save original terminal settings
-    stdin_fd = sys.stdin.fileno()
-    old_attrs = termios.tcgetattr(stdin_fd)
-
-    # Fork a child with a pty
-    child_pid, master_fd = pty.fork()
-
-    if child_pid == 0:
-        # Child — exec SSH
-        os.execvp(ssh_cmd[0], ssh_cmd)
-        sys.exit(1)
-
-    # Parent — proxy I/O
-    try:
-        # Set terminal to raw mode
-        new_attrs = termios.tcgetattr(stdin_fd)
-        new_attrs[0] = 0          # iflag — no input processing
-        new_attrs[1] = 0          # oflag — no output processing
-        new_attrs[2] &= ~(termios.CSIZE | termios.PARENB)
-        new_attrs[2] |= termios.CS8
-        new_attrs[3] = 0          # lflag — no echo, no canonical
-        new_attrs[6][termios.VMIN]  = 1
-        new_attrs[6][termios.VTIME] = 0
-        termios.tcsetattr(stdin_fd, termios.TCSAFLUSH, new_attrs)
-
-        # Propagate initial window size
-        rows, cols, xpix, ypix = get_winsize(stdin_fd)
-        set_winsize(master_fd, rows, cols, xpix, ypix)
-
-        # Handle SIGWINCH
-        def on_winch(signum, frame):
-            r, c, xp, yp = get_winsize(stdin_fd)
-            set_winsize(master_fd, r, c, xp, yp)
-            os.kill(child_pid, signal.SIGWINCH)
-        signal.signal(signal.SIGWINCH, on_winch)
-
-        # Enable bracketed paste on the real terminal
-        os.write(stdin_fd, BRACKETED_PASTE_ON)
-
-        set_nonblock(master_fd)
-
-        paste_buf = None  # None = not in paste; bytes = accumulating paste content
-
-        while True:
-            try:
-                rlist, _, _ = select.select([stdin_fd, master_fd], [], [], 0.5)
-            except (select.error, InterruptedError):
-                continue
-
-            if stdin_fd in rlist:
-                try:
-                    data = os.read(stdin_fd, 65536)
-                except OSError:
-                    data = b''
-                if not data:
-                    break
-
-                # Process data for bracketed paste markers
-                i = 0
-                while i < len(data):
-                    if paste_buf is not None:
-                        # Inside a paste — look for end marker
-                        end_idx = data.find(PASTE_END, i)
-                        if end_idx == -1:
-                            paste_buf += data[i:]
-                            break
-                        else:
-                            paste_buf += data[i:end_idx]
-                            handle_paste(paste_buf, master_fd, ssh_target, rsync_ssh)
-                            paste_buf = None
-                            i = end_idx + len(PASTE_END)
-                    else:
-                        # Outside a paste — look for start marker
-                        start_idx = data.find(PASTE_START, i)
-                        if start_idx == -1:
-                            os.write(master_fd, data[i:])
-                            break
-                        else:
-                            # Forward everything before the marker
-                            if start_idx > i:
-                                os.write(master_fd, data[i:start_idx])
-                            paste_buf = b''
-                            i = start_idx + len(PASTE_START)
-
-            if master_fd in rlist:
-                try:
-                    data = os.read(master_fd, 65536)
-                except OSError:
-                    data = b''
-                if not data:
-                    break
-                os.write(stdin_fd, data)
-
-    finally:
-        # Restore terminal
-        os.write(stdin_fd, BRACKETED_PASTE_OFF)
-        termios.tcsetattr(stdin_fd, termios.TCSAFLUSH, old_attrs)
-
-    # Wait for child and propagate exit status
-    _, status = os.waitpid(child_pid, 0)
-    if os.WIFEXITED(status):
-        sys.exit(os.WEXITSTATUS(status))
-    sys.exit(1)
-
-if __name__ == '__main__':
-    main()
-PROXY_EOF
-    chmod +x "$dest"
 }
 
 # Auto-start a stopped AWS instance (if applicable).
@@ -3940,7 +3721,7 @@ resolve_remo_host() {
 }
 
 shell_connect() {
-    local -n _tunnels=$1
+    local _tunnels_name=$1
     local no_open="$2"
 
     resolve_remo_host
@@ -3954,8 +3735,9 @@ shell_connect() {
 
     local ssh_cmd=(ssh "${SSH_OPTS[@]}")
 
-    # Parse and add tunnel specs
+    # Parse and add tunnel specs (eval for Bash 3.2 compat - no nameref support)
     local local_port remote_port
+    eval "local _tunnels=(\"\${${_tunnels_name}[@]}\")"
     for spec in "${_tunnels[@]}"; do
         case "$spec" in
             *:*)
@@ -4003,16 +3785,7 @@ shell_connect() {
         fi
     fi
 
-    if command -v python3 &>/dev/null; then
-        local _proxy
-        _proxy=$(mktemp /tmp/remo-shell-proxy.XXXXXX.py)
-        trap 'rm -f "$_proxy"; stty sane 2>/dev/null' EXIT
-        _write_shell_proxy "$_proxy"
-        REMO_SSH_TARGET="$SSH_TARGET" REMO_RSYNC_SSH="ssh $(printf '%q ' "${SSH_OPTS[@]}")" \
-            python3 "$_proxy" "${ssh_cmd[@]}"
-    else
-        "${ssh_cmd[@]}"
-    fi
+    "${ssh_cmd[@]}"
 
     # Reset terminal to sane state — covers connection drops where the remote
     # side vanishes and we fall through back to the local terminal.
