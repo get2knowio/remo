@@ -1889,7 +1889,6 @@ COMMANDS:
 CREATE OPTIONS:
     --name <name>       Resource namespace (default: $USER)
     --type <type>       Instance type (default: m6a.large)
-    --arm, --graviton   Use ARM/Graviton instance (m6g.large) for better price-perf
     --region <region>   AWS region (default: us-west-2)
     --spot              Use spot instance (cheaper but can be interrupted)
     --volume-size <GB>  Persistent home volume size in GB (default: 20)
@@ -1935,7 +1934,7 @@ CONNECTION:
 
 EXAMPLES:
     remo aws create
-    remo aws create --arm
+    remo aws create --type m6g.large
     remo aws create --spot
     remo aws create --name alice --type m6a.xlarge
     remo aws create --iam-profile MyCustomSSMProfile
@@ -2180,7 +2179,6 @@ PYEOF
 aws_create() {
     local name=""
     local instance_type=""
-    local use_arm="false"
     local region=""
     local volume_size=""
     local use_spot="false"
@@ -2209,10 +2207,6 @@ aws_create() {
                 volume_size="$2"
                 shift 2
                 ;;
-            --arm|--graviton)
-                use_arm="true"
-                shift
-                ;;
             --spot)
                 use_spot="true"
                 shift
@@ -2240,11 +2234,6 @@ aws_create() {
 
     [ -n "$name" ] && validate_name "$name" "instance name"
     [ -n "$region" ] && validate_region "$region"
-
-    # --arm/--graviton sets default to m6g.large unless --type was explicitly given
-    if [ "$use_arm" = "true" ] && [ -z "$instance_type" ]; then
-        instance_type="m6g.large"
-    fi
 
     print_info "Creating AWS EC2 instance..."
 

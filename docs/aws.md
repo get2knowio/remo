@@ -90,7 +90,6 @@ remo aws destroy --yes --remove-storage
 |--------|---------|-------------|
 | `--name <name>` | `$USER` | Resource namespace (for multi-user support) |
 | `--type <type>` | `m6a.large` | Instance type |
-| `--arm`, `--graviton` | (off) | Use ARM/Graviton instance (`m6g.large`) for better price-perf |
 | `--region <region>` | `us-west-2` | AWS region |
 | `--spot` | (off) | Use spot instance for cost savings |
 | `--iam-profile <name>` | (auto) | Use existing IAM instance profile (skips discovery) |
@@ -147,7 +146,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `m6g.xlarge` | ARM | 4 | 16 GB | ~$0.154/hr (~$112/mo) | ~$0.055/hr |
 | `t3.medium` | x86 | 2 | 4 GB | ~$0.042/hr (~$30/mo) | ~$0.013/hr |
 
-Use `--arm` / `--graviton` for ARM instances, or `--type <type>` for any specific type.
+Use `--type <type>` to select any instance type (e.g., `--type m6g.large` for ARM/Graviton).
 Prices vary by region. See [EC2 pricing](https://aws.amazon.com/ec2/pricing/).
 
 ## Regions
