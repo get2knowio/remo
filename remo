@@ -1425,7 +1425,7 @@ handle_self_update() {
         git fetch origin 2>/dev/null
 
         print_info "Checking out origin/$branch..."
-        git checkout "origin/$branch" 2>/dev/null
+        git checkout --force "origin/$branch" 2>/dev/null
 
         # Re-run init to update dependencies
         print_info "Updating dependencies..."
@@ -1486,7 +1486,7 @@ handle_self_update() {
     git fetch --tags origin 2>/dev/null
 
     print_info "Checking out $target_version..."
-    git checkout "$target_version" 2>/dev/null
+    git checkout --force "$target_version" 2>/dev/null
 
     # Re-run init to update dependencies
     print_info "Updating dependencies..."
