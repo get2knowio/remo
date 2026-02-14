@@ -1,24 +1,45 @@
 {
-  "name": "get2know.io devcontainer",
-  "image": "ghcr.io/get2knowio/devcontainer:latest",
-  "remoteUser": "vscode",
-  "features": {},
-  "remoteEnv": {
-    "GH_PAGER": ""
-  },
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "rust-lang.rust-analyzer"
-      ]
-    }
-  },
-  "workspaceFolder": "/workspaces/remote-coding",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/remote-coding,type=bind,consistency=cached",
-  "initializeCommand": "docker pull ghcr.io/get2knowio/devcontainer:latest",
-  "mounts": [
-    "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached"
-  ]
+    "name": "Python Agentic Development",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "remoteUser": "vscode",
+    "features": {
+        "ghcr.io/devcontainers/features/python:1": {},
+        "ghcr.io/devcontainers/features/node:1": {
+            "version": "22"
+        },
+        "ghcr.io/devcontainers/features/docker-in-docker:2": {
+            "version": "latest",
+            "enableNonRootDocker": "true"
+        },
+        "ghcr.io/devcontainers/features/aws-cli:1": {},
+        "ghcr.io/devcontainers/features/github-cli:1": {},
+        "ghcr.io/eitsupi/devcontainer-features/jq-likes:2": {},
+        "ghcr.io/devcontainers-extra/features/starship:1": {},
+        "ghcr.io/get2knowio/devcontainer-features/ai-clis:2": {
+            "install": "claudeCode,specifyCli"
+        },
+        "ghcr.io/get2knowio/devcontainer-features/modern-cli-tools:2": {},
+        "ghcr.io/get2knowio/devcontainer-features/python-tools:2": {
+            "omit": "poetry,ruff,mypy"
+        },
+        "ghcr.io/get2knowio/devcontainer-features/github-actions-tools:2": {}
+    },
+    "remoteEnv": {
+        "GH_PAGER": ""
+    },
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "zsh"
+            }
+        }
+    },
+    "workspaceFolder": "/workspaces/remote-coding",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/remote-coding,type=bind,consistency=cached",
+    "mounts": [
+        "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached",
+        "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached"
+    ],
+    "postCreateCommand": "python3 --version && node --version"
 }
