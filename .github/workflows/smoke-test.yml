@@ -20,7 +20,7 @@ on:
         description: 'Provider to test'
         type: choice
         default: 'all'
-        options: [all, aws-direct, aws-ssm, hetzner, incus]
+        options: [all, aws, hetzner, incus]
 
 concurrency:
   group: smoke-test-${{ github.ref }}
@@ -28,82 +28,20 @@ concurrency:
 
 jobs:
   # ===========================================================================
-  # AWS EC2 — Direct SSH access
-  # ===========================================================================
-  aws-direct:
-    if: >-
-      github.event_name != 'workflow_dispatch' ||
-      github.event.inputs.provider == 'all' ||
-      github.event.inputs.provider == 'aws-direct'
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    timeout-minutes: 20
-    env:
-      INSTANCE_NAME: ci-${{ github.run_id }}-aws-direct
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
-          role-session-name: remo-ci-${{ github.run_id }}
-          aws-region: us-west-2
-
-      - name: Generate ephemeral SSH key
-        run: |
-          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "remo-ci"
-
-      - name: Install dependencies
-        run: |
-          ./remo init
-          printf '%s\n' \
-            "SSH_PRIVATE_KEY_PATH=~/.ssh/id_ed25519" \
-            "SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub" \
-            > .env
-
-      - name: Provision
-        run: ./remo aws create --name "$INSTANCE_NAME" --access direct
-
-      - name: Test SSH connectivity
-        run: |
-          ENTRY=$(grep "^aws:${INSTANCE_NAME}:" ~/.config/remo/known_hosts | tail -1)
-          HOST=$(echo "$ENTRY" | cut -d: -f3)
-          USER=$(echo "$ENTRY" | cut -d: -f4)
-          echo "Testing SSH to $USER@$HOST..."
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=30 -o BatchMode=yes \
-              -i ~/.ssh/id_ed25519 \
-              "$USER@$HOST" echo "connection-ok" | grep -q "connection-ok"
-          echo "SSH connectivity: PASS"
-
-      - name: Teardown
-        if: always()
-        run: |
-          ./remo aws destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
-
-  # ===========================================================================
   # AWS EC2 — SSM access
   # ===========================================================================
-  aws-ssm:
+  aws:
     if: >-
       github.event_name != 'workflow_dispatch' ||
       github.event.inputs.provider == 'all' ||
-      github.event.inputs.provider == 'aws-ssm'
+      github.event.inputs.provider == 'aws'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
     timeout-minutes: 20
     env:
-      INSTANCE_NAME: ci-${{ github.run_id }}-aws-ssm
+      INSTANCE_NAME: ci-${{ github.run_id }}-aws
 
     steps:
       - uses: actions/checkout@v4
@@ -138,7 +76,7 @@ jobs:
             > .env
 
       - name: Provision
-        run: ./remo aws create --name "$INSTANCE_NAME" --access ssm
+        run: ./remo aws create --name "$INSTANCE_NAME"
 
       - name: Test SSM connectivity
         run: |

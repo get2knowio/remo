@@ -115,12 +115,7 @@
           - Non-devcontainer projects use zellij sessions
 
           Security:
-          {% if hostvars['localhost']['aws_access_mode'] | default('ssm') == 'ssm' %}
           - SSM Session Manager - no inbound ports open
-          {% else %}
-          - SSH (port 22) - allowed from your current IP
-          - All other ports - blocked
-          {% endif %}
 
           Storage:
           - /home/remo is on EBS (block storage)
@@ -128,9 +123,6 @@
 
           Connect using:
             remo shell
-          {% if hostvars['localhost']['aws_access_mode'] | default('ssm') != 'ssm' %}
-            ssh remo@{{ hostvars['localhost']['aws_instance_public_ip'] | default(ansible_host) }}
-          {% endif %}
 
     - name: Reboot server if required by package updates
       ansible.builtin.reboot:

@@ -106,17 +106,15 @@ remo hetzner sync                   # Discover existing VMs
 remo hetzner update                 # Update dev tools
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
-# AWS (SSM access by default — no inbound ports)
+# AWS (SSM access — no inbound ports)
 remo aws create                     # Provision EC2 via SSM
 remo aws create --spot              # Use spot instance (~70% savings)
-remo aws create --access direct     # Use direct SSH instead of SSM
 remo aws list                       # List registered instances
 remo aws sync                       # Discover existing instances
 remo aws update                     # Update dev tools
 remo aws stop [--yes]               # Stop instance (pause billing)
 remo aws start                      # Start a stopped instance
 remo aws destroy [--yes]            # Tear down (keeps storage)
-remo aws update-ip                  # Update security group IP (direct only)
 remo aws info                       # Show instance info
 
 # Incus Containers

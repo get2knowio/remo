@@ -30,9 +30,6 @@ aws_ami_name_pattern: ""  # Auto-detected from instance type; override for custo
 aws_ssh_public_key_path: "~/.ssh/id_rsa.pub"
 aws_ssh_private_key_path: "~/.ssh/id_rsa"
 
-# Security group - SSH allowed CIDR (auto-detected if empty)
-aws_allowed_ssh_cidr: ""
-
 # Storage configuration - EBS (block storage)
 # Persistent home volume mounted at /home/remo, survives instance termination.
 aws_ebs_name: "remo-{{ aws_resource_name }}-home"
@@ -40,16 +37,7 @@ aws_ebs_size: 20  # Size in GB
 aws_ebs_type: "gp3"  # gp3 is the best general-purpose option
 aws_ebs_device_name: "/dev/xvdf"  # Device name when attached
 
-# Route53 configuration (optional)
-aws_create_dns: false
-aws_route53_zone_id: "{{ lookup('env', 'AWS_ROUTE53_ZONE_ID') | default('', true) }}"
-aws_route53_zone_domain: "{{ lookup('env', 'AWS_ROUTE53_ZONE_DOMAIN') | default('', true) }}"
-aws_route53_record_name: "{{ aws_resource_name }}"  # Creates <name>.<domain>
-
-# Elastic IP
-aws_create_eip: true
-
-# Access mode: 'ssm' (AWS SSM Session Manager) or 'direct' (SSH over internet)
+# Access mode — always SSM (AWS SSM Session Manager)
 aws_access_mode: "ssm"
 
 # IAM instance profile name (required when aws_access_mode is 'ssm')

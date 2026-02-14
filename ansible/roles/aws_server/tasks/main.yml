@@ -16,15 +16,3 @@
 
 - name: Configure Patch Manager associations
   ansible.builtin.include_tasks: patch_manager.yml
-
-- name: Create Elastic IP
-  ansible.builtin.include_tasks: elastic_ip.yml
-  when:
-    - aws_create_eip | bool
-    - (aws_access_mode | default('ssm')) != 'ssm'
-
-- name: Create Route53 DNS record
-  ansible.builtin.include_tasks: route53.yml
-  when:
-    - aws_create_dns | bool
-    - (aws_access_mode | default('ssm')) != 'ssm'

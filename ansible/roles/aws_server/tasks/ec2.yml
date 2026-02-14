@@ -115,7 +115,7 @@
     region: "{{ aws_region }}"
     iam_instance_profile: "{{ aws_iam_instance_profile if aws_iam_instance_profile else omit }}"
     network_interfaces:
-      - assign_public_ip: "{{ (aws_access_mode | default('ssm')) != 'ssm' }}"
+      - assign_public_ip: false
         device_index: 0
     volumes:
       - device_name: /dev/sda1
@@ -152,7 +152,7 @@
     region: "{{ aws_region }}"
     iam_instance_profile: "{{ aws_iam_instance_profile if aws_iam_instance_profile else omit }}"
     network_interfaces:
-      - assign_public_ip: "{{ (aws_access_mode | default('ssm')) != 'ssm' }}"
+      - assign_public_ip: false
         device_index: 0
     volumes:
       - device_name: /dev/sda1
@@ -264,37 +264,8 @@
     executable: /bin/bash
   register: ssm_wait_result
   changed_when: false
-  when: aws_access_mode == 'ssm'
 
-- name: Wait for SSH port to become available
-  delegate_to: localhost
-  become: false
-  ansible.builtin.wait_for:
-    host: "{{ aws_instance_public_ip }}"
-    port: 22
-    delay: 10
-    timeout: 300
-    state: started
-  when: aws_access_mode != 'ssm'
-
-- name: Wait for cloud-init to complete (direct)
-  delegate_to: localhost
-  become: false
-  ansible.builtin.command:
-    cmd: >
-      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-      -o ConnectTimeout=10 -o BatchMode=yes
-      -i {{ aws_ssh_private_key_path | expanduser }}
-      ubuntu@{{ aws_instance_public_ip }}
-      'cloud-init status --wait || true'
-  register: cloud_init_result
-  changed_when: false
-  retries: 6
-  delay: 10
-  until: cloud_init_result.rc | default(1) == 0
-  when: aws_access_mode != 'ssm'
-
-- name: Wait for cloud-init to complete (SSM)
+- name: Wait for cloud-init to complete
   delegate_to: localhost
   become: false
   ansible.builtin.command:
@@ -310,26 +281,8 @@
   retries: 6
   delay: 10
   until: cloud_init_ssm_result.rc | default(1) == 0
-  when: aws_access_mode == 'ssm'
 
-- name: Verify SSH connection is stable (direct)
-  delegate_to: localhost
-  become: false
-  ansible.builtin.command:
-    cmd: >
-      ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-      -o ConnectTimeout=10 -o BatchMode=yes
-      -i {{ aws_ssh_private_key_path | expanduser }}
-      ubuntu@{{ aws_instance_public_ip }}
-      'echo SSH connection successful'
-  register: ssh_test_result
-  changed_when: false
-  retries: 3
-  delay: 5
-  until: ssh_test_result.rc | default(1) == 0
-  when: aws_access_mode != 'ssm'
-
-- name: Verify SSH connection is stable (SSM)
+- name: Verify SSH connection is stable
   delegate_to: localhost
   become: false
   ansible.builtin.command:
@@ -345,20 +298,8 @@
   retries: 3
   delay: 5
   until: ssh_test_ssm_result.rc | default(1) == 0
-  when: aws_access_mode == 'ssm'
 
-- name: Add new instance to inventory (direct)
-  delegate_to: localhost
-  become: false
-  ansible.builtin.add_host:
-    name: aws_server
-    ansible_host: "{{ aws_instance_public_ip }}"
-    ansible_user: ubuntu
-    ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
-    groups: provisioned
-  when: aws_access_mode != 'ssm'
-
-- name: Add new instance to inventory (SSM)
+- name: Add new instance to inventory
   delegate_to: localhost
   become: false
   vars:
@@ -371,4 +312,3 @@
     ansible_ssh_private_key_file: "{{ aws_ssh_private_key_path | expanduser }}"
     ansible_ssh_args: '-C -o ControlMaster=auto -o ControlPersist=60s -o ControlPath=~/.ssh/remo-%%r@%%h-%%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ProxyCommand="{{ _proxy_env }}aws ssm start-session --region {{ aws_region }} --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
     groups: provisioned
-  when: aws_access_mode == 'ssm'
