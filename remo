@@ -336,6 +336,7 @@ USAGE:
 
 COMMANDS:
     shell       Connect to a remo environment (auto-detects or picker)
+    cp          Copy files to/from a remo environment
     init        Initialize remo (install dependencies, create .env)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
@@ -349,6 +350,10 @@ EXAMPLES:
     remo shell
     remo shell -L 8080
     remo shell -L 9000:8080 --no-open
+
+    remo cp ./file.txt :/tmp/
+    remo cp -r ./project/ myenv:/home/dev/
+    remo cp :/var/log/app.log ./
 
     remo incus create dev1
     remo incus list
@@ -3805,6 +3810,49 @@ PROXY_EOF
     chmod +x "$dest"
 }
 
+# Auto-start a stopped AWS instance (if applicable).
+# Expects REMO_TYPE, REMO_NAME, REMO_INSTANCE_ID to be set in caller scope.
+# On start, re-reads known_hosts and updates REMO_HOST (and friends) in caller scope.
+_auto_start_aws_if_stopped() {
+    if [ "$REMO_TYPE" != "aws" ] || [ -z "${REMO_INSTANCE_ID:-}" ]; then
+        return 0
+    fi
+
+    local inst_state
+    local _effective_region
+    _effective_region=$(get_aws_region "$REMO_NAME")
+    inst_state=$(python3 << EOF
+import os, sys, json
+try:
+    import boto3
+except ImportError:
+    sys.exit(0)
+region = '${_effective_region}'
+profile = os.environ.get('AWS_PROFILE') or None
+session = boto3.Session(region_name=region, profile_name=profile)
+ec2 = session.client('ec2')
+response = ec2.describe_instances(InstanceIds=['${REMO_INSTANCE_ID}'])
+for r in response.get('Reservations', []):
+    for inst in r.get('Instances', []):
+        print(inst['State']['Name'])
+        break
+EOF
+    )
+    if [ "${inst_state:-}" = "stopped" ]; then
+        print_warning "Instance $REMO_INSTANCE_ID is stopped. Starting it..."
+        aws_start --name "$REMO_NAME"
+        # Re-read known_hosts for updated IP
+        local updated_entry
+        updated_entry=$(get_known_hosts "aws" | grep "^aws:${REMO_NAME}:" || true)
+        if [ -n "$updated_entry" ]; then
+            IFS=: read -r REMO_TYPE REMO_NAME REMO_HOST REMO_USER REMO_INSTANCE_ID REMO_ACCESS_MODE REMO_REGION <<< "$updated_entry"
+        fi
+    elif [ "${inst_state:-}" = "stopping" ]; then
+        print_error "Instance $REMO_INSTANCE_ID is currently stopping. Please wait and try again."
+        exit 1
+    fi
+}
+
 # Resolve a remo host from known_hosts with optional fzf picker and AWS auto-start.
 # Sets these variables in the caller's scope:
 #   REMO_TYPE, REMO_NAME, REMO_HOST, REMO_USER,
@@ -3888,42 +3936,7 @@ resolve_remo_host() {
     # Parse selected environment (supports 4-field, 6-field, and 7-field formats)
     IFS=: read -r REMO_TYPE REMO_NAME REMO_HOST REMO_USER REMO_INSTANCE_ID REMO_ACCESS_MODE REMO_REGION <<< "$selected"
 
-    # Auto-start stopped AWS instances
-    if [ "$REMO_TYPE" = "aws" ] && [ -n "${REMO_INSTANCE_ID:-}" ]; then
-        local inst_state
-        local _effective_region
-        _effective_region=$(get_aws_region "$REMO_NAME")
-        inst_state=$(python3 << EOF
-import os, sys, json
-try:
-    import boto3
-except ImportError:
-    sys.exit(0)
-region = '${_effective_region}'
-profile = os.environ.get('AWS_PROFILE') or None
-session = boto3.Session(region_name=region, profile_name=profile)
-ec2 = session.client('ec2')
-response = ec2.describe_instances(InstanceIds=['${REMO_INSTANCE_ID}'])
-for r in response.get('Reservations', []):
-    for inst in r.get('Instances', []):
-        print(inst['State']['Name'])
-        break
-EOF
-        )
-        if [ "${inst_state:-}" = "stopped" ]; then
-            print_warning "Instance $REMO_INSTANCE_ID is stopped. Starting it..."
-            aws_start --name "$REMO_NAME"
-            # Re-read known_hosts for updated IP
-            local updated_entry
-            updated_entry=$(get_known_hosts "aws" | grep "^aws:${REMO_NAME}:" || true)
-            if [ -n "$updated_entry" ]; then
-                IFS=: read -r REMO_TYPE REMO_NAME REMO_HOST REMO_USER REMO_INSTANCE_ID REMO_ACCESS_MODE REMO_REGION <<< "$updated_entry"
-            fi
-        elif [ "${inst_state:-}" = "stopping" ]; then
-            print_error "Instance $REMO_INSTANCE_ID is currently stopping. Please wait and try again."
-            exit 1
-        fi
-    fi
+    _auto_start_aws_if_stopped
 }
 
 shell_connect() {
@@ -4045,6 +4058,303 @@ handle_shell() {
 }
 
 # =============================================================================
+# CP COMMAND
+# =============================================================================
+
+show_cp_help() {
+    cat << 'EOF'
+remo cp - Copy files to/from a remo environment
+
+USAGE:
+    remo cp [options] <source>... <destination>
+
+DESCRIPTION:
+    Transfer files between local machine and a remote remo environment
+    using scp-style colon notation.
+
+    Use a colon prefix to denote a remote path:
+      :path           Remote path (auto-select environment)
+      name:path       Remote path on named environment
+
+UPLOAD (local -> remote):
+    remo cp ./file.txt :/tmp/
+    remo cp file1.txt file2.txt :/tmp/
+    remo cp -r ./project/ myenv:/home/dev/
+
+DOWNLOAD (remote -> local):
+    remo cp :/var/log/app.log ./
+    remo cp -r myenv:/etc/nginx/ ./backup/
+
+OPTIONS:
+    -r, --recursive   Copy directories recursively
+    --progress        Show transfer progress
+    --help            Show this help
+
+EXAMPLES:
+    remo cp ./notes.txt :/tmp/              # Upload a file
+    remo cp -r ./src/ :/home/dev/project/   # Upload a directory
+    remo cp :/etc/hostname ./               # Download a file
+    remo cp --progress ./big.tar.gz :/tmp/  # Upload with progress
+EOF
+}
+
+# Resolve a remo host by exact environment name (no interactive picker).
+# For incus entries (format "host/container"), matches on the container part.
+# Sets REMO_TYPE, REMO_NAME, REMO_HOST, REMO_USER,
+#   REMO_INSTANCE_ID, REMO_ACCESS_MODE, REMO_REGION in caller scope.
+resolve_remo_host_by_name() {
+    local env_name="$1"
+    local hosts
+    hosts=$(get_known_hosts)
+
+    if [ -z "$hosts" ]; then
+        print_error "No remo environments registered."
+        echo ""
+        echo "Create one with:"
+        echo "  remo aws create"
+        echo "  remo hetzner create"
+        echo "  remo incus create <name>"
+        exit 1
+    fi
+
+    local selected=""
+    while IFS=: read -r type name host user instance_id access_mode region; do
+        if [ "$name" = "$env_name" ]; then
+            selected="${type}:${name}:${host}:${user}:${instance_id}:${access_mode}:${region}"
+            break
+        fi
+        # For incus entries, also match on the container part (after /)
+        if [ "$type" = "incus" ]; then
+            local container="${name#*/}"
+            if [ "$container" = "$env_name" ]; then
+                selected="${type}:${name}:${host}:${user}:${instance_id}:${access_mode}:${region}"
+                break
+            fi
+        fi
+    done <<< "$hosts"
+
+    if [ -z "$selected" ]; then
+        print_error "Environment '$env_name' not found."
+        echo ""
+        echo "Available environments:"
+        while IFS=: read -r type name _rest; do
+            local display="$name"
+            if [ "$type" = "incus" ]; then
+                display="${name#*/} ($name)"
+            fi
+            echo "  $display"
+        done <<< "$hosts"
+        exit 1
+    fi
+
+    IFS=: read -r REMO_TYPE REMO_NAME REMO_HOST REMO_USER REMO_INSTANCE_ID REMO_ACCESS_MODE REMO_REGION <<< "$selected"
+
+    _auto_start_aws_if_stopped
+}
+
+# Parse a single path argument for colon notation.
+# Sets _SPEC_TYPE ("local" or "remote"), _SPEC_ENV_NAME (env name or ""),
+# and _SPEC_PATH in caller scope.
+parse_remote_spec() {
+    local arg="$1"
+    _SPEC_TYPE="local"
+    _SPEC_ENV_NAME=""
+    _SPEC_PATH="$arg"
+
+    # :path → remote with bare colon (auto-select env)
+    if [[ "$arg" == :* ]]; then
+        _SPEC_TYPE="remote"
+        _SPEC_ENV_NAME=""
+        _SPEC_PATH="${arg#:}"
+        return
+    fi
+
+    # name:path → remote with named env
+    # Name must match [a-zA-Z0-9][a-zA-Z0-9._-]* and be at least 2 chars
+    # before the colon (single letter excluded for Windows drive letters)
+    if [[ "$arg" =~ ^([a-zA-Z0-9][a-zA-Z0-9._-]+):(.+)$ ]]; then
+        _SPEC_TYPE="remote"
+        _SPEC_ENV_NAME="${BASH_REMATCH[1]}"
+        _SPEC_PATH="${BASH_REMATCH[2]}"
+        return
+    fi
+
+    # Everything else → local
+}
+
+handle_cp() {
+    local recursive=false
+    local progress=false
+    local positional=()
+
+    # Phase 1: Parse flags
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --help|-h)
+                show_cp_help
+                return 0
+                ;;
+            -r|--recursive)
+                recursive=true
+                shift
+                ;;
+            --progress)
+                progress=true
+                shift
+                ;;
+            --)
+                shift
+                positional+=("$@")
+                break
+                ;;
+            -*)
+                print_error "Unknown option: $1"
+                echo "Run 'remo cp --help' for usage."
+                exit 1
+                ;;
+            *)
+                positional+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Phase 2: Validate positional args (need at least 2: source(s) + destination)
+    if [ "${#positional[@]}" -lt 2 ]; then
+        print_error "Expected at least 2 arguments: source(s) and destination."
+        echo ""
+        echo "Usage: remo cp [options] <source>... <destination>"
+        echo "Run 'remo cp --help' for examples."
+        exit 1
+    fi
+
+    # Phase 3: Last positional = destination, rest = sources
+    local dest="${positional[-1]}"
+    local sources=("${positional[@]:0:${#positional[@]}-1}")
+
+    # Phase 4: Parse all specs
+    local src_types=()
+    local src_env_names=()
+    local src_paths=()
+    local dest_type dest_env_name dest_path
+
+    for src in "${sources[@]}"; do
+        parse_remote_spec "$src"
+        src_types+=("$_SPEC_TYPE")
+        src_env_names+=("$_SPEC_ENV_NAME")
+        src_paths+=("$_SPEC_PATH")
+    done
+
+    parse_remote_spec "$dest"
+    dest_type="$_SPEC_TYPE"
+    dest_env_name="$_SPEC_ENV_NAME"
+    dest_path="$_SPEC_PATH"
+
+    # Phase 5: Determine direction and validate consistency
+    local direction=""
+    local remote_env_name=""
+
+    # Check if any source is remote
+    local has_remote_src=false
+    local has_local_src=false
+    for st in "${src_types[@]}"; do
+        if [ "$st" = "remote" ]; then
+            has_remote_src=true
+        else
+            has_local_src=true
+        fi
+    done
+
+    if [ "$has_remote_src" = true ] && [ "$has_local_src" = true ]; then
+        print_error "Cannot mix local and remote sources."
+        echo "All sources must be either local or remote."
+        exit 1
+    fi
+
+    if [ "$has_remote_src" = true ] && [ "$dest_type" = "remote" ]; then
+        print_error "Cannot copy from remote to remote."
+        echo "One side must be local."
+        exit 1
+    fi
+
+    if [ "$has_remote_src" = false ] && [ "$dest_type" = "local" ]; then
+        print_error "No remote side specified."
+        echo ""
+        echo "Use colon notation for remote paths:"
+        echo "  remo cp ./file.txt :/tmp/        # upload"
+        echo "  remo cp :/var/log/app.log ./     # download"
+        echo ""
+        echo "Run 'remo cp --help' for more examples."
+        exit 1
+    fi
+
+    if [ "$has_remote_src" = true ]; then
+        direction="download"
+        # Validate all remote sources reference the same env
+        for i in "${!src_env_names[@]}"; do
+            local this_env="${src_env_names[$i]}"
+            if [ -z "$remote_env_name" ]; then
+                remote_env_name="$this_env"
+            elif [ "$this_env" != "$remote_env_name" ]; then
+                print_error "All remote sources must reference the same environment."
+                exit 1
+            fi
+        done
+    else
+        direction="upload"
+        remote_env_name="$dest_env_name"
+    fi
+
+    # Phase 6: Resolve environment
+    if [ -n "$remote_env_name" ]; then
+        resolve_remo_host_by_name "$remote_env_name"
+    else
+        resolve_remo_host
+    fi
+
+    build_ssh_opts
+
+    # Phase 7: Validate local sources
+    if [ "$direction" = "upload" ]; then
+        for src in "${src_paths[@]}"; do
+            if [ ! -e "$src" ]; then
+                print_error "Source not found: $src"
+                exit 1
+            fi
+            if [ -d "$src" ] && [ "$recursive" = false ]; then
+                print_error "'$src' is a directory. Use -r to copy directories."
+                exit 1
+            fi
+        done
+    fi
+
+    # Phase 8: Build and execute rsync
+    local rsync_opts=(-az)
+
+    if [ "$recursive" = true ]; then
+        rsync_opts+=(-r)
+    fi
+
+    if [ "$progress" = true ]; then
+        rsync_opts+=(--progress)
+    fi
+
+    rsync_opts+=(-e "ssh ${SSH_OPTS[*]}")
+
+    if [ "$direction" = "upload" ]; then
+        print_info "Uploading to $REMO_TYPE: $REMO_NAME..."
+        rsync "${rsync_opts[@]}" "${src_paths[@]}" "${SSH_TARGET}:${dest_path}"
+    else
+        print_info "Downloading from $REMO_TYPE: $REMO_NAME..."
+        local remote_srcs=()
+        for sp in "${src_paths[@]}"; do
+            remote_srcs+=("${SSH_TARGET}:${sp}")
+        done
+        rsync "${rsync_opts[@]}" "${remote_srcs[@]}" "$dest_path"
+    fi
+}
+
+# =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
 
@@ -4061,6 +4371,9 @@ main() {
             ;;
         shell)
             handle_shell "$@"
+            ;;
+        cp)
+            handle_cp "$@"
             ;;
         incus)
             handle_incus "$@"
