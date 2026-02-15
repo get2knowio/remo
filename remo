@@ -1340,7 +1340,11 @@ check_for_updates_passive() {
             cached_version="${cached_version#v}"
             if [ -n "$cached_version" ] && version_is_newer "$cached_version" "$current_version"; then
                 echo ""
-                print_info "Update available: v${current_version} → v${cached_version}. Run 'remo self-update' to upgrade."
+                local update_cmd="remo self-update"
+                case "$cached_version" in
+                    *-rc*|*-beta*|*-alpha*) update_cmd="remo self-update --pre-release" ;;
+                esac
+                print_info "Update available: v${current_version} → v${cached_version}. Run '${update_cmd}' to upgrade."
             fi
             return 0
         fi
