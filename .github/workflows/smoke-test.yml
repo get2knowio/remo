@@ -76,6 +76,20 @@ jobs:
           ./remo init
           > .env
 
+      - name: Debug paths
+        run: |
+          echo "SCRIPT_DIR resolution:"
+          SOURCE="./remo"; while [ -h "$SOURCE" ]; do SOURCE="$(readlink "$SOURCE")"; done
+          echo "  resolved to: $(cd -P "$(dirname "$SOURCE")" && pwd)"
+          echo "venv contents:"
+          ls -la .venv/bin/python .venv/bin/ansible-playbook 2>&1 || true
+          echo "PATH ansible-playbook:"
+          which ansible-playbook 2>&1 || true
+          echo "ls ~/.remo:"
+          ls -la ~/.remo/ 2>&1 || echo "  does not exist"
+          echo "ls ~/.local/bin/remo:"
+          ls -la ~/.local/bin/remo 2>&1 || echo "  does not exist"
+
       - name: Provision
         run: ./remo aws create --name "$INSTANCE_NAME"
 
