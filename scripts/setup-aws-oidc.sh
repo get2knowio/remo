@@ -149,23 +149,40 @@ PERMISSIONS_POLICY=$(cat <<'EOF'
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "EC2Management",
+      "Sid": "EC2ReadOnly",
+      "Effect": "Allow",
+      "Action": "ec2:Describe*",
+      "Resource": "*"
+    },
+    {
+      "Sid": "EC2Write",
       "Effect": "Allow",
       "Action": [
         "ec2:RunInstances",
+        "ec2:StartInstances",
+        "ec2:StopInstances",
         "ec2:TerminateInstances",
-        "ec2:DescribeInstances",
+        "ec2:ImportKeyPair",
         "ec2:CreateKeyPair",
         "ec2:DeleteKeyPair",
-        "ec2:DescribeKeyPairs",
         "ec2:CreateSecurityGroup",
         "ec2:DeleteSecurityGroup",
-        "ec2:DescribeSecurityGroups",
         "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsIngress",
+        "ec2:UpdateSecurityGroupRuleDescriptionsEgress",
         "ec2:CreateTags",
-        "ec2:DescribeImages",
-        "ec2:DescribeSubnets",
-        "ec2:DescribeVpcs"
+        "ec2:CreateVolume",
+        "ec2:DeleteVolume",
+        "ec2:AttachVolume",
+        "ec2:DetachVolume",
+        "ec2:ModifyVolume",
+        "ec2:AllocateAddress",
+        "ec2:AssociateAddress",
+        "ec2:DisassociateAddress",
+        "ec2:ReleaseAddress"
       ],
       "Resource": "*"
     },
@@ -175,7 +192,10 @@ PERMISSIONS_POLICY=$(cat <<'EOF'
       "Action": [
         "ssm:StartSession",
         "ssm:TerminateSession",
-        "ssm:DescribeSessions"
+        "ssm:DescribeSessions",
+        "ssm:DescribeInstanceInformation",
+        "ssm:ListAssociations",
+        "ssm:CreateAssociation"
       ],
       "Resource": "*"
     },
@@ -185,10 +205,12 @@ PERMISSIONS_POLICY=$(cat <<'EOF'
       "Action": [
         "iam:CreateRole",
         "iam:DeleteRole",
+        "iam:GetRole",
         "iam:AttachRolePolicy",
         "iam:DetachRolePolicy",
         "iam:CreateInstanceProfile",
         "iam:DeleteInstanceProfile",
+        "iam:GetInstanceProfile",
         "iam:AddRoleToInstanceProfile",
         "iam:RemoveRoleFromInstanceProfile",
         "iam:ListEntitiesForPolicy",
