@@ -1615,7 +1615,7 @@ hetzner_create() {
     local server_name="${name:-remote-coding-server}"
     local server_ip
     server_ip=$(curl -fsSL -H "Authorization: Bearer ${HETZNER_API_TOKEN}" \
-        "https://api.hetzner.cloud/v1/servers?name=${server_name}&label_selector=remo" 2>/dev/null \
+        "https://api.hetzner.cloud/v1/servers?name=${server_name}" 2>/dev/null \
         | python3 -c "import sys,json; servers=json.load(sys.stdin).get('servers',[]); print(servers[0]['public_net']['ipv4']['ip'] if servers else '')" 2>/dev/null || true)
 
     if [ -n "$server_ip" ]; then

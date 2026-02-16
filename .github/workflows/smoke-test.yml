@@ -133,15 +133,17 @@ jobs:
 
       - name: Test SSH connectivity
         run: |
-          ENTRY=$(grep "^hetzner:${INSTANCE_NAME}:" ~/.config/remo/known_hosts | tail -1)
-          HOST=$(echo "$ENTRY" | cut -d: -f3)
-          USER=$(echo "$ENTRY" | cut -d: -f4)
-          echo "Testing SSH to $USER@$HOST..."
+          HOST=$(curl -fsSL -H "Authorization: Bearer ${HETZNER_API_TOKEN}" \
+            "https://api.hetzner.cloud/v1/servers?name=${INSTANCE_NAME}" \
+            | python3 -c "import sys,json; s=json.load(sys.stdin)['servers']; print(s[0]['public_net']['ipv4']['ip'])")
+          echo "Testing SSH to remo@$HOST..."
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=30 -o BatchMode=yes \
               -i ~/.ssh/id_rsa \
-              "$USER@$HOST" echo "connection-ok" | grep -q "connection-ok"
+              "remo@$HOST" echo "connection-ok" | grep -q "connection-ok"
           echo "SSH connectivity: PASS"
+        env:
+          HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
 
       - name: Teardown
         if: always()
