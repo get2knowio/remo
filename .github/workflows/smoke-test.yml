@@ -63,9 +63,13 @@ jobs:
             -o /tmp/ssm-plugin.deb
           sudo dpkg -i /tmp/ssm-plugin.deb
 
-      - name: Generate ephemeral SSH key
+      - name: Write SSH keys from secrets
         run: |
-          ssh-keygen -t ed25519 -f ~/.ssh/id_rsa -N "" -C "remo-ci"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > ~/.ssh/id_rsa.pub
+          chmod 600 ~/.ssh/id_rsa
+          chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Install dependencies
         run: |
@@ -115,9 +119,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Generate ephemeral SSH key
+      - name: Write SSH keys from secrets
         run: |
-          ssh-keygen -t ed25519 -f ~/.ssh/id_rsa -N "" -C "remo-ci"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > ~/.ssh/id_rsa.pub
+          chmod 600 ~/.ssh/id_rsa
+          chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Install dependencies
         run: |
@@ -185,9 +193,13 @@ jobs:
           sudo incus admin init --minimal
           sudo usermod -aG incus-admin "$USER"
 
-      - name: Generate ephemeral SSH key
+      - name: Write SSH keys from secrets
         run: |
-          ssh-keygen -t ed25519 -f ~/.ssh/id_rsa -N "" -C "remo-ci"
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > ~/.ssh/id_rsa.pub
+          chmod 600 ~/.ssh/id_rsa
+          chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Install dependencies
         run: |
