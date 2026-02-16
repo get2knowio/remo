@@ -127,6 +127,22 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           chmod 644 ~/.ssh/id_rsa.pub
 
+      - name: Reset SSH key in Hetzner Cloud
+        run: |
+          # Delete stale SSH key so Ansible recreates it with the current key
+          KEY_ID=$(curl -fsSL -H "Authorization: Bearer ${HETZNER_API_TOKEN}" \
+            "https://api.hetzner.cloud/v1/ssh_keys?name=remote-coding-key" \
+            | python3 -c "import sys,json; keys=json.load(sys.stdin)['ssh_keys']; print(keys[0]['id'] if keys else '')")
+          if [ -n "$KEY_ID" ]; then
+            curl -fsSL -X DELETE -H "Authorization: Bearer ${HETZNER_API_TOKEN}" \
+              "https://api.hetzner.cloud/v1/ssh_keys/$KEY_ID"
+            echo "Deleted stale SSH key (id: $KEY_ID)"
+          else
+            echo "No existing SSH key found — nothing to delete"
+          fi
+        env:
+          HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+
       - name: Install dependencies
         run: |
           ./remo init
