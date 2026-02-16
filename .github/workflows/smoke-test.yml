@@ -65,15 +65,12 @@ jobs:
 
       - name: Generate ephemeral SSH key
         run: |
-          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "remo-ci"
+          ssh-keygen -t ed25519 -f ~/.ssh/id_rsa -N "" -C "remo-ci"
 
       - name: Install dependencies
         run: |
           ./remo init
-          printf '%s\n' \
-            "SSH_PRIVATE_KEY_PATH=~/.ssh/id_ed25519" \
-            "SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub" \
-            > .env
+          > .env
 
       - name: Provision
         run: ./remo aws create --name "$INSTANCE_NAME"
@@ -89,7 +86,7 @@ jobs:
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=60 \
               -o "ProxyCommand=aws ssm start-session --region ${REGION} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
-              -i ~/.ssh/id_ed25519 \
+              -i ~/.ssh/id_rsa \
               "$USER@$INSTANCE_ID" echo "connection-ok" | grep -q "connection-ok"
           echo "SSM connectivity: PASS"
 
@@ -120,15 +117,13 @@ jobs:
 
       - name: Generate ephemeral SSH key
         run: |
-          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "remo-ci"
+          ssh-keygen -t ed25519 -f ~/.ssh/id_rsa -N "" -C "remo-ci"
 
       - name: Install dependencies
         run: |
           ./remo init
           printf '%s\n' \
             "HETZNER_API_TOKEN=${HETZNER_API_TOKEN}" \
-            "SSH_PRIVATE_KEY_PATH=~/.ssh/id_ed25519" \
-            "SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub" \
             > .env
         env:
           HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
@@ -144,7 +139,7 @@ jobs:
           echo "Testing SSH to $USER@$HOST..."
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=30 -o BatchMode=yes \
-              -i ~/.ssh/id_ed25519 \
+              -i ~/.ssh/id_rsa \
               "$USER@$HOST" echo "connection-ok" | grep -q "connection-ok"
           echo "SSH connectivity: PASS"
 
@@ -190,15 +185,12 @@ jobs:
 
       - name: Generate ephemeral SSH key
         run: |
-          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "remo-ci"
+          ssh-keygen -t ed25519 -f ~/.ssh/id_rsa -N "" -C "remo-ci"
 
       - name: Install dependencies
         run: |
           ./remo init
-          printf '%s\n' \
-            "SSH_PRIVATE_KEY_PATH=~/.ssh/id_ed25519" \
-            "SSH_PUBLIC_KEY_PATH=~/.ssh/id_ed25519.pub" \
-            > .env
+          > .env
 
       - name: Create container
         run: |
@@ -213,7 +205,7 @@ jobs:
           echo "Testing SSH to $USER@$HOST..."
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=30 -o BatchMode=yes \
-              -i ~/.ssh/id_ed25519 \
+              -i ~/.ssh/id_rsa \
               "$USER@$HOST" echo "connection-ok" | grep -q "connection-ok"
           echo "Incus connectivity: PASS"
 
