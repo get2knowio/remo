@@ -150,9 +150,15 @@ run_playbook() {
     shift
     cd "$ANSIBLE_DIR"
 
+    # Use venv ansible-playbook if available, otherwise fall back to PATH
+    local ansible_cmd="ansible-playbook"
+    if [ -x "$VENV_DIR/bin/ansible-playbook" ]; then
+        ansible_cmd="$VENV_DIR/bin/ansible-playbook"
+    fi
+
     # Verbose mode: pass through directly (current behavior)
     if [ "${REMO_VERBOSE:-}" = "1" ]; then
-        ansible-playbook "$playbook" "$@"
+        "$ansible_cmd" "$playbook" "$@"
         return
     fi
 
@@ -161,7 +167,7 @@ run_playbook() {
     log_file=$(mktemp /tmp/remo-playbook.XXXXXX)
 
     # Disable color so ANSI codes don't break TASK/PLAY line matching
-    ANSIBLE_NOCOLOR=1 ansible-playbook "$playbook" "$@" > "$log_file" 2>&1 &
+    ANSIBLE_NOCOLOR=1 "$ansible_cmd" "$playbook" "$@" > "$log_file" 2>&1 &
     local pid=$!
 
     # Cleanup on interrupt or unexpected exit (set -e)
