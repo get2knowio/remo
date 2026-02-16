@@ -178,6 +178,24 @@ PERMISSIONS_POLICY=$(cat <<'EOF'
         "ssm:DescribeSessions"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "IAMForSSMInstanceProfile",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:ListEntitiesForPolicy",
+        "iam:ListInstanceProfilesForRole",
+        "iam:PassRole"
+      ],
+      "Resource": "*"
     }
   ]
 }
