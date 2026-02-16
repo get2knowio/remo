@@ -9,12 +9,14 @@
   vars:
     # Use the same Python that runs ansible-playbook (has boto3 installed)
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
-  environment:
-    # Let boto3 handle credentials via environment variables
-    AWS_PROFILE: "{{ aws_profile | default(omit, true) }}"
-    AWS_ACCESS_KEY_ID: "{{ '' if (aws_profile | default('')) else (aws_access_key_id | default('')) }}"
-    AWS_SECRET_ACCESS_KEY: "{{ '' if (aws_profile | default('')) else (aws_secret_access_key | default('')) }}"
-    AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
+  environment: >-
+    {{ {'AWS_DEFAULT_REGION': aws_region | default('us-west-2')}
+       | combine({'AWS_PROFILE': aws_profile} if (aws_profile | default('')) else {})
+       | combine({} if (aws_profile | default('')) else {
+           'AWS_ACCESS_KEY_ID': aws_access_key_id | default(''),
+           'AWS_SECRET_ACCESS_KEY': aws_secret_access_key | default('')
+         })
+    }}
   tasks:
     - name: Include AWS server role
       ansible.builtin.include_role:
