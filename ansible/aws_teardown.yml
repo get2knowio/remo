@@ -29,7 +29,7 @@
     aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
 
   environment:
-    AWS_PROFILE: "{{ aws_profile | default('') }}"
+    AWS_PROFILE: "{{ aws_profile | default(omit, true) }}"
     AWS_ACCESS_KEY_ID: "{{ '' if (aws_profile | default('')) else (aws_access_key_id | default('')) }}"
     AWS_SECRET_ACCESS_KEY: "{{ '' if (aws_profile | default('')) else (aws_secret_access_key | default('')) }}"
     AWS_DEFAULT_REGION: "{{ aws_region | default('us-west-2') }}"
