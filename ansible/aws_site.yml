@@ -7,8 +7,8 @@
   gather_facts: false
   become: false
   vars:
-    # Use remo venv Python which has boto3 installed
-    ansible_python_interpreter: "{{ lookup('env', 'HOME') }}/.remo/.venv/bin/python"
+    # Use the same Python that runs ansible-playbook (has boto3 installed)
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
   environment:
     # Let boto3 handle credentials via environment variables
     AWS_PROFILE: "{{ aws_profile | default('') }}"
