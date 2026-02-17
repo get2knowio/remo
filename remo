@@ -1157,7 +1157,8 @@ incus_update() {
     local container_ip
     local ssh_err
     if [ "$host" = "localhost" ]; then
-        container_ip=$(incus list "$name" -f csv -c 4 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+        # Filter to eth0 to avoid picking up Docker bridge (172.17.0.1) or other internal IPs
+        container_ip=$(incus list "$name" -f csv -c 4 2>/dev/null | grep 'eth0' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
     else
         local ssh_target="$host"
         [ -n "$user" ] && ssh_target="${user}@${host}"
@@ -1168,7 +1169,7 @@ incus_update() {
             fi
             exit 1
         }
-        container_ip=$(ssh "$ssh_target" "incus list '$name' -f csv -c 4" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+        container_ip=$(ssh "$ssh_target" "incus list '$name' -f csv -c 4" 2>/dev/null | grep 'eth0' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
     fi
 
     if [ -z "$container_ip" ]; then
