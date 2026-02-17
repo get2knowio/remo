@@ -183,7 +183,7 @@ jobs:
       github.event.inputs.provider == 'all' ||
       github.event.inputs.provider == 'incus'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       CONTAINER_NAME: ci-test
 
@@ -232,12 +232,74 @@ jobs:
           # Get container IP from incus (known_hosts stores name, not IP)
           HOST=$(sudo incus list $CONTAINER_NAME --format=json | \
             python3 -c "import sys,json; d=json.load(sys.stdin)[0]['state']['network']['eth0']['addresses']; print([a['address'] for a in d if a['family']=='inet'][0])")
+          echo "HOST=$HOST" >> "$GITHUB_ENV"
           echo "Testing SSH to remo@$HOST..."
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=30 -o BatchMode=yes \
               -i ~/.ssh/id_rsa \
               "remo@$HOST" echo "connection-ok" | grep -q "connection-ok"
           echo "Incus connectivity: PASS"
+
+      - name: Verify dev tools
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 -o BatchMode=yes -i ~/.ssh/id_rsa remo@$HOST"
+          verify_tools() {
+            echo "--- Docker ---"
+            $SSH_CMD "docker --version"
+            $SSH_CMD "docker info > /dev/null 2>&1"
+            echo "  docker info: OK (daemon running)"
+            echo "--- Node.js ---"
+            $SSH_CMD "node --version"
+            $SSH_CMD "npm --version"
+            echo "--- Git ---"
+            $SSH_CMD "git --version"
+            echo "--- GitHub CLI ---"
+            $SSH_CMD "gh --version"
+            echo "--- fzf ---"
+            $SSH_CMD "fzf --version"
+            echo "--- Zellij ---"
+            $SSH_CMD "zellij --version"
+            echo "--- User / sudo ---"
+            $SSH_CMD "id remo"
+            $SSH_CMD "sudo -n true"
+            echo "  passwordless sudo: OK"
+          }
+          verify_tools
+          echo "Dev tools verification: PASS"
+
+      - name: Test update (idempotent)
+        run: |
+          sg incus-admin -c "./remo incus update $CONTAINER_NAME"
+          echo "Incus update: PASS"
+
+      - name: Verify tools after update
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 -o BatchMode=yes -i ~/.ssh/id_rsa remo@$HOST"
+          verify_tools() {
+            echo "--- Docker ---"
+            $SSH_CMD "docker --version"
+            $SSH_CMD "docker info > /dev/null 2>&1"
+            echo "  docker info: OK (daemon running)"
+            echo "--- Node.js ---"
+            $SSH_CMD "node --version"
+            $SSH_CMD "npm --version"
+            echo "--- Git ---"
+            $SSH_CMD "git --version"
+            echo "--- GitHub CLI ---"
+            $SSH_CMD "gh --version"
+            echo "--- fzf ---"
+            $SSH_CMD "fzf --version"
+            echo "--- Zellij ---"
+            $SSH_CMD "zellij --version"
+            echo "--- User / sudo ---"
+            $SSH_CMD "id remo"
+            $SSH_CMD "sudo -n true"
+            echo "  passwordless sudo: OK"
+          }
+          verify_tools
+          echo "Post-update dev tools verification: PASS"
 
       - name: Teardown
         if: always()
