@@ -194,21 +194,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Incus from Zabbly
-        run: |
-          curl -fsSL https://pkgs.zabbly.com/key.asc | \
-            sudo gpg --dearmor -o /etc/apt/keyrings/zabbly.gpg
-          CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME")
-          echo "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable $CODENAME main" | \
-            sudo tee /etc/apt/sources.list.d/zabbly-incus-stable.list
-          sudo apt-get update
-          sudo apt-get install -y incus
-
-      - name: Initialize Incus
-        run: |
-          sudo incus admin init --minimal
-          sudo usermod -aG incus-admin "$USER"
-
       - name: Write SSH keys from secrets
         run: |
           mkdir -p ~/.ssh
@@ -222,6 +207,21 @@ jobs:
           ./remo init
           > .env
 
+      - name: Bootstrap Incus
+        run: |
+          sudo ANSIBLE_COLLECTIONS_PATH="$HOME/.ansible/collections" \
+            .venv/bin/ansible-playbook ansible/incus_bootstrap.yml \
+            -e incus_network_type=bridge \
+            -e incus_user=$USER
+
+      - name: Fix Docker/Incus iptables conflict
+        run: |
+          # Docker sets FORWARD policy to DROP, blocking Incus bridge NAT.
+          # Add DOCKER-USER rules to allow Incus bridge traffic.
+          # See: https://linuxcontainers.org/incus/docs/main/howto/network_bridge_firewalld/
+          sudo iptables -I DOCKER-USER -i incusbr0 -j ACCEPT
+          sudo iptables -I DOCKER-USER -o incusbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
       - name: Create container
         run: |
           # Run via sg to pick up incus-admin group without re-login
@@ -229,14 +229,14 @@ jobs:
 
       - name: Test connectivity
         run: |
-          ENTRY=$(grep "^incus:.*/${CONTAINER_NAME}:" ~/.config/remo/known_hosts | tail -1)
-          HOST=$(echo "$ENTRY" | cut -d: -f3)
-          USER=$(echo "$ENTRY" | cut -d: -f4)
-          echo "Testing SSH to $USER@$HOST..."
+          # Get container IP from incus (known_hosts stores name, not IP)
+          HOST=$(sudo incus list $CONTAINER_NAME --format=json | \
+            python3 -c "import sys,json; d=json.load(sys.stdin)[0]['state']['network']['eth0']['addresses']; print([a['address'] for a in d if a['family']=='inet'][0])")
+          echo "Testing SSH to remo@$HOST..."
           ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               -o ConnectTimeout=30 -o BatchMode=yes \
               -i ~/.ssh/id_rsa \
-              "$USER@$HOST" echo "connection-ok" | grep -q "connection-ok"
+              "remo@$HOST" echo "connection-ok" | grep -q "connection-ok"
           echo "Incus connectivity: PASS"
 
       - name: Teardown

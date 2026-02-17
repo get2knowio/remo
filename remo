@@ -574,6 +574,7 @@ UPDATE OPTIONS:
 BOOTSTRAP OPTIONS:
     --host <host>       Remote Incus host (default: localhost)
     --user <user>       SSH user for remote host
+    --network-type <t>  Network type: macvlan or bridge (default: macvlan)
     -v, --verbose       Show detailed output
 
 SYNC OPTIONS:
@@ -1024,6 +1025,7 @@ incus_bootstrap() {
     local host="localhost"
     local user=""
     local verbose=""
+    local network_type=""
     local extra_args=()
 
     while [[ $# -gt 0 ]]; do
@@ -1036,6 +1038,11 @@ incus_bootstrap() {
             --user)
                 require_arg "$1" "${2:-}"
                 user="$2"
+                shift 2
+                ;;
+            --network-type)
+                require_arg "$1" "${2:-}"
+                network_type="$2"
                 shift 2
                 ;;
             -v|--verbose)
@@ -1064,6 +1071,7 @@ incus_bootstrap() {
     fi
 
     [ -n "$verbose" ] && extra_args+=(-e "incus_bootstrap_verbosity=$verbose")
+    [ -n "$network_type" ] && extra_args+=(-e "incus_network_type=$network_type")
 
     run_playbook incus_bootstrap.yml "${extra_args[@]}"
 }

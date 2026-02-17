@@ -48,9 +48,17 @@
 - name: Configure container with development tools
   hosts: "{{ container_name }}"
   become: true
-  gather_facts: true
+  gather_facts: false
 
   pre_tasks:
+    - name: Wait for SSH to stabilize after cloud-init
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        delay: 5
+
+    - name: Gather facts after connection is stable
+      ansible.builtin.setup:
+
     - name: Wait for apt to be ready
       ansible.builtin.shell: |
         while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do

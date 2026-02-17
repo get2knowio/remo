@@ -152,8 +152,8 @@
       Detected OS: {{ ansible_distribution }} {{ ansible_distribution_version }} (Family: {{ ansible_os_family }})
       Supported OS families: {{ incus_supported_os_families | join(', ') }}
 
-      This Incus bootstrap role currently supports only OpenSUSE Tumbleweed.
-      Support for additional distributions (Ubuntu, Fedora, etc.) is planned but not yet implemented.
+      This Incus bootstrap role currently supports OpenSUSE (Suse family) and Ubuntu/Debian (Debian family).
+      Support for additional distributions (Fedora, etc.) is planned but not yet implemented.
 
       How you can help:
         - If you would like to add support for {{ ansible_distribution }}, contributions are welcome!
@@ -223,24 +223,38 @@
     - packages
     - incus_install
 
-# Placeholder for future Debian/Ubuntu support
-# When implementing Ubuntu support:
-#   - Research correct package names (may need official Incus PPA or Zabbly repository)
-#   - Update package manager from zypper to apt
-#   - Test on Ubuntu 22.04 LTS and 24.04 LTS
-#   - Verify package availability: 'incus' and 'incus-tools' or equivalent
-#   - Consider snap package as alternative installation method
-# - name: Install Incus packages on Debian/Ubuntu family distributions
-#   ansible.builtin.apt:
-#     name:
-#       - incus       # TODO: Verify package name for Ubuntu
-#       - incus-tools # TODO: Verify package name for Ubuntu
-#     state: present
-#     update_cache: true
-#   when: ansible_os_family == 'Debian'
-#   tags:
-#     - packages
-#     - incus_install
+- name: Add Zabbly GPG key for Incus repository (Debian/Ubuntu)
+  ansible.builtin.shell: |
+    set -o pipefail
+    curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor -o /etc/apt/keyrings/zabbly.gpg
+  args:
+    executable: /bin/bash
+    creates: /etc/apt/keyrings/zabbly.gpg
+  when: ansible_os_family == 'Debian'
+  tags:
+    - packages
+    - incus_install
+
+- name: Add Zabbly Incus apt repository (Debian/Ubuntu)
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable {{ ansible_distribution_release }} main"
+    filename: zabbly-incus-stable
+    state: present
+  when: ansible_os_family == 'Debian'
+  tags:
+    - packages
+    - incus_install
+
+- name: Install Incus packages on Debian/Ubuntu family distributions
+  ansible.builtin.apt:
+    name:
+      - incus
+    state: present
+    update_cache: true
+  when: ansible_os_family == 'Debian'
+  tags:
+    - packages
+    - incus_install
 
 # ============================================================================
 # SERVICE CONFIGURATION

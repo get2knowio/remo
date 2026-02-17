@@ -177,6 +177,18 @@
     verbosity: 1
   when: container_devices is defined
 
+# Wait for cloud-init to complete before checking SSH
+# Cloud-init installs openssh-server and configures users, so SSH won't be
+# reliably available until cloud-init finishes. Uses incus exec (not SSH).
+- name: Wait for cloud-init to complete
+  ansible.builtin.command:
+    cmd: incus exec {{ incus_container_name }} -- cloud-init status --wait
+  register: cloudinit_wait_result
+  changed_when: false
+  failed_when: false
+  timeout: 300
+  when: incus_container_created | default(false)
+
 # T012: Wait for container IP address
 # Uses native Jinja2 JSON parsing instead of external jq command
 - name: Get container info for IP address
@@ -248,6 +260,7 @@
     ansible_host: "{{ incus_container_ip | default('') }}"
     ansible_user: "{{ incus_container_ssh_user | default('root') }}"
     ansible_ssh_private_key_file: "{{ incus_container_ssh_private_key | default('~/.ssh/id_rsa') | expanduser }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
     ansible_python_interpreter: /usr/bin/python3
     groups:
       - incus_containers

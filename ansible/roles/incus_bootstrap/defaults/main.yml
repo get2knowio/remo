@@ -8,16 +8,14 @@
 # ============================================================================
 
 # List of supported OS families
-# Currently only OpenSUSE Tumbleweed (Suse family) is tested and supported
 # To add support for additional distributions:
-#   1. Add the OS family to this list (e.g., 'Debian' for Ubuntu)
+#   1. Add the OS family to this list
 #   2. Add distribution-specific package installation tasks in tasks/main.yml
 #   3. Verify service unit names match the distribution's defaults
 #   4. Test initialization on the target distribution
-#
-# Planned support: Ubuntu (Debian family), Fedora (RedHat family)
 incus_supported_os_families:
-  - "Suse"  # OpenSUSE Tumbleweed, OpenSUSE Leap
+  - "Suse"    # OpenSUSE Tumbleweed, OpenSUSE Leap
+  - "Debian"  # Ubuntu, Debian (via Zabbly repository)
 
 # Extension points for new distributions:
 #
