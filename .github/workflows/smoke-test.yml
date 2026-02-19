@@ -301,6 +301,123 @@ jobs:
           verify_tools
           echo "Post-update dev tools verification: PASS"
 
+      - name: Prepare for remo cp tests
+        run: |
+          # Make container name resolvable (remo stores name, not IP, for Incus)
+          echo "$HOST ci-test" | sudo tee -a /etc/hosts
+
+          # remo doesn't set StrictHostKeyChecking=no for non-SSM connections
+          mkdir -p ~/.ssh
+          cat >> ~/.ssh/config <<'SSHEOF'
+          Host *
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          SSHEOF
+          chmod 600 ~/.ssh/config
+
+          # Generate test fixtures
+          FIXTURES=/tmp/remo-cp-test
+          mkdir -p "$FIXTURES/upload" "$FIXTURES/download" "$FIXTURES/upload/testdir/nested"
+          echo "hello-single" > "$FIXTURES/upload/single.txt"
+          sha256sum "$FIXTURES/upload/single.txt" | awk '{print $1}' > "$FIXTURES/upload/single.sha256"
+          echo "multi-one" > "$FIXTURES/upload/multi1.txt"
+          echo "multi-two" > "$FIXTURES/upload/multi2.txt"
+          echo "nested-file" > "$FIXTURES/upload/testdir/nested/deep.txt"
+          echo "top-level" > "$FIXTURES/upload/testdir/top.txt"
+          dd if=/dev/urandom of="$FIXTURES/upload/progress-test.bin" bs=1024 count=1024 2>/dev/null
+          echo "named-upload" > "$FIXTURES/upload/named.txt"
+          echo "FIXTURES=$FIXTURES" >> "$GITHUB_ENV"
+          echo "Test fixtures created in $FIXTURES"
+
+      - name: Test remo cp upload (single file)
+        run: |
+          ./remo cp "$FIXTURES/upload/single.txt" :/tmp/
+          EXPECTED=$(cat "$FIXTURES/upload/single.sha256")
+          ACTUAL=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -i ~/.ssh/id_rsa "remo@$HOST" "sha256sum /tmp/single.txt" | awk '{print $1}')
+          [ "$EXPECTED" = "$ACTUAL" ]
+          echo "Single file upload + checksum: PASS"
+
+      - name: Test remo cp upload (multi-file and directory)
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
+          ./remo cp "$FIXTURES/upload/multi1.txt" "$FIXTURES/upload/multi2.txt" :/tmp/
+          $SSH_CMD "cat /tmp/multi1.txt" | grep -q "multi-one"
+          $SSH_CMD "cat /tmp/multi2.txt" | grep -q "multi-two"
+          echo "Multi-file upload: PASS"
+
+          ./remo cp -r "$FIXTURES/upload/testdir/" :/tmp/testdir/
+          $SSH_CMD "cat /tmp/testdir/top.txt" | grep -q "top-level"
+          $SSH_CMD "cat /tmp/testdir/nested/deep.txt" | grep -q "nested-file"
+          echo "Directory upload (nested structure): PASS"
+
+      - name: Test remo cp download
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
+          # Create files inside container
+          $SSH_CMD "echo 'remote-created-content' > /tmp/remote-created.txt"
+          $SSH_CMD "mkdir -p /tmp/download-dir/sub && echo 'dl-top' > /tmp/download-dir/top.txt && echo 'dl-sub' > /tmp/download-dir/sub/nested.txt"
+
+          # Download single file
+          ./remo cp :/tmp/remote-created.txt "$FIXTURES/download/"
+          grep -q "remote-created-content" "$FIXTURES/download/remote-created.txt"
+          echo "Single file download: PASS"
+
+          # Download directory
+          ./remo cp -r :/tmp/download-dir/ "$FIXTURES/download/download-dir/"
+          grep -q "dl-top" "$FIXTURES/download/download-dir/top.txt"
+          grep -q "dl-sub" "$FIXTURES/download/download-dir/sub/nested.txt"
+          echo "Directory download (nested structure): PASS"
+
+      - name: Test remo cp named instance and progress flag
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
+          # Upload with named instance
+          ./remo cp "$FIXTURES/upload/named.txt" "${CONTAINER_NAME}:/tmp/"
+          $SSH_CMD "cat /tmp/named.txt" | grep -q "named-upload"
+          echo "Named instance upload: PASS"
+
+          # Download with named instance
+          $SSH_CMD "echo 'named-download-content' > /tmp/named-dl.txt"
+          ./remo cp "${CONTAINER_NAME}:/tmp/named-dl.txt" "$FIXTURES/download/"
+          grep -q "named-download-content" "$FIXTURES/download/named-dl.txt"
+          echo "Named instance download: PASS"
+
+          # Progress flag (just verify it doesn't error)
+          ./remo cp --progress "$FIXTURES/upload/progress-test.bin" :/tmp/
+          $SSH_CMD "test -f /tmp/progress-test.bin"
+          echo "Progress flag upload: PASS"
+
+      - name: Test remo cp error cases
+        run: |
+          # Nonexistent source file
+          if ./remo cp /tmp/this-does-not-exist.txt :/tmp/ 2>/dev/null; then
+            echo "FAIL: expected error for nonexistent source" && exit 1
+          fi
+          echo "Nonexistent source error: PASS"
+
+          # Directory without -r flag
+          if ./remo cp "$FIXTURES/upload/testdir/" :/tmp/testdir-norec/ 2>/dev/null; then
+            echo "FAIL: expected error for directory without -r" && exit 1
+          fi
+          echo "Directory without -r error: PASS"
+
+          # No remote side specified
+          if ./remo cp /tmp/foo.txt /tmp/bar.txt 2>/dev/null; then
+            echo "FAIL: expected error for no remote side" && exit 1
+          fi
+          echo "No remote side error: PASS"
+
+      - name: Test git clone inside container
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
+          $SSH_CMD "git --version"
+          echo "Git installed: PASS"
+
+          $SSH_CMD "cd /tmp && git clone https://github.com/octocat/Hello-World.git"
+          $SSH_CMD "test -f /tmp/Hello-World/README"
+          echo "Git clone + network egress: PASS"
+
       - name: Teardown
         if: always()
         run: |
