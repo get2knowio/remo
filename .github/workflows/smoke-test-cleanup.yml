@@ -81,7 +81,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Setup hcloud CLI
-        uses: hetznercloud/setup-hcloud@v2
+        uses: hetznercloud/setup-hcloud@v1
 
       - name: Delete stale CI servers
         env:
