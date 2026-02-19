@@ -418,6 +418,152 @@ jobs:
           $SSH_CMD "test -f /tmp/Hello-World/README"
           echo "Git clone + network egress: PASS"
 
+      - name: Install expect for interactive tests
+        run: |
+          sudo apt-get update && sudo apt-get install -y expect
+
+          # Disable project-menu auto-start so remo shell lands on a bash prompt.
+          # The menu launches Zellij TUI which can't be driven by expect.
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
+          $SSH_CMD "sed -i '/# BEGIN ANSIBLE MANAGED BLOCK - PROJECT MENU/,/# END ANSIBLE MANAGED BLOCK - PROJECT MENU/d' ~/.bashrc"
+
+      - name: Test remo shell basic access
+        run: |
+          expect <<'EXPECT'
+          set timeout 30
+          spawn ./remo shell
+          expect {
+            "$ " {}
+            timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
+          }
+          send "whoami\r"
+          expect {
+            "remo" {}
+            timeout { puts "FAIL: whoami did not return remo"; exit 1 }
+          }
+          expect "$ "
+          send "hostname\r"
+          expect {
+            -re ".+" {}
+            timeout { puts "FAIL: hostname returned nothing"; exit 1 }
+          }
+          expect "$ "
+          send "exit\r"
+          expect eof
+          puts "remo shell basic access: PASS"
+          EXPECT
+
+      - name: Test remo shell environment
+        run: |
+          expect <<'EXPECT'
+          set timeout 30
+          spawn ./remo shell
+          expect {
+            "$ " {}
+            timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
+          }
+          send "echo TERM=\$TERM\r"
+          expect {
+            -re "TERM=.+" {}
+            timeout { puts "FAIL: TERM not set"; exit 1 }
+          }
+          expect "$ "
+          send "echo TZ=\$TZ\r"
+          expect {
+            -re "TZ=.*" {}
+            timeout { puts "FAIL: TZ echo timed out"; exit 1 }
+          }
+          expect "$ "
+          send "exit\r"
+          expect eof
+          puts "remo shell environment: PASS"
+          EXPECT
+
+      - name: Test remo shell port forwarding
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
+
+          # Start HTTP server inside container
+          $SSH_CMD "nohup python3 -m http.server 8080 > /dev/null 2>&1 &"
+          sleep 1
+
+          # Background expect: open shell with tunnel, hold it open
+          cat > /tmp/tunnel-test.exp <<'EXPECT'
+          set timeout 30
+          spawn ./remo shell -L 8080 --no-open
+          expect {
+            "$ " {}
+            timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
+          }
+          # Hold connection open
+          sleep 30
+          send "exit\r"
+          expect eof
+          EXPECT
+          expect /tmp/tunnel-test.exp &
+          EXPECT_PID=$!
+
+          # Wait for tunnel to establish
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:8080 > /dev/null 2>&1; then
+              echo "Tunnel active after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          curl -sf http://localhost:8080 > /dev/null
+          echo "remo shell port forwarding: PASS"
+
+          # Cleanup
+          kill $EXPECT_PID 2>/dev/null || true
+          $SSH_CMD "pkill -f 'python3 -m http.server 8080'" 2>/dev/null || true
+
+      - name: Test remo shell multiple tunnels
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
+
+          # Start two HTTP servers inside container
+          $SSH_CMD "nohup python3 -m http.server 9090 > /dev/null 2>&1 &"
+          $SSH_CMD "nohup python3 -m http.server 3000 > /dev/null 2>&1 &"
+          sleep 1
+
+          # Background expect: open shell with both tunnels
+          cat > /tmp/multi-tunnel-test.exp <<'EXPECT'
+          set timeout 30
+          spawn ./remo shell -L 9090 -L 3000 --no-open
+          expect {
+            "$ " {}
+            timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
+          }
+          sleep 30
+          send "exit\r"
+          expect eof
+          EXPECT
+          expect /tmp/multi-tunnel-test.exp &
+          EXPECT_PID=$!
+
+          # Wait for tunnels to establish
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:9090 > /dev/null 2>&1 && \
+               curl -sf http://localhost:3000 > /dev/null 2>&1; then
+              echo "Both tunnels active after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+
+          curl -sf http://localhost:9090 > /dev/null
+          echo "Tunnel 9090: OK"
+          curl -sf http://localhost:3000 > /dev/null
+          echo "Tunnel 3000: OK"
+          echo "remo shell multiple tunnels: PASS"
+
+          # Cleanup
+          kill $EXPECT_PID 2>/dev/null || true
+          $SSH_CMD "pkill -f 'python3 -m http.server 9090'" 2>/dev/null || true
+          $SSH_CMD "pkill -f 'python3 -m http.server 3000'" 2>/dev/null || true
+
       - name: Teardown
         if: always()
         run: |
