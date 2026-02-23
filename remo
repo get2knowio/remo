@@ -1113,24 +1113,40 @@ incus_update() {
         fi
     fi
 
-    # Get container IP from Incus host
+    # Resolve container IP: use known_hosts hostname (works over Tailscale),
+    # fall back to querying eth0 IP from the Incus host.
     print_info "Looking up container '$name'..."
     local container_ip
     local ssh_err
-    if [ "$host" = "localhost" ]; then
-        # Filter to eth0 to avoid picking up Docker bridge (172.17.0.1) or other internal IPs
-        container_ip=$(incus list "$name" -f csv -c 4 2>/dev/null | grep 'eth0' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
-    else
-        local ssh_target="$host"
-        [ -n "$user" ] && ssh_target="${user}@${host}"
-        ssh_err=$(ssh -o ConnectTimeout=10 "$ssh_target" "incus list '$name' -f csv -c 4" 2>&1 >/dev/null) || {
-            print_error "SSH to '$ssh_target' failed: $ssh_err"
-            if [ -z "$user" ]; then
-                print_warning "Try specifying --user, e.g.: remo incus update --host $host --user <username> $name"
-            fi
-            exit 1
-        }
-        container_ip=$(ssh "$ssh_target" "incus list '$name' -f csv -c 4" 2>/dev/null | grep 'eth0' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+
+    # For remote hosts, prefer the known_hosts hostname (e.g. Tailscale MagicDNS
+    # name) over querying the eth0 IP, which may be on an unreachable LAN.
+    if [ "$host" != "localhost" ]; then
+        local known_entry
+        known_entry=$(get_known_hosts "incus" | awk -F: -v n="$name" '$2 ~ "/" n "$"' | head -1)
+        if [ -n "$known_entry" ]; then
+            local known_host
+            known_host=$(echo "$known_entry" | cut -d: -f3)
+            [ -n "$known_host" ] && container_ip="$known_host"
+        fi
+    fi
+
+    if [ -z "$container_ip" ]; then
+        if [ "$host" = "localhost" ]; then
+            # Filter to eth0 to avoid picking up Docker bridge (172.17.0.1) or other internal IPs
+            container_ip=$(incus list "$name" -f csv -c 4 2>/dev/null | grep 'eth0' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+        else
+            local ssh_target="$host"
+            [ -n "$user" ] && ssh_target="${user}@${host}"
+            ssh_err=$(ssh -o ConnectTimeout=10 "$ssh_target" "incus list '$name' -f csv -c 4" 2>&1 >/dev/null) || {
+                print_error "SSH to '$ssh_target' failed: $ssh_err"
+                if [ -z "$user" ]; then
+                    print_warning "Try specifying --user, e.g.: remo incus update --host $host --user <username> $name"
+                fi
+                exit 1
+            }
+            container_ip=$(ssh "$ssh_target" "incus list '$name' -f csv -c 4" 2>/dev/null | grep 'eth0' | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -1)
+        fi
     fi
 
     if [ -z "$container_ip" ]; then
