@@ -3794,19 +3794,47 @@ handle_cp() {
         rsync_opts+=(--progress)
     fi
 
-    rsync_opts+=(-e "ssh ${SSH_OPTS[*]}")
+    # Build a quoted -e string so rsync correctly handles SSH options that
+    # contain spaces (e.g. ProxyCommand with arguments).  rsync's -e parser
+    # supports double quotes, which protects spaces inside option values.
+    local ssh_cmd="ssh"
+    for opt in "${SSH_OPTS[@]}"; do
+        ssh_cmd+=" \"${opt}\""
+    done
+    rsync_opts+=(-e "$ssh_cmd")
+
+    local rsync_log
+    rsync_log=$(mktemp /tmp/remo-cp.XXXXXX)
+    local rc=0
 
     if [ "$direction" = "upload" ]; then
         print_info "Uploading to $REMO_TYPE: $REMO_NAME..."
-        rsync "${rsync_opts[@]}" "${src_paths[@]}" "${SSH_TARGET}:${dest_path}"
+        rsync "${rsync_opts[@]}" "${src_paths[@]}" "${SSH_TARGET}:${dest_path}" > "$rsync_log" 2>&1 || rc=$?
     else
         print_info "Downloading from $REMO_TYPE: $REMO_NAME..."
         local remote_srcs=()
         for sp in "${src_paths[@]}"; do
             remote_srcs+=("${SSH_TARGET}:${sp}")
         done
-        rsync "${rsync_opts[@]}" "${remote_srcs[@]}" "$dest_path"
+        rsync "${rsync_opts[@]}" "${remote_srcs[@]}" "$dest_path" > "$rsync_log" 2>&1 || rc=$?
     fi
+
+    if [ "$rc" -ne 0 ]; then
+        echo ""
+        print_error "Transfer failed. Full output:"
+        echo "─────────────────────────────────────────────────"
+        cat "$rsync_log"
+        echo "─────────────────────────────────────────────────"
+        rm -f "$rsync_log"
+        return 1
+    fi
+
+    # Show rsync output when --progress was requested
+    if [ "$progress" = true ]; then
+        cat "$rsync_log"
+    fi
+
+    rm -f "$rsync_log"
 }
 
 # =============================================================================
