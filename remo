@@ -3668,7 +3668,7 @@ handle_cp() {
     fi
 
     # Phase 3: Last positional = destination, rest = sources
-    local dest="${positional[-1]}"
+    local dest="${positional[${#positional[@]}-1]}"
     local sources=("${positional[@]:0:${#positional[@]}-1}")
 
     # Phase 4: Parse all specs
