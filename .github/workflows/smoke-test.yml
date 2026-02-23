@@ -72,9 +72,7 @@ jobs:
           chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Install dependencies
-        run: |
-          ./remo init
-          > .env
+        run: ./remo init
 
       - name: Provision
         run: ./remo aws create --name "$INSTANCE_NAME"
@@ -111,6 +109,7 @@ jobs:
     timeout-minutes: 15
     env:
       INSTANCE_NAME: ci-${{ github.run_id }}-hetzner
+      HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
 
     steps:
       - uses: actions/checkout@v4
@@ -140,17 +139,9 @@ jobs:
           else
             echo "No existing SSH key found — nothing to delete"
           fi
-        env:
-          HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
 
       - name: Install dependencies
-        run: |
-          ./remo init
-          printf '%s\n' \
-            "HETZNER_API_TOKEN=${HETZNER_API_TOKEN}" \
-            > .env
-        env:
-          HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+        run: ./remo init
 
       - name: Provision
         run: ./remo hetzner create --name "$INSTANCE_NAME"
@@ -166,8 +157,6 @@ jobs:
               -i ~/.ssh/id_rsa \
               "remo@$HOST" echo "connection-ok" | grep -q "connection-ok"
           echo "SSH connectivity: PASS"
-        env:
-          HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
 
       - name: Teardown
         if: always()
@@ -203,9 +192,7 @@ jobs:
           chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Install dependencies
-        run: |
-          ./remo init
-          > .env
+        run: ./remo init
 
       - name: Bootstrap Incus
         run: |

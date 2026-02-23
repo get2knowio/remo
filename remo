@@ -12,7 +12,6 @@ while [ -h "$SOURCE" ]; do
     [[ $SOURCE != /* ]] && SOURCE="$SCRIPT_DIR/$SOURCE"
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SOURCE")" >/dev/null 2>&1 && pwd)"
-ENV_FILE="$SCRIPT_DIR/.env"
 ANSIBLE_DIR="$SCRIPT_DIR/ansible"
 VENV_DIR="$SCRIPT_DIR/.venv"
 
@@ -86,17 +85,6 @@ get_current_version() {
         return
     fi
     echo "unknown"
-}
-
-load_env() {
-    if [ -f "$ENV_FILE" ]; then
-        while IFS='=' read -r key value; do
-            [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
-            if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-                export "$key=$value"
-            fi
-        done < "$ENV_FILE"
-    fi
 }
 
 detect_timezone() {
@@ -343,7 +331,7 @@ USAGE:
 COMMANDS:
     shell       Connect to a remo environment (auto-detects or picker)
     cp          Copy files to/from a remo environment
-    init        Initialize remo (install dependencies, create .env)
+    init        Initialize remo (install dependencies)
     incus       Manage Incus containers (local or remote host)
     hetzner     Manage Hetzner Cloud VMs
     aws         Manage AWS EC2 instances with EBS storage
@@ -400,7 +388,6 @@ DESCRIPTION:
     1. Create a Python virtual environment (.venv)
     2. Install Ansible and hcloud Python packages
     3. Install required Ansible collections
-    4. Create .env from .env.example (if not exists)
 
 OPTIONS:
     --force     Recreate venv even if it exists
@@ -497,44 +484,18 @@ handle_init() {
     "$ansible_galaxy" collection install --upgrade -r "$ANSIBLE_DIR/requirements.yml" > /dev/null
     print_success "✓ Installed Ansible collections"
 
-    # Step 4: Create .env file
-    local env_example="$SCRIPT_DIR/.env.example"
-    if [ -f "$ENV_FILE" ]; then
-        print_success "✓ Configuration file already exists (.env)"
-    elif [ -f "$env_example" ]; then
-        cp "$env_example" "$ENV_FILE"
-        print_success "✓ Created configuration file (.env)"
-    else
-        print_warning "⚠ No .env.example found, skipping .env creation"
-    fi
-
     # Print next steps
     echo ""
     print_success "═══════════════════════════════════════════════════════════════"
     print_success "  remo initialized successfully!"
     print_success "═══════════════════════════════════════════════════════════════"
     echo ""
-
-    if [ -f "$ENV_FILE" ]; then
-        echo "Next step: Configure your credentials in .env"
-        echo ""
-        echo -e "  ${YELLOW}For Hetzner Cloud:${NC}"
-        echo "    HETZNER_API_TOKEN  - Get from https://console.hetzner.cloud/"
-        echo ""
-        echo -e "  ${YELLOW}For AWS:${NC}"
-        echo "    AWS_ACCESS_KEY_ID      - Get from AWS IAM console"
-        echo "    AWS_SECRET_ACCESS_KEY  - Get from AWS IAM console"
-        echo "    AWS_REGION             - Optional (default: us-west-2)"
-        echo ""
-        echo -e "  ${YELLOW}For Incus (local/homelab):${NC}"
-        echo "    No credentials needed - uses SSH keys"
-        echo ""
-        echo "Then run:"
-        echo -e "  ${GREEN}./remo incus create dev1 --host <incus-host> --user <user>${NC}"
-        echo -e "  ${GREEN}./remo hetzner create${NC}"
-        echo -e "  ${GREEN}./remo aws create${NC}"
-        echo ""
-    fi
+    echo "Next steps:"
+    echo ""
+    echo -e "  ${GREEN}remo incus create dev1 --host <incus-host> --user <user>${NC}"
+    echo -e "  ${GREEN}remo hetzner create${NC}   (requires HETZNER_API_TOKEN env var)"
+    echo -e "  ${GREEN}remo aws create${NC}       (requires aws configure / AWS_PROFILE)"
+    echo ""
 }
 
 show_incus_help() {
@@ -629,7 +590,7 @@ DESTROY OPTIONS:
     --remove-volume     Also remove the persistent volume (DESTROYS DATA!)
 
 NOTES:
-    Requires HETZNER_API_TOKEN in .env file or environment.
+    Requires HETZNER_API_TOKEN in environment.
     The persistent volume is preserved by default on destroy.
 
 EXAMPLES:
@@ -3837,9 +3798,6 @@ handle_cp() {
 # =============================================================================
 
 main() {
-    # Load environment variables
-    load_env
-
     local provider="${1:-}"
     shift || true
 

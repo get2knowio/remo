@@ -15,8 +15,10 @@ Spin up an EC2 instance with EBS storage for persistent home directories.
 # Install remo
 curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
-# Edit .env with your AWS credentials
-vim ~/.remo/.env
+# Configure AWS credentials (choose one method)
+aws configure                  # Interactive setup (stores in ~/.aws/)
+# or
+export AWS_PROFILE=your-profile  # Use an existing named profile / SSO
 
 # Provision instance
 remo aws create
@@ -27,21 +29,19 @@ remo shell
 
 ## Configuration
 
-Add to your `~/.remo/.env` file:
+remo uses standard AWS credential resolution (`~/.aws/credentials`, `~/.aws/config`, environment variables). Configure with any of these methods:
 
 ```bash
-# Required - AWS Access Key ID
-# Get from: https://console.aws.amazon.com/iam/home#/security_credentials
-AWS_ACCESS_KEY_ID=your-access-key-id
+# Option 1: AWS CLI interactive setup (recommended)
+aws configure
 
-# Required - AWS Secret Access Key
-AWS_SECRET_ACCESS_KEY=your-secret-access-key
+# Option 2: Named profile / SSO
+export AWS_PROFILE=your-profile
 
-# Optional - AWS Region (default: us-west-2)
-AWS_REGION=us-west-2
-
-# Optional - AWS Profile (for SSO)
-# AWS_PROFILE=your-profile
+# Option 3: Environment variables
+export AWS_ACCESS_KEY_ID=your-access-key-id
+export AWS_SECRET_ACCESS_KEY=your-secret-access-key
+export AWS_REGION=us-west-2           # Optional (default: us-west-2)
 ```
 
 ## CLI Commands
@@ -260,7 +260,7 @@ When you run `remo aws destroy`, IAM resources created by remo (role and instanc
 ## Troubleshooting
 
 **"AWS credentials not configured"?**
-Verify `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` are set in `~/.remo/.env`.
+Run `aws configure` or set `AWS_PROFILE` to a configured profile.
 
 **"No default VPC found"?**
 Create a default VPC in the AWS Console: VPC → Your VPCs → Actions → Create default VPC.

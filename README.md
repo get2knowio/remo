@@ -97,7 +97,7 @@ remo shell -L 8080 -L 3000          # Shell + forward multiple ports
 remo shell -L 8080 --no-open        # Skip auto-opening browser
 
 # Setup
-remo init                           # Install dependencies, create .env
+remo init                           # Install dependencies
 
 # Hetzner Cloud
 remo hetzner create                 # Provision VM
@@ -190,7 +190,7 @@ rm -rf ~/.config/remo
 
 | Path | Contents |
 |------|----------|
-| `~/.remo/` | Cloned repo, Python venv (`.venv/`), Ansible collections, `.env` credentials |
+| `~/.remo/` | Cloned repo, Python venv (`.venv/`), Ansible collections |
 | `~/.local/bin/remo` | Symlink to `~/.remo/remo` |
 | `~/.config/remo/` | Runtime state: `known_hosts` (environment registry) |
 

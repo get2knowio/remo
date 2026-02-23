@@ -22,7 +22,7 @@ remo shell
 
 ## Configuration
 
-No `.env` configuration needed for Incus. Authentication uses your SSH key.
+No additional configuration needed for Incus. Authentication uses your SSH key.
 
 ## CLI Commands
 

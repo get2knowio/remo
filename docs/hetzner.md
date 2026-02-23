@@ -14,8 +14,8 @@ Spin up a cloud VM with full dev tooling and persistent storage.
 # Install remo
 curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
-# Edit .env with your Hetzner token
-vim ~/.remo/.env
+# Set your Hetzner API token
+export HETZNER_API_TOKEN=your-hetzner-api-token
 
 # Provision server
 remo hetzner create
@@ -26,12 +26,11 @@ remo shell
 
 ## Configuration
 
-Add to your `~/.remo/.env` file:
+Set the `HETZNER_API_TOKEN` environment variable. Get your token from the [Hetzner Cloud Console](https://console.hetzner.cloud/) under Security → API Tokens.
 
 ```bash
-# Required - Hetzner Cloud API Token
-# Get from: https://console.hetzner.cloud/projects/<project-id>/security/tokens
-HETZNER_API_TOKEN=your-hetzner-api-token
+# Add to your shell profile (~/.bashrc, ~/.zshrc, etc.)
+export HETZNER_API_TOKEN=your-hetzner-api-token
 ```
 
 ## CLI Commands

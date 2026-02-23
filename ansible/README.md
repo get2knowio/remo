@@ -82,7 +82,7 @@ Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task 
 
 ### Environment Variables (Hetzner)
 
-Set these in `.env` at the repository root:
+Set these as environment variables:
 
 | Variable | Required | Description |
 |----------|----------|-------------|

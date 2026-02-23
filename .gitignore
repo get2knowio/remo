@@ -1,6 +1,3 @@
-# Environment files (contain secrets)
-.env
-
 # Ansible cache and artifacts
 .ansible/
 *.retry
@@ -37,8 +34,6 @@ env/
 .idea/
 .vscode/
 *.sublime-*
-
-.env
 
 # Maverick workflow state (ignore everything except checkpoints)
 .maverick/*
