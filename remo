@@ -1507,7 +1507,7 @@ handle_self_update() {
         echo ""
         printf "Update all remote hosts? [y/N] "
         read -r confirm
-        if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        if [[ "$confirm" =~ ^[Yy] ]]; then
             echo ""
             while IFS=: read -r type name host user host_user _rest; do
                 print_info "Updating ${type}:${name}..."
@@ -2615,7 +2615,7 @@ EOF
         echo "Compute billing will stop but EBS storage charges continue."
         echo ""
         read -r -p "Stop this instance? [y/N] " confirm
-        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        if [[ ! "$confirm" =~ ^[Yy] ]]; then
             echo "Aborted."
             return 0
         fi
@@ -2888,7 +2888,7 @@ EOF
         echo "This will reboot instance $instance_id (remo-${resource_name})."
         echo ""
         read -r -p "Reboot this instance? [y/N] " confirm
-        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        if [[ ! "$confirm" =~ ^[Yy] ]]; then
             echo "Aborted."
             return 0
         fi
