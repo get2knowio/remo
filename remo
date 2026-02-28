@@ -3467,11 +3467,31 @@ shell_connect() {
         fi
     fi
 
-    "${ssh_cmd[@]}"
+    # Reset terminal to sane state after SSH exits. Needed because connection
+    # drops leave the terminal with mouse tracking, alternate screen buffer,
+    # bracketed paste, etc. still active — the remote side (e.g. Zellij) never
+    # gets to send its cleanup sequences.
+    #
+    # stty sane resets the kernel line discipline (echo, canonical mode, etc.)
+    # but does NOT reset terminal emulator state. We must explicitly disable:
+    #   - Mouse tracking modes (cause control codes on mouse movement)
+    #   - SGR mouse encoding
+    #   - Alternate screen buffer
+    #   - Bracketed paste mode
+    #   - Application cursor keys
+    # and re-show the cursor in case it was hidden.
+    reset_terminal() {
+        printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1049l\e[?2004l\e[?1l\e[?25h' 2>/dev/null
+        stty sane 2>/dev/null
+    }
+    trap reset_terminal EXIT
 
-    # Reset terminal to sane state — covers connection drops where the remote
-    # side vanishes and we fall through back to the local terminal.
-    stty sane 2>/dev/null
+    # Allow non-zero exit (e.g. SSH exit code 255 on connection drop) so we
+    # always reach the cleanup below instead of set -e killing us first.
+    "${ssh_cmd[@]}" || true
+
+    reset_terminal
+    trap - EXIT
 }
 
 handle_shell() {
