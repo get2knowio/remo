@@ -18,14 +18,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       - name: Install Ansible and dependencies
         run: |
-          pip install ansible requests python-dateutil
+          uv pip install --system ansible requests python-dateutil
           ansible-galaxy collection install -r ansible/requirements.yml
 
       - name: Set up SSH key

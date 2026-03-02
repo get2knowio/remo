@@ -25,6 +25,12 @@ vault.yml
 id_rsa
 id_rsa.pub
 
+# Python packaging
+dist/
+build/
+*.egg-info/
+*.egg
+
 # Python virtual environment
 venv/
 .venv/

@@ -2,17 +2,28 @@
 
 Spin up a fully-configured development environment in minutes. One command gives you a persistent, secure coding environment with Dev Containers support.
 
+## Prerequisites
+
+- [uv](https://docs.astral.sh/uv/) (install: `curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- SSH client
+- Ansible 2.14+ (installed automatically by `remo init`)
+
 ## Installation
 
 ```bash
-# Install latest stable version
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
+# Clone and install
+git clone https://github.com/get2knowio/remo.git ~/.remo
+cd ~/.remo
+uv sync                         # Base install
+uv sync --all-extras            # With all provider SDKs (boto3, hcloud)
+uv sync --extra aws             # AWS only (boto3)
+uv sync --extra hetzner         # Hetzner only (hcloud)
 
-# Install latest pre-release (for testing new features)
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
+# Initialize (installs Ansible collections)
+uv run remo init
 ```
 
-After installation, `remo` is available in `~/.local/bin`. Update with:
+After installation, update with:
 
 ```bash
 remo self-update
@@ -82,7 +93,7 @@ Every remo environment includes:
 | **Node.js 24 LTS** | From NodeSource repository |
 | **GitHub CLI** | `gh` for GitHub workflow integration |
 | **Zellij** | Terminal multiplexer for persistent sessions |
-| **fzf** | Fuzzy finder powering the project menu |
+| **fzf** | Fuzzy finder powering the project menu (server-side) |
 
 ---
 
@@ -190,7 +201,7 @@ rm -rf ~/.config/remo
 
 | Path | Contents |
 |------|----------|
-| `~/.remo/` | Cloned repo, Python venv (`.venv/`), Ansible collections |
+| `~/.remo/` | Cloned repo, virtual environment (`.venv/`), Ansible collections |
 | `~/.local/bin/remo` | Symlink to `~/.remo/remo` |
 | `~/.config/remo/` | Runtime state: `known_hosts` (environment registry) |
 
