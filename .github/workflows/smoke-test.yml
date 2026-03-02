@@ -4,14 +4,18 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - 'remo'
+      - 'src/remo_cli/**'
       - 'ansible/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
       - '.github/workflows/smoke-test.yml'
   push:
     branches: [main]
     paths:
-      - 'remo'
+      - 'src/remo_cli/**'
       - 'ansible/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
   schedule:
     - cron: '0 6 * * 1'  # Weekly Monday 6am UTC
   workflow_dispatch:
@@ -46,9 +50,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install remo
+        run: uv sync --all-extras
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -72,10 +78,10 @@ jobs:
           chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Install dependencies
-        run: ./remo init
+        run: uv run remo init
 
       - name: Provision
-        run: ./remo aws create --name "$INSTANCE_NAME"
+        run: uv run remo aws create --name "$INSTANCE_NAME"
 
       - name: Test SSM connectivity
         run: |
@@ -95,7 +101,7 @@ jobs:
       - name: Teardown
         if: always()
         run: |
-          ./remo aws destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
+          uv run remo aws destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
 
   # ===========================================================================
   # Hetzner Cloud
@@ -114,9 +120,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install remo
+        run: uv sync --all-extras
 
       - name: Write SSH keys from secrets
         run: |
@@ -141,10 +149,10 @@ jobs:
           fi
 
       - name: Install dependencies
-        run: ./remo init
+        run: uv run remo init
 
       - name: Provision
-        run: ./remo hetzner create --name "$INSTANCE_NAME"
+        run: uv run remo hetzner create --name "$INSTANCE_NAME"
 
       - name: Test SSH connectivity
         run: |
@@ -161,7 +169,7 @@ jobs:
       - name: Teardown
         if: always()
         run: |
-          ./remo hetzner destroy --name "$INSTANCE_NAME" --yes --remove-volume || true
+          uv run remo hetzner destroy --name "$INSTANCE_NAME" --yes --remove-volume || true
 
   # ===========================================================================
   # Incus / LXC (local on runner)
@@ -179,9 +187,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install remo
+        run: uv sync --all-extras
 
       - name: Write SSH keys from secrets
         run: |
@@ -192,7 +202,7 @@ jobs:
           chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Install dependencies
-        run: ./remo init
+        run: uv run remo init
 
       - name: Bootstrap Incus
         run: |
@@ -212,7 +222,7 @@ jobs:
       - name: Create container
         run: |
           # Run via sg to pick up incus-admin group without re-login
-          sg incus-admin -c "./remo incus create $CONTAINER_NAME"
+          sg incus-admin -c "uv run remo incus create $CONTAINER_NAME"
 
       - name: Test connectivity
         run: |
@@ -257,7 +267,7 @@ jobs:
 
       - name: Test update (idempotent)
         run: |
-          sg incus-admin -c "./remo incus update $CONTAINER_NAME"
+          sg incus-admin -c "uv run remo incus update $CONTAINER_NAME"
           echo "Incus update: PASS"
 
       - name: Verify tools after update
@@ -318,7 +328,7 @@ jobs:
 
       - name: Test remo cp upload (single file)
         run: |
-          ./remo cp "$FIXTURES/upload/single.txt" :/tmp/
+          uv run remo cp "$FIXTURES/upload/single.txt" :/tmp/
           EXPECTED=$(cat "$FIXTURES/upload/single.sha256")
           ACTUAL=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -i ~/.ssh/id_rsa "remo@$HOST" "sha256sum /tmp/single.txt" | awk '{print $1}')
@@ -328,12 +338,12 @@ jobs:
       - name: Test remo cp upload (multi-file and directory)
         run: |
           SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
-          ./remo cp "$FIXTURES/upload/multi1.txt" "$FIXTURES/upload/multi2.txt" :/tmp/
+          uv run remo cp "$FIXTURES/upload/multi1.txt" "$FIXTURES/upload/multi2.txt" :/tmp/
           $SSH_CMD "cat /tmp/multi1.txt" | grep -q "multi-one"
           $SSH_CMD "cat /tmp/multi2.txt" | grep -q "multi-two"
           echo "Multi-file upload: PASS"
 
-          ./remo cp -r "$FIXTURES/upload/testdir/" :/tmp/testdir/
+          uv run remo cp -r "$FIXTURES/upload/testdir/" :/tmp/testdir/
           $SSH_CMD "cat /tmp/testdir/top.txt" | grep -q "top-level"
           $SSH_CMD "cat /tmp/testdir/nested/deep.txt" | grep -q "nested-file"
           echo "Directory upload (nested structure): PASS"
@@ -346,12 +356,12 @@ jobs:
           $SSH_CMD "mkdir -p /tmp/download-dir/sub && echo 'dl-top' > /tmp/download-dir/top.txt && echo 'dl-sub' > /tmp/download-dir/sub/nested.txt"
 
           # Download single file
-          ./remo cp :/tmp/remote-created.txt "$FIXTURES/download/"
+          uv run remo cp :/tmp/remote-created.txt "$FIXTURES/download/"
           grep -q "remote-created-content" "$FIXTURES/download/remote-created.txt"
           echo "Single file download: PASS"
 
           # Download directory
-          ./remo cp -r :/tmp/download-dir/ "$FIXTURES/download/download-dir/"
+          uv run remo cp -r :/tmp/download-dir/ "$FIXTURES/download/download-dir/"
           grep -q "dl-top" "$FIXTURES/download/download-dir/top.txt"
           grep -q "dl-sub" "$FIXTURES/download/download-dir/sub/nested.txt"
           echo "Directory download (nested structure): PASS"
@@ -360,37 +370,37 @@ jobs:
         run: |
           SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
           # Upload with named instance
-          ./remo cp "$FIXTURES/upload/named.txt" "${CONTAINER_NAME}:/tmp/"
+          uv run remo cp "$FIXTURES/upload/named.txt" "${CONTAINER_NAME}:/tmp/"
           $SSH_CMD "cat /tmp/named.txt" | grep -q "named-upload"
           echo "Named instance upload: PASS"
 
           # Download with named instance
           $SSH_CMD "echo 'named-download-content' > /tmp/named-dl.txt"
-          ./remo cp "${CONTAINER_NAME}:/tmp/named-dl.txt" "$FIXTURES/download/"
+          uv run remo cp "${CONTAINER_NAME}:/tmp/named-dl.txt" "$FIXTURES/download/"
           grep -q "named-download-content" "$FIXTURES/download/named-dl.txt"
           echo "Named instance download: PASS"
 
           # Progress flag (just verify it doesn't error)
-          ./remo cp --progress "$FIXTURES/upload/progress-test.bin" :/tmp/
+          uv run remo cp --progress "$FIXTURES/upload/progress-test.bin" :/tmp/
           $SSH_CMD "test -f /tmp/progress-test.bin"
           echo "Progress flag upload: PASS"
 
       - name: Test remo cp error cases
         run: |
           # Nonexistent source file
-          if ./remo cp /tmp/this-does-not-exist.txt :/tmp/ 2>/dev/null; then
+          if uv run remo cp /tmp/this-does-not-exist.txt :/tmp/ 2>/dev/null; then
             echo "FAIL: expected error for nonexistent source" && exit 1
           fi
           echo "Nonexistent source error: PASS"
 
           # Directory without -r flag
-          if ./remo cp "$FIXTURES/upload/testdir/" :/tmp/testdir-norec/ 2>/dev/null; then
+          if uv run remo cp "$FIXTURES/upload/testdir/" :/tmp/testdir-norec/ 2>/dev/null; then
             echo "FAIL: expected error for directory without -r" && exit 1
           fi
           echo "Directory without -r error: PASS"
 
           # No remote side specified
-          if ./remo cp /tmp/foo.txt /tmp/bar.txt 2>/dev/null; then
+          if uv run remo cp /tmp/foo.txt /tmp/bar.txt 2>/dev/null; then
             echo "FAIL: expected error for no remote side" && exit 1
           fi
           echo "No remote side error: PASS"
@@ -418,7 +428,7 @@ jobs:
         run: |
           expect <<'EXPECT'
           set timeout 30
-          spawn ./remo shell
+          spawn uv run remo shell
           expect {
             "$ " {}
             timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
@@ -444,7 +454,7 @@ jobs:
         run: |
           expect <<'EXPECT'
           set timeout 30
-          spawn ./remo shell
+          spawn uv run remo shell
           expect {
             "$ " {}
             timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
@@ -477,7 +487,7 @@ jobs:
           # Background expect: open shell with tunnel, hold it open
           cat > /tmp/tunnel-test.exp <<'EXPECT'
           set timeout 30
-          spawn ./remo shell -L 8080 --no-open
+          spawn uv run remo shell -L 8080 --no-open
           expect {
             "$ " {}
             timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
@@ -518,7 +528,7 @@ jobs:
           # Background expect: open shell with both tunnels
           cat > /tmp/multi-tunnel-test.exp <<'EXPECT'
           set timeout 30
-          spawn ./remo shell -L 9090 -L 3000 --no-open
+          spawn uv run remo shell -L 9090 -L 3000 --no-open
           expect {
             "$ " {}
             timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
@@ -554,4 +564,4 @@ jobs:
       - name: Teardown
         if: always()
         run: |
-          sg incus-admin -c "./remo incus destroy $CONTAINER_NAME --yes" || true
+          sg incus-admin -c "uv run remo incus destroy $CONTAINER_NAME --yes" || true

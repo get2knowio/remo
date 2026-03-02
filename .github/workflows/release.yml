@@ -6,7 +6,28 @@ on:
       - 'v*'
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras --python ${{ matrix.python-version }}
+
+      - name: Run tests
+        run: uv run --python ${{ matrix.python-version }} pytest --tb=short -q
+
   release:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -55,33 +76,31 @@ jobs:
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           PREV_TAG="${{ steps.prev_tag.outputs.prev_tag }}"
+          VERSION="${TAG#v}"
 
           # Create release notes file
-          cat > release_notes.md << HEADER
+          cat > release_notes.md << 'HEADER'
           ## Installation
 
-          \`\`\`bash
-          # Install this version
-          curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --version $TAG
+          ```bash
+          # Run directly (no install needed)
+          uvx remo-cli
+
+          # Or install globally
+          uv tool install remo-cli
+          pip install remo-cli
+          ```
           HEADER
 
           # Add pre-release note if applicable
           if [ "${{ steps.prerelease.outputs.is_prerelease }}" == "true" ]; then
-            cat >> release_notes.md << PRERELEASE
+            cat >> release_notes.md << 'PRERELEASE'
 
-          # Or install latest pre-release
-          curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
-          \`\`\`
-
-          > **Note:** This is a pre-release version for testing. Use \`--pre-release\` flag to install.
+          > **Note:** This is a pre-release version for testing. Install with:
+          > ```bash
+          > uv tool install remo-cli==$VERSION
+          > ```
           PRERELEASE
-          else
-            cat >> release_notes.md << STABLE
-
-          # Or install latest stable
-          curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
-          \`\`\`
-          STABLE
           fi
 
           # Add changes section
@@ -121,3 +140,21 @@ jobs:
           body_path: release_notes.md
           prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
           draft: false
+
+  publish:
+    needs: [test, release]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    environment: pypi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build package
+        run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
