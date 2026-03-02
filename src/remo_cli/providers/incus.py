@@ -368,6 +368,11 @@ def bootstrap(
         extra_vars.extend(["-e", "target_hosts=all"])
         if user:
             extra_vars.extend(["-e", f"ansible_user={user}"])
+    else:
+        # On localhost with sudo, ansible_user is root; allow overriding
+        # incus_user so the correct user gets added to the incus-admin group.
+        if user:
+            extra_vars.extend(["-e", f"incus_user={user}"])
 
     if network_type:
         extra_vars.extend(["-e", f"incus_network_type={network_type}"])

@@ -205,11 +205,7 @@ jobs:
         run: uv run remo init
 
       - name: Bootstrap Incus
-        run: |
-          sudo ANSIBLE_COLLECTIONS_PATH="$HOME/.ansible/collections" \
-            .venv/bin/ansible-playbook ansible/incus_bootstrap.yml \
-            -e incus_network_type=bridge \
-            -e incus_user=$USER
+        run: sudo uv run remo incus bootstrap --network-type bridge --user $USER
 
       - name: Fix Docker/Incus iptables conflict
         run: |
