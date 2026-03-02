@@ -1,0 +1,127 @@
+#!/bin/bash
+# remo — migration stub
+#
+# If you're seeing this, your git-based remo installation has pulled
+# a version where remo is now distributed as a Python package via PyPI.
+#
+# This stub replaces the old 3910-line bash script and guides you
+# through the migration.
+
+set -e
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+OLD_INSTALL_DIR="${HOME}/.remo"
+OLD_SYMLINK="${HOME}/.local/bin/remo"
+CONFIG_DIR="${REMO_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/remo}"
+
+print_error()   { echo -e "${RED}Error:${NC} $1" >&2; }
+print_success() { echo -e "${GREEN}$1${NC}"; }
+print_info()    { echo -e "${BLUE}$1${NC}"; }
+print_warning() { echo -e "${YELLOW}$1${NC}"; }
+
+show_migration_banner() {
+    echo ""
+    echo -e "${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BOLD}║${NC}  ${YELLOW}remo has moved to PyPI!${NC}                                    ${BOLD}║${NC}"
+    echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo "  The bash-based remo CLI has been rewritten in Python and is"
+    echo "  now distributed as a package on PyPI (remo-cli)."
+    echo ""
+    echo "  Your existing configuration in ${CONFIG_DIR}/"
+    echo "  (known_hosts, settings) is fully compatible — nothing is lost."
+    echo ""
+}
+
+show_manual_instructions() {
+    echo -e "${BOLD}To migrate manually:${NC}"
+    echo ""
+    echo "  1. Install uv (if you don't have it):"
+    echo "     curl -LsSf https://astral.sh/uv/install.sh | sh"
+    echo ""
+    echo "  2. Remove the old symlink:"
+    echo "     rm -f ${OLD_SYMLINK}"
+    echo ""
+    echo "  3. Install remo from PyPI:"
+    echo "     uv tool install remo-cli"
+    echo ""
+    echo "  4. Clean up the old git-based install:"
+    echo "     rm -rf ${OLD_INSTALL_DIR}"
+    echo ""
+    echo "  5. Verify:"
+    echo "     remo --version"
+    echo ""
+}
+
+do_migrate() {
+    print_info "Starting migration..."
+    echo ""
+
+    # Remove old symlink so uv can place its own
+    if [ -L "${OLD_SYMLINK}" ]; then
+        print_info "Removing old symlink ${OLD_SYMLINK}..."
+        rm -f "${OLD_SYMLINK}"
+    elif [ -f "${OLD_SYMLINK}" ]; then
+        print_warning "Found file (not symlink) at ${OLD_SYMLINK} — removing..."
+        rm -f "${OLD_SYMLINK}"
+    fi
+
+    # Install via uv
+    print_info "Installing remo-cli from PyPI..."
+    if uv tool install remo-cli; then
+        echo ""
+        print_success "=============================================="
+        print_success "  Migration successful!"
+        print_success "=============================================="
+        echo ""
+        echo "  Your config in ${CONFIG_DIR}/ was preserved."
+        echo ""
+        print_warning "You can now remove the old git-based installation:"
+        echo "  rm -rf ${OLD_INSTALL_DIR}"
+        echo ""
+        echo "  Then verify with:"
+        echo "  remo --version"
+        echo ""
+        exit 0
+    else
+        print_error "uv tool install failed."
+        echo "  Try running manually: uv tool install remo-cli"
+        exit 1
+    fi
+}
+
+main() {
+    show_migration_banner
+
+    # Check if uv is available and offer auto-migration
+    if command -v uv &>/dev/null; then
+        print_info "Detected uv on your system."
+        echo ""
+        read -r -p "  Migrate now with 'uv tool install remo-cli'? [Y/n] " answer
+        case "${answer:-Y}" in
+            [Yy]|"")
+                do_migrate
+                ;;
+            *)
+                echo ""
+                show_manual_instructions
+                ;;
+        esac
+    else
+        print_warning "uv is not installed."
+        echo ""
+        show_manual_instructions
+    fi
+
+    # Any invocation of this stub exits non-zero so scripts fail fast
+    exit 1
+}
+
+main "$@"

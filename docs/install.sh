@@ -1,32 +1,33 @@
 #!/bin/bash
-# remo installer
+# remo installer — installs remo-cli from PyPI via uv
+#
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
-#   curl -fsSL .../install.sh | bash -s -- --version v1.0.0
+#   curl -fsSL https://get2know.io/remo/install.sh | bash
+#   curl -fsSL .../install.sh | bash -s -- --version 0.4.0
 #   curl -fsSL .../install.sh | bash -s -- --pre-release
-#   curl -fsSL .../install.sh | bash -s -- --branch feat/my-feature
 
 set -e
 
-REPO="get2knowio/remo"
-INSTALL_DIR="${REMO_INSTALL_DIR:-$HOME/.remo}"
-BIN_DIR="${REMO_BIN_DIR:-$HOME/.local/bin}"
+PACKAGE="remo-cli"
+OLD_INSTALL_DIR="${HOME}/.remo"
+OLD_SYMLINK="${HOME}/.local/bin/remo"
+CONFIG_DIR="${REMO_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/remo}"
 
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
+BOLD='\033[1m'
 NC='\033[0m'
 
-print_error() { echo -e "${RED}Error:${NC} $1" >&2; }
-print_success() { echo -e "${GREEN}$1${NC}" >&2; }
-print_info() { echo -e "${BLUE}$1${NC}" >&2; }
-print_warning() { echo -e "${YELLOW}$1${NC}" >&2; }
+print_error()   { echo -e "${RED}Error:${NC} $1" >&2; }
+print_success() { echo -e "${GREEN}$1${NC}"; }
+print_info()    { echo -e "${BLUE}$1${NC}"; }
+print_warning() { echo -e "${YELLOW}$1${NC}"; }
 
 # Parse arguments
 VERSION=""
-BRANCH=""
 PRE_RELEASE=false
 
 while [[ $# -gt 0 ]]; do
@@ -35,44 +36,32 @@ while [[ $# -gt 0 ]]; do
             VERSION="$2"
             shift 2
             ;;
-        --branch)
-            BRANCH="$2"
-            shift 2
-            ;;
         --pre-release)
             PRE_RELEASE=true
             shift
             ;;
         --help|-h)
             cat << 'EOF'
-remo installer
+remo installer — installs remo-cli from PyPI via uv
 
 USAGE:
-    curl -fsSL .../install.sh | bash
+    curl -fsSL https://get2know.io/remo/install.sh | bash
     curl -fsSL .../install.sh | bash -s -- [OPTIONS]
 
 OPTIONS:
-    --version <version>   Install specific version (e.g., v1.0.0)
-    --pre-release         Install latest pre-release version
-    --branch <branch>     Install from specific branch (for development)
+    --version <version>   Install specific version (e.g., 0.4.0)
+    --pre-release         Allow pre-release versions
     --help                Show this help message
-
-ENVIRONMENT:
-    REMO_INSTALL_DIR      Installation directory (default: ~/.remo)
-    REMO_BIN_DIR          Binary directory (default: ~/.local/bin)
 
 EXAMPLES:
     # Install latest stable
-    curl -fsSL .../install.sh | bash
+    curl -fsSL https://get2know.io/remo/install.sh | bash
 
     # Install specific version
-    curl -fsSL .../install.sh | bash -s -- --version v1.0.0
+    curl -fsSL .../install.sh | bash -s -- --version 0.4.0
 
-    # Install latest pre-release
+    # Install with pre-release versions allowed
     curl -fsSL .../install.sh | bash -s -- --pre-release
-
-    # Install from branch
-    curl -fsSL .../install.sh | bash -s -- --branch main
 EOF
             exit 0
             ;;
@@ -83,164 +72,93 @@ EOF
     esac
 done
 
-# Check for required tools
-check_requirements() {
-    local missing=()
+# Install uv if not present
+ensure_uv() {
+    if command -v uv &>/dev/null; then
+        print_info "Found uv: $(uv --version)"
+        return
+    fi
 
-    command -v git &>/dev/null || missing+=("git")
-    command -v curl &>/dev/null || missing+=("curl")
-    command -v python3 &>/dev/null || missing+=("python3")
-    command -v ssh &>/dev/null || missing+=("ssh")
+    print_info "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
 
-    if [ ${#missing[@]} -gt 0 ]; then
-        print_error "Missing required tools: ${missing[*]}"
-        echo "Please install them and try again."
+    # Source the env so uv is available in this session
+    if [ -f "${HOME}/.local/bin/env" ]; then
+        # shellcheck disable=SC1091
+        . "${HOME}/.local/bin/env"
+    fi
+
+    if ! command -v uv &>/dev/null; then
+        # Try adding to PATH directly
+        export PATH="${HOME}/.local/bin:${PATH}"
+    fi
+
+    if ! command -v uv &>/dev/null; then
+        print_error "uv installation succeeded but 'uv' not found in PATH."
+        echo "  Try opening a new terminal and re-running the installer."
         exit 1
     fi
 
-    # Optional but recommended
-    if ! command -v fzf &>/dev/null; then
-        print_warning "Optional: 'fzf' not found — needed for interactive environment picker (remo shell)"
-        echo "  Install: https://github.com/junegunn/fzf#installation"
+    print_success "uv installed successfully."
+}
+
+# Clean up old git-based installation
+cleanup_old_install() {
+    local found_old=false
+
+    if [ -d "${OLD_INSTALL_DIR}" ] && [ -d "${OLD_INSTALL_DIR}/.git" ]; then
+        found_old=true
+        print_warning "Detected old git-based remo installation at ${OLD_INSTALL_DIR}"
+    fi
+
+    if [ -L "${OLD_SYMLINK}" ]; then
+        local target
+        target=$(readlink -f "${OLD_SYMLINK}" 2>/dev/null || true)
+        if [[ "${target}" == "${OLD_INSTALL_DIR}"* ]]; then
+            found_old=true
+            print_info "Removing old symlink ${OLD_SYMLINK}..."
+            rm -f "${OLD_SYMLINK}"
+        fi
+    fi
+
+    if [ "${found_old}" = true ] && [ -d "${OLD_INSTALL_DIR}" ]; then
         echo ""
+        read -r -p "  Remove old git-based installation at ${OLD_INSTALL_DIR}? [Y/n] " answer
+        case "${answer:-Y}" in
+            [Yy]|"")
+                rm -rf "${OLD_INSTALL_DIR}"
+                print_success "Removed ${OLD_INSTALL_DIR}"
+                ;;
+            *)
+                print_info "Keeping ${OLD_INSTALL_DIR} — you can remove it later with:"
+                echo "  rm -rf ${OLD_INSTALL_DIR}"
+                ;;
+        esac
     fi
 }
 
-# Get latest release tag from GitHub API
-get_latest_release() {
-    local include_prerelease="$1"
-    local releases
-
-    releases=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases?per_page=20")
-
-    if [ "$include_prerelease" = "true" ]; then
-        # Get latest pre-release
-        echo "$releases" | grep -o '"tag_name": "[^"]*"' | head -1 | cut -d'"' -f4
-    else
-        # Get latest stable (non-prerelease)
-        # Filter out releases marked as prerelease or with -rc, -beta, -alpha in tag
-        echo "$releases" | python3 -c "
-import sys, json
-releases = json.load(sys.stdin)
-for r in releases:
-    if not r.get('prerelease', False) and not r.get('draft', False):
-        tag = r.get('tag_name', '')
-        if '-rc' not in tag and '-beta' not in tag and '-alpha' not in tag:
-            print(tag)
-            break
-" 2>/dev/null || echo ""
-    fi
-}
-
-# Determine what to install
-determine_version() {
-    if [ -n "$BRANCH" ]; then
-        echo "branch:$BRANCH"
-        return
-    fi
-
-    if [ -n "$VERSION" ]; then
-        echo "tag:$VERSION"
-        return
-    fi
-
-    print_info "Checking for latest release..."
-
-    local tag
-    if [ "$PRE_RELEASE" = "true" ]; then
-        tag=$(get_latest_release true)
-        if [ -z "$tag" ]; then
-            print_error "No pre-release found"
-            exit 1
-        fi
-        print_info "Latest pre-release: $tag"
-    else
-        tag=$(get_latest_release false)
-        if [ -z "$tag" ]; then
-            print_warning "No stable release found, falling back to main branch"
-            echo "branch:main"
-            return
-        fi
-        print_info "Latest stable release: $tag"
-    fi
-
-    echo "tag:$tag"
-}
-
-# Install remo
+# Install remo-cli
 install_remo() {
-    local ref="$1"
-    local ref_type="${ref%%:*}"
-    local ref_value="${ref#*:}"
-
     echo ""
-    print_info "Installing remo..."
-    echo ""
+    print_info "Installing ${PACKAGE}..."
 
-    # Remove existing installation
-    if [ -d "$INSTALL_DIR" ]; then
-        print_info "Removing existing installation..."
-        rm -rf "$INSTALL_DIR"
-    fi
+    local uv_args=("tool" "install")
 
-    # Clone repository
-    print_info "Downloading remo..."
-    if [ "$ref_type" = "branch" ]; then
-        git clone --depth 1 --branch "$ref_value" "https://github.com/${REPO}.git" "$INSTALL_DIR" 2>/dev/null
+    if [ -n "${VERSION}" ]; then
+        uv_args+=("${PACKAGE}==${VERSION}")
     else
-        git clone --depth 1 --branch "$ref_value" "https://github.com/${REPO}.git" "$INSTALL_DIR" 2>/dev/null
+        uv_args+=("${PACKAGE}")
     fi
 
-    # Record installed version info
-    echo "$ref" > "$INSTALL_DIR/.installed-ref"
-
-    # Run remo init
-    print_info "Initializing remo..."
-    cd "$INSTALL_DIR"
-    ./remo init
-
-    # Create bin directory if needed
-    mkdir -p "$BIN_DIR"
-
-    # Create symlink
-    if [ -L "$BIN_DIR/remo" ]; then
-        rm "$BIN_DIR/remo"
-    fi
-    ln -s "$INSTALL_DIR/remo" "$BIN_DIR/remo"
-
-    # Check if BIN_DIR is in PATH
-    if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
-        print_warning "Note: $BIN_DIR is not in your PATH"
-        echo ""
-        echo "Add it to your shell profile:"
-        echo ""
-        echo "  # For bash (~/.bashrc):"
-        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-        echo ""
-        echo "  # For zsh (~/.zshrc):"
-        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-        echo ""
+    if [ "${PRE_RELEASE}" = true ]; then
+        uv_args+=("--prerelease" "allow")
     fi
 
-    # Success message
-    echo ""
-    print_success "=============================================="
-    print_success "  remo installed successfully!"
-    print_success "=============================================="
-    echo ""
-
-    local version
-    version=$(git -C "$INSTALL_DIR" describe --tags --exact-match 2>/dev/null || echo "$ref_value")
-    version="${version#v}"
-    echo "  Version:  $version"
-    echo "  Location: $INSTALL_DIR"
-    echo "  Binary:   $BIN_DIR/remo"
-    echo ""
-    echo "Get started:"
-    echo "  remo --help"
-    echo "  remo incus --help"
-    echo "  remo hetzner --help"
-    echo ""
+    if ! uv "${uv_args[@]}"; then
+        print_error "Installation failed."
+        echo "  Try running manually: uv ${uv_args[*]}"
+        exit 1
+    fi
 }
 
 # Main
@@ -249,12 +167,35 @@ main() {
     print_info "remo installer"
     echo ""
 
-    check_requirements
+    ensure_uv
+    cleanup_old_install
+    install_remo
 
-    local ref
-    ref=$(determine_version)
+    # Success
+    echo ""
+    print_success "=============================================="
+    print_success "  remo installed successfully!"
+    print_success "=============================================="
+    echo ""
 
-    install_remo "$ref"
+    if [ -d "${CONFIG_DIR}" ]; then
+        echo "  Your existing config in ${CONFIG_DIR}/ was preserved."
+        echo ""
+    fi
+
+    echo "  Get started:"
+    echo "    remo --version"
+    echo "    remo init            # Set up SSH keys, Ansible, etc."
+    echo "    remo --help"
+    echo ""
+
+    # Check if remo is in PATH
+    if ! command -v remo &>/dev/null; then
+        print_warning "Note: 'remo' is not in your PATH yet."
+        echo "  You may need to open a new terminal or add ~/.local/bin to your PATH:"
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+        echo ""
+    fi
 }
 
 main "$@"
