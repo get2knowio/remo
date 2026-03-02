@@ -94,12 +94,12 @@ jobs:
 
           # Add pre-release note if applicable
           if [ "${{ steps.prerelease.outputs.is_prerelease }}" == "true" ]; then
-            cat >> release_notes.md << 'PRERELEASE'
+            cat >> release_notes.md << PRERELEASE
 
           > **Note:** This is a pre-release version for testing. Install with:
-          > ```bash
-          > uv tool install remo-cli==$VERSION
-          > ```
+          > \`\`\`bash
+          > uv tool install remo-cli==${VERSION}
+          > \`\`\`
           PRERELEASE
           fi
 
