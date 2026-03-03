@@ -12,12 +12,12 @@ requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
     "InquirerPy>=0.3.4",
+    "boto3",
+    "hcloud",
+    "ansible-core>=2.18.0,<2.19.0",
 ]
 
 [project.optional-dependencies]
-aws = ["boto3"]
-hetzner = ["hcloud"]
-all = ["boto3", "hcloud"]
 dev = [
     "pytest",
     "pytest-mock",

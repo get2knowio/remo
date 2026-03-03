@@ -54,7 +54,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install remo
-        run: uv sync --all-extras
+        run: uv sync
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -77,8 +77,6 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           chmod 644 ~/.ssh/id_rsa.pub
 
-      - name: Install dependencies
-        run: uv run remo init
 
       - name: Provision
         run: uv run remo aws create --name "$INSTANCE_NAME"
@@ -124,7 +122,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install remo
-        run: uv sync --all-extras
+        run: uv sync
 
       - name: Write SSH keys from secrets
         run: |
@@ -148,8 +146,6 @@ jobs:
             echo "No existing SSH key found — nothing to delete"
           fi
 
-      - name: Install dependencies
-        run: uv run remo init
 
       - name: Provision
         run: uv run remo hetzner create --name "$INSTANCE_NAME"
@@ -191,7 +187,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install remo
-        run: uv sync --all-extras
+        run: uv sync
 
       - name: Write SSH keys from secrets
         run: |
@@ -201,8 +197,6 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           chmod 644 ~/.ssh/id_rsa.pub
 
-      - name: Install dependencies
-        run: uv run remo init
 
       - name: Bootstrap Incus
         run: sudo uv run remo incus bootstrap --network-type bridge --user $USER

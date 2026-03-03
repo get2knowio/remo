@@ -7,9 +7,12 @@
 - name: Tear down Hetzner Cloud Resources
   hosts: localhost
   gather_facts: false
+  become: false
   vars:
     # By default, keep the volume to preserve data
     remove_volume: false
+    # Use the same Python that runs ansible-playbook (has hcloud installed)
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
   tasks:
     - name: Validate Hetzner API token is set

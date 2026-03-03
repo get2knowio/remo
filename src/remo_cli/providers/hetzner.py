@@ -115,6 +115,9 @@ def create(
 
     rc = run_playbook("hetzner_site.yml", extra_vars, verbose=verbose)
 
+    if rc != 0:
+        return rc
+
     # Save to known_hosts on success.
     server_name = name or "remote-coding-server"
     server_ip = _query_hetzner_server_ip(server_name)

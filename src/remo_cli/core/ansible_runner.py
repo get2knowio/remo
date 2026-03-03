@@ -6,6 +6,7 @@ shows only PLAY and TASK names, or verbose pass-through mode.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import signal
@@ -13,9 +14,10 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 
-from remo_cli.core.config import get_ansible_dir, is_verbose
-from remo_cli.core.output import BLUE, NC, print_error
+from remo_cli.core.config import get_ansible_dir, get_remo_home, is_verbose
+from remo_cli.core.output import BLUE, NC, print_error, print_info
 
 # ANSI color reset for inline use
 _RESET = NC
@@ -24,14 +26,57 @@ _RESET = NC
 def _find_ansible_cmd() -> str:
     """Return the path to ansible-playbook.
 
-    Prefers the project-local .venv binary; falls back to the system PATH.
+    Checks the same bin directory as the running Python interpreter first
+    (covers uv tool installs and venv installs), then falls back to PATH.
+    """
+    co_installed = Path(sys.executable).parent / "ansible-playbook"
+    if co_installed.is_file() and os.access(co_installed, os.X_OK):
+        return str(co_installed)
+    return "ansible-playbook"
+
+
+def _ensure_collections() -> None:
+    """Install Ansible Galaxy collections if requirements.yml has changed.
+
+    Uses a hash of requirements.yml stored in REMO_HOME as a marker so the
+    install only runs once (or again when requirements change).  Collections
+    are installed to REMO_HOME/ansible/collections/.
     """
     ansible_dir = get_ansible_dir()
-    project_root = ansible_dir.parent
-    venv_bin = project_root / ".venv" / "bin" / "ansible-playbook"
-    if venv_bin.is_file() and os.access(venv_bin, os.X_OK):
-        return str(venv_bin)
-    return "ansible-playbook"
+    requirements_file = ansible_dir / "requirements.yml"
+    if not requirements_file.is_file():
+        return
+
+    remo_home = get_remo_home()
+    marker_file = remo_home / "collections.lock"
+
+    current_hash = hashlib.sha256(requirements_file.read_bytes()).hexdigest()
+    if marker_file.is_file() and marker_file.read_text().strip() == current_hash:
+        return
+
+    print_info("Installing Ansible collections (first run)...")
+
+    galaxy_cmd = str(Path(sys.executable).parent / "ansible-galaxy")
+    if not Path(galaxy_cmd).is_file():
+        galaxy_cmd = "ansible-galaxy"
+
+    result = subprocess.run(
+        [
+            galaxy_cmd,
+            "collection",
+            "install",
+            "--upgrade",
+            "-r",
+            str(requirements_file),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        print_error(f"Failed to install Ansible collections:\n{result.stderr.strip()}")
+        sys.exit(1)
+
+    marker_file.write_text(current_hash)
 
 
 def _filter_line(line: str, pending: list[str]) -> str | None:
@@ -120,6 +165,8 @@ def run_playbook(
     int
         The exit code of ansible-playbook (0 on success).
     """
+    _ensure_collections()
+
     ansible_dir = get_ansible_dir()
     ansible_cmd = _find_ansible_cmd()
 
@@ -157,7 +204,7 @@ def run_playbook(
         sys.exit(130)
 
     signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
     env = os.environ.copy()
     env["ANSIBLE_NOCOLOR"] = "1"

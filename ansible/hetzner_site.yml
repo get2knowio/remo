@@ -5,6 +5,10 @@
 - name: Provision Hetzner Cloud Server
   hosts: localhost
   gather_facts: false
+  become: false
+  vars:
+    # Use the same Python that runs ansible-playbook (has hcloud installed)
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
   tasks:
     - name: Include Hetzner server role
       ansible.builtin.include_role:

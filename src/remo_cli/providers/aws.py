@@ -160,7 +160,8 @@ def _require_boto3():  # noqa: ANN202
         return boto3
     except ImportError:
         print_error(
-            "boto3 is not installed.  Run 'uv pip install boto3' or 'remo init' first."
+            "boto3 is not installed.  Try reinstalling remo:\n"
+            "  uv tool install remo-cli"
         )
         sys.exit(1)
 
@@ -427,6 +428,9 @@ def create(
     extra_vars.extend(build_tool_args(tools_only, tools_skip))
 
     rc = run_playbook("aws_site.yml", extra_vars, verbose=verbose)
+
+    if rc != 0:
+        return rc
 
     # Save to known_hosts on success -- get the instance IP and ID.
     instance = _get_running_instance(resource_name, effective_region)

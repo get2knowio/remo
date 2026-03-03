@@ -241,7 +241,7 @@
   delegate_to: localhost
   become: false
   ansible.builtin.shell: |
-    python3 << 'PYEOF'
+    "{{ ansible_playbook_python }}" << 'PYEOF'
     import boto3, time, sys, os
     region = os.environ.get('AWS_DEFAULT_REGION', '{{ aws_region }}')
     profile = os.environ.get('AWS_PROFILE') or None

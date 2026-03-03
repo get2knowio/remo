@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+import termios
 from pathlib import Path
 
 from remo_cli.core.known_hosts import get_aws_region, get_known_hosts, resolve_remo_host_by_name
@@ -151,12 +152,14 @@ def require_session_manager_plugin() -> None:
         )
 
 
-def reset_terminal() -> None:
+def reset_terminal(saved_attrs: list | None = None) -> None:
     """Restore the terminal to a sane state after an SSH session.
 
     Sends escape sequences that disable mouse tracking, the alternate screen
     buffer, bracketed paste mode, application cursor keys, and then restores
-    cursor visibility.  Follows up with ``stty sane`` for good measure.
+    cursor visibility.  If ``saved_attrs`` is provided (from
+    ``termios.tcgetattr`` before the session), restores the exact pre-session
+    tty settings; otherwise falls back to ``stty sane``.
     """
     sys.stdout.write(
         "\033[?1000l"   # disable X10 mouse tracking
@@ -169,7 +172,13 @@ def reset_terminal() -> None:
         "\033[?25h"     # show cursor
     )
     sys.stdout.flush()
-    subprocess.run(["stty", "sane"], stderr=subprocess.DEVNULL)
+    if saved_attrs is not None:
+        try:
+            termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, saved_attrs)
+        except termios.error:
+            pass
+    else:
+        subprocess.run(["stty", "sane"], stderr=subprocess.DEVNULL)
 
 
 def detect_timezone() -> str:
@@ -321,9 +330,15 @@ def shell_connect(host: KnownHost, tunnels: list[str], no_open: bool) -> None:
     # ------------------------------------------------------------------
     # Execute SSH session with terminal reset on exit
     # ------------------------------------------------------------------
+    saved_attrs = None
+    try:
+        saved_attrs = termios.tcgetattr(sys.stdin.fileno())
+    except termios.error:
+        pass
+
     try:
         subprocess.run(ssh_cmd)
     except KeyboardInterrupt:
         pass
     finally:
-        reset_terminal()
+        reset_terminal(saved_attrs)
