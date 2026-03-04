@@ -77,7 +77,6 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           chmod 644 ~/.ssh/id_rsa.pub
 
-
       - name: Provision
         run: uv run remo aws create --name "$INSTANCE_NAME"
 
@@ -146,7 +145,6 @@ jobs:
             echo "No existing SSH key found — nothing to delete"
           fi
 
-
       - name: Provision
         run: uv run remo hetzner create --name "$INSTANCE_NAME"
 
@@ -197,7 +195,6 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           chmod 644 ~/.ssh/id_rsa.pub
 
-
       - name: Bootstrap Incus
         run: sudo uv run remo incus bootstrap --network-type bridge --user $USER
 
@@ -212,7 +209,7 @@ jobs:
       - name: Create container
         run: |
           # Run via sg to pick up incus-admin group without re-login
-          sg incus-admin -c "uv run remo incus create $CONTAINER_NAME"
+          sg incus-admin -c "uv run remo incus create --name $CONTAINER_NAME"
 
       - name: Test connectivity
         run: |
@@ -257,7 +254,7 @@ jobs:
 
       - name: Test update (idempotent)
         run: |
-          sg incus-admin -c "uv run remo incus update $CONTAINER_NAME"
+          sg incus-admin -c "uv run remo incus update --name $CONTAINER_NAME"
           echo "Incus update: PASS"
 
       - name: Verify tools after update
@@ -554,4 +551,4 @@ jobs:
       - name: Teardown
         if: always()
         run: |
-          sg incus-admin -c "uv run remo incus destroy $CONTAINER_NAME --yes" || true
+          sg incus-admin -c "uv run remo incus destroy --name $CONTAINER_NAME --yes" || true

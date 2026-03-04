@@ -223,13 +223,31 @@
     - packages
     - incus_install
 
+- name: Ensure gpg is available (Debian/Ubuntu)
+  ansible.builtin.apt:
+    name: gpg
+    state: present
+    update_cache: true
+  when: ansible_os_family == 'Debian'
+  tags:
+    - packages
+    - incus_install
+
+- name: Ensure keyrings directory exists (Debian/Ubuntu)
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: "0755"
+  when: ansible_os_family == 'Debian'
+  tags:
+    - packages
+    - incus_install
+
 - name: Add Zabbly GPG key for Incus repository (Debian/Ubuntu)
-  ansible.builtin.shell: |
-    set -o pipefail
-    curl -fsSL https://pkgs.zabbly.com/key.asc | gpg --dearmor -o /etc/apt/keyrings/zabbly.gpg
-  args:
-    executable: /bin/bash
-    creates: /etc/apt/keyrings/zabbly.gpg
+  ansible.builtin.get_url:
+    url: https://pkgs.zabbly.com/key.asc
+    dest: /etc/apt/keyrings/zabbly.asc
+    mode: "0644"
   when: ansible_os_family == 'Debian'
   tags:
     - packages
@@ -237,7 +255,7 @@
 
 - name: Add Zabbly Incus apt repository (Debian/Ubuntu)
   ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/zabbly.gpg] https://pkgs.zabbly.com/incus/stable {{ ansible_distribution_release }} main"
+    repo: "deb [signed-by=/etc/apt/keyrings/zabbly.asc] https://pkgs.zabbly.com/incus/stable {{ ansible_distribution_release }} main"
     filename: zabbly-incus-stable
     state: present
   when: ansible_os_family == 'Debian'

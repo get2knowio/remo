@@ -23,24 +23,25 @@ from remo_cli.core.output import BLUE, NC, print_error, print_info
 _RESET = NC
 
 
-def _find_ansible_cmd() -> str:
-    """Return the path to ansible-playbook.
+def _find_co_installed(name: str) -> str:
+    """Find a binary co-installed alongside the running Python interpreter.
 
-    Checks the same bin directory as the running Python interpreter first
-    (covers uv tool installs and venv installs), then falls back to PATH.
+    Checks ``sys.executable``'s bin directory first (covers uv tool installs
+    and venv installs), then falls back to *name* alone (resolved via PATH).
     """
-    co_installed = Path(sys.executable).parent / "ansible-playbook"
-    if co_installed.is_file() and os.access(co_installed, os.X_OK):
-        return str(co_installed)
-    return "ansible-playbook"
+    candidate = Path(sys.executable).parent / name
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
+    return name
 
 
 def _ensure_collections() -> None:
     """Install Ansible Galaxy collections if requirements.yml has changed.
 
-    Uses a hash of requirements.yml stored in REMO_HOME as a marker so the
-    install only runs once (or again when requirements change).  Collections
-    are installed to REMO_HOME/ansible/collections/.
+    Uses a SHA-256 hash of requirements.yml stored in REMO_HOME as a marker
+    so the install only runs once (or again when requirements change).
+    Collections are installed to Ansible's default user location
+    (``~/.ansible/collections/``).
     """
     ansible_dir = get_ansible_dir()
     requirements_file = ansible_dir / "requirements.yml"
@@ -56,13 +57,9 @@ def _ensure_collections() -> None:
 
     print_info("Installing Ansible collections (first run)...")
 
-    galaxy_cmd = str(Path(sys.executable).parent / "ansible-galaxy")
-    if not Path(galaxy_cmd).is_file():
-        galaxy_cmd = "ansible-galaxy"
-
     result = subprocess.run(
         [
-            galaxy_cmd,
+            _find_co_installed("ansible-galaxy"),
             "collection",
             "install",
             "--upgrade",
@@ -168,7 +165,7 @@ def run_playbook(
     _ensure_collections()
 
     ansible_dir = get_ansible_dir()
-    ansible_cmd = _find_ansible_cmd()
+    ansible_cmd = _find_co_installed("ansible-playbook")
 
     cmd: list[str] = [ansible_cmd, playbook]
     if extra_vars:
@@ -204,7 +201,7 @@ def run_playbook(
         sys.exit(130)
 
     signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, signal.SIG_DFL)
+    signal.signal(signal.SIGTERM, _signal_handler)
 
     env = os.environ.copy()
     env["ANSIBLE_NOCOLOR"] = "1"

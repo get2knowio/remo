@@ -15,7 +15,7 @@ def incus() -> None:
 
 
 @incus.command()
-@click.argument("name")
+@click.option("--name", default="dev1", help="Container name (default: dev1).")
 @click.option("--host", default="localhost", help="Incus host (default: localhost).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
 @click.option("--domain", default="", help="Domain name for the container.")
@@ -50,7 +50,7 @@ def create(
 
 
 @incus.command()
-@click.argument("name")
+@click.option("--name", default="dev1", help="Container name (default: dev1).")
 @click.option("--host", default="", help="Incus host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
 @click.option("--remove-storage", is_flag=True, help="Also remove storage volume.")
@@ -76,7 +76,7 @@ def destroy(
 
 
 @incus.command()
-@click.argument("name")
+@click.option("--name", default="dev1", help="Container name (default: dev1).")
 @click.option("--host", default="", help="Incus host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
 @click.option("--only", multiple=True, help="Only install these tools.")
