@@ -26,7 +26,7 @@ uv run remo init
 After installation, update with:
 
 ```bash
-remo self-update
+uv tool upgrade remo-cli
 ```
 
 ---
@@ -137,7 +137,7 @@ remo incus destroy <name> [--yes]   # Destroy container
 remo incus bootstrap                # Initialize Incus on host
 
 # Updates
-remo self-update                    # Update to latest version
+uv tool upgrade remo-cli            # Update to latest version
 
 # Help
 remo --help

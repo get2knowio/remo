@@ -46,7 +46,7 @@ jobs:
         id: prerelease
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          if [[ "$TAG" == *"-rc"* ]] || [[ "$TAG" == *"-beta"* ]] || [[ "$TAG" == *"-alpha"* ]]; then
+          if [[ "$TAG" == *"rc"* ]] || [[ "$TAG" == *"beta"* ]] || [[ "$TAG" == *"alpha"* ]] || [[ "$TAG" == *"dev"* ]]; then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
             echo "This is a pre-release"
           else
@@ -65,7 +65,7 @@ jobs:
             PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           else
             # Stable release: find the previous stable tag (skip rc/beta/alpha)
-            PREV_TAG=$(git tag -l | grep -v -E '(-rc|-beta|-alpha)' | grep -v "^${TAG}$" | sort -V | tail -1)
+            PREV_TAG=$(git tag -l | grep -v -E '(rc|beta|alpha|dev)' | grep -v "^${TAG}$" | sort -V | tail -1)
             PREV_TAG="${PREV_TAG:-}"
           fi
 

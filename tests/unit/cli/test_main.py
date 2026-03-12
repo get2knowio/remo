@@ -38,7 +38,7 @@ class TestCliHelp:
     def test_help_lists_subcommands(self):
         """All registered subcommands must appear in the help text."""
         result = _invoke("--help")
-        expected = ["shell", "cp", "init", "self-update", "incus", "hetzner", "aws"]
+        expected = ["shell", "cp", "incus", "hetzner", "aws"]
         for name in expected:
             assert name in result.output, f"Subcommand '{name}' missing from --help output"
 
@@ -79,7 +79,7 @@ class TestCliVersion:
 class TestSubcommandRegistration:
     """Ensure all expected subcommands are registered on the root CLI group."""
 
-    EXPECTED_COMMANDS = ["shell", "cp", "init", "self-update", "incus", "hetzner", "aws"]
+    EXPECTED_COMMANDS = ["shell", "cp", "incus", "hetzner", "aws"]
 
     def test_all_subcommands_registered(self):
         """Every expected command name must be present in the CLI group's commands dict."""

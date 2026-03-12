@@ -36,14 +36,12 @@ def _register_commands() -> None:
     # when only --version or --help is requested.
     from remo_cli.cli.shell import shell  # noqa: F811
     from remo_cli.cli.cp import cp  # noqa: F811
-    from remo_cli.cli.self_update import self_update  # noqa: F811
     from remo_cli.cli.providers.incus import incus  # noqa: F811
     from remo_cli.cli.providers.hetzner import hetzner  # noqa: F811
     from remo_cli.cli.providers.aws import aws  # noqa: F811
 
     cli.add_command(shell)
     cli.add_command(cp)
-    cli.add_command(self_update, "self-update")
     cli.add_command(incus)
     cli.add_command(hetzner)
     cli.add_command(aws)

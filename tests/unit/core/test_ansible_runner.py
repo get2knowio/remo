@@ -37,61 +37,60 @@ def mock_verbose_off(mocker):
 
 
 # ---------------------------------------------------------------------------
-# _find_ansible_cmd
+# _find_co_installed
 # ---------------------------------------------------------------------------
 
 
-class TestFindAnsibleCmd:
-    """Tests for _find_ansible_cmd()."""
+class TestFindCoInstalled:
+    """Tests for _find_co_installed()."""
 
-    def test_prefers_venv_ansible_playbook(self, tmp_path, mocker):
-        """When .venv/bin/ansible-playbook exists and is executable, use it."""
-        ansible_dir = tmp_path / "ansible"
-        ansible_dir.mkdir()
-        mocker.patch("remo_cli.core.ansible_runner.get_ansible_dir", return_value=ansible_dir)
+    def test_prefers_co_installed_binary(self, tmp_path, mocker):
+        """When binary exists alongside sys.executable and is executable, use it."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        fake_python = bin_dir / "python"
+        fake_python.touch()
+        mocker.patch("remo_cli.core.ansible_runner.sys.executable", str(fake_python))
 
-        # Create the .venv/bin/ansible-playbook file in project root (parent of ansible/)
-        venv_bin = tmp_path / ".venv" / "bin"
-        venv_bin.mkdir(parents=True)
-        venv_ansible = venv_bin / "ansible-playbook"
-        venv_ansible.touch()
-        venv_ansible.chmod(0o755)
+        co_installed = bin_dir / "ansible-playbook"
+        co_installed.touch()
+        co_installed.chmod(0o755)
 
-        from remo_cli.core.ansible_runner import _find_ansible_cmd
+        from remo_cli.core.ansible_runner import _find_co_installed
 
-        result = _find_ansible_cmd()
+        result = _find_co_installed("ansible-playbook")
 
-        assert result == str(venv_ansible)
+        assert result == str(co_installed)
 
-    def test_falls_back_to_path_when_no_venv(self, tmp_path, mocker):
-        """When .venv/bin/ansible-playbook does not exist, falls back to PATH."""
-        ansible_dir = tmp_path / "ansible"
-        ansible_dir.mkdir()
-        mocker.patch("remo_cli.core.ansible_runner.get_ansible_dir", return_value=ansible_dir)
+    def test_falls_back_to_name_when_not_found(self, tmp_path, mocker):
+        """When binary does not exist alongside sys.executable, falls back to name."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        fake_python = bin_dir / "python"
+        fake_python.touch()
+        mocker.patch("remo_cli.core.ansible_runner.sys.executable", str(fake_python))
 
-        # No .venv directory exists
+        from remo_cli.core.ansible_runner import _find_co_installed
 
-        from remo_cli.core.ansible_runner import _find_ansible_cmd
-
-        result = _find_ansible_cmd()
+        result = _find_co_installed("ansible-playbook")
 
         assert result == "ansible-playbook"
 
-    def test_falls_back_when_venv_file_not_executable(self, tmp_path, mocker):
-        """When .venv/bin/ansible-playbook exists but is NOT executable, falls back."""
-        ansible_dir = tmp_path / "ansible"
-        ansible_dir.mkdir()
-        mocker.patch("remo_cli.core.ansible_runner.get_ansible_dir", return_value=ansible_dir)
+    def test_falls_back_when_not_executable(self, tmp_path, mocker):
+        """When binary exists but is NOT executable, falls back to name."""
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        fake_python = bin_dir / "python"
+        fake_python.touch()
+        mocker.patch("remo_cli.core.ansible_runner.sys.executable", str(fake_python))
 
-        venv_bin = tmp_path / ".venv" / "bin"
-        venv_bin.mkdir(parents=True)
-        venv_ansible = venv_bin / "ansible-playbook"
-        venv_ansible.touch()
-        venv_ansible.chmod(0o644)  # Not executable
+        co_installed = bin_dir / "ansible-playbook"
+        co_installed.touch()
+        co_installed.chmod(0o644)  # Not executable
 
-        from remo_cli.core.ansible_runner import _find_ansible_cmd
+        from remo_cli.core.ansible_runner import _find_co_installed
 
-        result = _find_ansible_cmd()
+        result = _find_co_installed("ansible-playbook")
 
         assert result == "ansible-playbook"
 
@@ -108,7 +107,7 @@ class TestRunPlaybookVerbose:
         """Builds correct command with ansible_dir and playbook name."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=True)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="/usr/bin/ansible-playbook",
         )
         mock_run = mocker.patch("remo_cli.core.ansible_runner.subprocess.run")
@@ -130,7 +129,7 @@ class TestRunPlaybookVerbose:
         """Extra args are appended to the ansible-playbook command."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=True)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="ansible-playbook",
         )
         mock_run = mocker.patch("remo_cli.core.ansible_runner.subprocess.run")
@@ -153,7 +152,7 @@ class TestRunPlaybookVerbose:
         """When inventory is provided, -i <inventory> is appended."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=True)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="ansible-playbook",
         )
         mock_run = mocker.patch("remo_cli.core.ansible_runner.subprocess.run")
@@ -171,7 +170,7 @@ class TestRunPlaybookVerbose:
         """Returns the actual exit code from ansible-playbook."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=True)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="ansible-playbook",
         )
         mock_run = mocker.patch("remo_cli.core.ansible_runner.subprocess.run")
@@ -187,7 +186,7 @@ class TestRunPlaybookVerbose:
         """When REMO_VERBOSE=1, verbose mode is used even without verbose=True."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=True)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="ansible-playbook",
         )
         mock_run = mocker.patch("remo_cli.core.ansible_runner.subprocess.run")
@@ -215,7 +214,7 @@ class TestRunPlaybookFiltered:
         """In filtered mode, subprocess.Popen is used instead of subprocess.run."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=False)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="ansible-playbook",
         )
 
@@ -240,7 +239,7 @@ class TestRunPlaybookFiltered:
         """Filtered mode sets ANSIBLE_NOCOLOR=1 in the environment."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=False)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="ansible-playbook",
         )
 
@@ -263,7 +262,7 @@ class TestRunPlaybookFiltered:
         """Filtered mode sets cwd to ansible_dir."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=False)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="ansible-playbook",
         )
 
@@ -285,7 +284,7 @@ class TestRunPlaybookFiltered:
         """Filtered mode returns non-zero exit code on failure."""
         mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=False)
         mocker.patch(
-            "remo_cli.core.ansible_runner._find_ansible_cmd",
+            "remo_cli.core.ansible_runner._find_co_installed",
             return_value="ansible-playbook",
         )
 

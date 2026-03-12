@@ -25,7 +25,6 @@ src/remo/                  # Python CLI package (src layout, hatchling build)
 │   ├── shell.py           # remo shell
 │   ├── cp.py              # remo cp
 │   ├── init_cmd.py        # remo init
-│   ├── self_update.py     # remo self-update
 │   └── providers/         # Provider CLI groups
 │       ├── incus.py       # remo incus {create,destroy,update,list,sync,bootstrap}
 │       ├── hetzner.py     # remo hetzner {create,destroy,update,list,sync}
@@ -43,7 +42,7 @@ src/remo/                  # Python CLI package (src layout, hatchling build)
 │   ├── ansible_runner.py  # Ansible playbook subprocess
 │   ├── picker.py          # InquirerPy fuzzy picker
 │   ├── rsync.py           # File transfer
-│   ├── version.py         # Version check, self-update
+│   ├── version.py         # Version check, passive update notification
 │   └── init.py            # remo init logic
 └── models/
     └── host.py            # KnownHost dataclass

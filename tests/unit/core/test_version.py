@@ -27,11 +27,20 @@ class TestParseVersion:
     def test_simple_version_without_v_prefix(self):
         assert _parse_version("1.2.3") == (1, 2, 3, 999999)
 
-    def test_rc_version(self):
+    def test_rc_version_pep440(self):
+        assert _parse_version("1.2.3rc1") == (1, 2, 3, 1)
+
+    def test_rc_version_with_v_prefix_pep440(self):
+        assert _parse_version("v1.2.3rc1") == (1, 2, 3, 1)
+
+    def test_rc_version_with_dash(self):
         assert _parse_version("1.2.3-rc.1") == (1, 2, 3, 1)
 
-    def test_rc_version_with_v_prefix(self):
-        assert _parse_version("v1.2.3-rc.1") == (1, 2, 3, 1)
+    def test_dev_version_pep440(self):
+        assert _parse_version("0.8.0.dev0") == (0, 8, 0, 0)
+
+    def test_dev_version_with_dash(self):
+        assert _parse_version("0.8.0-dev.1") == (0, 8, 0, 1)
 
     def test_v0_8_0(self):
         assert _parse_version("v0.8.0") == (0, 8, 0, 999999)
@@ -44,12 +53,12 @@ class TestParseVersion:
 
     def test_release_sorts_above_rc(self):
         release = _parse_version("v1.0.0")
-        rc = _parse_version("v1.0.0-rc.1")
+        rc = _parse_version("v1.0.0rc1")
         assert release > rc
 
     def test_higher_rc_sorts_above_lower_rc(self):
-        rc2 = _parse_version("v1.0.0-rc.2")
-        rc1 = _parse_version("v1.0.0-rc.1")
+        rc2 = _parse_version("v1.0.0rc2")
+        rc1 = _parse_version("v1.0.0rc1")
         assert rc2 > rc1
 
     def test_whitespace_stripped(self):
@@ -62,7 +71,7 @@ class TestParseVersion:
         assert _parse_version("v0.0.0") == (0, 0, 0, 999999)
 
     def test_rc_zero(self):
-        assert _parse_version("v1.0.0-rc.0") == (1, 0, 0, 0)
+        assert _parse_version("v1.0.0rc0") == (1, 0, 0, 0)
 
 
 class TestVersionIsNewer:
@@ -84,13 +93,13 @@ class TestVersionIsNewer:
         assert version_is_newer("v1.0.0", "v1.0.0") is False
 
     def test_rc2_newer_than_rc1(self):
-        assert version_is_newer("v1.0.0-rc.2", "v1.0.0-rc.1") is True
+        assert version_is_newer("v1.0.0rc2", "v1.0.0rc1") is True
 
     def test_release_newer_than_rc(self):
-        assert version_is_newer("v1.0.0", "v1.0.0-rc.1") is True
+        assert version_is_newer("v1.0.0", "v1.0.0rc1") is True
 
     def test_rc_not_newer_than_release(self):
-        assert version_is_newer("v1.0.0-rc.1", "v1.0.0") is False
+        assert version_is_newer("v1.0.0rc1", "v1.0.0") is False
 
     def test_without_v_prefix(self):
         assert version_is_newer("1.1.0", "1.0.0") is True
@@ -144,14 +153,14 @@ class TestGetLatestRelease:
         assert result == "1.2.0"
 
     def test_excludes_prerelease_by_default(self, mocker):
-        self._mock_pypi_response(mocker, ["1.0.0", "1.1.0", "1.2.0-rc.1"])
+        self._mock_pypi_response(mocker, ["1.0.0", "1.1.0", "1.2.0rc1"])
         result = get_latest_release(include_prerelease=False)
         assert result == "1.1.0"
 
     def test_includes_prerelease_when_requested(self, mocker):
-        self._mock_pypi_response(mocker, ["1.0.0", "1.1.0", "1.2.0-rc.1"])
+        self._mock_pypi_response(mocker, ["1.0.0", "1.1.0", "1.2.0rc1"])
         result = get_latest_release(include_prerelease=True)
-        assert result == "1.2.0-rc.1"
+        assert result == "1.2.0rc1"
 
     def test_returns_empty_on_network_error(self, mocker):
         mocker.patch(
@@ -167,7 +176,7 @@ class TestGetLatestRelease:
         assert result == ""
 
     def test_returns_empty_when_only_prereleases_and_stable_requested(self, mocker):
-        self._mock_pypi_response(mocker, ["1.0.0-rc.1", "1.0.0-beta.1"])
+        self._mock_pypi_response(mocker, ["1.0.0rc1", "1.0.0beta1"])
         result = get_latest_release(include_prerelease=False)
         assert result == ""
 
@@ -193,7 +202,6 @@ class TestCheckForUpdatesPassive:
         assert result is not None
         assert "1.1.0" in result
         assert "Update available" in result
-        assert "remo self-update" in result
         assert "uv tool upgrade remo-cli" in result
 
     def test_returns_none_when_up_to_date(self, mocker, tmp_path):
@@ -287,11 +295,11 @@ class TestCheckForUpdatesPassive:
         """When current version is an RC, include_prerelease should be True
         for the background thread refresh."""
         mocker.patch(
-            "remo_cli.core.version.get_current_version", return_value="1.0.0-rc.1"
+            "remo_cli.core.version.get_current_version", return_value="1.0.0rc1"
         )
         mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
         mock_get_latest = mocker.patch(
-            "remo_cli.core.version.get_latest_release", return_value="1.0.0-rc.2"
+            "remo_cli.core.version.get_latest_release", return_value="1.0.0rc2"
         )
 
         # No cache file -> triggers background refresh
