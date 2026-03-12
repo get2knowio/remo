@@ -61,7 +61,7 @@ def _resolve_container_ip(
     # For remote hosts, prefer the known_hosts hostname.
     if host != "localhost":
         for entry in get_known_hosts(type_filter="incus"):
-            if "/" in entry.name and entry.name.endswith(f"/{name}"):
+            if entry.name == f"{host}/{name}":
                 if entry.host:
                     container_ip = entry.host
                 break
@@ -157,17 +157,22 @@ def create(
 
     extra_vars.extend(build_tool_args(tools_only, tools_skip))
 
+    # Clear any stale registry entry so _resolve_container_ip queries
+    # the Incus host for the fresh IP instead of returning cached values.
+    remove_known_host("incus", f"{host}/{name}")
+
     rc = run_playbook("incus_site.yml", extra_vars, verbose=verbose)
 
     if rc == 0:
-        # Format: incus:HOST/CONTAINER:CONTAINER:remo:HOST_USER
+        container_host = _resolve_container_ip(name, host, user) or name
         save_known_host(
             KnownHost(
                 type="incus",
                 name=f"{host}/{name}",
-                host=name,
+                host=container_host,
                 user="remo",
                 instance_id=user,
+                access_mode="direct",
             )
         )
 
@@ -342,6 +347,7 @@ def sync(host: str = "localhost", user: str = "") -> None:
                 host=name,
                 user="remo",
                 instance_id=user,
+                access_mode="direct",
             )
         )
 

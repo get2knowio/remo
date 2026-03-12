@@ -217,6 +217,7 @@
     name:
       - incus
       - incus-tools
+      - iptables
     state: present
   when: ansible_os_family == 'Suse'
   tags:
@@ -637,6 +638,33 @@
   tags:
     - incus_init
     - network
+
+# Ensure the default profile has a root disk device pointing to the storage pool.
+# This can be missing if incus admin init --minimal partially failed (e.g. network
+# error after storage was created) and we configured the network manually above.
+- name: Check if default profile has root disk device
+  ansible.builtin.shell: |
+    incus profile device show default | grep -q 'type: disk'
+  register: profile_has_root_disk
+  changed_when: false
+  failed_when: false
+  when: not incus_skip_init
+  tags:
+    - incus_init
+    - storage
+
+- name: Add root disk device to default profile
+  ansible.builtin.command: >
+    incus profile device add default root disk
+    path=/ pool={{ incus_storage_pool_name }}
+  when:
+    - not incus_skip_init
+    - profile_has_root_disk.rc | default(1) != 0
+  register: incus_profile_root_add
+  changed_when: incus_profile_root_add.rc | default(1) == 0
+  tags:
+    - incus_init
+    - storage
 
 - name: Display initialization result
   ansible.builtin.debug:

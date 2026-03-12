@@ -6,6 +6,7 @@ import click
 
 
 @click.command()
+@click.argument("name", required=False, default=None)
 @click.option(
     "-L",
     "tunnels",
@@ -18,12 +19,12 @@ import click
     default=False,
     help="Skip auto-opening browser for tunneled ports",
 )
-def shell(tunnels: tuple[str, ...], no_open: bool) -> None:
+def shell(name: str | None, tunnels: tuple[str, ...], no_open: bool) -> None:
     """Connect to a remo environment (auto-detects or picker)."""
     from remo_cli.core.ssh import resolve_remo_host, shell_connect  # noqa: PLC0415
     from remo_cli.providers.aws import auto_start_aws_if_stopped  # noqa: PLC0415
 
-    host = resolve_remo_host()
+    host = resolve_remo_host(name)
 
     # Auto-start stopped AWS instances before connecting
     host = auto_start_aws_if_stopped(host)
