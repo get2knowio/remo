@@ -48,7 +48,7 @@
   ansible.builtin.include_role:
     name: user_setup
   vars:
-    remo_version: "{{ lookup('pipe', 'git -C ' + playbook_dir + '/.. describe --tags --exact-match 2>/dev/null || echo \"\"') | regex_replace('^v', '') }}"
+    remo_version: "{{ remo_version | default('') }}"
   when: configure_user_setup | default(true) | bool
 
 - name: Install Node.js
@@ -75,3 +75,12 @@
   ansible.builtin.include_role:
     name: zellij
   when: configure_zellij | default(true) | bool
+
+- name: Write remo version marker
+  ansible.builtin.copy:
+    content: "{{ remo_version | default('') }}"
+    dest: "/home/{{ remo_user | default('remo') }}/.remo-version"
+    owner: "{{ remo_user | default('remo') }}"
+    group: "{{ remo_user | default('remo') }}"
+    mode: '0644'
+  when: remo_version | default('') | length > 0

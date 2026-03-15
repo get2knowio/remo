@@ -257,6 +257,26 @@ def detect_timezone() -> str:
     return ""
 
 
+def check_remote_version(host: KnownHost) -> str | None:
+    """Read the remo version marker from the remote instance.
+
+    Runs ``cat ~/.remo-version`` over SSH and returns the version string,
+    or ``None`` if the file doesn't exist or SSH fails.
+    """
+    ssh_opts, ssh_target = build_ssh_opts(host)
+    cmd = ["ssh"] + ssh_opts + ["-o", "ConnectTimeout=10", ssh_target, "cat ~/.remo-version 2>/dev/null"]
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        version = result.stdout.strip()
+        if result.returncode == 0 and version:
+            return version
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    return None
+
+
 def shell_connect(host: KnownHost, tunnels: list[str], no_open: bool) -> None:
     """Open an interactive SSH session to *host* with optional port tunnels.
 

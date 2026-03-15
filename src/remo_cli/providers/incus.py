@@ -21,6 +21,7 @@ from remo_cli.core.known_hosts import (
 from remo_cli.core.output import print_error, print_info, print_warning
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, validate_name
+from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
 
 
@@ -157,6 +158,10 @@ def create(
 
     extra_vars.extend(build_tool_args(tools_only, tools_skip))
 
+    current = get_current_version()
+    if current != "unknown":
+        extra_vars.extend(["-e", f"remo_version={current}"])
+
     # Clear any stale registry entry so _resolve_container_ip queries
     # the Incus host for the fresh IP instead of returning cached values.
     remove_known_host("incus", f"{host}/{name}")
@@ -262,6 +267,10 @@ def update(
     tz = detect_timezone()
     if tz:
         extra_vars.extend(["-e", f"timezone={tz}"])
+
+    current = get_current_version()
+    if current != "unknown":
+        extra_vars.extend(["-e", f"remo_version={current}"])
 
     return run_playbook("incus_configure.yml", extra_vars, verbose=verbose)
 

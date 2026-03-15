@@ -28,6 +28,7 @@ from remo_cli.core.known_hosts import (
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
 from remo_cli.core.ssh import detect_timezone, require_session_manager_plugin
 from remo_cli.core.validation import build_tool_args, validate_name
+from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
 
 
@@ -427,6 +428,10 @@ def create(
 
     extra_vars.extend(build_tool_args(tools_only, tools_skip))
 
+    current = get_current_version()
+    if current != "unknown":
+        extra_vars.extend(["-e", f"remo_version={current}"])
+
     rc = run_playbook("aws_site.yml", extra_vars, verbose=verbose)
 
     if rc != 0:
@@ -581,6 +586,10 @@ def update(
     tz = detect_timezone()
     if tz:
         extra_vars.extend(["-e", f"timezone={tz}"])
+
+    current = get_current_version()
+    if current != "unknown":
+        extra_vars.extend(["-e", f"remo_version={current}"])
 
     print_info(f"Updating AWS instance {instance_id} via SSM...")
 
