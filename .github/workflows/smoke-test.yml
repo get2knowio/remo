@@ -196,7 +196,7 @@ jobs:
           chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Bootstrap Incus
-        run: sudo uv run remo incus bootstrap --network-type bridge --user $USER
+        run: sudo env "PATH=$PATH" uv run remo incus bootstrap --network-type bridge --user $USER
 
       - name: Fix Docker/Incus iptables conflict
         run: |
