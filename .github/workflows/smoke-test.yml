@@ -198,11 +198,16 @@ jobs:
       - name: Bootstrap Incus
         run: sudo env "PATH=$PATH" uv run remo incus bootstrap --network-type bridge --user $USER
 
-      - name: Fix root-owned files from sudo bootstrap
+      - name: Fix Ansible collections after sudo bootstrap
         run: |
-          # sudo bootstrap installs Ansible collections and marker files as root
-          # under $HOME. Reclaim ownership so the runner user can use them.
+          # sudo bootstrap may install Ansible collections and marker files
+          # under root's HOME or the runner's HOME (depending on sudo config).
+          # Reclaim ownership and delete the marker so the runner user
+          # re-installs collections it can read.
           sudo chown -R "$(id -u):$(id -g)" ~/.ansible ~/.config/remo 2>/dev/null || true
+          sudo chown -R "$(id -u):$(id -g)" /root/.ansible 2>/dev/null && \
+            cp -a /root/.ansible/collections ~/.ansible/ 2>/dev/null || true
+          rm -f ~/.config/remo/collections.lock
 
       - name: Fix Docker/Incus iptables conflict
         run: |
