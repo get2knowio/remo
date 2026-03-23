@@ -198,6 +198,12 @@ jobs:
       - name: Bootstrap Incus
         run: sudo env "PATH=$PATH" uv run remo incus bootstrap --network-type bridge --user $USER
 
+      - name: Fix root-owned files from sudo bootstrap
+        run: |
+          # sudo bootstrap installs Ansible collections and marker files as root
+          # under $HOME. Reclaim ownership so the runner user can use them.
+          sudo chown -R "$(id -u):$(id -g)" ~/.ansible ~/.config/remo 2>/dev/null || true
+
       - name: Fix Docker/Incus iptables conflict
         run: |
           # Docker sets FORWARD policy to DROP, blocking Incus bridge NAT.
