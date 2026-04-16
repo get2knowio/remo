@@ -28,6 +28,34 @@ jobs:
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} pytest --tb=short -q
 
+  wheel-install:
+    name: Wheel install smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build wheel
+        run: uv build --wheel
+
+      - name: Install wheel into a fresh venv (non-editable)
+        run: |
+          uv venv /tmp/remo-wheel-test
+          uv pip install --python /tmp/remo-wheel-test/bin/python dist/*.whl
+
+      - name: Verify ansible dir is found and contains playbooks
+        run: |
+          /tmp/remo-wheel-test/bin/python - <<'EOF'
+          from remo_cli.core.config import get_ansible_dir
+          d = get_ansible_dir()
+          print(f"ansible_dir: {d}")
+          assert (d / "incus_configure.yml").is_file(), f"incus_configure.yml not found in {d}"
+          assert (d / "requirements.yml").is_file(), f"requirements.yml not found in {d}"
+          assert not (d / "__init__.py").exists(), f"ansible_dir looks like a Python package: {d}"
+          print("OK: ansible playbooks found in installed wheel")
+          EOF
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

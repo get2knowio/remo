@@ -42,7 +42,7 @@ def get_ansible_dir() -> Path:
     current = Path(__file__).resolve().parent
     while True:
         ansible_candidate = current / "ansible"
-        if ansible_candidate.is_dir():
+        if ansible_candidate.is_dir() and not (ansible_candidate / "__init__.py").is_file():
             return ansible_candidate
         if (current / "pyproject.toml").is_file():
             ansible_in_project = current / "ansible"

@@ -701,7 +701,7 @@ wheels = [
 
 [[package]]
 name = "remo-cli"
-version = "0.8.0rc1"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "ansible-core" },

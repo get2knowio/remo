@@ -32,6 +32,9 @@ remo = "remo_cli.cli.main:cli"
 [tool.hatch.build.targets.wheel]
 packages = ["src/remo_cli"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"ansible" = "remo_cli/ansible"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

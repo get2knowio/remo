@@ -168,3 +168,42 @@ class TestGetAnsibleDir:
         project_root = get_project_root()
         # The ansible dir should be relative to or under the project root.
         assert str(ansible_dir).startswith(str(project_root))
+
+    def test_skips_python_package_named_ansible(self, tmp_path, monkeypatch):
+        """get_ansible_dir() must not return the ansible-core Python package.
+
+        When remo is installed as a uv tool (non-editable), the walk-up from
+        site-packages/remo_cli/core/ hits site-packages/ansible/ — which is
+        the ansible-core Python module, not remo's playbooks directory.  The
+        fix is to skip any ansible/ candidate that contains __init__.py.
+        """
+        from remo_cli.core import config as config_mod
+
+        # Build a fake site-packages layout:
+        #   fake_root/
+        #     site-packages/
+        #       ansible/          ← Python package (has __init__.py) — must be skipped
+        #         __init__.py
+        #       remo_cli/
+        #         ansible/        ← remo playbooks (no __init__.py) — must be returned
+        #           incus_configure.yml
+        #         core/
+        #           config.py     ← fake __file__ anchor
+        site_packages = tmp_path / "site-packages"
+        python_ansible = site_packages / "ansible"
+        python_ansible.mkdir(parents=True)
+        (python_ansible / "__init__.py").write_text("")  # marks it as a Python package
+
+        remo_ansible = site_packages / "remo_cli" / "ansible"
+        remo_ansible.mkdir(parents=True)
+        (remo_ansible / "incus_configure.yml").write_text("---")  # remo playbook
+
+        fake_config = site_packages / "remo_cli" / "core" / "config.py"
+        fake_config.parent.mkdir(parents=True, exist_ok=True)
+        fake_config.write_text("")
+
+        monkeypatch.setattr(config_mod, "__file__", str(fake_config))
+
+        result = config_mod.get_ansible_dir()
+        assert result == remo_ansible
+        assert not (result / "__init__.py").exists()

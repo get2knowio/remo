@@ -1,0 +1,19 @@
+#cloud-config
+# Cloud-init config for OrbStack VMs used as remo Incus test hosts.
+#
+# The __SSH_PUBKEY__ placeholder is replaced at runtime by orbstack.sh
+# with the contents of ~/.ssh/id_rsa.pub (or $SSH_KEY_FILE).
+
+users:
+  - name: sysadm
+    groups: sudo, wheel
+    shell: /bin/bash
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh_authorized_keys:
+      - __SSH_PUBKEY__
+
+packages:
+  - openssh-server
+
+runcmd:
+  - systemctl enable --now sshd || systemctl enable --now ssh
