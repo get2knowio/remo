@@ -77,11 +77,17 @@ def destroy(
 
 @aws.command()
 @click.option("--name", default="", help="Instance name (defaults to $USER).")
+@click.option(
+    "--volume-size",
+    default="",
+    help="Grow the persistent EBS volume to this size in GB and grow the filesystem in place. AWS only supports growing.",
+)
 @click.option("--only", multiple=True, help="Only configure these tools.")
 @click.option("--skip", multiple=True, help="Skip configuring these tools.")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose output.")
 def update(
     name: str,
+    volume_size: str,
     only: tuple[str, ...],
     skip: tuple[str, ...],
     verbose: bool,
@@ -91,6 +97,7 @@ def update(
 
     rc = aws_update(
         name=name,
+        volume_size=volume_size,
         tools_only=only,
         tools_skip=skip,
         verbose=verbose,

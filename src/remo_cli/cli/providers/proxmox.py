@@ -24,7 +24,11 @@ def proxmox() -> None:
 @click.option("--template", default="", help="LXC template path (storage:vztmpl/<file>).")
 @click.option("--cores", default=0, type=int, help="CPU cores (default: 2).")
 @click.option("--memory", default=0, type=int, help="RAM in MiB (default: 2048).")
-@click.option("--disk", default=0, type=int, help="Rootfs size in GiB (default: 20).")
+@click.option(
+    "--volume-size",
+    default="",
+    help="Rootfs size in GiB (default: 20). When the container exists and the requested size is larger, the rootfs is grown via `pct resize`.",
+)
 @click.option(
     "--unprivileged/--privileged",
     default=True,
@@ -45,7 +49,7 @@ def create(
     template: str,
     cores: int,
     memory: int,
-    disk: int,
+    volume_size: str,
     unprivileged: bool,
     domain: str,
     only: tuple[str, ...],
@@ -64,7 +68,7 @@ def create(
         template=template,
         cores=cores,
         memory=memory,
-        disk=disk,
+        volume_size=volume_size,
         unprivileged=unprivileged,
         domain=domain,
         tools_only=only,
@@ -109,6 +113,11 @@ def destroy(
 @click.option("--name", default="dev1", help="Container hostname.")
 @click.option("--host", default="", help="Proxmox host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for the Proxmox host.")
+@click.option(
+    "--volume-size",
+    default="",
+    help="Grow the rootfs to this size in GiB. pct resize only supports growing.",
+)
 @click.option("--only", multiple=True, help="Only install these tools.")
 @click.option("--skip", multiple=True, help="Skip these tools.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
@@ -116,6 +125,7 @@ def update(
     name: str,
     host: str,
     user: str,
+    volume_size: str,
     only: tuple[str, ...],
     skip: tuple[str, ...],
     verbose: bool,
@@ -125,6 +135,7 @@ def update(
         name=name,
         host=host,
         user=user,
+        volume_size=volume_size,
         tools_only=only,
         tools_skip=skip,
         verbose=verbose,

@@ -121,12 +121,39 @@ def _extract_eth0_ip(incus_output: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _run_resize_playbook(
+    *,
+    name: str,
+    host: str,
+    user: str,
+    volume_size: str,
+    verbose: bool = False,
+) -> int:
+    """Run incus_resize.yml against the Incus host.
+
+    Returns the ansible-playbook exit code (0 on success).
+    """
+    extra_vars: list[str] = [
+        "-e", f"container_name={name}",
+        "-e", f"volume_size={volume_size}",
+    ]
+
+    if host and host != "localhost":
+        extra_vars.extend(["-i", f"{host},"])
+        extra_vars.extend(["-e", "target_hosts=all"])
+        if user:
+            extra_vars.extend(["-e", f"incus_host_user={user}"])
+
+    return run_playbook("incus_resize.yml", extra_vars, verbose=verbose)
+
+
 def create(
     name: str,
     host: str = "localhost",
     user: str = "",
     domain: str = "",
     image: str = "",
+    volume_size: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
@@ -180,6 +207,15 @@ def create(
                 access_mode="direct",
             )
         )
+
+        if volume_size:
+            rc = _run_resize_playbook(
+                name=name,
+                host=host,
+                user=user,
+                volume_size=volume_size,
+                verbose=verbose,
+            )
 
     return rc
 
@@ -241,11 +277,14 @@ def update(
     name: str,
     host: str = "",
     user: str = "",
+    volume_size: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
 ) -> int:
     """Re-configure dev tools on an existing Incus container.
+
+    When *volume_size* is provided, resize the root disk first.
 
     Returns the ansible-playbook exit code (0 on success).
     """
@@ -256,6 +295,22 @@ def update(
         host, looked_up_user = _lookup_incus_host(name)
         if not user and looked_up_user:
             user = looked_up_user
+
+    if volume_size:
+        print_info(
+            f"Resizing root disk of '{name}' to {volume_size}GiB"
+            + (f" on {host}" if host and host != "localhost" else "")
+            + "..."
+        )
+        rc = _run_resize_playbook(
+            name=name,
+            host=host,
+            user=user,
+            volume_size=volume_size,
+            verbose=verbose,
+        )
+        if rc != 0:
+            return rc
 
     print_info(f"Looking up container '{name}'...")
 

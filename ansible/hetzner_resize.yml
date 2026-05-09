@@ -1,0 +1,117 @@
+---
+# Hetzner Volume Resize Playbook
+#
+# Grows the persistent Hetzner volume that backs /home/remo, then grows the
+# ext4 filesystem in place. Hetzner only supports growing volumes.
+#
+# Usage:
+#   ./run.sh hetzner_resize.yml -e "hetzner_server_name=alice volume_size=50"
+#
+# Required variables:
+#   hetzner_server_name: Server name (used to derive volume name).
+#   volume_size:         New volume size in GB (must be >= current).
+#   hetzner_api_token:   API token (typically via env HETZNER_API_TOKEN).
+
+- name: Resize Hetzner Cloud volume
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    hetzner_api_token_effective: "{{ hetzner_api_token | default(lookup('env', 'HETZNER_API_TOKEN'), true) }}"
+    # Mirror the volume-naming convention used by hetzner_server role.
+    hetzner_volume_name: "{{ hetzner_volume_name | default(hetzner_server_name + '-home') }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variables 'hetzner_server_name' and 'volume_size' must be defined."
+      when:
+        - hetzner_server_name is not defined or volume_size is not defined
+
+    - name: Validate API token is available
+      ansible.builtin.fail:
+        msg: "Hetzner API token not set. Pass -e hetzner_api_token=<token> or set HETZNER_API_TOKEN."
+      when: hetzner_api_token_effective | length == 0
+
+  tasks:
+    - name: Look up the volume
+      hetzner.hcloud.volume_info:
+        api_token: "{{ hetzner_api_token_effective }}"
+        name: "{{ hetzner_volume_name }}"
+      register: existing_volume
+
+    - name: Fail if volume not found
+      ansible.builtin.fail:
+        msg: "No Hetzner volume found with name '{{ hetzner_volume_name }}'."
+      when: existing_volume.hcloud_volume_info | default([]) | length == 0
+
+    - name: Set current size and ID facts
+      ansible.builtin.set_fact:
+        hetzner_volume_current_size: "{{ existing_volume.hcloud_volume_info[0].size | int }}"
+        hetzner_volume_id: "{{ existing_volume.hcloud_volume_info[0].id }}"
+        hetzner_server_attached: "{{ existing_volume.hcloud_volume_info[0].server | default('') }}"
+
+    - name: Refuse to shrink volume
+      ansible.builtin.fail:
+        msg: "Cannot shrink Hetzner volume from {{ hetzner_volume_current_size }}GB to {{ volume_size }}GB. Hetzner only supports growing."
+      when: (volume_size | int) < (hetzner_volume_current_size | int)
+
+    - name: Grow Hetzner volume
+      hetzner.hcloud.volume:
+        api_token: "{{ hetzner_api_token_effective }}"
+        name: "{{ hetzner_volume_name }}"
+        size: "{{ volume_size | int }}"
+        state: present
+      when: (volume_size | int) > (hetzner_volume_current_size | int)
+
+    - name: No-op when sizes match
+      ansible.builtin.debug:
+        msg: "Volume already at {{ hetzner_volume_current_size }}GB — no resize needed."
+      when: (volume_size | int) == (hetzner_volume_current_size | int)
+
+    - name: Look up the attached server's IP
+      hetzner.hcloud.server_info:
+        api_token: "{{ hetzner_api_token_effective }}"
+        name: "{{ hetzner_server_attached }}"
+      register: hetzner_server_lookup
+      when:
+        - (volume_size | int) > (hetzner_volume_current_size | int)
+        - hetzner_server_attached | length > 0
+
+    - name: Add server to inventory for filesystem grow
+      ansible.builtin.add_host:
+        name: hetzner_instance
+        ansible_host: "{{ hetzner_server_lookup.hcloud_server_info[0].ipv4_address }}"
+        ansible_user: "{{ instance_user | default('remo') }}"
+        ansible_ssh_private_key_file: "{{ ssh_private_key_path | default('~/.ssh/id_rsa') }}"
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        groups:
+          - provisioned
+        hetzner_volume_device: "/dev/disk/by-id/scsi-0HC_Volume_{{ hetzner_volume_id }}"
+      when:
+        - (volume_size | int) > (hetzner_volume_current_size | int)
+        - hetzner_server_attached | length > 0
+
+- name: Grow filesystem inside the server
+  hosts: hetzner_instance
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for SSH to stabilize
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        delay: 5
+
+  tasks:
+    - name: Grow ext4 filesystem on the Hetzner volume
+      ansible.builtin.command:
+        cmd: "resize2fs {{ hetzner_volume_device }}"
+      register: resize_result
+      changed_when: "'Nothing to do' not in (resize_result.stderr | default(''))"
+
+    - name: Display resize outcome
+      ansible.builtin.debug:
+        msg: "Filesystem on {{ hetzner_volume_device }} grown."
+      when: resize_result is changed | default(false)

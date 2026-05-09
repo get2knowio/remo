@@ -1,0 +1,97 @@
+---
+# Proxmox Container Resize Playbook
+#
+# Grows the rootfs of an existing LXC container. `pct resize` only supports
+# growing — shrinking is impossible at the storage layer for the formats we
+# use. Idempotent: a no-op when the requested size matches the current size.
+#
+# Usage:
+#   ./run.sh proxmox_resize.yml -i "prox01," -e "ansible_user=root container_name=dev1 volume_size=50"
+#
+# Required variables:
+#   container_name: Hostname of the container to resize.
+#   volume_size:    New rootfs size in GiB (must be >= current).
+
+- name: Resize Proxmox LXC container rootfs
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  remote_user: "{{ proxmox_host_user | default(omit) }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    proxmox_container_name: "{{ container_name }}"
+    proxmox_container_vmid_input: "{{ container_vmid | default('') }}"
+    proxmox_container_disk: "{{ volume_size | int }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variables 'container_name' and 'volume_size' must be defined."
+      when:
+        - container_name is not defined or volume_size is not defined
+
+  tasks:
+    - name: Look up VMID by hostname (if VMID not supplied)
+      ansible.builtin.shell: |
+        set -eo pipefail
+        grep -l '^hostname: {{ proxmox_container_name }}$' /etc/pve/lxc/*.conf 2>/dev/null | head -1 | sed 's:.*/\([0-9]\+\)\.conf:\1:' || true
+      args:
+        executable: /bin/bash
+      register: vmid_lookup
+      changed_when: false
+      failed_when: false
+      when: proxmox_container_vmid_input | default('') | length == 0
+
+    - name: Set VMID fact
+      ansible.builtin.set_fact:
+        proxmox_container_vmid: >-
+          {{ proxmox_container_vmid_input
+             if (proxmox_container_vmid_input | default('') | length > 0)
+             else (vmid_lookup.stdout | default('') | trim) }}
+
+    - name: Fail if VMID could not be determined
+      ansible.builtin.fail:
+        msg: "Container '{{ proxmox_container_name }}' was not found on this Proxmox node."
+      when: proxmox_container_vmid | default('') | length == 0
+
+    - name: Read current rootfs size from pct config
+      ansible.builtin.shell: |
+        set -eo pipefail
+        pct config {{ proxmox_container_vmid }} \
+          | awk -F'size=' '/^rootfs:/ {print $2}' \
+          | awk -F'G' '{print $1}' \
+          | tr -d '[:space:]'
+      args:
+        executable: /bin/bash
+      register: current_size_result
+      changed_when: false
+      failed_when: current_size_result.rc | default(1) != 0
+
+    - name: Set current size fact
+      ansible.builtin.set_fact:
+        proxmox_container_current_disk: "{{ (current_size_result.stdout | default('0') | trim) | int }}"
+
+    - name: Refuse to shrink rootfs
+      ansible.builtin.fail:
+        msg: |
+          Cannot shrink rootfs from {{ proxmox_container_current_disk }}G to {{ proxmox_container_disk }}G.
+          pct resize only supports growing the rootfs.
+      when: (proxmox_container_disk | int) < (proxmox_container_current_disk | int)
+
+    - name: Resize rootfs (online for ext4)
+      ansible.builtin.command:
+        cmd: pct resize {{ proxmox_container_vmid }} rootfs {{ proxmox_container_disk }}G
+      register: pct_resize_result
+      changed_when: pct_resize_result.rc | default(1) == 0
+      failed_when: pct_resize_result.rc | default(1) != 0
+      when: (proxmox_container_disk | int) > (proxmox_container_current_disk | int)
+
+    - name: Display resize outcome
+      ansible.builtin.debug:
+        msg: |
+          {% if (proxmox_container_disk | int) == (proxmox_container_current_disk | int) %}
+          Rootfs already at {{ proxmox_container_current_disk }}G — no resize needed.
+          {% else %}
+          Resized rootfs: {{ proxmox_container_current_disk }}G -> {{ proxmox_container_disk }}G
+          {% endif %}
