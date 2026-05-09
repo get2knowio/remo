@@ -108,7 +108,11 @@ jobs:
           done
 
           echo "Testing SSH via SSM to $USER@$INSTANCE_ID..."
-          for attempt in $(seq 1 5); do
+          # The provision playbook ends with a reboot when kernel updates were
+          # applied; the SSM agent reports Online again quickly via heartbeat,
+          # but its session-handler can take 3-5 minutes to accept fresh
+          # start-session calls. Retry generously to cover that window.
+          for attempt in $(seq 1 18); do
             if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                 -o ConnectTimeout=60 \
                 -o "ProxyCommand=aws ssm start-session --region ${REGION} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
@@ -117,10 +121,10 @@ jobs:
               echo "SSM connectivity: PASS (attempt $attempt)"
               exit 0
             fi
-            echo "Attempt $attempt failed; sleeping 15s before retry..."
-            sleep 15
+            echo "Attempt $attempt failed; sleeping 20s before retry..."
+            sleep 20
           done
-          echo "SSM connectivity: FAIL after 5 attempts"
+          echo "SSM connectivity: FAIL after 18 attempts (~6 minutes)"
           exit 1
 
       - name: Teardown
