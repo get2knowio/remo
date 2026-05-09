@@ -118,6 +118,18 @@ def destroy(
     default="",
     help="Grow the rootfs to this size in GiB. pct resize only supports growing.",
 )
+@click.option(
+    "--cores",
+    default=0,
+    type=int,
+    help="Set the CPU core count via pct set (live; cgroup v2).",
+)
+@click.option(
+    "--memory",
+    default=0,
+    type=int,
+    help="Set the memory limit in MiB via pct set (live).",
+)
 @click.option("--only", multiple=True, help="Only install these tools.")
 @click.option("--skip", multiple=True, help="Skip these tools.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
@@ -126,6 +138,8 @@ def update(
     host: str,
     user: str,
     volume_size: str,
+    cores: int,
+    memory: int,
     only: tuple[str, ...],
     skip: tuple[str, ...],
     verbose: bool,
@@ -136,6 +150,8 @@ def update(
         host=host,
         user=user,
         volume_size=volume_size,
+        cores=cores,
+        memory=memory,
         tools_only=only,
         tools_skip=skip,
         verbose=verbose,

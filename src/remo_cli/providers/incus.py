@@ -126,17 +126,24 @@ def _run_resize_playbook(
     name: str,
     host: str,
     user: str,
-    volume_size: str,
+    volume_size: str = "",
+    cores: int = 0,
+    memory: int = 0,
     verbose: bool = False,
 ) -> int:
     """Run incus_resize.yml against the Incus host.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Pass any combination of *volume_size*, *cores*, and *memory*; the
+    playbook adjusts only the axes whose value is set. Returns the
+    ansible-playbook exit code (0 on success, including no-op).
     """
-    extra_vars: list[str] = [
-        "-e", f"container_name={name}",
-        "-e", f"volume_size={volume_size}",
-    ]
+    extra_vars: list[str] = ["-e", f"container_name={name}"]
+    if volume_size:
+        extra_vars.extend(["-e", f"volume_size={volume_size}"])
+    if cores:
+        extra_vars.extend(["-e", f"cores={cores}"])
+    if memory:
+        extra_vars.extend(["-e", f"memory={memory}"])
 
     if host and host != "localhost":
         extra_vars.extend(["-i", f"{host},"])
@@ -154,6 +161,8 @@ def create(
     domain: str = "",
     image: str = "",
     volume_size: str = "",
+    cores: int = 0,
+    memory: int = 0,
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
@@ -208,12 +217,14 @@ def create(
             )
         )
 
-        if volume_size:
+        if volume_size or cores or memory:
             rc = _run_resize_playbook(
                 name=name,
                 host=host,
                 user=user,
                 volume_size=volume_size,
+                cores=cores,
+                memory=memory,
                 verbose=verbose,
             )
 
@@ -278,13 +289,17 @@ def update(
     host: str = "",
     user: str = "",
     volume_size: str = "",
+    cores: int = 0,
+    memory: int = 0,
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
 ) -> int:
     """Re-configure dev tools on an existing Incus container.
 
-    When *volume_size* is provided, resize the root disk first.
+    When any of *volume_size*, *cores*, or *memory* is provided, apply
+    those resource changes (via incus config set / device override)
+    before running the dev-tools configure playbook.
 
     Returns the ansible-playbook exit code (0 on success).
     """
@@ -296,17 +311,23 @@ def update(
         if not user and looked_up_user:
             user = looked_up_user
 
-    if volume_size:
-        print_info(
-            f"Resizing root disk of '{name}' to {volume_size}GiB"
-            + (f" on {host}" if host and host != "localhost" else "")
-            + "..."
-        )
+    if volume_size or cores or memory:
+        bits: list[str] = []
+        if volume_size:
+            bits.append(f"size={volume_size}GiB")
+        if cores:
+            bits.append(f"cores={cores}")
+        if memory:
+            bits.append(f"memory={memory}MiB")
+        location = f" on {host}" if host and host != "localhost" else ""
+        print_info(f"Updating resources on '{name}' ({', '.join(bits)}){location}...")
         rc = _run_resize_playbook(
             name=name,
             host=host,
             user=user,
             volume_size=volume_size,
+            cores=cores,
+            memory=memory,
             verbose=verbose,
         )
         if rc != 0:

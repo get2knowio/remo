@@ -1,18 +1,25 @@
 ---
-# Proxmox Container Resize Playbook
+# Proxmox Container Resource Update Playbook
 #
-# Grows the rootfs of an existing LXC container. `pct resize` only supports
-# growing — shrinking is impossible at the storage layer for the formats we
-# use. Idempotent: a no-op when the requested size matches the current size.
+# Adjusts resource limits on an existing LXC container: rootfs size, CPU
+# cores, and/or memory. Each axis is optional — pass only the vars you
+# want to change. Idempotent: a no-op when the requested value matches
+# the current one. Rootfs can only grow; cores and memory can move in
+# either direction.
 #
 # Usage:
 #   ./run.sh proxmox_resize.yml -i "prox01," -e "ansible_user=root container_name=dev1 volume_size=50"
+#   ./run.sh proxmox_resize.yml -i "prox01," -e "ansible_user=root container_name=dev1 cores=4 memory=4096"
 #
 # Required variables:
-#   container_name: Hostname of the container to resize.
-#   volume_size:    New rootfs size in GiB (must be >= current).
+#   container_name: Hostname of the container to update.
+#
+# Optional variables (at least one of these must be set):
+#   volume_size: New rootfs size in GiB (must be >= current).
+#   cores:       New CPU core count.
+#   memory:      New memory limit in MiB.
 
-- name: Resize Proxmox LXC container rootfs
+- name: Update Proxmox LXC container resources
   hosts: "{{ target_hosts | default('localhost') }}"
   connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
   remote_user: "{{ proxmox_host_user | default(omit) }}"
@@ -22,14 +29,23 @@
   vars:
     proxmox_container_name: "{{ container_name }}"
     proxmox_container_vmid_input: "{{ container_vmid | default('') }}"
-    proxmox_container_disk: "{{ volume_size | int }}"
+    proxmox_container_disk_input: "{{ volume_size | default('') }}"
+    proxmox_container_cores_input: "{{ cores | default('') }}"
+    proxmox_container_memory_input: "{{ memory | default('') }}"
 
   pre_tasks:
     - name: Validate required variables
       ansible.builtin.fail:
-        msg: "Required variables 'container_name' and 'volume_size' must be defined."
+        msg: "Required variable 'container_name' is not defined."
+      when: container_name is not defined
+
+    - name: Validate at least one resource axis was requested
+      ansible.builtin.fail:
+        msg: "At least one of 'volume_size', 'cores', or 'memory' must be set."
       when:
-        - container_name is not defined or volume_size is not defined
+        - (proxmox_container_disk_input | string | length) == 0
+        - (proxmox_container_cores_input | string | length) == 0
+        - (proxmox_container_memory_input | string | length) == 0
 
   tasks:
     - name: Look up VMID by hostname (if VMID not supplied)
@@ -55,6 +71,9 @@
         msg: "Container '{{ proxmox_container_name }}' was not found on this Proxmox node."
       when: proxmox_container_vmid | default('') | length == 0
 
+    # -------------------------------------------------------------------------
+    # Rootfs grow (when volume_size was passed).
+    # -------------------------------------------------------------------------
     - name: Read current rootfs size from pct config
       ansible.builtin.shell: |
         set -eo pipefail
@@ -67,31 +86,116 @@
       register: current_size_result
       changed_when: false
       failed_when: current_size_result.rc | default(1) != 0
+      when: (proxmox_container_disk_input | string | length) > 0
 
-    - name: Set current size fact
+    - name: Set current rootfs size fact
       ansible.builtin.set_fact:
         proxmox_container_current_disk: "{{ (current_size_result.stdout | default('0') | trim) | int }}"
+      when: (proxmox_container_disk_input | string | length) > 0
 
     - name: Refuse to shrink rootfs
       ansible.builtin.fail:
         msg: |
-          Cannot shrink rootfs from {{ proxmox_container_current_disk }}G to {{ proxmox_container_disk }}G.
+          Cannot shrink rootfs from {{ proxmox_container_current_disk }}G to {{ proxmox_container_disk_input | int }}G.
           pct resize only supports growing the rootfs.
-      when: (proxmox_container_disk | int) < (proxmox_container_current_disk | int)
+      when:
+        - (proxmox_container_disk_input | string | length) > 0
+        - (proxmox_container_disk_input | int) < (proxmox_container_current_disk | int)
 
     - name: Resize rootfs (online for ext4)
       ansible.builtin.command:
-        cmd: pct resize {{ proxmox_container_vmid }} rootfs {{ proxmox_container_disk }}G
+        cmd: pct resize {{ proxmox_container_vmid }} rootfs {{ proxmox_container_disk_input | int }}G
       register: pct_resize_result
       changed_when: pct_resize_result.rc | default(1) == 0
       failed_when: pct_resize_result.rc | default(1) != 0
-      when: (proxmox_container_disk | int) > (proxmox_container_current_disk | int)
+      when:
+        - (proxmox_container_disk_input | string | length) > 0
+        - (proxmox_container_disk_input | int) > (proxmox_container_current_disk | int)
 
-    - name: Display resize outcome
+    - name: Display rootfs outcome
       ansible.builtin.debug:
         msg: |
-          {% if (proxmox_container_disk | int) == (proxmox_container_current_disk | int) %}
+          {% if (proxmox_container_disk_input | int) == (proxmox_container_current_disk | int) %}
           Rootfs already at {{ proxmox_container_current_disk }}G — no resize needed.
           {% else %}
-          Resized rootfs: {{ proxmox_container_current_disk }}G -> {{ proxmox_container_disk }}G
+          Resized rootfs: {{ proxmox_container_current_disk }}G -> {{ proxmox_container_disk_input | int }}G
           {% endif %}
+      when: (proxmox_container_disk_input | string | length) > 0
+
+    # -------------------------------------------------------------------------
+    # CPU cores (when cores was passed).
+    # -------------------------------------------------------------------------
+    - name: Read current cores from pct config
+      ansible.builtin.shell: |
+        set -eo pipefail
+        pct config {{ proxmox_container_vmid }} | awk '/^cores:/ {print $2}' | tr -d '[:space:]'
+      args:
+        executable: /bin/bash
+      register: current_cores_result
+      changed_when: false
+      failed_when: current_cores_result.rc | default(1) != 0
+      when: (proxmox_container_cores_input | string | length) > 0
+
+    - name: Set current cores fact
+      ansible.builtin.set_fact:
+        proxmox_container_current_cores: "{{ (current_cores_result.stdout | default('0') | trim) | int }}"
+      when: (proxmox_container_cores_input | string | length) > 0
+
+    - name: Set new cores (live; cgroup v2)
+      ansible.builtin.command:
+        cmd: pct set {{ proxmox_container_vmid }} --cores {{ proxmox_container_cores_input | int }}
+      register: pct_set_cores_result
+      changed_when: pct_set_cores_result.rc | default(1) == 0
+      failed_when: pct_set_cores_result.rc | default(1) != 0
+      when:
+        - (proxmox_container_cores_input | string | length) > 0
+        - (proxmox_container_cores_input | int) != (proxmox_container_current_cores | int)
+
+    - name: Display cores outcome
+      ansible.builtin.debug:
+        msg: |
+          {% if (proxmox_container_cores_input | int) == (proxmox_container_current_cores | int) %}
+          Cores already at {{ proxmox_container_current_cores }} — no change.
+          {% else %}
+          Cores: {{ proxmox_container_current_cores }} -> {{ proxmox_container_cores_input | int }}
+          {% endif %}
+      when: (proxmox_container_cores_input | string | length) > 0
+
+    # -------------------------------------------------------------------------
+    # Memory (when memory was passed).
+    # -------------------------------------------------------------------------
+    - name: Read current memory from pct config
+      ansible.builtin.shell: |
+        set -eo pipefail
+        pct config {{ proxmox_container_vmid }} | awk '/^memory:/ {print $2}' | tr -d '[:space:]'
+      args:
+        executable: /bin/bash
+      register: current_memory_result
+      changed_when: false
+      failed_when: current_memory_result.rc | default(1) != 0
+      when: (proxmox_container_memory_input | string | length) > 0
+
+    - name: Set current memory fact
+      ansible.builtin.set_fact:
+        proxmox_container_current_memory: "{{ (current_memory_result.stdout | default('0') | trim) | int }}"
+      when: (proxmox_container_memory_input | string | length) > 0
+
+    - name: Set new memory (MiB; live)
+      ansible.builtin.command:
+        cmd: pct set {{ proxmox_container_vmid }} --memory {{ proxmox_container_memory_input | int }}
+      register: pct_set_memory_result
+      changed_when: pct_set_memory_result.rc | default(1) == 0
+      failed_when: pct_set_memory_result.rc | default(1) != 0
+      when:
+        - (proxmox_container_memory_input | string | length) > 0
+        - (proxmox_container_memory_input | int) != (proxmox_container_current_memory | int)
+
+    - name: Display memory outcome
+      ansible.builtin.debug:
+        msg: |
+          {% if (proxmox_container_memory_input | int) == (proxmox_container_current_memory | int) %}
+          Memory already at {{ proxmox_container_current_memory }} MiB — no change.
+          {% else %}
+          Memory: {{ proxmox_container_current_memory }} MiB -> {{ proxmox_container_memory_input | int }} MiB
+          {% endif %}
+      when: (proxmox_container_memory_input | string | length) > 0
