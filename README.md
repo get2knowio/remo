@@ -26,7 +26,7 @@ remo init
 ## Quick Start
 
 ```bash
-remo hetzner create             # Provision a VM (or: remo aws create / remo incus create)
+remo hetzner create             # Provision a VM (or: remo aws create / remo incus create / remo proxmox create)
 remo shell                      # Connect to your environment
 ```
 
@@ -46,14 +46,14 @@ You land in an interactive project menu. Pick a project, and you're in a persist
 
 ## Choose Your Platform
 
-| | [Hetzner Cloud](docs/hetzner.md) | [AWS](docs/aws.md) | [Incus](docs/incus.md) |
-|---|---|---|---|
-| **Type** | Cloud VM | Cloud VM | Local container |
-| **Location** | EU/US datacenters | Global regions | Your hardware |
-| **Cost** | ~€4/month | ~$30/month (~$10 spot) | Your electricity |
-| **Storage** | Block volume | EBS / root volume | Host mounts |
-| **Access** | Server IP | SSM (no inbound ports) or SSH | LAN hostname |
-| **Best for** | EU, budget hosting | US, enterprise, spot instances | Local dev, homelab |
+| | [Hetzner Cloud](docs/hetzner.md) | [AWS](docs/aws.md) | [Incus](docs/incus.md) | [Proxmox](docs/proxmox.md) |
+|---|---|---|---|---|
+| **Type** | Cloud VM | Cloud VM | Local container | Local container |
+| **Location** | EU/US datacenters | Global regions | Your hardware | Your hardware |
+| **Cost** | ~€4/month | ~$30/month (~$10 spot) | Your electricity | Your electricity |
+| **Storage** | Block volume | EBS / root volume | Host mounts | LVM / ZFS / dir |
+| **Access** | Server IP | SSM (no inbound ports) or SSH | LAN hostname | LAN IP |
+| **Best for** | EU, budget hosting | US, enterprise, spot instances | Local dev, homelab | Proxmox homelab |
 
 All platforms give you the same dev workflow and tooling described below.
 
@@ -172,6 +172,14 @@ remo incus update --name <n>        # Update dev tools
 remo incus destroy --name <n> [--yes]    # Destroy container
 remo incus bootstrap                # Initialize Incus on host
 
+# Proxmox VE LXC Containers
+remo proxmox create --name <n> --host <node>  # Create LXC container
+remo proxmox list                   # List registered containers
+remo proxmox sync --host <node>     # Discover existing containers
+remo proxmox update --name <n>      # Update dev tools
+remo proxmox destroy --name <n> [--yes] [--remove-storage]  # Destroy container
+remo proxmox bootstrap --host <node>  # Verify node + download LXC template
+
 # Updates
 uv tool upgrade remo-cli            # Update CLI to latest version
 remo <platform> update              # Update dev tools on remote
@@ -185,6 +193,7 @@ See platform-specific docs for full options:
 - [Hetzner Cloud](docs/hetzner.md)
 - [AWS](docs/aws.md)
 - [Incus Containers](docs/incus.md)
+- [Proxmox VE LXC Containers](docs/proxmox.md)
 
 ### Environment Variables
 
@@ -198,9 +207,10 @@ See platform-specific docs for full options:
 
 **Installed remo on a new machine with existing instances?**
 ```bash
-remo aws sync       # Discover AWS instances with 'remo' tag
-remo hetzner sync   # Discover Hetzner VMs with 'remo' label
-remo incus sync     # Discover Incus containers
+remo aws sync                          # Discover AWS instances with 'remo' tag
+remo hetzner sync                      # Discover Hetzner VMs with 'remo' label
+remo incus sync                        # Discover Incus containers
+remo proxmox sync --host <node>        # Discover Proxmox LXC containers
 ```
 
 **SSH connection fails?**
@@ -218,6 +228,7 @@ See troubleshooting sections in:
 - [Hetzner troubleshooting](docs/hetzner.md#troubleshooting)
 - [AWS troubleshooting](docs/aws.md#troubleshooting)
 - [Incus troubleshooting](docs/incus.md#troubleshooting)
+- [Proxmox troubleshooting](docs/proxmox.md#troubleshooting)
 
 ---
 
@@ -235,7 +246,7 @@ rm -rf ~/.config/remo
 |------|----------|
 | `~/.config/remo/` | Runtime state: `known_hosts` (environment registry) |
 
-**Note:** Uninstalling remo does not destroy any cloud resources (EC2 instances, Hetzner VMs, Incus containers). Run `remo <platform> destroy` first if you want to tear those down.
+**Note:** Uninstalling remo does not destroy any cloud resources (EC2 instances, Hetzner VMs, Incus or Proxmox containers). Run `remo <platform> destroy` first if you want to tear those down.
 
 ---
 
