@@ -201,11 +201,15 @@ def destroy(
 
 def update(
     name: str = "",
+    volume_size: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
 ) -> int:
     """Re-configure dev tools on an existing Hetzner VM.
+
+    When *volume_size* is provided, grow the persistent volume and the
+    filesystem first (idempotent — no-op when sizes match).
 
     Returns the ansible-playbook exit code (0 on success).
     """
@@ -220,6 +224,16 @@ def update(
         print_error(f"Server '{server_name}' not found in known_hosts.")
         print("Run 'remo hetzner sync' or 'remo hetzner create' first.")
         sys.exit(1)
+
+    if volume_size:
+        print_info(f"Resizing Hetzner volume for '{server_name}' to {volume_size}GB...")
+        resize_vars: list[str] = [
+            "-e", f"hetzner_server_name={server_name}",
+            "-e", f"volume_size={volume_size}",
+        ]
+        rc = run_playbook("hetzner_resize.yml", resize_vars, verbose=verbose)
+        if rc != 0:
+            return rc
 
     print_info(f"Updating Hetzner VM '{server_name}' at {server_host}...")
 

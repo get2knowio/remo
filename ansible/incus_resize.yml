@@ -1,0 +1,128 @@
+---
+# Incus Container Resource Update Playbook
+#
+# Adjusts resource limits on an existing Incus container: root disk size,
+# CPU cores, and/or memory. Each axis is optional — pass only the vars you
+# want to change. Disk-size changes use `incus config device override` /
+# `set` on the `root` device. CPU and memory changes use
+# `incus config set <name> limits.cpu / limits.memory`. Most changes
+# are live; some storage backends require a container restart for size
+# changes to take effect.
+#
+# Usage:
+#   ./run.sh incus_resize.yml -e "container_name=dev1 volume_size=50"
+#   ./run.sh incus_resize.yml -e "container_name=dev1 cores=4 memory=4096"
+#   ./run.sh incus_resize.yml -i "incus-host," -e "container_name=dev1 volume_size=50 incus_host_user=ubuntu"
+#
+# Required variables:
+#   container_name: Name of the container.
+#
+# Optional variables (at least one of these must be set):
+#   volume_size: Root disk size in GiB.
+#   cores:       New CPU core count.
+#   memory:      New memory limit in MiB.
+
+- name: Update Incus container resource limits
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  remote_user: "{{ incus_host_user | default(omit) }}"
+  gather_facts: false
+
+  vars:
+    incus_container_name: "{{ container_name }}"
+    incus_container_size_input: "{{ volume_size | default('') }}"
+    incus_container_cores_input: "{{ cores | default('') }}"
+    incus_container_memory_input: "{{ memory | default('') }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_name' is not defined."
+      when: container_name is not defined
+
+    - name: Validate at least one resource axis was requested
+      ansible.builtin.fail:
+        msg: "At least one of 'volume_size', 'cores', or 'memory' must be set."
+      when:
+        - (incus_container_size_input | string | length) == 0
+        - (incus_container_cores_input | string | length) == 0
+        - (incus_container_memory_input | string | length) == 0
+
+  tasks:
+    - name: Verify container exists
+      ansible.builtin.command:
+        cmd: incus info {{ incus_container_name }}
+      register: incus_info_result
+      changed_when: false
+      failed_when: incus_info_result.rc | default(1) != 0
+
+    # -------------------------------------------------------------------------
+    # Root disk size (when volume_size was passed).
+    # -------------------------------------------------------------------------
+    - name: Check whether root device has instance-level override
+      ansible.builtin.shell: |
+        set -eo pipefail
+        incus config device list {{ incus_container_name }} 2>/dev/null | grep -Fxq root && echo present || echo profile
+      args:
+        executable: /bin/bash
+      register: incus_root_override
+      changed_when: false
+      failed_when: incus_root_override.rc | default(1) != 0
+      when: (incus_container_size_input | string | length) > 0
+
+    - name: Override root device with new size (no instance-level device yet)
+      ansible.builtin.command:
+        cmd: incus config device override {{ incus_container_name }} root size={{ incus_container_size_input | int }}GiB
+      register: incus_root_override_result
+      changed_when: incus_root_override_result.rc | default(1) == 0
+      failed_when: incus_root_override_result.rc | default(1) != 0
+      when:
+        - (incus_container_size_input | string | length) > 0
+        - (incus_root_override.stdout | default('') | trim) == "profile"
+
+    - name: Update root device size (instance-level device already exists)
+      ansible.builtin.command:
+        cmd: incus config device set {{ incus_container_name }} root size={{ incus_container_size_input | int }}GiB
+      register: incus_root_set_result
+      changed_when: incus_root_set_result.rc | default(1) == 0
+      failed_when: incus_root_set_result.rc | default(1) != 0
+      when:
+        - (incus_container_size_input | string | length) > 0
+        - (incus_root_override.stdout | default('') | trim) == "present"
+
+    - name: Display root size outcome
+      ansible.builtin.debug:
+        msg: "Set root device size on '{{ incus_container_name }}' to {{ incus_container_size_input | int }}GiB. Restart the container if your storage backend requires it."
+      when: (incus_container_size_input | string | length) > 0
+
+    # -------------------------------------------------------------------------
+    # CPU cores (when cores was passed).
+    # -------------------------------------------------------------------------
+    - name: Set CPU limits (live; cgroup v2)
+      ansible.builtin.command:
+        cmd: incus config set {{ incus_container_name }} limits.cpu {{ incus_container_cores_input | int }}
+      register: incus_set_cores_result
+      changed_when: incus_set_cores_result.rc | default(1) == 0
+      failed_when: incus_set_cores_result.rc | default(1) != 0
+      when: (incus_container_cores_input | string | length) > 0
+
+    - name: Display CPU outcome
+      ansible.builtin.debug:
+        msg: "Set CPU limit on '{{ incus_container_name }}' to {{ incus_container_cores_input | int }} cores."
+      when: (incus_container_cores_input | string | length) > 0
+
+    # -------------------------------------------------------------------------
+    # Memory (when memory was passed).
+    # -------------------------------------------------------------------------
+    - name: Set memory limit (MiB; live)
+      ansible.builtin.command:
+        cmd: incus config set {{ incus_container_name }} limits.memory {{ incus_container_memory_input | int }}MiB
+      register: incus_set_memory_result
+      changed_when: incus_set_memory_result.rc | default(1) == 0
+      failed_when: incus_set_memory_result.rc | default(1) != 0
+      when: (incus_container_memory_input | string | length) > 0
+
+    - name: Display memory outcome
+      ansible.builtin.debug:
+        msg: "Set memory limit on '{{ incus_container_name }}' to {{ incus_container_memory_input | int }}MiB."
+      when: (incus_container_memory_input | string | length) > 0

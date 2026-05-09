@@ -20,6 +20,23 @@ def incus() -> None:
 @click.option("--user", default="", help="SSH user for remote Incus host.")
 @click.option("--domain", default="", help="Domain name for the container.")
 @click.option("--image", default="", help="Container image to use.")
+@click.option(
+    "--volume-size",
+    default="",
+    help="Root disk size in GiB. When set, an instance-level override of the profile root device is applied (or updated, if it already exists).",
+)
+@click.option(
+    "--cores",
+    default=0,
+    type=int,
+    help="Set the CPU core limit (limits.cpu).",
+)
+@click.option(
+    "--memory",
+    default=0,
+    type=int,
+    help="Set the memory limit in MiB (limits.memory).",
+)
 @click.option("--only", multiple=True, help="Only install these tools.")
 @click.option("--skip", multiple=True, help="Skip these tools.")
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm prompts.")
@@ -30,6 +47,9 @@ def create(
     user: str,
     domain: str,
     image: str,
+    volume_size: str,
+    cores: int,
+    memory: int,
     only: tuple[str, ...],
     skip: tuple[str, ...],
     yes: bool,
@@ -42,6 +62,9 @@ def create(
         user=user,
         domain=domain,
         image=image,
+        volume_size=volume_size,
+        cores=cores,
+        memory=memory,
         tools_only=only,
         tools_skip=skip,
         verbose=verbose,
@@ -84,6 +107,23 @@ def destroy(
 @click.option("--name", default="dev1", help="Container name (default: dev1).")
 @click.option("--host", default="", help="Incus host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
+@click.option(
+    "--volume-size",
+    default="",
+    help="Resize the root disk to this size in GiB. The change may require a container restart depending on the storage backend.",
+)
+@click.option(
+    "--cores",
+    default=0,
+    type=int,
+    help="Set the CPU core limit (limits.cpu).",
+)
+@click.option(
+    "--memory",
+    default=0,
+    type=int,
+    help="Set the memory limit in MiB (limits.memory).",
+)
 @click.option("--only", multiple=True, help="Only install these tools.")
 @click.option("--skip", multiple=True, help="Skip these tools.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
@@ -91,6 +131,9 @@ def update(
     name: str,
     host: str,
     user: str,
+    volume_size: str,
+    cores: int,
+    memory: int,
     only: tuple[str, ...],
     skip: tuple[str, ...],
     verbose: bool,
@@ -100,6 +143,9 @@ def update(
         name=name,
         host=host,
         user=user,
+        volume_size=volume_size,
+        cores=cores,
+        memory=memory,
         tools_only=only,
         tools_skip=skip,
         verbose=verbose,

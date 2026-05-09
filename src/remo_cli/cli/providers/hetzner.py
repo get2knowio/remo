@@ -71,11 +71,17 @@ def destroy(
 
 @hetzner.command()
 @click.option("--name", default="", help="Server name (default: remote-coding-server).")
+@click.option(
+    "--volume-size",
+    default="",
+    help="Grow the persistent Hetzner volume to this size in GB and grow the filesystem in place. Hetzner only supports growing.",
+)
 @click.option("--only", multiple=True, help="Only install these tools.")
 @click.option("--skip", multiple=True, help="Skip these tools.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output.")
 def update(
     name: str,
+    volume_size: str,
     only: tuple[str, ...],
     skip: tuple[str, ...],
     verbose: bool,
@@ -85,6 +91,7 @@ def update(
 
     rc = do_update(
         name=name,
+        volume_size=volume_size,
         tools_only=only,
         tools_skip=skip,
         verbose=verbose,

@@ -542,6 +542,7 @@ def destroy(
 
 def update(
     name: str = "",
+    volume_size: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
@@ -550,6 +551,8 @@ def update(
 
     Queries boto3 for the running instance to get current IP and instance
     ID, updates the known-hosts registry, then runs the configure playbook.
+    When *volume_size* is provided, grow the EBS volume and the filesystem
+    first (idempotent — no-op when sizes match).
 
     Returns the ansible-playbook exit code (0 on success).
     """
@@ -582,6 +585,18 @@ def update(
             region=region,
         )
     )
+
+    if volume_size:
+        print_info(f"Resizing EBS volume for {instance_id} to {volume_size}GB...")
+        resize_vars: list[str] = [
+            "-e", f"aws_resource_name={resource_name}",
+            "-e", f"aws_instance_id={instance_id}",
+            "-e", f"aws_region={region}",
+            "-e", f"volume_size={volume_size}",
+        ]
+        rc = run_playbook("aws_resize.yml", resize_vars, verbose=verbose)
+        if rc != 0:
+            return rc
 
     extra_vars: list[str] = [
         "-e", "aws_access_mode=ssm",

@@ -1,0 +1,165 @@
+---
+# AWS EBS Resize Playbook
+#
+# Grows the persistent EBS volume that backs /home/remo on an existing
+# instance, then grows the ext4 filesystem in place.
+#
+# Usage:
+#   ./run.sh aws_resize.yml -e "aws_resource_name=alice volume_size=50 aws_instance_id=i-0123 aws_region=us-west-2"
+#
+# Required variables:
+#   aws_resource_name: Tag suffix used at create time (defaults to $USER).
+#   aws_instance_id:   The EC2 instance ID (used for SSM session).
+#   aws_region:        AWS region.
+#   volume_size:       New EBS size in GB (must be >= current).
+
+- name: Resize EBS volume on AWS
+  hosts: localhost
+  gather_facts: false
+  become: false
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+    aws_ebs_name: "remo-{{ aws_resource_name }}-home"
+
+  environment: >-
+    {{ {'AWS_DEFAULT_REGION': aws_region | default('us-west-2')}
+       | combine({'AWS_PROFILE': aws_profile} if (aws_profile | default('')) else {})
+    }}
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variables missing. Need aws_resource_name, aws_instance_id, aws_region, volume_size."
+      when:
+        - aws_resource_name is not defined
+          or aws_instance_id is not defined
+          or aws_region is not defined
+          or volume_size is not defined
+
+  tasks:
+    - name: Look up the EBS volume by tag
+      amazon.aws.ec2_vol_info:
+        region: "{{ aws_region }}"
+        filters:
+          "tag:Name": "{{ aws_ebs_name }}"
+          "tag:remo": "true"
+      register: existing_ebs
+
+    - name: Fail if EBS volume not found
+      ansible.builtin.fail:
+        msg: "No EBS volume found with tags Name={{ aws_ebs_name }}, remo=true in {{ aws_region }}."
+      when: existing_ebs.volumes | default([]) | length == 0
+
+    - name: Set current size fact
+      ansible.builtin.set_fact:
+        aws_ebs_current_size: "{{ existing_ebs.volumes[0].size | int }}"
+        aws_ebs_volume_id: "{{ existing_ebs.volumes[0].id }}"
+
+    - name: Refuse to shrink EBS volume
+      ansible.builtin.fail:
+        msg: "Cannot shrink EBS from {{ aws_ebs_current_size }}GB to {{ volume_size }}GB. AWS only supports growing EBS volumes."
+      when: (volume_size | int) < (aws_ebs_current_size | int)
+
+    - name: Grow EBS volume
+      amazon.aws.ec2_vol:
+        id: "{{ aws_ebs_volume_id }}"
+        volume_size: "{{ volume_size }}"
+        region: "{{ aws_region }}"
+        modify_volume: true
+        state: present
+      when: (volume_size | int) > (aws_ebs_current_size | int)
+
+    - name: Wait for EBS modification to complete
+      ansible.builtin.shell: |
+        "{{ ansible_playbook_python }}" << 'PYEOF'
+        import boto3, sys, time, os
+        region = os.environ.get('AWS_DEFAULT_REGION', '{{ aws_region }}')
+        profile = os.environ.get('AWS_PROFILE') or None
+        session = boto3.Session(region_name=region, profile_name=profile)
+        ec2 = session.client('ec2')
+        for attempt in range(60):
+            r = ec2.describe_volumes_modifications(VolumeIds=['{{ aws_ebs_volume_id }}'])
+            mods = r.get('VolumesModifications', [])
+            if not mods:
+                # No active modification — nothing to wait for.
+                print('No modification in progress')
+                sys.exit(0)
+            state = mods[0].get('ModificationState', '')
+            if state in ('completed', 'optimizing'):
+                # 'optimizing' is reported once the volume is usable at the
+                # new size; full background optimization continues afterwards
+                # but does not block resize2fs.
+                print(f'Modification state: {state}')
+                sys.exit(0)
+            if state == 'failed':
+                print('EBS modification failed', file=sys.stderr)
+                sys.exit(1)
+            time.sleep(5)
+        print('Timed out waiting for EBS modification', file=sys.stderr)
+        sys.exit(1)
+        PYEOF
+      args:
+        executable: /bin/bash
+      register: ebs_wait_result
+      changed_when: false
+      failed_when: ebs_wait_result.rc | default(1) != 0
+      when: (volume_size | int) > (aws_ebs_current_size | int)
+
+    - name: Add instance to in-memory inventory for filesystem grow
+      vars:
+        _aws_profile: "{{ aws_profile | default(lookup('env', 'AWS_PROFILE') | default('', true), true) }}"
+        _proxy_env: "{{ 'env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY= AWS_PROFILE=' + _aws_profile + ' ' if _aws_profile else '' }}"
+      ansible.builtin.add_host:
+        name: aws_instance
+        ansible_host: "{{ aws_instance_id }}"
+        ansible_user: "{{ instance_user | default('remo') }}"
+        ansible_ssh_private_key_file: "{{ ssh_private_key_path | default('~/.ssh/id_rsa') }}"
+        ansible_ssh_args: '-C -o ControlMaster=auto -o ControlPersist=60s -o ControlPath=~/.ssh/remo-%%r@%%h-%%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ProxyCommand="{{ _proxy_env }}aws ssm start-session --region {{ aws_region }} --target %h --document-name AWS-StartSSHSession --parameters portNumber=%p"'
+        groups:
+          - provisioned
+      when: (volume_size | int) > (aws_ebs_current_size | int)
+
+    - name: Display no-op when sizes already match
+      ansible.builtin.debug:
+        msg: "EBS already at {{ aws_ebs_current_size }}GB — no resize needed."
+      when: (volume_size | int) == (aws_ebs_current_size | int)
+
+- name: Grow filesystem inside the instance
+  hosts: aws_instance
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for SSH-over-SSM to stabilize
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        delay: 5
+
+  tasks:
+    - name: Detect EBS device path (xvdf or nvme1n1)
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /dev/xvdf
+        - /dev/nvme1n1
+      register: device_stats
+
+    - name: Set device path fact
+      ansible.builtin.set_fact:
+        ebs_device: "{{ (device_stats.results | selectattr('stat.exists', 'equalto', true) | list | first).item | default('') }}"
+
+    - name: Fail if no EBS device found
+      ansible.builtin.fail:
+        msg: "Could not find EBS device at /dev/xvdf or /dev/nvme1n1."
+      when: ebs_device | length == 0
+
+    - name: Grow ext4 filesystem
+      ansible.builtin.command:
+        cmd: "resize2fs {{ ebs_device }}"
+      register: resize_result
+      changed_when: "'Nothing to do' not in (resize_result.stderr | default(''))"
+
+    - name: Display resize outcome
+      ansible.builtin.debug:
+        msg: "Filesystem on {{ ebs_device }} grown."
+      when: resize_result is changed | default(false)

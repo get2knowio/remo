@@ -130,6 +130,41 @@ def _resolve_container_ip(
 # ---------------------------------------------------------------------------
 
 
+def _run_resize_playbook(
+    *,
+    name: str,
+    host: str,
+    user: str,
+    volume_size: str = "",
+    cores: int = 0,
+    memory: int = 0,
+    vmid: str = "",
+    verbose: bool = False,
+) -> int:
+    """Run proxmox_resize.yml against the given Proxmox host.
+
+    Pass any combination of *volume_size*, *cores*, and *memory*; the
+    playbook adjusts only the axes whose value is set. Returns the
+    ansible-playbook exit code (0 on success, including no-op).
+    """
+    extra_vars: list[str] = ["-e", f"container_name={name}"]
+    if volume_size:
+        extra_vars.extend(["-e", f"volume_size={volume_size}"])
+    if cores:
+        extra_vars.extend(["-e", f"cores={cores}"])
+    if memory:
+        extra_vars.extend(["-e", f"memory={memory}"])
+    if vmid:
+        extra_vars.extend(["-e", f"container_vmid={vmid}"])
+
+    extra_vars.extend(["-i", f"{host},"])
+    extra_vars.extend(["-e", "target_hosts=all"])
+    if user:
+        extra_vars.extend(["-e", f"proxmox_host_user={user}"])
+
+    return run_playbook("proxmox_resize.yml", extra_vars, verbose=verbose)
+
+
 def create(
     name: str,
     host: str,
@@ -140,7 +175,7 @@ def create(
     template: str = "",
     cores: int = 0,
     memory: int = 0,
-    disk: int = 0,
+    volume_size: str = "",
     unprivileged: bool = True,
     domain: str = "",
     tools_only: tuple[str, ...] = (),
@@ -173,8 +208,8 @@ def create(
         extra_vars.extend(["-e", f"container_cores={cores}"])
     if memory:
         extra_vars.extend(["-e", f"container_memory={memory}"])
-    if disk:
-        extra_vars.extend(["-e", f"container_disk={disk}"])
+    if volume_size:
+        extra_vars.extend(["-e", f"container_disk={volume_size}"])
     if domain:
         extra_vars.extend(["-e", f"container_domain={domain}"])
 
@@ -217,6 +252,21 @@ def create(
                 region=user or "root",
             )
         )
+
+        # If the container already existed, site.yml skipped pct create and
+        # did not apply the requested resource values. Run the resize
+        # playbook as a follow-up; idempotent (no-op when values match).
+        if volume_size or cores or memory:
+            rc = _run_resize_playbook(
+                name=name,
+                host=host,
+                user=user,
+                volume_size=volume_size,
+                cores=cores,
+                memory=memory,
+                vmid=vmid,
+                verbose=verbose,
+            )
 
     return rc
 
@@ -284,11 +334,18 @@ def update(
     name: str,
     host: str = "",
     user: str = "",
+    volume_size: str = "",
+    cores: int = 0,
+    memory: int = 0,
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
 ) -> int:
     """Re-configure dev tools on an existing Proxmox LXC container.
+
+    When any of *volume_size*, *cores*, or *memory* is provided, apply
+    those resource changes (via pct resize / pct set) before running the
+    dev-tools configure playbook.
 
     Returns the ansible-playbook exit code (0 on success).
     """
@@ -309,6 +366,28 @@ def update(
 
     if not user:
         user = "root"
+
+    if volume_size or cores or memory:
+        bits: list[str] = []
+        if volume_size:
+            bits.append(f"rootfs={volume_size}G")
+        if cores:
+            bits.append(f"cores={cores}")
+        if memory:
+            bits.append(f"memory={memory}MiB")
+        print_info(f"Updating resources on '{name}' ({', '.join(bits)}) on {host}...")
+        rc = _run_resize_playbook(
+            name=name,
+            host=host,
+            user=user,
+            volume_size=volume_size,
+            cores=cores,
+            memory=memory,
+            vmid=vmid,
+            verbose=verbose,
+        )
+        if rc != 0:
+            return rc
 
     print_info(f"Looking up container '{name}' on {host}...")
 
