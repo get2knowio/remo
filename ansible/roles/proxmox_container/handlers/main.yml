@@ -1,0 +1,8 @@
+---
+# Handlers for proxmox_container role
+
+- name: Remove temporary SSH pubkey on host
+  ansible.builtin.file:
+    path: "{{ proxmox_container_pubkey_host_path | default('') }}"
+    state: absent
+  when: proxmox_container_pubkey_host_path | default('') | length > 0

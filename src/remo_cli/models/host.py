@@ -101,12 +101,12 @@ class KnownHost:
     def display_name(self) -> str:
         """Human-friendly name for picker UIs.
 
-        For *incus* hosts the name encodes both the Incus host and the
-        container (``host/container``); this property formats that as
+        For *incus* and *proxmox* hosts the name encodes both the host node
+        and the container (``host/container``); this property formats that as
         ``"container (on host)"`` for readability.  For every other
         provider the name is returned unchanged.
         """
-        if self.type == "incus" and "/" in self.name:
-            incus_host, container = self.name.split("/", maxsplit=1)
-            return f"{container} (on {incus_host})"
+        if self.type in {"incus", "proxmox"} and "/" in self.name:
+            node, container = self.name.split("/", maxsplit=1)
+            return f"{container} (on {node})"
         return self.name

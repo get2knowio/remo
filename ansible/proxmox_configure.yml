@@ -1,0 +1,68 @@
+---
+# Proxmox Configure Playbook - Install or refresh dev tools on an existing container.
+# Run this after the container exists; pass its IP via -e container_ip=<ip>.
+#
+# Usage:
+#   ./run.sh proxmox_configure.yml -e "container_ip=192.168.1.123"
+#   ./run.sh proxmox_configure.yml -e "container_ip=192.168.1.123 container_user=remo"
+
+- name: Add container to inventory
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_ip' is not defined. Use -e container_ip=<ip>"
+      when: container_ip is not defined
+
+    - name: Add container to in-memory inventory
+      ansible.builtin.add_host:
+        name: proxmox_container
+        ansible_host: "{{ container_ip }}"
+        ansible_user: "{{ container_user | default('remo') }}"
+        ansible_python_interpreter: /usr/bin/python3
+        groups:
+          - proxmox_containers
+
+- name: Configure Proxmox container with development tools
+  hosts: proxmox_container
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Wait for apt to be ready
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+          sleep 5
+        done
+      args:
+        executable: /bin/bash
+      register: apt_lock_result
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: apt_lock_result.rc | default(1) == 0
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+
+  tasks:
+    - name: Configure dev tools
+      ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Container configuration complete!
+
+          Connect with:
+            ssh remo@{{ ansible_host }}

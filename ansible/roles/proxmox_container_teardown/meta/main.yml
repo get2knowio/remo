@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: remo project
+  description: Tear down a Proxmox VE LXC container by hostname or VMID
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - lxc
+    - containers
+    - teardown
+
+dependencies: []

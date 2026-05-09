@@ -1,0 +1,50 @@
+---
+# Proxmox Teardown Playbook - Destroy an LXC container by hostname.
+#
+# Usage:
+#   ./run.sh proxmox_teardown.yml -i "prox01," -e "ansible_user=root container_name=dev1"
+#   ./run.sh proxmox_teardown.yml -i "prox01," -e "ansible_user=root container_name=dev1 auto_confirm=true"
+#
+# Required variables:
+#   container_name: Hostname of the container to destroy (looked up to VMID).
+#
+# Optional variables (see roles/proxmox_container_teardown/defaults/main.yml):
+#   container_vmid: Pass directly when known (skips hostname-to-VMID lookup).
+#   force: Forcefully destroy even if running (default: false; graceful stop first).
+#   auto_confirm: Skip the confirmation prompt (default: false).
+#   remove_storage: Purge rootfs volume from storage (default: false).
+
+- name: Teardown Proxmox LXC container
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  remote_user: "{{ proxmox_host_user | default(omit) }}"
+  become: true
+  gather_facts: false
+
+  vars:
+    proxmox_container_name: "{{ container_name }}"
+    proxmox_container_vmid_input: "{{ container_vmid | default('') }}"
+    proxmox_container_force: "{{ force | default(false) | bool }}"
+    proxmox_container_auto_confirm: "{{ auto_confirm | default(false) | bool }}"
+    proxmox_container_remove_storage: "{{ remove_storage | default(false) | bool }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_name' is not defined. Use -e container_name=<name>"
+      when: container_name is not defined
+
+  roles:
+    - role: proxmox_container_teardown
+
+  post_tasks:
+    - name: Display teardown success message
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          Container teardown complete
+          ============================================================
+          Container: {{ proxmox_container_name }}
+          VMID:      {{ proxmox_container_vmid | default('(not found)') }}
+          Destroyed: {{ proxmox_container_destroyed | default(false) }}
+          ============================================================

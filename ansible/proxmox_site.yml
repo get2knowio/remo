@@ -1,0 +1,112 @@
+---
+# Proxmox Site Playbook - Provision and configure an LXC container in one run.
+#
+# Usage:
+#   ./run.sh proxmox_site.yml -i "prox01," -e "ansible_user=root container_name=dev1"
+#   ./run.sh proxmox_site.yml -i "prox01," -e "ansible_user=root container_name=dev1 container_storage=local-zfs"
+#
+# Required variables:
+#   container_name: Hostname for the new container.
+#
+# Optional variables (see roles/proxmox_container/defaults/main.yml for full list):
+#   container_template: <storage>:vztmpl/<file> (default: ubuntu 24.04)
+#   container_node, container_bridge, container_storage
+#   container_cores, container_memory, container_disk
+#   container_unprivileged (default: true)
+
+# Play 1: Provision the container on the Proxmox node.
+- name: Provision Proxmox LXC container
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  remote_user: "{{ proxmox_host_user | default(omit) }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    proxmox_container_name: "{{ container_name }}"
+    proxmox_container_template: "{{ container_template | default('local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst') }}"
+    proxmox_container_node: "{{ container_node | default(inventory_hostname) }}"
+    proxmox_container_bridge: "{{ container_bridge | default('vmbr0') }}"
+    proxmox_container_storage: "{{ container_storage | default('local-lvm') }}"
+    proxmox_container_cores: "{{ container_cores | default(2) }}"
+    proxmox_container_memory: "{{ container_memory | default(2048) }}"
+    proxmox_container_disk: "{{ container_disk | default(20) }}"
+    proxmox_container_unprivileged: "{{ container_unprivileged | default(true) }}"
+    proxmox_container_ssh_user: "{{ container_ssh_user | default('remo') }}"
+    proxmox_container_ssh_key_path: "{{ container_ssh_key_path | default('~/.ssh/id_rsa.pub') }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_name' is not defined. Use -e container_name=<name>"
+      when: container_name is not defined
+
+  roles:
+    - role: proxmox_container
+
+# Play 2: Configure the container with development tools.
+- name: Configure container with development tools
+  hosts: "{{ container_name }}"
+  become: true
+  gather_facts: false
+
+  pre_tasks:
+    - name: Wait for SSH to stabilize
+      ansible.builtin.wait_for_connection:
+        timeout: 120
+        delay: 5
+
+    - name: Gather facts after connection is stable
+      ansible.builtin.setup:
+
+    - name: Wait for apt to be ready
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+          sleep 5
+        done
+      args:
+        executable: /bin/bash
+      register: apt_lock_result
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: apt_lock_result.rc | default(1) == 0
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+
+  tasks:
+    - name: Configure dev tools
+      ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Container provisioning and configuration complete!
+
+          Container Information:
+          - Name: {{ container_name }}
+          - IP Address: {{ ansible_host }}
+          - Hostname: {{ container_name }}
+
+          Installed:
+          - Docker (with docker-compose plugin)
+          - User 'remo' with sudo NOPASSWD access
+          - User 'remo' added to docker group
+          - Node.js LTS (v{{ nodejs_version }})
+          - Git
+          - fzf (fuzzy finder for TUI menu)
+          - @devcontainers/cli
+          - GitHub CLI (gh)
+          - Zellij terminal multiplexer
+
+          Connect with:
+            ssh remo@{{ ansible_host }}

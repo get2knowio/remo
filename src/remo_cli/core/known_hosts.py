@@ -191,9 +191,9 @@ def get_aws_region(name: str) -> str:
 def resolve_remo_host_by_name(name: str) -> KnownHost:
     """Find a registered host by name, matching across all types.
 
-    For *incus* entries whose name is in ``"host/container"`` form, this
-    function also matches when *name* equals the container part alone (the
-    portion after ``"/"``).
+    For *incus* and *proxmox* entries whose name is in ``"host/container"``
+    form, this function also matches when *name* equals the container part
+    alone (the portion after ``"/"``).
 
     Raises :exc:`SystemExit` with a descriptive error message when no match is
     found, listing the available environment names so the user can correct the
@@ -206,9 +206,9 @@ def resolve_remo_host_by_name(name: str) -> KnownHost:
         if host.name == name:
             return host
 
-    # Second pass: incus short-name match (container part of "host/container").
+    # Second pass: incus/proxmox short-name match (container part of "host/container").
     for host in all_hosts:
-        if host.type == "incus" and "/" in host.name:
+        if host.type in {"incus", "proxmox"} and "/" in host.name:
             _, container = host.name.split("/", maxsplit=1)
             if container == name:
                 return host

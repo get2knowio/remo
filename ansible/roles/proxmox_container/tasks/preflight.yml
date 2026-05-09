@@ -1,0 +1,48 @@
+---
+# Preflight checks for proxmox_container role
+# Verify that the Proxmox node has everything needed before attempting create.
+
+- name: Validate required variables
+  ansible.builtin.fail:
+    msg: "Required variable 'proxmox_container_name' is not defined."
+  when: proxmox_container_name | default('') | length == 0
+
+- name: Verify pct is available
+  ansible.builtin.command:
+    cmd: pct help
+  register: pct_check
+  changed_when: false
+  failed_when: pct_check.rc | default(1) != 0
+
+- name: Verify configured bridge exists
+  ansible.builtin.command:
+    cmd: ip -br link show dev {{ proxmox_container_bridge }}
+  register: bridge_check
+  changed_when: false
+  failed_when: bridge_check.rc | default(1) != 0
+
+- name: Verify configured rootfs storage exists
+  ansible.builtin.command:
+    cmd: pvesm status -storage {{ proxmox_container_storage }}
+  register: storage_check
+  changed_when: false
+  failed_when: storage_check.rc | default(1) != 0
+
+- name: Verify LXC template is present on storage
+  ansible.builtin.command:
+    cmd: pvesm list {{ proxmox_container_template.split(':')[0] }}
+  register: template_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail with guidance if template is missing
+  ansible.builtin.fail:
+    msg: |
+      LXC template '{{ proxmox_container_template }}' not found on this node.
+
+      Download it with:
+        pveam update
+        pveam download {{ proxmox_container_template.split(':')[0] }} {{ proxmox_container_template.split('/')[-1] }}
+
+      Or run: remo proxmox bootstrap --host {{ inventory_hostname }} --user {{ ansible_user | default('root') }}
+  when: proxmox_container_template not in (template_check.stdout | default(''))

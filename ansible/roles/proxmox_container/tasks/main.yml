@@ -1,0 +1,307 @@
+---
+# Main tasks for proxmox_container role
+#
+# Per CLAUDE.md Ansible Standards: every register'd result accessed below
+# uses `| default(...)` filters to remain safe when tasks are skipped.
+
+- name: Include preflight checks
+  ansible.builtin.include_tasks: preflight.yml
+
+# ---------------------------------------------------------------------------
+# Idempotency: check whether a container with this hostname already exists.
+# Each LXC has a config at /etc/pve/lxc/<vmid>.conf containing `hostname: ...`
+# ---------------------------------------------------------------------------
+- name: Find existing LXC config matching the requested hostname
+  ansible.builtin.shell: |
+    set -eo pipefail
+    grep -l '^hostname: {{ proxmox_container_name }}$' /etc/pve/lxc/*.conf 2>/dev/null | head -1 | sed 's:.*/\([0-9]\+\)\.conf:\1:' || true
+  args:
+    executable: /bin/bash
+  register: existing_vmid_lookup
+  changed_when: false
+  failed_when: false
+
+- name: Set existence facts
+  ansible.builtin.set_fact:
+    proxmox_container_existing_vmid: "{{ existing_vmid_lookup.stdout | default('') | trim }}"
+    proxmox_container_exists: "{{ (existing_vmid_lookup.stdout | default('') | trim) | length > 0 }}"
+
+# ---------------------------------------------------------------------------
+# Allocate a new VMID for create (skipped when container already exists).
+# ---------------------------------------------------------------------------
+- name: Allocate VMID via pvesh get /cluster/nextid
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/nextid
+  register: nextid_result
+  changed_when: false
+  failed_when: nextid_result.rc | default(1) != 0
+  when: not proxmox_container_exists
+
+- name: Set VMID fact (newly allocated or existing)
+  ansible.builtin.set_fact:
+    proxmox_container_vmid: >-
+      {{ proxmox_container_existing_vmid
+         if proxmox_container_exists
+         else (nextid_result.stdout | default('') | trim) }}
+
+- name: Verify VMID was determined
+  ansible.builtin.fail:
+    msg: "Could not determine a VMID for container '{{ proxmox_container_name }}'."
+  when: proxmox_container_vmid | default('') | length == 0
+
+# ---------------------------------------------------------------------------
+# Stage the SSH pubkey on the Proxmox host so `pct create --ssh-public-keys`
+# can read it. Removed in a handler at the end of the play.
+# ---------------------------------------------------------------------------
+- name: Read SSH pubkey from controller
+  ansible.builtin.set_fact:
+    proxmox_container_pubkey_content: "{{ lookup('file', proxmox_container_ssh_key_path | expanduser) }}"
+  no_log: false  # public key is not sensitive
+
+- name: Stage pubkey on Proxmox host
+  ansible.builtin.copy:
+    content: "{{ proxmox_container_pubkey_content }}\n"
+    dest: "/tmp/remo-pubkey-{{ proxmox_container_vmid }}.pub"
+    mode: "0600"
+  notify: Remove temporary SSH pubkey on host
+
+- name: Set pubkey host path fact (for handler)
+  ansible.builtin.set_fact:
+    proxmox_container_pubkey_host_path: "/tmp/remo-pubkey-{{ proxmox_container_vmid }}.pub"
+
+# ---------------------------------------------------------------------------
+# Create the container (skipped when it already exists).
+# ---------------------------------------------------------------------------
+- name: Create LXC container
+  ansible.builtin.command:
+    cmd: >-
+      pct create {{ proxmox_container_vmid }}
+      {{ proxmox_container_template }}
+      --hostname {{ proxmox_container_name }}
+      --cores {{ proxmox_container_cores }}
+      --memory {{ proxmox_container_memory }}
+      --swap {{ proxmox_container_swap }}
+      --rootfs {{ proxmox_container_storage }}:{{ proxmox_container_disk }}
+      --net0 name={{ proxmox_container_network_interface }},bridge={{ proxmox_container_bridge }},ip=dhcp
+      --features {{ proxmox_container_features }}
+      --unprivileged {{ '1' if proxmox_container_unprivileged else '0' }}
+      --onboot {{ '1' if proxmox_container_onboot else '0' }}
+      --ssh-public-keys {{ proxmox_container_pubkey_host_path }}
+      --start 0
+  register: pct_create_result
+  changed_when: pct_create_result.rc | default(1) == 0
+  failed_when: pct_create_result.rc | default(1) != 0
+  when: not proxmox_container_exists
+
+- name: Set created fact
+  ansible.builtin.set_fact:
+    proxmox_container_created: "{{ not proxmox_container_exists }}"
+
+# ---------------------------------------------------------------------------
+# Start the container (idempotent — pct start on a running CT exits 0).
+# ---------------------------------------------------------------------------
+- name: Get container status
+  ansible.builtin.command:
+    cmd: pct status {{ proxmox_container_vmid }}
+  register: pct_status_result
+  changed_when: false
+  failed_when: pct_status_result.rc | default(1) != 0
+
+- name: Start container if not running
+  ansible.builtin.command:
+    cmd: pct start {{ proxmox_container_vmid }}
+  register: pct_start_result
+  changed_when: pct_start_result.rc | default(1) == 0
+  failed_when: pct_start_result.rc | default(1) != 0
+  when: "'running' not in (pct_status_result.stdout | default(''))"
+
+# ---------------------------------------------------------------------------
+# Wait for the container's eth0 to receive a DHCP lease.
+# Extract the IP via awk (no Jinja regex; more robust across Ansible versions).
+# ---------------------------------------------------------------------------
+- name: Wait for container IPv4 on {{ proxmox_container_network_interface }}
+  ansible.builtin.shell: |
+    set -o pipefail
+    pct exec {{ proxmox_container_vmid }} -- \
+      ip -4 -o addr show dev {{ proxmox_container_network_interface }} \
+      | awk '{print $4}' | cut -d/ -f1 | head -1
+  args:
+    executable: /bin/bash
+  register: pct_ip_result
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 2
+  until: (pct_ip_result.stdout | default('') | trim) | length > 0
+
+- name: Set container IPv4 fact
+  ansible.builtin.set_fact:
+    proxmox_container_ip: "{{ pct_ip_result.stdout | default('') | trim }}"
+
+- name: Fail if no IPv4 was assigned
+  ansible.builtin.fail:
+    msg: |
+      Container '{{ proxmox_container_name }}' (VMID {{ proxmox_container_vmid }})
+      did not receive an IPv4 address on {{ proxmox_container_network_interface }}.
+
+      Troubleshoot:
+        pct exec {{ proxmox_container_vmid }} -- ip addr
+        pct exec {{ proxmox_container_vmid }} -- journalctl -u networking
+  when: proxmox_container_ip | default('') | length == 0
+
+# ---------------------------------------------------------------------------
+# Provision the container's OS (no cloud-init for Proxmox LXC):
+#  - install python3 + openssh-server + sudo
+#  - create the remo user with NOPASSWD sudo
+#  - install the SSH pubkey for remo
+#  - harden sshd
+# All via pct exec from the Proxmox host.
+# ---------------------------------------------------------------------------
+- name: Wait for apt lock to release inside container
+  ansible.builtin.command:
+    cmd: >-
+      pct exec {{ proxmox_container_vmid }} --
+      bash -c "while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do sleep 2; done"
+  register: pct_apt_lock_result
+  changed_when: false
+  failed_when: false
+  retries: 30
+  delay: 5
+  until: pct_apt_lock_result.rc | default(1) == 0
+
+- name: Update apt cache inside container
+  ansible.builtin.command:
+    cmd: pct exec {{ proxmox_container_vmid }} -- apt-get update -qq
+  register: pct_apt_update_result
+  changed_when: pct_apt_update_result.rc | default(1) == 0
+  failed_when: pct_apt_update_result.rc | default(1) != 0
+
+- name: Install base packages inside container
+  ansible.builtin.command:
+    cmd: >-
+      pct exec {{ proxmox_container_vmid }} -- env DEBIAN_FRONTEND=noninteractive
+      apt-get install -y --no-install-recommends
+      python3 openssh-server sudo ca-certificates
+  register: pct_apt_install_result
+  changed_when: pct_apt_install_result.rc | default(1) == 0
+  failed_when: pct_apt_install_result.rc | default(1) != 0
+
+- name: Create remo group inside container
+  ansible.builtin.command:
+    cmd: >-
+      pct exec {{ proxmox_container_vmid }} --
+      bash -c "getent group {{ proxmox_container_ssh_user }} >/dev/null || groupadd {{ proxmox_container_ssh_user }}"
+  register: pct_group_result
+  changed_when: false
+  failed_when: pct_group_result.rc | default(1) != 0
+
+- name: Create remo user inside container
+  ansible.builtin.command:
+    cmd: >-
+      pct exec {{ proxmox_container_vmid }} --
+      bash -c "id {{ proxmox_container_ssh_user }} >/dev/null 2>&1 || useradd -m -s /bin/bash -g {{ proxmox_container_ssh_user }} -G sudo {{ proxmox_container_ssh_user }}"
+  register: pct_user_result
+  changed_when: false
+  failed_when: pct_user_result.rc | default(1) != 0
+
+- name: Configure sudo NOPASSWD for remo
+  ansible.builtin.command:
+    cmd: >-
+      pct exec {{ proxmox_container_vmid }} --
+      bash -c "echo '{{ proxmox_container_ssh_user }} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/{{ proxmox_container_ssh_user }} && chmod 0440 /etc/sudoers.d/{{ proxmox_container_ssh_user }}"
+  register: pct_sudo_result
+  changed_when: false
+  failed_when: pct_sudo_result.rc | default(1) != 0
+
+- name: Create ~/.ssh inside container with correct ownership and mode
+  ansible.builtin.command:
+    cmd: >-
+      pct exec {{ proxmox_container_vmid }} --
+      install -d -o {{ proxmox_container_ssh_user }}
+      -g {{ proxmox_container_ssh_user }} -m 0700
+      /home/{{ proxmox_container_ssh_user }}/.ssh
+  register: pct_sshdir_result
+  changed_when: false
+  failed_when: pct_sshdir_result.rc | default(1) != 0
+
+- name: Push SSH pubkey into container via pct push
+  ansible.builtin.command:
+    cmd: >-
+      pct push {{ proxmox_container_vmid }}
+      {{ proxmox_container_pubkey_host_path }}
+      /home/{{ proxmox_container_ssh_user }}/.ssh/authorized_keys
+      --user {{ proxmox_container_ssh_user }}
+      --group {{ proxmox_container_ssh_user }}
+      --perms 0600
+  register: pct_push_result
+  changed_when: pct_push_result.rc | default(1) == 0
+  failed_when: pct_push_result.rc | default(1) != 0
+
+- name: Harden sshd config (UseDNS no, PermitRootLogin no, GSSAPI off)
+  ansible.builtin.command:
+    cmd: >-
+      pct exec {{ proxmox_container_vmid }} --
+      bash -c "mkdir -p /etc/ssh/sshd_config.d && printf 'UseDNS no\nGSSAPIAuthentication no\nPermitRootLogin no\n' > /etc/ssh/sshd_config.d/10-remo.conf"
+  register: pct_sshd_conf_result
+  changed_when: false
+  failed_when: pct_sshd_conf_result.rc | default(1) != 0
+
+- name: Enable and (re)start sshd
+  ansible.builtin.command:
+    cmd: >-
+      pct exec {{ proxmox_container_vmid }} --
+      bash -c "systemctl enable ssh >/dev/null 2>&1; systemctl restart ssh"
+  register: pct_sshd_restart_result
+  changed_when: pct_sshd_restart_result.rc | default(1) == 0
+  failed_when: pct_sshd_restart_result.rc | default(1) != 0
+
+# ---------------------------------------------------------------------------
+# Wait for SSH from the controller (workstation), not the Proxmox host.
+# ---------------------------------------------------------------------------
+- name: Wait for SSH on container IP from the controller
+  ansible.builtin.wait_for:
+    host: "{{ proxmox_container_ip }}"
+    port: 22
+    timeout: "{{ proxmox_container_wait_timeout }}"
+    state: started
+  register: ssh_wait_result
+  failed_when: false
+  delegate_to: localhost
+  become: false
+
+- name: Provide troubleshooting guidance if SSH connection timed out
+  ansible.builtin.fail:
+    msg: |
+      SSH to {{ proxmox_container_name }} ({{ proxmox_container_ip }}) timed out
+      after {{ proxmox_container_wait_timeout }}s.
+
+      Troubleshoot from the Proxmox host ({{ inventory_hostname }}):
+        pct status {{ proxmox_container_vmid }}
+        pct exec {{ proxmox_container_vmid }} -- systemctl status ssh
+        pct exec {{ proxmox_container_vmid }} -- ip addr
+  when: ssh_wait_result.failed | default(false)
+
+# ---------------------------------------------------------------------------
+# Register the container in the in-memory inventory for play 2.
+# ---------------------------------------------------------------------------
+- name: Add container to in-memory inventory
+  ansible.builtin.add_host:
+    name: "{{ proxmox_container_name }}"
+    ansible_host: "{{ proxmox_container_ip }}"
+    ansible_user: "{{ proxmox_container_ssh_user }}"
+    ansible_ssh_private_key_file: "{{ proxmox_container_ssh_private_key | expanduser }}"
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    ansible_python_interpreter: /usr/bin/python3
+    groups:
+      - proxmox_containers
+
+- name: Set output facts
+  ansible.builtin.set_fact:
+    proxmox_container_result:
+      name: "{{ proxmox_container_name }}"
+      vmid: "{{ proxmox_container_vmid }}"
+      node: "{{ proxmox_container_node }}"
+      ip: "{{ proxmox_container_ip }}"
+      created: "{{ proxmox_container_created | default(false) }}"
+      exists: "{{ proxmox_container_exists | default(false) }}"
+      ssh_user: "{{ proxmox_container_ssh_user }}"

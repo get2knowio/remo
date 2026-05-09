@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: remo project
+  description: Verify a Proxmox VE node has the prerequisites to host remo LXC containers
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - lxc
+    - virtualization
+    - bootstrap
+
+dependencies: []

@@ -1,0 +1,112 @@
+---
+# Tasks for proxmox_container_teardown role.
+#
+# Per CLAUDE.md Ansible Standards: every register'd result accessed below
+# uses `| default(...)` filters to remain safe when tasks are skipped.
+
+# ---------------------------------------------------------------------------
+# Resolve VMID from hostname (or use the explicit value if provided).
+# ---------------------------------------------------------------------------
+- name: Look up VMID by hostname (if VMID not supplied)
+  ansible.builtin.shell: |
+    set -eo pipefail
+    grep -l '^hostname: {{ proxmox_container_name }}$' /etc/pve/lxc/*.conf 2>/dev/null | head -1 | sed 's:.*/\([0-9]\+\)\.conf:\1:' || true
+  args:
+    executable: /bin/bash
+  register: vmid_lookup
+  changed_when: false
+  failed_when: false
+  when: proxmox_container_vmid_input | default('') | length == 0
+
+- name: Set VMID fact
+  ansible.builtin.set_fact:
+    proxmox_container_vmid: >-
+      {{ proxmox_container_vmid_input
+         if (proxmox_container_vmid_input | default('') | length > 0)
+         else (vmid_lookup.stdout | default('') | trim) }}
+
+- name: Set existence fact
+  ansible.builtin.set_fact:
+    proxmox_teardown_container_exists: "{{ proxmox_container_vmid | default('') | length > 0 }}"
+
+- name: Skip teardown if container does not exist
+  ansible.builtin.debug:
+    msg: "Container '{{ proxmox_container_name }}' not found. Nothing to teardown."
+  when: not proxmox_teardown_container_exists
+
+# ---------------------------------------------------------------------------
+# Confirmation
+# ---------------------------------------------------------------------------
+- name: Display teardown warning
+  ansible.builtin.debug:
+    msg: |
+      ============================================================
+      WARNING: About to destroy container '{{ proxmox_container_name }}' (VMID {{ proxmox_container_vmid }})
+      ============================================================
+      Force: {{ 'YES' if proxmox_container_force else 'NO (graceful stop first)' }}
+      Purge rootfs volume: {{ 'YES' if proxmox_container_remove_storage else 'NO' }}
+      This action cannot be undone.
+      ============================================================
+  when: proxmox_teardown_container_exists
+
+- name: Pause for confirmation
+  ansible.builtin.pause:
+    prompt: "Press Enter to continue with destruction, or Ctrl+C to abort"
+  when:
+    - proxmox_teardown_container_exists
+    - not proxmox_container_auto_confirm
+
+# ---------------------------------------------------------------------------
+# Stop the container (best effort).
+# ---------------------------------------------------------------------------
+- name: Get container status
+  ansible.builtin.command:
+    cmd: pct status {{ proxmox_container_vmid }}
+  register: pct_status_result
+  changed_when: false
+  failed_when: false
+  when: proxmox_teardown_container_exists
+
+- name: Stop container gracefully
+  ansible.builtin.command:
+    cmd: pct stop {{ proxmox_container_vmid }}
+  register: pct_stop_result
+  changed_when: pct_stop_result.rc | default(1) == 0
+  failed_when: false
+  when:
+    - proxmox_teardown_container_exists
+    - "'running' in (pct_status_result.stdout | default(''))"
+
+- name: Warn if graceful stop failed
+  ansible.builtin.debug:
+    msg: |
+      Warning: Graceful stop failed: {{ pct_stop_result.stderr | default('unknown error') }}
+      Will proceed to destroy with appropriate flags.
+  when:
+    - proxmox_teardown_container_exists
+    - "'running' in (pct_status_result.stdout | default(''))"
+    - pct_stop_result.rc | default(0) != 0
+
+# ---------------------------------------------------------------------------
+# Destroy the container.
+# ---------------------------------------------------------------------------
+- name: Destroy container
+  ansible.builtin.command:
+    cmd: >-
+      pct destroy {{ proxmox_container_vmid }}
+      {{ '--force 1' if proxmox_container_force else '' }}
+      {{ '--purge 1' if proxmox_container_remove_storage else '' }}
+  register: pct_destroy_result
+  changed_when: pct_destroy_result.rc | default(1) == 0
+  failed_when: pct_destroy_result.rc | default(1) != 0
+  when: proxmox_teardown_container_exists
+
+- name: Set teardown output facts
+  ansible.builtin.set_fact:
+    proxmox_container_destroyed: "{{ pct_destroy_result.rc | default(1) == 0 }}"
+  when: proxmox_teardown_container_exists
+
+- name: Set output facts when container did not exist
+  ansible.builtin.set_fact:
+    proxmox_container_destroyed: false
+  when: not proxmox_teardown_container_exists

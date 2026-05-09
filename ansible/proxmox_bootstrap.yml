@@ -1,0 +1,35 @@
+---
+# Proxmox Bootstrap playbook - Verify a Proxmox VE node is ready to host LXC containers
+#
+# Unlike incus_bootstrap.yml (which installs and initializes Incus itself),
+# Proxmox is a full OS and is assumed already installed. This playbook
+# verifies pct is available, ensures the configured bridge and storage
+# exist, and downloads the default Ubuntu LXC template via pveam if missing.
+#
+# Usage:
+#   ./run.sh proxmox_bootstrap.yml -i "proxmox-host," -e "ansible_user=root"
+#   ./run.sh proxmox_bootstrap.yml -i "proxmox-host," -e "proxmox_bridge=vmbr1 proxmox_storage=local-zfs"
+
+- name: Bootstrap Proxmox VE node for remo
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: proxmox_bootstrap
+
+  post_tasks:
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Proxmox bootstrap complete!
+
+          Verified:
+          - pct, pveam, pvesh, pvesm are available
+          - Bridge: {{ proxmox_bridge }}
+          - Storage: {{ proxmox_storage }}
+          - Template: {{ proxmox_template }}
+
+          Launch a container:
+            remo proxmox create dev1 --host {{ inventory_hostname }} --user {{ ansible_user | default('root') }}

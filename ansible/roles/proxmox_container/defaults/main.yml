@@ -1,0 +1,74 @@
+---
+# proxmox_container default variables
+# Provision an LXC container on a Proxmox VE node, set up the `remo` user,
+# wait for SSH, and register the container in dynamic inventory.
+
+# ============================================================================
+# CONTAINER IDENTITY
+# ============================================================================
+
+# Container hostname — REQUIRED, no default. Must be unique on this node.
+# Example: "dev1", "web-server-01"
+# proxmox_container_name: ""
+
+# LXC template stored on Proxmox storage, in <storage>:vztmpl/<filename> form.
+# Pre-downloaded by `remo proxmox bootstrap`.
+proxmox_container_template: "local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
+
+# Proxmox node name (cluster member name). Defaults to the inventory_hostname,
+# which works whenever the SSH host is the node itself.
+proxmox_container_node: "{{ inventory_hostname }}"
+
+# ============================================================================
+# RESOURCES
+# ============================================================================
+
+proxmox_container_cores: 2
+proxmox_container_memory: 2048   # MiB
+proxmox_container_swap: 512      # MiB
+proxmox_container_disk: 20       # GiB rootfs
+proxmox_container_storage: "local-lvm"
+
+# ============================================================================
+# NETWORK
+# ============================================================================
+
+proxmox_container_bridge: "vmbr0"
+proxmox_container_network_interface: "eth0"
+
+# ============================================================================
+# SECURITY
+# ============================================================================
+
+# Unprivileged containers map root inside the container to a high-numbered
+# UID on the host, matching the Incus default security posture.
+proxmox_container_unprivileged: true
+
+# `nesting=1` enables Docker-in-Docker. `keyctl=1` enables some apt operations
+# that require kernel keyring access in unprivileged containers.
+proxmox_container_features: "nesting=1,keyctl=1"
+
+# Auto-start the container on host boot.
+proxmox_container_onboot: true
+
+# ============================================================================
+# SSH USER
+# ============================================================================
+
+# Username created inside the container with sudo NOPASSWD.
+proxmox_container_ssh_user: "remo"
+
+# Path on the controller (your workstation) to the public key that will be
+# installed in the container's ~/.ssh/authorized_keys.
+proxmox_container_ssh_key_path: "~/.ssh/id_rsa.pub"
+
+# Path on the controller to the matching private key used by Ansible to
+# connect to the container in the configure play.
+proxmox_container_ssh_private_key: "~/.ssh/id_rsa"
+
+# ============================================================================
+# WAIT TIMEOUTS
+# ============================================================================
+
+# How long to wait for SSH on the container after it has an IP.
+proxmox_container_wait_timeout: 180

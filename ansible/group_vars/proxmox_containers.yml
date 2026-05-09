@@ -1,0 +1,15 @@
+---
+# Group variables for Proxmox LXC containers
+# Connection defaults for all containers in the proxmox_containers group.
+
+# Python interpreter location (Ubuntu LXC default)
+ansible_python_interpreter: /usr/bin/python3
+
+# Default SSH user for Proxmox containers (created by the proxmox_container role)
+ansible_user: remo
+
+# Default SSH private key path; can be overridden per-container in inventory.
+ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+# SSH connection settings optimized for short-lived dev containers.
+ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

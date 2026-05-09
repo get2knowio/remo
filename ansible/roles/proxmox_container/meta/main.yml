@@ -1,0 +1,18 @@
+---
+galaxy_info:
+  author: remo project
+  description: Provision LXC containers on a Proxmox VE node with SSH access for remo
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+        - trixie
+  galaxy_tags:
+    - proxmox
+    - lxc
+    - containers
+    - virtualization
+
+dependencies: []

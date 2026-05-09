@@ -1,0 +1,52 @@
+---
+# Proxmox Provision Playbook - Create an LXC container only (no dev tool install).
+# Use proxmox_site.yml for the full provision+configure flow.
+#
+# Usage:
+#   ./run.sh proxmox_provision.yml -i "prox01," -e "ansible_user=root container_name=dev1"
+
+- name: Provision Proxmox LXC container
+  hosts: "{{ target_hosts | default('localhost') }}"
+  connection: "{{ 'local' if (target_hosts | default('localhost')) == 'localhost' else 'ssh' }}"
+  remote_user: "{{ proxmox_host_user | default(omit) }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    proxmox_container_name: "{{ container_name }}"
+    proxmox_container_template: "{{ container_template | default('local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst') }}"
+    proxmox_container_node: "{{ container_node | default(inventory_hostname) }}"
+    proxmox_container_bridge: "{{ container_bridge | default('vmbr0') }}"
+    proxmox_container_storage: "{{ container_storage | default('local-lvm') }}"
+    proxmox_container_cores: "{{ container_cores | default(2) }}"
+    proxmox_container_memory: "{{ container_memory | default(2048) }}"
+    proxmox_container_disk: "{{ container_disk | default(20) }}"
+    proxmox_container_unprivileged: "{{ container_unprivileged | default(true) }}"
+    proxmox_container_ssh_user: "{{ container_ssh_user | default('remo') }}"
+    proxmox_container_ssh_key_path: "{{ container_ssh_key_path | default('~/.ssh/id_rsa.pub') }}"
+
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.fail:
+        msg: "Required variable 'container_name' is not defined. Use -e container_name=<name>"
+      when: container_name is not defined
+
+  roles:
+    - role: proxmox_container
+
+  post_tasks:
+    - name: Display container provisioning result
+      ansible.builtin.debug:
+        msg: |
+          ============================================================
+          Container '{{ proxmox_container_name }}' provisioned!
+          ============================================================
+
+          VMID:       {{ proxmox_container_vmid }}
+          Node:       {{ proxmox_container_node }}
+          IP:         {{ proxmox_container_ip | default('N/A') }}
+          SSH user:   {{ proxmox_container_ssh_user }}
+
+          Connect:
+            ssh {{ proxmox_container_ssh_user }}@{{ proxmox_container_ip | default('<ip>') }}
+          ============================================================

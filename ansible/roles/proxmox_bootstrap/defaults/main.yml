@@ -1,0 +1,22 @@
+---
+# proxmox_bootstrap default variables
+# Verify a Proxmox VE node has the prerequisites for remo container creation.
+
+# Linux bridge containers will attach to. The Proxmox installer creates vmbr0
+# by default, enslaving the primary NIC. Use a different bridge if your node
+# is configured with vmbr1 (LAN) + vmbr0 (WAN), VLAN-aware bridges, etc.
+proxmox_bridge: "vmbr0"
+
+# Storage pool for container rootfs volumes. Common choices:
+#   local-lvm  (LVM-thin; default on most installs)
+#   local-zfs  (ZFS-on-root installs)
+#   local      (directory storage)
+proxmox_storage: "local-lvm"
+
+# Storage pool for downloaded LXC templates. Almost always `local` (the
+# directory-based pool that backs /var/lib/vz).
+proxmox_template_storage: "local"
+
+# LXC template filename to ensure is downloaded.
+# Browse with: pveam available --section system | grep ubuntu
+proxmox_template: "ubuntu-24.04-standard_24.04-2_amd64.tar.zst"

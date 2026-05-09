@@ -1,0 +1,148 @@
+---
+# Tasks for proxmox_bootstrap role
+# Verify Proxmox VE prerequisites and download the default LXC template if missing.
+#
+# Per CLAUDE.md Ansible Standards: every register'd result accessed below
+# uses `| default(...)` filters to remain safe when tasks are skipped.
+
+- name: Verify pveversion is available
+  ansible.builtin.command:
+    cmd: pveversion
+  register: pveversion_result
+  changed_when: false
+  failed_when: pveversion_result.rc | default(1) != 0
+
+- name: Display Proxmox VE version
+  ansible.builtin.debug:
+    msg: "Detected: {{ pveversion_result.stdout | default('unknown') }}"
+
+- name: Verify pct is available
+  ansible.builtin.command:
+    cmd: pct help
+  register: pct_help_result
+  changed_when: false
+  failed_when: pct_help_result.rc | default(1) != 0
+
+- name: Verify pveam is available
+  ansible.builtin.command:
+    cmd: pveam help
+  register: pveam_help_result
+  changed_when: false
+  failed_when: pveam_help_result.rc | default(1) != 0
+
+- name: Verify pvesh is available
+  ansible.builtin.command:
+    cmd: pvesh help
+  register: pvesh_help_result
+  changed_when: false
+  failed_when: pvesh_help_result.rc | default(1) != 0
+
+# ---------------------------------------------------------------------------
+# Bridge verification
+# ---------------------------------------------------------------------------
+- name: Check that the configured bridge exists
+  ansible.builtin.command:
+    cmd: ip -br link show dev {{ proxmox_bridge }}
+  register: bridge_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail with guidance if bridge is missing
+  ansible.builtin.fail:
+    msg: |
+      Bridge '{{ proxmox_bridge }}' not found on this node.
+
+      Available bridges:
+      {{ available_bridges.stdout | default('(could not list)') }}
+
+      Configure a bridge in /etc/network/interfaces or via the Proxmox web UI
+      under Datacenter -> Node -> Network, then re-run bootstrap.
+      Override the default with: -e proxmox_bridge=<your-bridge>
+  vars:
+    available_bridges: "{{ list_bridges | default({}) }}"
+  when: bridge_check.rc | default(1) != 0
+
+- name: List available bridges (only when verification fails)
+  ansible.builtin.command:
+    cmd: ip -br link show type bridge
+  register: list_bridges
+  changed_when: false
+  failed_when: false
+  when: bridge_check.rc | default(1) != 0
+
+# ---------------------------------------------------------------------------
+# Storage verification
+# ---------------------------------------------------------------------------
+- name: Get list of configured storages
+  ansible.builtin.command:
+    cmd: pvesm status
+  register: pvesm_status
+  changed_when: false
+  failed_when: pvesm_status.rc | default(1) != 0
+
+- name: Fail if rootfs storage is missing
+  ansible.builtin.fail:
+    msg: |
+      Storage '{{ proxmox_storage }}' not configured on this node.
+
+      Available storages:
+      {{ pvesm_status.stdout | default('(none)') }}
+
+      Configure storage via the Proxmox web UI under Datacenter -> Storage,
+      then re-run bootstrap. Override the default with: -e proxmox_storage=<name>
+  when: proxmox_storage not in (pvesm_status.stdout | default(''))
+
+- name: Fail if template storage is missing
+  ansible.builtin.fail:
+    msg: |
+      Template storage '{{ proxmox_template_storage }}' not configured on this node.
+
+      Available storages:
+      {{ pvesm_status.stdout | default('(none)') }}
+
+      The template storage must support content type 'vztmpl'. Override with:
+        -e proxmox_template_storage=<name>
+  when: proxmox_template_storage not in (pvesm_status.stdout | default(''))
+
+# ---------------------------------------------------------------------------
+# Template management
+# ---------------------------------------------------------------------------
+- name: Refresh available template list
+  ansible.builtin.command:
+    cmd: pveam update
+  register: pveam_update_result
+  changed_when: pveam_update_result.rc | default(1) == 0
+  failed_when: false
+
+- name: List downloaded templates on the template storage
+  ansible.builtin.command:
+    cmd: pveam list {{ proxmox_template_storage }}
+  register: pveam_list_result
+  changed_when: false
+  failed_when: pveam_list_result.rc | default(1) != 0
+
+- name: Determine whether the requested template is downloaded
+  ansible.builtin.set_fact:
+    proxmox_template_present: "{{ proxmox_template in (pveam_list_result.stdout | default('')) }}"
+
+- name: Download LXC template if missing
+  ansible.builtin.command:
+    cmd: pveam download {{ proxmox_template_storage }} {{ proxmox_template }}
+  register: pveam_download_result
+  changed_when: pveam_download_result.rc | default(1) == 0
+  when: not proxmox_template_present
+
+- name: Verify template is now present
+  ansible.builtin.command:
+    cmd: pveam list {{ proxmox_template_storage }}
+  register: pveam_verify_result
+  changed_when: false
+  failed_when: >-
+    proxmox_template not in (pveam_verify_result.stdout | default(''))
+
+- name: Display ready summary
+  ansible.builtin.debug:
+    msg: |
+      Bridge:   {{ proxmox_bridge }} (verified)
+      Storage:  {{ proxmox_storage }} (verified)
+      Template: {{ proxmox_template_storage }}:vztmpl/{{ proxmox_template }} {{ '(downloaded just now)' if not proxmox_template_present else '(already present)' }}
