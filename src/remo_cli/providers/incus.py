@@ -188,6 +188,7 @@ def destroy(
     name: str,
     host: str = "",
     user: str = "",
+    remove_storage: bool = False,
     auto_confirm: bool = False,
     verbose: bool = False,
 ) -> int:
@@ -203,6 +204,11 @@ def destroy(
         if not user and looked_up_user:
             user = looked_up_user
 
+    if remove_storage:
+        print_warning(
+            "WARNING: --remove-storage will delete host mount directories — all data on bound mounts will be lost!"
+        )
+
     if not auto_confirm:
         location = f" on {host}" if host and host != "localhost" else ""
         prompt = f"Destroy Incus container '{name}'{location}? This cannot be undone."
@@ -214,6 +220,7 @@ def destroy(
 
     extra_vars: list[str] = [
         "-e", f"container_name={name}",
+        "-e", f"preserve_data={'false' if remove_storage else 'true'}",
     ]
 
     if host != "localhost":

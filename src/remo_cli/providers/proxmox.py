@@ -225,7 +225,7 @@ def destroy(
     name: str,
     host: str = "",
     user: str = "",
-    remove_storage: bool = False,
+    purge: bool = False,
     auto_confirm: bool = False,
     verbose: bool = False,
 ) -> int:
@@ -252,11 +252,6 @@ def destroy(
     if not user:
         user = "root"
 
-    if remove_storage:
-        print_warning(
-            "WARNING: --remove-storage will purge the rootfs volume — all data will be lost!"
-        )
-
     if not auto_confirm:
         prompt = f"Destroy Proxmox LXC container '{name}' on {host}? This cannot be undone."
         if not confirm(prompt):
@@ -267,7 +262,7 @@ def destroy(
 
     extra_vars: list[str] = [
         "-e", f"container_name={name}",
-        "-e", f"remove_storage={'true' if remove_storage else 'false'}",
+        "-e", f"purge={'true' if purge else 'false'}",
     ]
     if vmid:
         extra_vars.extend(["-e", f"container_vmid={vmid}"])

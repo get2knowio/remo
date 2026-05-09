@@ -10,5 +10,7 @@ proxmox_container_vmid_input: ""
 # Forcefully destroy even if running (skips graceful stop).
 proxmox_container_force: false
 
-# Pass --purge to pct destroy (removes rootfs volume from storage).
-proxmox_container_remove_storage: false
+# Pass --purge to pct destroy. This removes the container from backup,
+# replication, and HA job configurations. The rootfs is always destroyed
+# by pct destroy regardless of this flag.
+proxmox_container_purge: false

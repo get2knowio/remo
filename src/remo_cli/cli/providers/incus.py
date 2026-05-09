@@ -53,7 +53,11 @@ def create(
 @click.option("--name", default="dev1", help="Container name (default: dev1).")
 @click.option("--host", default="", help="Incus host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
-@click.option("--remove-storage", is_flag=True, help="Also remove storage volume.")
+@click.option(
+    "--remove-storage",
+    is_flag=True,
+    help="Also remove host mount directories (e.g. /home, /workspace) bound into the container.",
+)
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm prompts.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def destroy(
@@ -69,6 +73,7 @@ def destroy(
         name=name,
         host=host,
         user=user,
+        remove_storage=remove_storage,
         auto_confirm=yes,
         verbose=verbose,
     )

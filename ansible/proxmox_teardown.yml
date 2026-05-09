@@ -10,7 +10,9 @@
 # Optional variables (see roles/proxmox_container_teardown/defaults/main.yml):
 #   container_vmid: Pass directly when known (skips hostname-to-VMID lookup).
 #   force: Forcefully destroy even if running (default: false; graceful stop first).
-#   remove_storage: Purge rootfs volume from storage (default: false).
+#   purge: Pass --purge to pct destroy to also remove the container from
+#     backup/replication/HA job configs (default: false). The rootfs is
+#     always destroyed regardless of this flag.
 
 - name: Teardown Proxmox LXC container
   hosts: "{{ target_hosts | default('localhost') }}"
@@ -23,7 +25,7 @@
     proxmox_container_name: "{{ container_name }}"
     proxmox_container_vmid_input: "{{ container_vmid | default('') }}"
     proxmox_container_force: "{{ force | default(false) | bool }}"
-    proxmox_container_remove_storage: "{{ remove_storage | default(false) | bool }}"
+    proxmox_container_purge: "{{ purge | default(false) | bool }}"
 
   pre_tasks:
     - name: Validate required variables

@@ -73,7 +73,7 @@
     cmd: >-
       pct destroy {{ proxmox_container_vmid }}
       {{ '--force 1' if proxmox_container_force else '' }}
-      {{ '--purge 1' if proxmox_container_remove_storage else '' }}
+      {{ '--purge 1' if proxmox_container_purge else '' }}
   register: pct_destroy_result
   changed_when: pct_destroy_result.rc | default(1) == 0
   failed_when: pct_destroy_result.rc | default(1) != 0

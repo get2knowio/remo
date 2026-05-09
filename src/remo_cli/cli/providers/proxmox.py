@@ -78,14 +78,18 @@ def create(
 @click.option("--name", default="dev1", help="Container hostname.")
 @click.option("--host", default="", help="Proxmox host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for the Proxmox host.")
-@click.option("--remove-storage", is_flag=True, help="Also purge rootfs volume.")
+@click.option(
+    "--purge",
+    is_flag=True,
+    help="Also remove the container from backup/replication/HA job configs (pct destroy --purge). The rootfs is destroyed regardless.",
+)
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm prompts.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def destroy(
     name: str,
     host: str,
     user: str,
-    remove_storage: bool,
+    purge: bool,
     yes: bool,
     verbose: bool,
 ) -> None:
@@ -94,7 +98,7 @@ def destroy(
         name=name,
         host=host,
         user=user,
-        remove_storage=remove_storage,
+        purge=purge,
         auto_confirm=yes,
         verbose=verbose,
     )
