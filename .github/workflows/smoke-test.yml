@@ -36,9 +36,10 @@ jobs:
   # ===========================================================================
   aws:
     if: >-
-      github.event_name != 'workflow_dispatch' ||
-      github.event.inputs.provider == 'all' ||
-      github.event.inputs.provider == 'aws'
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'workflow_dispatch' ||
+       github.event.inputs.provider == 'all' ||
+       github.event.inputs.provider == 'aws')
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -87,13 +88,40 @@ jobs:
           INSTANCE_ID=$(echo "$ENTRY" | cut -d: -f5)
           REGION=$(echo "$ENTRY" | cut -d: -f7)
           REGION="${REGION:-us-west-2}"
+
+          # Wait for SSM to report the instance as connected. The provision
+          # playbook polls PingStatus during create, but the agent can flap
+          # back to "not connected" briefly afterwards, so re-confirm here
+          # before attempting SSH-via-SSM.
+          for attempt in $(seq 1 24); do
+            STATUS=$(aws ssm describe-instance-information \
+              --region "$REGION" \
+              --filters "Key=InstanceIds,Values=$INSTANCE_ID" \
+              --query 'InstanceInformationList[0].PingStatus' \
+              --output text 2>/dev/null || echo "")
+            if [ "$STATUS" = "Online" ]; then
+              echo "SSM PingStatus: Online (after ${attempt} polls)"
+              break
+            fi
+            echo "SSM PingStatus: ${STATUS:-unknown} (attempt $attempt/24)"
+            sleep 5
+          done
+
           echo "Testing SSH via SSM to $USER@$INSTANCE_ID..."
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -o ConnectTimeout=60 \
-              -o "ProxyCommand=aws ssm start-session --region ${REGION} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
-              -i ~/.ssh/id_rsa \
-              "$USER@$INSTANCE_ID" echo "connection-ok" | grep -q "connection-ok"
-          echo "SSM connectivity: PASS"
+          for attempt in $(seq 1 5); do
+            if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=60 \
+                -o "ProxyCommand=aws ssm start-session --region ${REGION} --target %h --document-name AWS-StartSSHSession --parameters 'portNumber=%p'" \
+                -i ~/.ssh/id_rsa \
+                "$USER@$INSTANCE_ID" echo "connection-ok" | grep -q "connection-ok"; then
+              echo "SSM connectivity: PASS (attempt $attempt)"
+              exit 0
+            fi
+            echo "Attempt $attempt failed; sleeping 15s before retry..."
+            sleep 15
+          done
+          echo "SSM connectivity: FAIL after 5 attempts"
+          exit 1
 
       - name: Teardown
         if: always()
@@ -105,9 +133,10 @@ jobs:
   # ===========================================================================
   hetzner:
     if: >-
-      github.event_name != 'workflow_dispatch' ||
-      github.event.inputs.provider == 'all' ||
-      github.event.inputs.provider == 'hetzner'
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'workflow_dispatch' ||
+       github.event.inputs.provider == 'all' ||
+       github.event.inputs.provider == 'hetzner')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -170,9 +199,10 @@ jobs:
   # ===========================================================================
   incus:
     if: >-
-      github.event_name != 'workflow_dispatch' ||
-      github.event.inputs.provider == 'all' ||
-      github.event.inputs.provider == 'incus'
+      github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'workflow_dispatch' ||
+       github.event.inputs.provider == 'all' ||
+       github.event.inputs.provider == 'incus')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
