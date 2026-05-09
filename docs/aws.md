@@ -71,7 +71,7 @@ remo aws update --skip docker --skip nodejs
 # Grow the persistent EBS volume (and the filesystem) in place
 remo aws update --volume-size 100
 
-# Show instance information
+# Show instance information (type, cores, memory, EBS volume size)
 remo aws info
 
 # Stop instance (pause billing, keep storage)

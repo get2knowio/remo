@@ -398,6 +398,89 @@ def list_hosts() -> None:
         print("Create one with: remo incus create <name>")
 
 
+def info(name: str, host: str = "", user: str = "") -> int:
+    """Print detailed information about an Incus container.
+
+    Runs ``incus list <name> --format=json`` (locally or via SSH on the
+    Incus host) and reports state, IP, CPU limit, memory limit, and root
+    disk size. Returns 0 on success or 1 if the container could not be
+    located.
+    """
+    import json
+
+    validate_name(name, "container name")
+
+    if not host:
+        host, looked_up_user = _lookup_incus_host(name)
+        if not user and looked_up_user:
+            user = looked_up_user
+
+    if not host:
+        host = "localhost"
+
+    incus_cmd = f"incus list '{name}' --format=json"
+    if host == "localhost":
+        result = subprocess.run(
+            ["incus", "list", name, "--format=json"],
+            capture_output=True,
+            text=True,
+        )
+    else:
+        ssh_target = f"{user}@{host}" if user else host
+        result = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=10", ssh_target, incus_cmd],
+            capture_output=True,
+            text=True,
+        )
+
+    if result.returncode != 0:
+        print_error(
+            f"Failed to query container '{name}' on '{host}': {result.stderr.strip()}"
+        )
+        return 1
+
+    try:
+        containers = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        print_error(f"Could not parse incus output for '{name}'.")
+        return 1
+
+    if not containers:
+        print_error(f"Container '{name}' was not found on Incus host '{host}'.")
+        return 1
+
+    container = containers[0]
+    state = container.get("status", "unknown")
+    expanded_config = container.get("expanded_config") or {}
+    expanded_devices = container.get("expanded_devices") or {}
+
+    cpu_limit = expanded_config.get("limits.cpu", "")
+    memory_limit = expanded_config.get("limits.memory", "")
+    root_device = expanded_devices.get("root") or {}
+    root_size = root_device.get("size", "")
+    root_pool = root_device.get("pool", "")
+
+    container_ip = ""
+    network = (container.get("state") or {}).get("network") or {}
+    eth0 = network.get("eth0") or {}
+    for addr in eth0.get("addresses", []):
+        if addr.get("family") == "inet":
+            container_ip = addr.get("address", "")
+            break
+
+    print("")
+    print(f"  Name:       {name}")
+    print(f"  Incus host: {host}")
+    print(f"  State:      {state}")
+    print(f"  IP:         {container_ip or '(unavailable)'}")
+    print(f"  Cores:      {cpu_limit or '(profile default)'}")
+    print(f"  Memory:     {memory_limit or '(profile default)'}")
+    print(f"  Root size:  {root_size or '(profile default)'}{f' ({root_pool})' if root_pool else ''}")
+    print("")
+
+    return 0
+
+
 def sync(host: str = "localhost", user: str = "") -> None:
     """Discover Incus containers on *host* and register them in known-hosts.
 

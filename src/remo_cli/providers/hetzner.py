@@ -275,6 +275,76 @@ def list_hosts() -> None:
         print("Create one with: remo hetzner create")
 
 
+def info(name: str = "") -> int:
+    """Print detailed information about a Hetzner Cloud server.
+
+    Queries the Hetzner API for the server (type, status, IP) and its
+    paired ``<name>-home`` volume (size). Requires ``HETZNER_API_TOKEN``.
+    Returns 0 on success or 1 on failure.
+    """
+    token = os.environ.get("HETZNER_API_TOKEN", "")
+    if not token:
+        print_error("HETZNER_API_TOKEN is not set.")
+        return 1
+
+    server_name = name or "remote-coding-server"
+
+    server_url = f"https://api.hetzner.cloud/v1/servers?name={server_name}"
+    server_req = urllib.request.Request(
+        server_url,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(server_req, timeout=15) as resp:
+            server_data = json.loads(resp.read().decode())
+    except urllib.error.URLError as e:
+        print_error(f"Hetzner API request failed: {e}")
+        return 1
+
+    servers = server_data.get("servers", [])
+    if not servers:
+        print_error(f"No Hetzner server found with name '{server_name}'.")
+        return 1
+
+    server = servers[0]
+    server_type = server.get("server_type") or {}
+    public_net = server.get("public_net") or {}
+    ipv4 = (public_net.get("ipv4") or {}).get("ip", "")
+    location = (server.get("datacenter") or {}).get("location", {}).get("name", "")
+
+    volume_name = f"{server_name}-home"
+    volume_url = f"https://api.hetzner.cloud/v1/volumes?name={volume_name}"
+    volume_req = urllib.request.Request(
+        volume_url,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    volume_size = ""
+    try:
+        with urllib.request.urlopen(volume_req, timeout=15) as resp:
+            volume_data = json.loads(resp.read().decode())
+        volumes = volume_data.get("volumes", [])
+        if volumes:
+            volume_size = f"{volumes[0].get('size', '?')} GB"
+    except urllib.error.URLError:
+        # Volume lookup is best-effort; don't fail the whole info call.
+        pass
+
+    print("")
+    print(f"  Name:          {server.get('name', server_name)}")
+    print(f"  Server ID:     {server.get('id', '?')}")
+    print(f"  State:         {server.get('status', 'unknown')}")
+    print(f"  Type:          {server_type.get('name', '?')}")
+    print(f"  Location:      {location or '?'}")
+    print(f"  Public IPv4:   {ipv4 or '(unavailable)'}")
+    print(f"  Cores:         {server_type.get('cores', '?')}")
+    print(f"  Memory:        {server_type.get('memory', '?')} GB")
+    print(f"  Server disk:   {server_type.get('disk', '?')} GB (ephemeral; tied to instance)")
+    print(f"  Volume:        {volume_size or '(none attached)'} ({volume_name})")
+    print("")
+
+    return 0
+
+
 def sync() -> None:
     """Discover Hetzner VMs with the ``remo`` label and update the registry.
 

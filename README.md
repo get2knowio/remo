@@ -148,6 +148,7 @@ remo init                           # Install Ansible collections
 # Hetzner Cloud
 remo hetzner create                 # Provision VM
 remo hetzner list                   # List registered VMs
+remo hetzner info [--name N]        # Show type, cores, memory, volume size
 remo hetzner sync                   # Discover existing VMs
 remo hetzner update                 # Update dev tools
 remo hetzner update --volume-size 100   # Grow persistent volume + FS
@@ -164,11 +165,12 @@ remo aws stop [--yes]               # Stop instance (pause billing)
 remo aws start                      # Start a stopped instance
 remo aws reboot                     # Reboot instance
 remo aws destroy [--yes]            # Tear down (keeps storage)
-remo aws info                       # Show instance info
+remo aws info [--name N]            # Show type, cores, memory, EBS size
 
 # Incus Containers
 remo incus create --name <n> [--host H]  # Create container
 remo incus list                     # List registered containers
+remo incus info --name <n>          # Show cores, memory, root size
 remo incus sync [--host H]          # Discover existing containers
 remo incus update --name <n>        # Update dev tools
 remo incus update --name <n> --volume-size 40 --cores 4 --memory 4096
@@ -178,6 +180,7 @@ remo incus bootstrap                # Initialize Incus on host
 # Proxmox VE LXC Containers
 remo proxmox create --name <n> --host <node>  # Create LXC container
 remo proxmox list                   # List registered containers
+remo proxmox info --name <n>        # Show cores, memory, rootfs size
 remo proxmox sync --host <node>     # Discover existing containers
 remo proxmox update --name <n>      # Update dev tools
 remo proxmox update --name <n> --volume-size 40 --cores 4 --memory 4096

@@ -65,6 +65,9 @@ remo incus destroy dev1 --host myserver --user paul --yes --remove-storage
 
 # Bootstrap Incus on a host
 remo incus bootstrap --host myserver --user paul
+
+# Inspect resources on an existing container
+remo incus info --name dev1
 ```
 
 ### Create Options

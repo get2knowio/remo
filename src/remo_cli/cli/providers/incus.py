@@ -160,6 +160,16 @@ def list_cmd() -> None:
 
 
 @incus.command()
+@click.option("--name", default="dev1", help="Container name (default: dev1).")
+@click.option("--host", default="", help="Incus host (default: auto-detect).")
+@click.option("--user", default="", help="SSH user for remote Incus host.")
+def info(name: str, host: str, user: str) -> None:
+    """Show resource details (cores, memory, root size) for an Incus container."""
+    rc = providers_incus.info(name=name, host=host, user=user)
+    sys.exit(rc)
+
+
+@incus.command()
 @click.option("--host", default="localhost", help="Incus host (default: localhost).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
 def sync(host: str, user: str) -> None:

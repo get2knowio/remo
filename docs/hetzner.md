@@ -57,6 +57,9 @@ remo hetzner update --skip docker --skip nodejs
 # Grow the persistent volume (and the filesystem) in place
 remo hetzner update --volume-size 100
 
+# Inspect resources on an existing server (type, cores, memory, volume size)
+remo hetzner info
+
 # Destroy server (keeps persistent volume)
 remo hetzner destroy --yes
 

@@ -166,6 +166,16 @@ def list_cmd() -> None:
 
 
 @proxmox.command()
+@click.option("--name", default="dev1", help="Container hostname.")
+@click.option("--host", default="", help="Proxmox host (default: auto-detect).")
+@click.option("--user", default="", help="SSH user for the Proxmox host.")
+def info(name: str, host: str, user: str) -> None:
+    """Show resource details (cores, memory, rootfs) for a Proxmox container."""
+    rc = providers_proxmox.info(name=name, host=host, user=user)
+    sys.exit(rc)
+
+
+@proxmox.command()
 @click.option("--host", required=True, help="Proxmox host to scan.")
 @click.option("--user", default="", help="SSH user for the Proxmox host.")
 def sync(host: str, user: str) -> None:
