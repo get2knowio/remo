@@ -127,6 +127,18 @@ jobs:
           echo "SSM connectivity: FAIL after 18 attempts (~6 minutes)"
           exit 1
 
+      - name: Test info command
+        run: |
+          OUT=$(uv run remo aws info --name "$INSTANCE_NAME")
+          echo "$OUT"
+          echo "$OUT" | grep -q "Instance ID:" || { echo "FAIL: missing Instance ID"; exit 1; }
+          echo "$OUT" | grep -q "State:"       || { echo "FAIL: missing State"; exit 1; }
+          echo "$OUT" | grep -q "Type:"        || { echo "FAIL: missing Type"; exit 1; }
+          echo "$OUT" | grep -q "Cores:"       || { echo "FAIL: missing Cores"; exit 1; }
+          echo "$OUT" | grep -q "Memory:"      || { echo "FAIL: missing Memory"; exit 1; }
+          echo "$OUT" | grep -q "EBS volume:"  || { echo "FAIL: missing EBS volume"; exit 1; }
+          echo "aws info: PASS"
+
       - name: Teardown
         if: always()
         run: |
@@ -192,6 +204,18 @@ jobs:
               -i ~/.ssh/id_rsa \
               "remo@$HOST" echo "connection-ok" | grep -q "connection-ok"
           echo "SSH connectivity: PASS"
+
+      - name: Test info command
+        run: |
+          OUT=$(uv run remo hetzner info --name "$INSTANCE_NAME")
+          echo "$OUT"
+          echo "$OUT" | grep -q "Server ID:"   || { echo "FAIL: missing Server ID"; exit 1; }
+          echo "$OUT" | grep -q "State:"       || { echo "FAIL: missing State"; exit 1; }
+          echo "$OUT" | grep -q "Type:"        || { echo "FAIL: missing Type"; exit 1; }
+          echo "$OUT" | grep -q "Cores:"       || { echo "FAIL: missing Cores"; exit 1; }
+          echo "$OUT" | grep -q "Memory:"      || { echo "FAIL: missing Memory"; exit 1; }
+          echo "$OUT" | grep -q "Volume:"      || { echo "FAIL: missing Volume"; exit 1; }
+          echo "hetzner info: PASS"
 
       - name: Teardown
         if: always()
@@ -268,6 +292,17 @@ jobs:
               -i ~/.ssh/id_rsa \
               "remo@$HOST" echo "connection-ok" | grep -q "connection-ok"
           echo "Incus connectivity: PASS"
+
+      - name: Test info command
+        run: |
+          OUT=$(sg incus-admin -c "uv run remo incus info --name $CONTAINER_NAME")
+          echo "$OUT"
+          echo "$OUT" | grep -q "State:"     || { echo "FAIL: missing State"; exit 1; }
+          echo "$OUT" | grep -q "IP:"        || { echo "FAIL: missing IP"; exit 1; }
+          echo "$OUT" | grep -q "Cores:"     || { echo "FAIL: missing Cores"; exit 1; }
+          echo "$OUT" | grep -q "Memory:"    || { echo "FAIL: missing Memory"; exit 1; }
+          echo "$OUT" | grep -q "Root size:" || { echo "FAIL: missing Root size"; exit 1; }
+          echo "incus info: PASS"
 
       - name: Verify dev tools
         run: |
