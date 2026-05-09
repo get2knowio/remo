@@ -46,7 +46,7 @@
 
 # Play 2: Configure the container with dev tools
 - name: Configure container with development tools
-  hosts: "{{ container_name }}"
+  hosts: "{{ container_name | default('localhost') }}"
   become: true
   gather_facts: false
 
