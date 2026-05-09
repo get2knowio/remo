@@ -13,7 +13,6 @@
     ansible_python_interpreter: "{{ ansible_playbook_python }}"
     # By default, keep storage to preserve data
     remove_storage: false
-    auto_confirm: false
 
     # Resource naming
     aws_resource_name: "{{ lookup('env', 'USER') | default('remo', true) }}"
@@ -38,34 +37,6 @@
     }}
 
   tasks:
-
-    - name: Display teardown warning
-      ansible.builtin.debug:
-        msg: |
-          WARNING: This will destroy the following resources:
-          - EC2 Instance: {{ aws_instance_name }}
-          - Elastic IP: {{ aws_instance_name }}-eip
-          - Security Group: {{ aws_security_group_name }}
-          - Key Pair: {{ aws_key_name }}
-          - IAM Role/Profile: remo-{{ aws_resource_name }}-ssm-role/profile (if remo-created)
-          {% if remove_storage | bool %}
-          - EBS Volume: {{ aws_ebs_name }} (ALL DATA WILL BE LOST!)
-          {% else %}
-          - Storage (EBS, if present) will be PRESERVED
-          {% endif %}
-
-    - name: Confirm teardown
-      ansible.builtin.pause:
-        prompt: "Are you sure you want to proceed? (yes/no)"
-      register: confirm_teardown
-      when: not (auto_confirm | default(false) | bool)
-
-    - name: Abort if not confirmed
-      ansible.builtin.fail:
-        msg: "Teardown aborted by user"
-      when:
-        - not (auto_confirm | default(false) | bool)
-        - confirm_teardown.user_input | default('') | lower != 'yes'
 
     # Get instance info first
     - name: Get EC2 instance info

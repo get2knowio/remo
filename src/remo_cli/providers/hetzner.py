@@ -20,7 +20,7 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     save_known_host,
 )
-from remo_cli.core.output import print_error, print_info, print_success, print_warning
+from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, validate_name
 from remo_cli.core.version import get_current_version
@@ -176,6 +176,12 @@ def destroy(
             "WARNING: --remove-volume will destroy all data on the persistent volume!"
         )
 
+    if not auto_confirm:
+        prompt = f"Destroy Hetzner Cloud server '{server_name}'? This cannot be undone."
+        if not confirm(prompt):
+            print_info("Aborted.")
+            return 0
+
     print_info(f"Destroying Hetzner VM '{server_name}'...")
 
     extra_vars: list[str] = []
@@ -183,7 +189,6 @@ def destroy(
     if name:
         extra_vars.extend(["-e", f"hetzner_server_name={name}"])
 
-    extra_vars.extend(["-e", f"auto_confirm={'true' if auto_confirm else 'false'}"])
     extra_vars.extend(["-e", f"remove_volume={'true' if remove_volume else 'false'}"])
 
     rc = run_playbook("hetzner_teardown.yml", extra_vars, verbose=verbose)

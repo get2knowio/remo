@@ -24,7 +24,7 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     save_known_host,
 )
-from remo_cli.core.output import print_error, print_info, print_warning
+from remo_cli.core.output import confirm, print_error, print_info, print_warning
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, validate_name
 from remo_cli.core.version import get_current_version
@@ -252,11 +252,21 @@ def destroy(
     if not user:
         user = "root"
 
+    if remove_storage:
+        print_warning(
+            "WARNING: --remove-storage will purge the rootfs volume — all data will be lost!"
+        )
+
+    if not auto_confirm:
+        prompt = f"Destroy Proxmox LXC container '{name}' on {host}? This cannot be undone."
+        if not confirm(prompt):
+            print_info("Aborted.")
+            return 0
+
     print_info(f"Destroying Proxmox LXC container '{name}' on {host}...")
 
     extra_vars: list[str] = [
         "-e", f"container_name={name}",
-        "-e", f"auto_confirm={'true' if auto_confirm else 'false'}",
         "-e", f"remove_storage={'true' if remove_storage else 'false'}",
     ]
     if vmid:

@@ -20,29 +20,6 @@
     msg: "Container '{{ incus_container_name }}' does not exist. Nothing to teardown."
   when: not incus_teardown_container_exists
 
-# T029: Display teardown warning
-- name: Display teardown warning
-  ansible.builtin.debug:
-    msg: |
-      ============================================================
-      WARNING: About to destroy container '{{ incus_container_name }}'
-      ============================================================
-
-      Data preservation: {{ 'ENABLED - mount directories will be kept' if incus_container_preserve_data else 'DISABLED - all data will be deleted' }}
-      Force delete: {{ 'YES' if incus_container_force else 'NO - will stop gracefully first' }}
-
-      This action cannot be undone!
-      ============================================================
-  when: incus_teardown_container_exists
-
-# T030: User confirmation pause (skip if incus_container_auto_confirm)
-- name: Pause for confirmation
-  ansible.builtin.pause:
-    prompt: "Press Enter to continue with container destruction, or Ctrl+C to abort"
-  when:
-    - incus_teardown_container_exists
-    - not (incus_container_auto_confirm | default(false) | bool)
-
 # Get mount directories BEFORE stopping/deleting container
 - name: Get mount devices from container config
   ansible.builtin.command:

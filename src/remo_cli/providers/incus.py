@@ -18,7 +18,7 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     save_known_host,
 )
-from remo_cli.core.output import print_error, print_info, print_warning
+from remo_cli.core.output import confirm, print_error, print_info, print_warning
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, validate_name
 from remo_cli.core.version import get_current_version
@@ -203,11 +203,17 @@ def destroy(
         if not user and looked_up_user:
             user = looked_up_user
 
+    if not auto_confirm:
+        location = f" on {host}" if host and host != "localhost" else ""
+        prompt = f"Destroy Incus container '{name}'{location}? This cannot be undone."
+        if not confirm(prompt):
+            print_info("Aborted.")
+            return 0
+
     print_info(f"Destroying Incus container '{name}'...")
 
     extra_vars: list[str] = [
         "-e", f"container_name={name}",
-        "-e", f"auto_confirm={'true' if auto_confirm else 'false'}",
     ]
 
     if host != "localhost":

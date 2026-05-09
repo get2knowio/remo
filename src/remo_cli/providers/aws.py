@@ -509,16 +509,24 @@ def destroy(
             "WARNING: --remove-storage will destroy all data on the storage volume!"
         )
 
-    print_info("Destroying AWS EC2 instance...")
-
     resource_name = name or os.environ.get("USER", "remo")
     region = get_aws_region(resource_name)
+
+    if not auto_confirm:
+        prompt = (
+            f"Destroy AWS EC2 instance for 'remo-{resource_name}' in {region}? "
+            "This cannot be undone."
+        )
+        if not confirm(prompt):
+            print_info("Aborted.")
+            return 0
+
+    print_info("Destroying AWS EC2 instance...")
 
     extra_vars: list[str] = []
 
     if name:
         extra_vars.extend(["-e", f"aws_resource_name={name}"])
-    extra_vars.extend(["-e", f"auto_confirm={'true' if auto_confirm else 'false'}"])
     extra_vars.extend(
         ["-e", f"remove_storage={'true' if remove_storage else 'false'}"]
     )

@@ -9,7 +9,6 @@
 # Optional variables (see roles/incus_container_teardown/defaults/main.yml):
 #   preserve_data: Keep mount directories (default: true)
 #   force: Force delete even if running (default: false)
-#   auto_confirm: Skip confirmation prompt (default: false)
 #
 # Remote host support:
 #   Use -i "hostname," to target a remote Incus host (note the trailing comma)
@@ -26,7 +25,6 @@
     incus_container_name: "{{ container_name }}"
     incus_container_preserve_data: "{{ preserve_data | default(true) | bool }}"
     incus_container_force: "{{ force | default(false) | bool }}"
-    incus_container_auto_confirm: "{{ auto_confirm | default(false) | bool }}"
 
   pre_tasks:
     - name: Validate required variables

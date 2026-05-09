@@ -22,31 +22,6 @@
           Set the HETZNER_API_TOKEN environment variable or pass -e hetzner_api_token=<token>
       when: hetzner_api_token | default('') | length == 0
 
-    - name: Display teardown warning
-      ansible.builtin.debug:
-        msg: |
-          WARNING: This will destroy the following resources:
-          - Server: {{ hetzner_server_name }}
-          - Firewall: {{ hetzner_server_name }}-firewall
-          {% if remove_volume | bool %}
-          - Volume: {{ hetzner_volume_name }} (ALL DATA WILL BE LOST!)
-          {% else %}
-          - Volume: {{ hetzner_volume_name }} (will be PRESERVED)
-          {% endif %}
-
-    - name: Confirm teardown
-      ansible.builtin.pause:
-        prompt: "Are you sure you want to proceed? (yes/no)"
-      register: confirm_teardown
-      when: not (auto_confirm | default(false) | bool)
-
-    - name: Abort if not confirmed
-      ansible.builtin.fail:
-        msg: "Teardown aborted by user"
-      when:
-        - not (auto_confirm | default(false) | bool)
-        - confirm_teardown.user_input | lower != 'yes'
-
     - name: Delete Hetzner Cloud server
       hetzner.hcloud.server:
         api_token: "{{ hetzner_api_token }}"

@@ -29,13 +29,3 @@ incus_container_preserve_data: true
 # Use with caution - force delete does not allow the container to shut down
 # cleanly.
 incus_container_force: false
-
-# -----------------------------------------------------------------------------
-# Confirmation
-# -----------------------------------------------------------------------------
-
-# When true, skip the confirmation prompt before destroying the container.
-# This is useful for automated pipelines or when the caller has already
-# confirmed the destructive action.
-# When false (default), the role will pause and require confirmation.
-incus_container_auto_confirm: false

@@ -35,28 +35,6 @@
   when: not proxmox_teardown_container_exists
 
 # ---------------------------------------------------------------------------
-# Confirmation
-# ---------------------------------------------------------------------------
-- name: Display teardown warning
-  ansible.builtin.debug:
-    msg: |
-      ============================================================
-      WARNING: About to destroy container '{{ proxmox_container_name }}' (VMID {{ proxmox_container_vmid }})
-      ============================================================
-      Force: {{ 'YES' if proxmox_container_force else 'NO (graceful stop first)' }}
-      Purge rootfs volume: {{ 'YES' if proxmox_container_remove_storage else 'NO' }}
-      This action cannot be undone.
-      ============================================================
-  when: proxmox_teardown_container_exists
-
-- name: Pause for confirmation
-  ansible.builtin.pause:
-    prompt: "Press Enter to continue with destruction, or Ctrl+C to abort"
-  when:
-    - proxmox_teardown_container_exists
-    - not proxmox_container_auto_confirm
-
-# ---------------------------------------------------------------------------
 # Stop the container (best effort).
 # ---------------------------------------------------------------------------
 - name: Get container status
