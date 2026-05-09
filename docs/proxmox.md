@@ -33,7 +33,7 @@ remo proxmox create --name dev1 --host prox01 --user root
 
 # Override resources
 remo proxmox create --name dev2 --host prox01 --user root \
-  --cores 4 --memory 4096 --disk 40
+  --cores 4 --memory 4096 --volume-size 40
 
 # Use a different storage / bridge
 remo proxmox create --name dev3 --host prox01 --user root \
@@ -55,14 +55,20 @@ remo proxmox update --name dev1 --only zellij --only fzf
 # Skip specific tools during update
 remo proxmox update --name dev1 --skip docker --skip nodejs
 
+# Resize the rootfs (grow only) on an existing container
+remo proxmox update --name dev1 --volume-size 40
+
+# Live-tune CPU and/or memory limits (cgroup v2)
+remo proxmox update --name dev1 --cores 4 --memory 4096
+
 # Sync remo's registry with the node (rebuild known_hosts entries)
 remo proxmox sync --host prox01 --user root
 
-# Destroy a container
+# Destroy a container (rootfs is removed regardless)
 remo proxmox destroy --name dev1 --yes
 
-# Destroy and purge the rootfs volume from storage
-remo proxmox destroy --name dev1 --yes --remove-storage
+# Destroy and also clean up backup/replication/HA job configs (pct destroy --purge)
+remo proxmox destroy --name dev1 --yes --purge
 
 # Bootstrap (verify) a Proxmox node
 remo proxmox bootstrap --host prox01 --user root
@@ -80,7 +86,7 @@ remo proxmox bootstrap --host prox01 --user root
 | `--template <ref>` | `local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst` | LXC template to use |
 | `--cores <n>` | `2` | CPU cores |
 | `--memory <MiB>` | `2048` | RAM |
-| `--disk <GiB>` | `20` | Rootfs size |
+| `--volume-size <GiB>` | `20` | Rootfs size. When the container exists, grows the rootfs via `pct resize`. |
 | `--unprivileged/--privileged` | `--unprivileged` | Container privilege mode |
 | `--domain <domain>` | (none) | FQDN suffix for the container |
 
@@ -90,6 +96,9 @@ remo proxmox bootstrap --host prox01 --user root
 |--------|-------------|
 | `--only <tool>` | Only update the specified tool (can repeat) |
 | `--skip <tool>` | Skip the specified tool (can repeat) |
+| `--volume-size <GiB>` | Grow the rootfs via `pct resize` (grow only) |
+| `--cores <n>` | Set CPU core count via `pct set` (live; cgroup v2) |
+| `--memory <MiB>` | Set memory limit via `pct set` (live) |
 | `--host <host>` | Proxmox host (auto-detected from registry if omitted) |
 | `--user <user>` | SSH user for the Proxmox host |
 
@@ -100,7 +109,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | Option | Description |
 |--------|-------------|
 | `--yes`, `-y` | Skip confirmation prompt |
-| `--remove-storage` | Pass `--purge` to `pct destroy` (also removes rootfs volume) |
+| `--purge` | Pass `--purge` to `pct destroy`: also remove the container from backup/replication/HA job configs. The rootfs is destroyed regardless of this flag. |
 | `--host <host>` | Proxmox host |
 | `--user <user>` | SSH user for the Proxmox host |
 

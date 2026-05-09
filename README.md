@@ -150,6 +150,7 @@ remo hetzner create                 # Provision VM
 remo hetzner list                   # List registered VMs
 remo hetzner sync                   # Discover existing VMs
 remo hetzner update                 # Update dev tools
+remo hetzner update --volume-size 100   # Grow persistent volume + FS
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
 # AWS (SSM access — no inbound ports)
@@ -158,6 +159,7 @@ remo aws create --spot              # Use spot instance (~70% savings)
 remo aws list                       # List registered instances
 remo aws sync                       # Discover existing instances
 remo aws update                     # Update dev tools
+remo aws update --volume-size 100   # Grow EBS volume + FS in place
 remo aws stop [--yes]               # Stop instance (pause billing)
 remo aws start                      # Start a stopped instance
 remo aws reboot                     # Reboot instance
@@ -169,6 +171,7 @@ remo incus create --name <n> [--host H]  # Create container
 remo incus list                     # List registered containers
 remo incus sync [--host H]          # Discover existing containers
 remo incus update --name <n>        # Update dev tools
+remo incus update --name <n> --volume-size 40 --cores 4 --memory 4096
 remo incus destroy --name <n> [--yes]    # Destroy container
 remo incus bootstrap                # Initialize Incus on host
 
@@ -177,7 +180,8 @@ remo proxmox create --name <n> --host <node>  # Create LXC container
 remo proxmox list                   # List registered containers
 remo proxmox sync --host <node>     # Discover existing containers
 remo proxmox update --name <n>      # Update dev tools
-remo proxmox destroy --name <n> [--yes] [--remove-storage]  # Destroy container
+remo proxmox update --name <n> --volume-size 40 --cores 4 --memory 4096
+remo proxmox destroy --name <n> [--yes] [--purge]   # Destroy container
 remo proxmox bootstrap --host <node>  # Verify node + download LXC template
 
 # Updates

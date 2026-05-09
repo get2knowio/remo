@@ -68,6 +68,9 @@ remo aws update --only zellij --only fzf
 # Update but skip specific tools
 remo aws update --skip docker --skip nodejs
 
+# Grow the persistent EBS volume (and the filesystem) in place
+remo aws update --volume-size 100
+
 # Show instance information
 remo aws info
 
@@ -100,6 +103,7 @@ remo aws destroy --yes --remove-storage
 |--------|-------------|
 | `--only <tool>` | Only update specified tool (can repeat) |
 | `--skip <tool>` | Skip specified tool (can repeat) |
+| `--volume-size <GB>` | Grow the persistent EBS volume to this size and grow the ext4 filesystem in place via SSH-over-SSM. AWS only supports growing. |
 | `--name <name>` | Resource namespace (default: `$USER`) |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`

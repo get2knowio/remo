@@ -36,6 +36,9 @@ remo incus create dev1
 # Create with domain for FQDN
 remo incus create dev1 --domain int.example.com
 
+# Override resources at create time
+remo incus create dev1 --cores 4 --memory 4096 --volume-size 40
+
 # List registered containers
 remo incus list
 
@@ -48,8 +51,17 @@ remo incus update dev1 --only zellij --only fzf
 # Skip specific tools during update
 remo incus update dev1 --skip docker --skip nodejs
 
+# Resize the root disk on an existing container
+remo incus update dev1 --volume-size 40
+
+# Live-tune CPU and/or memory limits (cgroup v2)
+remo incus update dev1 --cores 4 --memory 4096
+
 # Destroy container
 remo incus destroy dev1 --host myserver --user paul --yes
+
+# Destroy and also remove host mount directories
+remo incus destroy dev1 --host myserver --user paul --yes --remove-storage
 
 # Bootstrap Incus on a host
 remo incus bootstrap --host myserver --user paul
@@ -63,6 +75,9 @@ remo incus bootstrap --host myserver --user paul
 | `--user <user>` | (current user) | SSH user for the Incus host |
 | `--domain <domain>` | (none) | Domain for FQDN (e.g., `int.example.com`) |
 | `--image <image>` | `images:ubuntu/24.04/cloud` | Cloud image to use |
+| `--volume-size <GiB>` | (profile default) | Override the root disk size via `incus config device override root size=...` |
+| `--cores <n>` | (profile default) | Set CPU core limit (`limits.cpu`) |
+| `--memory <MiB>` | (profile default) | Set memory limit (`limits.memory`) |
 
 ### Update Options
 
@@ -70,6 +85,9 @@ remo incus bootstrap --host myserver --user paul
 |--------|-------------|
 | `--only <tool>` | Only update specified tool (can repeat) |
 | `--skip <tool>` | Skip specified tool (can repeat) |
+| `--volume-size <GiB>` | Resize the root disk (grow only). May require a container restart depending on the storage backend. |
+| `--cores <n>` | Set CPU core limit (`limits.cpu`); live on cgroup v2 |
+| `--memory <MiB>` | Set memory limit (`limits.memory`); live on cgroup v2 |
 | `--host <host>` | Incus host |
 | `--user <user>` | SSH user for host |
 
@@ -80,6 +98,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | Option | Description |
 |--------|-------------|
 | `--yes`, `-y` | Skip confirmation prompt |
+| `--remove-storage` | Also remove host mount directories (e.g. `/home`, `/workspace`) bound into the container. Without this flag, mount directories on the host are preserved. |
 | `--host <host>` | Incus host |
 | `--user <user>` | SSH user for host |
 

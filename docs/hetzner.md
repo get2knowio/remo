@@ -54,6 +54,9 @@ remo hetzner update --only zellij --only fzf
 # Update but skip specific tools
 remo hetzner update --skip docker --skip nodejs
 
+# Grow the persistent volume (and the filesystem) in place
+remo hetzner update --volume-size 100
+
 # Destroy server (keeps persistent volume)
 remo hetzner destroy --yes
 
@@ -75,6 +78,8 @@ remo hetzner destroy --yes --remove-volume
 |--------|-------------|
 | `--only <tool>` | Only update specified tool (can repeat) |
 | `--skip <tool>` | Skip specified tool (can repeat) |
+| `--volume-size <GB>` | Grow the persistent Hetzner volume to this size and grow the ext4 filesystem in place. Hetzner only supports growing. |
+| `--name <name>` | Server name (default: `remote-coding-server`) |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
