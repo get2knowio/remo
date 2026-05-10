@@ -1,6 +1,6 @@
 ---
 hetzner_api_token: ""
-hetzner_server_name: "remote-coding-server"
+hetzner_server_name: "remo"
 hetzner_server_type: "cx22"
 hetzner_image: "ubuntu-24.04"
 hetzner_location: "hel1"

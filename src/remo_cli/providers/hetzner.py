@@ -124,7 +124,7 @@ def create(
         return rc
 
     # Save to known_hosts on success.
-    server_name = name or "remote-coding-server"
+    server_name = name or "remo"
     server_ip = _query_hetzner_server_ip(server_name)
 
     if server_ip:
@@ -169,7 +169,7 @@ def destroy(
     if name:
         validate_name(name, "server name")
 
-    server_name = name or "remote-coding-server"
+    server_name = name or "remo"
 
     if remove_volume:
         print_warning(
@@ -216,7 +216,7 @@ def update(
     if name:
         validate_name(name, "server name")
 
-    server_name = name or "remote-coding-server"
+    server_name = name or "remo"
 
     # Get server address from known_hosts.
     server_host = _lookup_hetzner_host(server_name)
@@ -287,7 +287,7 @@ def info(name: str = "") -> int:
         print_error("HETZNER_API_TOKEN is not set.")
         return 1
 
-    server_name = name or "remote-coding-server"
+    server_name = name or "remo"
 
     server_url = f"https://api.hetzner.cloud/v1/servers?name={server_name}"
     server_req = urllib.request.Request(
