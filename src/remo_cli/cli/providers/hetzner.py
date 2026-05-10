@@ -6,6 +6,8 @@ import sys
 
 import click
 
+from remo_cli.core.completion import hetzner_name as _complete_name
+
 
 @click.group()
 def hetzner() -> None:
@@ -47,7 +49,7 @@ def create(
 
 
 @hetzner.command()
-@click.option("--name", default="", help="Server name (default: remote-coding-server).")
+@click.option("--name", default="", help="Server name (default: remote-coding-server).", shell_complete=_complete_name)
 @click.option("--remove-volume", is_flag=True, help="Also remove persistent volume.")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output.")
@@ -70,7 +72,7 @@ def destroy(
 
 
 @hetzner.command()
-@click.option("--name", default="", help="Server name (default: remote-coding-server).")
+@click.option("--name", default="", help="Server name (default: remote-coding-server).", shell_complete=_complete_name)
 @click.option(
     "--volume-size",
     default="",
@@ -108,7 +110,7 @@ def list_cmd() -> None:
 
 
 @hetzner.command()
-@click.option("--name", default="", help="Server name (default: remote-coding-server).")
+@click.option("--name", default="", help="Server name (default: remote-coding-server).", shell_complete=_complete_name)
 def info(name: str) -> None:
     """Show resource details (type, cores, memory, volume size) for a Hetzner VM."""
     from remo_cli.providers.hetzner import info as do_info

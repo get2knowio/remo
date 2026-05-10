@@ -79,7 +79,7 @@ class TestCliVersion:
 class TestSubcommandRegistration:
     """Ensure all expected subcommands are registered on the root CLI group."""
 
-    EXPECTED_COMMANDS = ["shell", "cp", "incus", "proxmox", "hetzner", "aws"]
+    EXPECTED_COMMANDS = ["shell", "cp", "incus", "proxmox", "hetzner", "aws", "completion"]
 
     def test_all_subcommands_registered(self):
         """Every expected command name must be present in the CLI group's commands dict."""
