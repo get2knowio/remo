@@ -72,6 +72,9 @@ remo proxmox destroy --name dev1 --yes --purge
 
 # Bootstrap (verify) a Proxmox node
 remo proxmox bootstrap --host prox01 --user root
+
+# Inspect resources on an existing container (cores, memory, rootfs size)
+remo proxmox info --name dev1
 ```
 
 ### Create Options

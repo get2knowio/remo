@@ -108,6 +108,16 @@ def list_cmd() -> None:
 
 
 @hetzner.command()
+@click.option("--name", default="", help="Server name (default: remote-coding-server).")
+def info(name: str) -> None:
+    """Show resource details (type, cores, memory, volume size) for a Hetzner VM."""
+    from remo_cli.providers.hetzner import info as do_info
+
+    rc = do_info(name=name)
+    sys.exit(rc)
+
+
+@hetzner.command()
 def sync() -> None:
     """Discover VMs and update registry."""
     from remo_cli.providers.hetzner import sync as do_sync

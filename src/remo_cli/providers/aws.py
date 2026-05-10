@@ -955,6 +955,41 @@ def info(name: str = "") -> None:
     tags = {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
     access_mode = tags.get("remo_access_mode", "ssm")
 
+    # Best-effort lookup of vCPU / memory from the instance type spec.
+    cores: str = "?"
+    memory_mib: str = "?"
+    try:
+        session = _boto3_session(region)
+        type_resp = session.client("ec2").describe_instance_types(
+            InstanceTypes=[instance_type]
+        )
+        type_info = (type_resp.get("InstanceTypes") or [{}])[0]
+        vcpu_info = type_info.get("VCpuInfo") or {}
+        memory_info = type_info.get("MemoryInfo") or {}
+        if vcpu_info.get("DefaultVCpus"):
+            cores = str(vcpu_info["DefaultVCpus"])
+        if memory_info.get("SizeInMiB"):
+            memory_mib = str(memory_info["SizeInMiB"])
+    except Exception:
+        # Non-fatal — fall back to '?'.
+        pass
+
+    # Best-effort lookup of the persistent EBS volume size.
+    ebs_size: str = "(none)"
+    try:
+        ebs_name = f"remo-{resource_name}-home"
+        ebs_resp = session.client("ec2").describe_volumes(
+            Filters=[
+                {"Name": "tag:Name", "Values": [ebs_name]},
+                {"Name": "tag:remo", "Values": ["true"]},
+            ],
+        )
+        volumes = ebs_resp.get("Volumes", [])
+        if volumes:
+            ebs_size = f"{volumes[0].get('Size', '?')} GB ({ebs_name})"
+    except Exception:
+        pass
+
     print("")
     print(f"  Name:         remo-{resource_name}")
     print(f"  Instance ID:  {instance_id}")
@@ -965,6 +1000,9 @@ def info(name: str = "") -> None:
     print(f"  Public DNS:   {public_dns}")
     print(f"  Launch Time:  {launch_time}")
     print(f"  Access Mode:  {access_mode}")
+    print(f"  Cores:        {cores}")
+    print(f"  Memory:       {memory_mib} MiB")
+    print(f"  EBS volume:   {ebs_size}")
     print("")
 
     # Register in known_hosts if not already present.

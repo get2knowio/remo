@@ -450,6 +450,95 @@ def list_hosts() -> None:
         print("Create one with: remo proxmox create <name> --host <node>")
 
 
+def info(name: str, host: str = "", user: str = "") -> int:
+    """Print detailed information about a Proxmox LXC container.
+
+    Reads ``pct config`` and ``pct status`` over SSH on the Proxmox host,
+    then prints state, network, CPU, memory, and rootfs details. Returns
+    0 on success or 1 if the container could not be located.
+    """
+    validate_name(name, "container name")
+
+    vmid = ""
+    if not host:
+        host, looked_up_user, vmid = _lookup_proxmox_host(name)
+        if not user and looked_up_user:
+            user = looked_up_user
+
+    if not host:
+        print_error(
+            f"Proxmox host for container '{name}' could not be determined.\n"
+            "Use --host (and --user) to specify it explicitly."
+        )
+        return 1
+
+    if not user:
+        user = "root"
+
+    if not vmid:
+        vmid = _resolve_vmid(name, host, user)
+    if not vmid:
+        print_error(f"Container '{name}' was not found on Proxmox host '{host}'.")
+        return 1
+
+    # Single SSH round-trip: combine config + status.
+    cmd = f"pct config {vmid}; echo ---STATUS---; pct status {vmid}"
+    result = _ssh_run(host, user, cmd)
+    if result.returncode != 0:
+        print_error(
+            f"Failed to query container '{name}' on '{host}': {result.stderr.strip()}"
+        )
+        return 1
+
+    config_text, _, status_text = result.stdout.partition("---STATUS---")
+
+    cores = _parse_pct_config_field(config_text, "cores")
+    memory = _parse_pct_config_field(config_text, "memory")
+    swap = _parse_pct_config_field(config_text, "swap")
+    hostname = _parse_pct_config_field(config_text, "hostname") or name
+    rootfs_line = _parse_pct_config_field(config_text, "rootfs")
+    rootfs_size = ""
+    rootfs_storage = ""
+    if rootfs_line:
+        # rootfs format: "vmpool:subvol-100-disk-0,size=20G"
+        rootfs_storage = rootfs_line.split(",", 1)[0]
+        size_match = re.search(r"size=(\S+)", rootfs_line)
+        if size_match:
+            rootfs_size = size_match.group(1)
+
+    state = ""
+    state_match = re.search(r"status:\s*(\S+)", status_text)
+    if state_match:
+        state = state_match.group(1)
+
+    container_ip = _resolve_container_ip(name, host, user, vmid=vmid)
+
+    print("")
+    print(f"  Name:       {hostname}")
+    print(f"  VMID:       {vmid}")
+    print(f"  Node:       {host}")
+    print(f"  State:      {state or 'unknown'}")
+    print(f"  IP:         {container_ip or '(unavailable)'}")
+    print(f"  Cores:      {cores or '?'}")
+    print(f"  Memory:     {memory + ' MiB' if memory else '?'}")
+    if swap:
+        print(f"  Swap:       {swap} MiB")
+    print(f"  Rootfs:     {rootfs_size or '?'}{f' ({rootfs_storage})' if rootfs_storage else ''}")
+    print("")
+
+    return 0
+
+
+def _parse_pct_config_field(config_text: str, field: str) -> str:
+    """Return the value of *field* from the output of ``pct config``.
+
+    Returns an empty string when the field is not present.
+    """
+    pattern = rf"^{re.escape(field)}:\s*(.+)$"
+    match = re.search(pattern, config_text, re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
 def sync(host: str, user: str = "") -> None:
     """Discover Proxmox LXC containers on *host* and register them.
 
