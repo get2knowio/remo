@@ -21,6 +21,23 @@ remo init
 - SSH key pair (`~/.ssh/id_rsa`)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
+### Shell completion (optional)
+
+Tab completion for subcommands, flags, and known instance/container names is available for bash, zsh, and fish:
+
+```bash
+# bash
+remo completion bash >> ~/.bashrc
+
+# zsh
+remo completion zsh >> ~/.zshrc
+
+# fish
+remo completion fish > ~/.config/fish/completions/remo.fish
+```
+
+After re-loading your shell, `remo proxmox info --name <TAB>` will suggest registered container names from your `known_hosts` registry.
+
 ---
 
 ## Quick Start
@@ -194,6 +211,9 @@ remo <platform> update              # Update dev tools on remote
 # Help
 remo --help
 remo <command> --help
+
+# Shell completion
+remo completion bash                # Print bash activation script (also: zsh, fish)
 ```
 
 See platform-specific docs for full options:

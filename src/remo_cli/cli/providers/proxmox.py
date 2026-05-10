@@ -6,6 +6,7 @@ import sys
 
 import click
 
+from remo_cli.core.completion import proxmox_name as _complete_name
 from remo_cli.providers import proxmox as providers_proxmox
 
 
@@ -79,7 +80,7 @@ def create(
 
 
 @proxmox.command()
-@click.option("--name", default="dev1", help="Container hostname.")
+@click.option("--name", default="dev1", help="Container hostname.", shell_complete=_complete_name)
 @click.option("--host", default="", help="Proxmox host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for the Proxmox host.")
 @click.option(
@@ -110,7 +111,7 @@ def destroy(
 
 
 @proxmox.command()
-@click.option("--name", default="dev1", help="Container hostname.")
+@click.option("--name", default="dev1", help="Container hostname.", shell_complete=_complete_name)
 @click.option("--host", default="", help="Proxmox host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for the Proxmox host.")
 @click.option(
@@ -166,7 +167,7 @@ def list_cmd() -> None:
 
 
 @proxmox.command()
-@click.option("--name", default="dev1", help="Container hostname.")
+@click.option("--name", default="dev1", help="Container hostname.", shell_complete=_complete_name)
 @click.option("--host", default="", help="Proxmox host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for the Proxmox host.")
 def info(name: str, host: str, user: str) -> None:

@@ -6,6 +6,7 @@ import sys
 
 import click
 
+from remo_cli.core.completion import incus_name as _complete_name
 from remo_cli.providers import incus as providers_incus
 
 
@@ -73,7 +74,7 @@ def create(
 
 
 @incus.command()
-@click.option("--name", default="dev1", help="Container name (default: dev1).")
+@click.option("--name", default="dev1", help="Container name (default: dev1).", shell_complete=_complete_name)
 @click.option("--host", default="", help="Incus host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
 @click.option(
@@ -104,7 +105,7 @@ def destroy(
 
 
 @incus.command()
-@click.option("--name", default="dev1", help="Container name (default: dev1).")
+@click.option("--name", default="dev1", help="Container name (default: dev1).", shell_complete=_complete_name)
 @click.option("--host", default="", help="Incus host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
 @click.option(
@@ -160,7 +161,7 @@ def list_cmd() -> None:
 
 
 @incus.command()
-@click.option("--name", default="dev1", help="Container name (default: dev1).")
+@click.option("--name", default="dev1", help="Container name (default: dev1).", shell_complete=_complete_name)
 @click.option("--host", default="", help="Incus host (default: auto-detect).")
 @click.option("--user", default="", help="SSH user for remote Incus host.")
 def info(name: str, host: str, user: str) -> None:

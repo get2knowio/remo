@@ -6,6 +6,8 @@ import sys
 
 import click
 
+from remo_cli.core.completion import aws_name as _complete_name
+
 
 @click.group()
 def aws() -> None:
@@ -53,7 +55,7 @@ def create(
 
 
 @aws.command()
-@click.option("--name", default="", help="Instance name (defaults to $USER).")
+@click.option("--name", default="", help="Instance name (defaults to $USER).", shell_complete=_complete_name)
 @click.option("--remove-storage", is_flag=True, default=False, help="Also remove EBS storage volume.")
 @click.option("--yes", "-y", "auto_confirm", is_flag=True, default=False, help="Skip confirmation prompts.")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose output.")
@@ -76,7 +78,7 @@ def destroy(
 
 
 @aws.command()
-@click.option("--name", default="", help="Instance name (defaults to $USER).")
+@click.option("--name", default="", help="Instance name (defaults to $USER).", shell_complete=_complete_name)
 @click.option(
     "--volume-size",
     default="",
@@ -123,7 +125,7 @@ def sync(region: str) -> None:
 
 
 @aws.command()
-@click.option("--name", default="", help="Instance name (defaults to $USER).")
+@click.option("--name", default="", help="Instance name (defaults to $USER).", shell_complete=_complete_name)
 @click.option("--yes", "-y", "auto_confirm", is_flag=True, default=False, help="Skip confirmation prompts.")
 def stop(name: str, auto_confirm: bool) -> None:
     """Stop an AWS EC2 instance."""
@@ -133,7 +135,7 @@ def stop(name: str, auto_confirm: bool) -> None:
 
 
 @aws.command()
-@click.option("--name", default="", help="Instance name (defaults to $USER).")
+@click.option("--name", default="", help="Instance name (defaults to $USER).", shell_complete=_complete_name)
 def start(name: str) -> None:
     """Start a stopped AWS EC2 instance."""
     from remo_cli.providers.aws import start as aws_start
@@ -142,7 +144,7 @@ def start(name: str) -> None:
 
 
 @aws.command()
-@click.option("--name", default="", help="Instance name (defaults to $USER).")
+@click.option("--name", default="", help="Instance name (defaults to $USER).", shell_complete=_complete_name)
 @click.option("--yes", "-y", "auto_confirm", is_flag=True, default=False, help="Skip confirmation prompts.")
 def reboot(name: str, auto_confirm: bool) -> None:
     """Reboot an AWS EC2 instance."""
@@ -152,7 +154,7 @@ def reboot(name: str, auto_confirm: bool) -> None:
 
 
 @aws.command()
-@click.option("--name", default="", help="Instance name (defaults to $USER).")
+@click.option("--name", default="", help="Instance name (defaults to $USER).", shell_complete=_complete_name)
 def info(name: str) -> None:
     """Show detailed info about an AWS EC2 instance."""
     from remo_cli.providers.aws import info as aws_info

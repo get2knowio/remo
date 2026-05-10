@@ -71,7 +71,7 @@ remo hetzner destroy --yes --remove-volume
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--name <name>` | `remote-coding-server` | Server name |
+| `--name <name>` | `remo` | Server name |
 | `--type <type>` | `cx22` | Server type (see [Hetzner pricing](https://www.hetzner.com/cloud)) |
 | `--location <loc>` | `hel1` | Datacenter: `fsn1`, `nbg1`, `hel1`, `ash`, `hil` |
 
@@ -82,7 +82,7 @@ remo hetzner destroy --yes --remove-volume
 | `--only <tool>` | Only update specified tool (can repeat) |
 | `--skip <tool>` | Skip specified tool (can repeat) |
 | `--volume-size <GB>` | Grow the persistent Hetzner volume to this size and grow the ext4 filesystem in place. Hetzner only supports growing. |
-| `--name <name>` | Server name (default: `remote-coding-server`) |
+| `--name <name>` | Server name (default: `remo`) |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 

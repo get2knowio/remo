@@ -30,6 +30,32 @@ def _post_command_hook(result: object, **kwargs: object) -> None:
         pass
 
 
+@cli.command()
+@click.argument("shell", type=click.Choice(["bash", "zsh", "fish"]))
+def completion(shell: str) -> None:
+    """Print the shell-completion activation script for SHELL.
+
+    Add the output to your shell rc file to enable tab completion. For
+    bash and zsh:
+
+        remo completion bash >> ~/.bashrc
+        remo completion zsh  >> ~/.zshrc
+
+    For fish:
+
+        remo completion fish > ~/.config/fish/completions/remo.fish
+    """
+    from click.shell_completion import get_completion_class
+
+    completer_cls = get_completion_class(shell)
+    if completer_cls is None:
+        raise click.ClickException(f"Unsupported shell: {shell}")
+
+    ctx = click.get_current_context()
+    instance = completer_cls(ctx.find_root().command, {}, "remo", "_REMO_COMPLETE")
+    click.echo(instance.source())
+
+
 def _register_commands() -> None:
     """Register all subcommands and groups. Called at import time."""
     # Import lazily to avoid circular imports and to keep startup fast
