@@ -158,3 +158,21 @@ class TestRunProviderUpdate:
         _run_provider_update(host)
 
         mock_update.assert_called_once_with(name="devcontainer")
+
+    def test_proxmox_update_extracts_node_and_container(self, mocker):
+        from remo_cli.cli.shell import _run_provider_update
+
+        host = KnownHost(
+            type="proxmox",
+            name="lab1/dev1",
+            host="192.168.1.46",
+            user="remo",
+            instance_id="100",
+            access_mode="direct",
+            region="root",
+        )
+        mock_update = mocker.patch("remo_cli.providers.proxmox.update", return_value=0)
+
+        _run_provider_update(host)
+
+        mock_update.assert_called_once_with(name="dev1", host="lab1", user="root")

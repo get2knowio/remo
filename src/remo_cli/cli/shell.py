@@ -93,3 +93,16 @@ def _run_provider_update(host) -> None:  # noqa: ANN001
         # Incus name in known_hosts is "host/container" — extract just the container name
         container_name = host.name.split("/", maxsplit=1)[-1] if "/" in host.name else host.name
         incus_update(name=container_name)
+    elif host.type == "proxmox":
+        from remo_cli.providers.proxmox import update as proxmox_update  # noqa: PLC0415
+        # Proxmox name in known_hosts is "node/container".
+        # The proxmox SSH user is stored in the region slot (see providers.proxmox.create).
+        proxmox_host, _, container_name = host.name.partition("/")
+        if not container_name:
+            container_name = host.name
+            proxmox_host = ""
+        proxmox_update(
+            name=container_name,
+            host=proxmox_host,
+            user=host.region or "",
+        )
