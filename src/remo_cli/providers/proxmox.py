@@ -26,7 +26,7 @@ from remo_cli.core.known_hosts import (
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_warning
 from remo_cli.core.ssh import detect_timezone
-from remo_cli.core.validation import build_tool_args, validate_name
+from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
 
@@ -187,6 +187,7 @@ def create(
     Returns the ansible-playbook exit code (0 on success).
     """
     validate_name(name, "container name")
+    volume_size = parse_volume_size(volume_size)
 
     if not host:
         print_error("Proxmox host is required (use --host).")
@@ -350,6 +351,7 @@ def update(
     Returns the ansible-playbook exit code (0 on success).
     """
     validate_name(name, "container name")
+    volume_size = parse_volume_size(volume_size)
 
     vmid = ""
     if not host:

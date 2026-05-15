@@ -27,7 +27,7 @@ from remo_cli.core.known_hosts import (
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
 from remo_cli.core.ssh import detect_timezone, require_session_manager_plugin
-from remo_cli.core.validation import build_tool_args, validate_name
+from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
 
@@ -388,6 +388,7 @@ def create(
     """
     if name:
         validate_name(name, "instance name")
+    volume_size = parse_volume_size(volume_size)
 
     print_info("Creating AWS EC2 instance...")
 
@@ -558,6 +559,7 @@ def update(
     """
     if name:
         validate_name(name, "instance name")
+    volume_size = parse_volume_size(volume_size)
 
     resource_name = name or os.environ.get("USER", "remo")
     region = get_aws_region(resource_name)

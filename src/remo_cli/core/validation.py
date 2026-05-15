@@ -26,6 +26,38 @@ def validate_name(value: str, label: str = "name") -> None:
         )
 
 
+def parse_volume_size(value: str) -> str:
+    """Normalize a user-provided volume size to a pure integer string.
+
+    Accepts a plain integer (``"100"``) or an integer with a common
+    size suffix (``"100G"``, ``"100GB"``, ``"100GiB"`` — case-insensitive)
+    and returns the integer portion as a string. Empty input passes
+    through unchanged so callers can treat ``""`` as "not provided".
+
+    Raises :class:`click.BadParameter` for anything else.
+    """
+    if not value:
+        return value
+    cleaned = value.strip()
+    lowered = cleaned.lower()
+    for suffix in ("gib", "gb", "g"):
+        if lowered.endswith(suffix):
+            cleaned = cleaned[: -len(suffix)].strip()
+            break
+    try:
+        as_int = int(cleaned)
+    except ValueError as exc:
+        raise click.BadParameter(
+            f"Invalid volume size: '{value}'. Expected an integer,"
+            " optionally with a G/GB/GiB suffix."
+        ) from exc
+    if as_int <= 0:
+        raise click.BadParameter(
+            f"Volume size must be a positive integer, got '{value}'."
+        )
+    return str(as_int)
+
+
 def validate_port(value: int) -> None:
     if not isinstance(value, int) or value < 1 or value > 65535:
         raise click.BadParameter(

@@ -22,7 +22,7 @@ from remo_cli.core.known_hosts import (
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
 from remo_cli.core.ssh import detect_timezone
-from remo_cli.core.validation import build_tool_args, validate_name
+from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
 
@@ -94,6 +94,7 @@ def create(
     """
     if name:
         validate_name(name, "server name")
+    volume_size = parse_volume_size(volume_size)
 
     print_info("Creating Hetzner VM...")
 
@@ -215,6 +216,7 @@ def update(
     """
     if name:
         validate_name(name, "server name")
+    volume_size = parse_volume_size(volume_size)
 
     server_name = name or "remo"
 

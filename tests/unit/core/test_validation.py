@@ -8,6 +8,7 @@ import click
 from remo_cli.core.validation import (
     ALL_TOOLS,
     build_tool_args,
+    parse_volume_size,
     validate_name,
     validate_port,
     validate_region,
@@ -259,3 +260,32 @@ class TestBuildToolArgs:
         args = build_tool_args(only=ALL_TOOLS, skip=())
         for tool in ALL_TOOLS:
             assert f"configure_{tool}=true" in args
+
+
+class TestParseVolumeSize:
+    """Tests for parse_volume_size()."""
+
+    def test_plain_integer(self):
+        assert parse_volume_size("100") == "100"
+
+    def test_empty_passes_through(self):
+        assert parse_volume_size("") == ""
+
+    @pytest.mark.parametrize("value", ["100G", "100GB", "100GiB", "100gb", "100gib"])
+    def test_strips_size_suffix(self, value):
+        assert parse_volume_size(value) == "100"
+
+    def test_strips_whitespace(self):
+        assert parse_volume_size("  100G  ") == "100"
+
+    def test_rejects_non_numeric(self):
+        with pytest.raises(click.BadParameter):
+            parse_volume_size("big")
+
+    def test_rejects_zero(self):
+        with pytest.raises(click.BadParameter):
+            parse_volume_size("0")
+
+    def test_rejects_negative(self):
+        with pytest.raises(click.BadParameter):
+            parse_volume_size("-5")
