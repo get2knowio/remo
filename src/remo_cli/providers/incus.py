@@ -165,6 +165,7 @@ def create(
     memory: int = 0,
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
+    use_ip: bool = False,
     verbose: bool = False,
 ) -> int:
     """Create a new Incus container and configure it with dev tools.
@@ -206,7 +207,10 @@ def create(
     rc = run_playbook("incus_site.yml", extra_vars, verbose=verbose)
 
     if rc == 0:
-        container_host = _resolve_container_ip(name, host, user) or name
+        if use_ip:
+            container_host = _resolve_container_ip(name, host, user) or name
+        else:
+            container_host = name
         save_known_host(
             KnownHost(
                 type="incus",
@@ -483,13 +487,17 @@ def info(name: str, host: str = "", user: str = "") -> int:
     return 0
 
 
-def sync(host: str = "localhost", user: str = "") -> None:
+def sync(host: str = "localhost", user: str = "", use_ip: bool = False) -> None:
     """Discover Incus containers on *host* and register them in known-hosts.
 
     For localhost, runs ``incus list -f csv -c n`` directly.  For remote hosts,
     the same command is executed over SSH.  All previously registered entries
     for the given host prefix are cleared before the newly discovered
     containers are saved.
+
+    When *use_ip* is true, each container's eth0 IP is resolved and stored as
+    the ``host`` field; otherwise the container name itself is stored (and
+    relies on DNS/MagicDNS for resolution at connect time).
     """
     if host == "localhost":
         result = subprocess.run(
@@ -523,11 +531,15 @@ def sync(host: str = "localhost", user: str = "") -> None:
     clear_known_hosts_by_prefix("incus", f"{host}/")
 
     for name in containers:
+        if use_ip:
+            container_host = _resolve_container_ip(name, host, user) or name
+        else:
+            container_host = name
         save_known_host(
             KnownHost(
                 type="incus",
                 name=f"{host}/{name}",
-                host=name,
+                host=container_host,
                 user="remo",
                 instance_id=user,
                 access_mode="direct",

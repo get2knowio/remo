@@ -180,6 +180,7 @@ def create(
     domain: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
+    use_ip: bool = False,
     verbose: bool = False,
 ) -> int:
     """Create a new Proxmox LXC container and configure dev tools.
@@ -241,12 +242,15 @@ def create(
 
     if rc == 0:
         vmid = _resolve_vmid(name, host, user)
-        ip = _resolve_container_ip(name, host, user, vmid=vmid) or name
+        if use_ip:
+            container_host = _resolve_container_ip(name, host, user, vmid=vmid) or name
+        else:
+            container_host = name
         save_known_host(
             KnownHost(
                 type="proxmox",
                 name=f"{host}/{name}",
-                host=ip,
+                host=container_host,
                 user="remo",
                 instance_id=vmid,
                 access_mode="direct",
@@ -541,11 +545,15 @@ def _parse_pct_config_field(config_text: str, field: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def sync(host: str, user: str = "") -> None:
+def sync(host: str, user: str = "", use_ip: bool = False) -> None:
     """Discover Proxmox LXC containers on *host* and register them.
 
     Runs ``pct list`` over SSH (or locally if host == "localhost"),
-    parses the output, then queries each container for its VMID and IP.
+    parses the output, then queries each container for its VMID. When
+    *use_ip* is true, each container's eth0 IP is also resolved and stored
+    as the ``host`` field; otherwise the container name itself is stored
+    (and relies on DNS/MagicDNS for resolution at connect time).
+
     Existing entries with the host prefix are cleared first.
     """
     if not host:
@@ -581,12 +589,15 @@ def sync(host: str, user: str = "") -> None:
     clear_known_hosts_by_prefix("proxmox", f"{host}/")
 
     for vmid, hostname in containers:
-        ip = _resolve_container_ip(hostname, host, user, vmid=vmid) or hostname
+        if use_ip:
+            container_host = _resolve_container_ip(hostname, host, user, vmid=vmid) or hostname
+        else:
+            container_host = hostname
         save_known_host(
             KnownHost(
                 type="proxmox",
                 name=f"{host}/{hostname}",
-                host=ip,
+                host=container_host,
                 user="remo",
                 instance_id=vmid,
                 access_mode="direct",

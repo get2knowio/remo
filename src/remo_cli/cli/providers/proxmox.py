@@ -38,6 +38,11 @@ def proxmox() -> None:
 @click.option("--domain", default="", help="Domain name for the container.")
 @click.option("--only", multiple=True, help="Only install these tools.")
 @click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option(
+    "--use-ip",
+    is_flag=True,
+    help="Store the container's IP address in known_hosts instead of its name (for setups without DNS/MagicDNS).",
+)
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm prompts.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def create(
@@ -55,6 +60,7 @@ def create(
     domain: str,
     only: tuple[str, ...],
     skip: tuple[str, ...],
+    use_ip: bool,
     yes: bool,
     verbose: bool,
 ) -> None:
@@ -74,6 +80,7 @@ def create(
         domain=domain,
         tools_only=only,
         tools_skip=skip,
+        use_ip=use_ip,
         verbose=verbose,
     )
     sys.exit(rc)
@@ -179,9 +186,14 @@ def info(name: str, host: str, user: str) -> None:
 @proxmox.command()
 @click.option("--host", required=True, help="Proxmox host to scan.")
 @click.option("--user", default="", help="SSH user for the Proxmox host.")
-def sync(host: str, user: str) -> None:
+@click.option(
+    "--use-ip",
+    is_flag=True,
+    help="Store each container's IP address in known_hosts instead of its name (for setups without DNS/MagicDNS).",
+)
+def sync(host: str, user: str, use_ip: bool) -> None:
     """Discover containers from a Proxmox host."""
-    providers_proxmox.sync(host=host, user=user)
+    providers_proxmox.sync(host=host, user=user, use_ip=use_ip)
 
 
 @proxmox.command()
