@@ -28,7 +28,10 @@ from remo_cli.core.known_hosts import (
 from datetime import datetime, timezone
 
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
-from remo_cli.core.snapshot import validate_name as validate_snapshot_name
+from remo_cli.core.snapshot import (
+    handle_destroy_snapshot_cleanup,
+    validate_name as validate_snapshot_name,
+)
 from remo_cli.core.ssh import detect_timezone, require_session_manager_plugin
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
@@ -516,6 +519,31 @@ def destroy(
 
     resource_name = name or os.environ.get("USER", "remo")
     region = get_aws_region(resource_name)
+
+    # FR-020 through FR-023: surface remo-managed EBS snapshots before destroy.
+    # Failure to enumerate (instance already gone, no creds, etc.) downgrades
+    # to a warning so the destroy itself can still proceed.
+    try:
+        _pre = snapshot_list(instance_name=resource_name, region=region)
+    except Exception as e:  # noqa: BLE001
+        print_warning(
+            f"Could not list snapshots before destroy ({e}); "
+            f"proceeding without snapshot cleanup."
+        )
+        _pre = []
+    handle_destroy_snapshot_cleanup(
+        provider_label="AWS",
+        instance=resource_name,
+        snapshots=_pre,
+        delete_one=lambda snap: snapshot_delete(
+            instance_name=resource_name,
+            snap_name=snap.name,
+            region=region,
+            auto_confirm=True,
+        ),
+        auto_confirm=auto_confirm,
+        show_status=True,
+    )
 
     if not auto_confirm:
         prompt = (

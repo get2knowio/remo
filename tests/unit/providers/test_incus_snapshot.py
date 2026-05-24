@@ -314,3 +314,124 @@ class TestSnapshotDelete:
         cmd = patch_ssh.call_args.args[2]
         assert "incus snapshot delete" in cmd
         assert "pre-x" in cmd
+
+
+# ---------------------------------------------------------------------------
+# destroy integration (FR-020 — FR-023)
+# ---------------------------------------------------------------------------
+
+
+class TestDestroySnapshotCleanup:
+    def test_no_snapshots_no_extra_prompt(self, mocker):
+        """FR-023: instance with no snapshots → no cleanup prompt."""
+        mocker.patch(
+            "remo_cli.providers.incus._lookup_incus_host",
+            return_value=("localhost", ""),
+        )
+        mocker.patch(
+            "remo_cli.providers.incus._list_snapshots_for_container",
+            return_value=[],
+        )
+        mocker.patch(
+            "remo_cli.providers.incus.run_playbook", return_value=0
+        )
+        mock_confirm = mocker.patch(
+            "remo_cli.providers.incus.confirm", return_value=True
+        )
+        snapshot_delete_spy = mocker.patch(
+            "remo_cli.providers.incus.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.incus.remove_known_host")
+
+        rc = providers_incus.destroy(name="dev1")
+        assert rc == 0
+        # Only the destroy-confirm prompt should be shown — no cleanup prompt.
+        assert mock_confirm.call_count == 1
+        snapshot_delete_spy.assert_not_called()
+
+    def test_cleanup_accepted_deletes_each(self, mocker, capsys):
+        """FR-021: user accepts cleanup → snapshot_delete called per snapshot."""
+        mocker.patch(
+            "remo_cli.providers.incus._lookup_incus_host",
+            return_value=("localhost", ""),
+        )
+        snaps = [_existing_snap("a"), _existing_snap("b"), _existing_snap("c")]
+        mocker.patch(
+            "remo_cli.providers.incus._list_snapshots_for_container",
+            return_value=snaps,
+        )
+        mocker.patch(
+            "remo_cli.providers.incus.run_playbook", return_value=0
+        )
+        # Cleanup-confirm prompt lives in core.snapshot; destroy-confirm in
+        # providers.incus.  Patch both.
+        mocker.patch("remo_cli.core.snapshot.confirm", return_value=True)
+        mocker.patch("remo_cli.providers.incus.confirm", return_value=True)
+        spy = mocker.patch(
+            "remo_cli.providers.incus.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.incus.remove_known_host")
+
+        rc = providers_incus.destroy(name="dev1")
+        assert rc == 0
+        assert spy.call_count == 3
+        names_deleted = sorted(c.kwargs["snap_name"] for c in spy.call_args_list)
+        assert names_deleted == ["a", "b", "c"]
+
+    def test_cleanup_declined_warns_and_keeps(self, mocker, capsys):
+        """FR-022: user declines cleanup → snapshot_delete NOT called +
+        orphan-cost warning printed; instance still destroyed."""
+        mocker.patch(
+            "remo_cli.providers.incus._lookup_incus_host",
+            return_value=("localhost", ""),
+        )
+        mocker.patch(
+            "remo_cli.providers.incus._list_snapshots_for_container",
+            return_value=[_existing_snap()],
+        )
+        mocker.patch(
+            "remo_cli.providers.incus.run_playbook", return_value=0
+        )
+        mocker.patch("remo_cli.core.snapshot.confirm", return_value=False)
+        mocker.patch("remo_cli.providers.incus.confirm", return_value=True)
+        spy = mocker.patch(
+            "remo_cli.providers.incus.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.incus.remove_known_host")
+
+        rc = providers_incus.destroy(name="dev1")
+        assert rc == 0
+        spy.assert_not_called()
+        out = capsys.readouterr().out
+        assert "Snapshots will remain on Incus" in out
+
+    def test_auto_confirm_keeps_snapshots_with_warning(self, mocker, capsys):
+        """auto_confirm bypasses prompts but defaults to KEEP snapshots
+        (safer default — never silently destroy data)."""
+        mocker.patch(
+            "remo_cli.providers.incus._lookup_incus_host",
+            return_value=("localhost", ""),
+        )
+        mocker.patch(
+            "remo_cli.providers.incus._list_snapshots_for_container",
+            return_value=[_existing_snap()],
+        )
+        mocker.patch(
+            "remo_cli.providers.incus.run_playbook", return_value=0
+        )
+        spy = mocker.patch(
+            "remo_cli.providers.incus.snapshot_delete", return_value=0
+        )
+        mock_confirm = mocker.patch("remo_cli.providers.incus.confirm")
+        mocker.patch("remo_cli.providers.incus.remove_known_host")
+
+        rc = providers_incus.destroy(name="dev1", auto_confirm=True)
+        assert rc == 0
+        # No prompts at all
+        mock_confirm.assert_not_called()
+        # Snapshots NOT deleted
+        spy.assert_not_called()
+        # User warned
+        out = capsys.readouterr().out
+        assert "--yes is set" in out
+        assert "keeping the 1 snapshot(s)" in out

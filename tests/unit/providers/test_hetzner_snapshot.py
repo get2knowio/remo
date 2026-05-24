@@ -274,3 +274,100 @@ class TestSnapshotDelete:
         assert rc == 1
         delete_calls = [c for c in api.call_args_list if c.args[0] == "DELETE"]
         assert delete_calls == []
+
+
+# ---------------------------------------------------------------------------
+# destroy integration (FR-020 — FR-023)
+# ---------------------------------------------------------------------------
+
+
+def _hetzner_snap(name: str = "pre-x") -> Snapshot:
+    return Snapshot(
+        provider="hetzner",
+        instance_name="dev1",
+        name=name,
+        backend_id="100",
+        created_at=datetime(2026, 5, 24, tzinfo=timezone.utc),
+        size_bytes=20 * 1024**3,
+        description="",
+        status=SnapshotStatus.AVAILABLE,
+    )
+
+
+class TestDestroySnapshotCleanup:
+    def test_no_snapshots_no_extra_prompt(self, mocker):
+        mocker.patch(
+            "remo_cli.providers.hetzner.snapshot_list", return_value=[]
+        )
+        mocker.patch(
+            "remo_cli.providers.hetzner.run_playbook", return_value=0
+        )
+        mock_confirm = mocker.patch(
+            "remo_cli.providers.hetzner.confirm", return_value=True
+        )
+        spy = mocker.patch(
+            "remo_cli.providers.hetzner.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.hetzner.remove_known_host")
+        rc = providers_hetzner.destroy(name="dev1")
+        assert rc == 0
+        assert mock_confirm.call_count == 1
+        spy.assert_not_called()
+
+    def test_cleanup_accepted(self, mocker):
+        mocker.patch(
+            "remo_cli.providers.hetzner.snapshot_list",
+            return_value=[_hetzner_snap("a"), _hetzner_snap("b")],
+        )
+        mocker.patch(
+            "remo_cli.providers.hetzner.run_playbook", return_value=0
+        )
+        mocker.patch("remo_cli.core.snapshot.confirm", return_value=True)
+        mocker.patch("remo_cli.providers.hetzner.confirm", return_value=True)
+        spy = mocker.patch(
+            "remo_cli.providers.hetzner.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.hetzner.remove_known_host")
+        rc = providers_hetzner.destroy(name="dev1")
+        assert rc == 0
+        assert spy.call_count == 2
+
+    def test_cleanup_declined_warns(self, mocker, capsys):
+        mocker.patch(
+            "remo_cli.providers.hetzner.snapshot_list",
+            return_value=[_hetzner_snap()],
+        )
+        mocker.patch(
+            "remo_cli.providers.hetzner.run_playbook", return_value=0
+        )
+        mocker.patch("remo_cli.core.snapshot.confirm", return_value=False)
+        mocker.patch("remo_cli.providers.hetzner.confirm", return_value=True)
+        spy = mocker.patch(
+            "remo_cli.providers.hetzner.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.hetzner.remove_known_host")
+        rc = providers_hetzner.destroy(name="dev1")
+        assert rc == 0
+        spy.assert_not_called()
+        out = capsys.readouterr().out
+        assert "Snapshots will remain on Hetzner" in out
+
+    def test_auto_confirm_keeps(self, mocker, capsys):
+        mocker.patch(
+            "remo_cli.providers.hetzner.snapshot_list",
+            return_value=[_hetzner_snap()],
+        )
+        mocker.patch(
+            "remo_cli.providers.hetzner.run_playbook", return_value=0
+        )
+        spy = mocker.patch(
+            "remo_cli.providers.hetzner.snapshot_delete", return_value=0
+        )
+        mock_confirm = mocker.patch("remo_cli.providers.hetzner.confirm")
+        mocker.patch("remo_cli.providers.hetzner.remove_known_host")
+        rc = providers_hetzner.destroy(name="dev1", auto_confirm=True)
+        assert rc == 0
+        mock_confirm.assert_not_called()
+        spy.assert_not_called()
+        out = capsys.readouterr().out
+        assert "--yes is set" in out

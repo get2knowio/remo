@@ -362,3 +362,104 @@ class TestSnapshotDelete:
         cmd = patch_ssh.call_args.args[2]
         assert "pct delsnapshot" in cmd
         assert "pre-x" in cmd
+
+
+# ---------------------------------------------------------------------------
+# destroy integration (FR-020 — FR-023)
+# ---------------------------------------------------------------------------
+
+
+class TestDestroySnapshotCleanup:
+    def test_no_snapshots_no_extra_prompt(self, mocker):
+        mocker.patch(
+            "remo_cli.providers.proxmox._lookup_proxmox_host",
+            return_value=("lab1", "root", "100"),
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
+            return_value=[],
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox.run_playbook", return_value=0
+        )
+        mock_confirm = mocker.patch(
+            "remo_cli.providers.proxmox.confirm", return_value=True
+        )
+        spy = mocker.patch(
+            "remo_cli.providers.proxmox.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
+        rc = providers_proxmox.destroy(name="dev1")
+        assert rc == 0
+        assert mock_confirm.call_count == 1
+        spy.assert_not_called()
+
+    def test_cleanup_accepted(self, mocker):
+        mocker.patch(
+            "remo_cli.providers.proxmox._lookup_proxmox_host",
+            return_value=("lab1", "root", "100"),
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
+            return_value=[_existing_snap("a"), _existing_snap("b")],
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox.run_playbook", return_value=0
+        )
+        mocker.patch("remo_cli.core.snapshot.confirm", return_value=True)
+        mocker.patch("remo_cli.providers.proxmox.confirm", return_value=True)
+        spy = mocker.patch(
+            "remo_cli.providers.proxmox.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
+        rc = providers_proxmox.destroy(name="dev1")
+        assert rc == 0
+        assert spy.call_count == 2
+
+    def test_cleanup_declined_warns(self, mocker, capsys):
+        mocker.patch(
+            "remo_cli.providers.proxmox._lookup_proxmox_host",
+            return_value=("lab1", "root", "100"),
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
+            return_value=[_existing_snap()],
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox.run_playbook", return_value=0
+        )
+        mocker.patch("remo_cli.core.snapshot.confirm", return_value=False)
+        mocker.patch("remo_cli.providers.proxmox.confirm", return_value=True)
+        spy = mocker.patch(
+            "remo_cli.providers.proxmox.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
+        rc = providers_proxmox.destroy(name="dev1")
+        assert rc == 0
+        spy.assert_not_called()
+        out = capsys.readouterr().out
+        assert "Snapshots will remain on Proxmox" in out
+
+    def test_auto_confirm_keeps(self, mocker, capsys):
+        mocker.patch(
+            "remo_cli.providers.proxmox._lookup_proxmox_host",
+            return_value=("lab1", "root", "100"),
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
+            return_value=[_existing_snap()],
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox.run_playbook", return_value=0
+        )
+        spy = mocker.patch(
+            "remo_cli.providers.proxmox.snapshot_delete", return_value=0
+        )
+        mock_confirm = mocker.patch("remo_cli.providers.proxmox.confirm")
+        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
+        rc = providers_proxmox.destroy(name="dev1", auto_confirm=True)
+        assert rc == 0
+        mock_confirm.assert_not_called()
+        spy.assert_not_called()
+        out = capsys.readouterr().out
+        assert "--yes is set" in out

@@ -15,6 +15,7 @@ from datetime import datetime
 
 import click
 
+from remo_cli.core.output import confirm, print_info, print_warning
 from remo_cli.models.snapshot import Snapshot
 
 # Anchored, single-pass: first char alphanumeric, rest alphanumeric/_/-.
@@ -66,6 +67,58 @@ def _humanize_size(num_bytes: int | None) -> str:
     if idx == 0:
         return f"{int(value)} {units[idx]}"
     return f"{value:.1f} {units[idx]}"
+
+
+def handle_destroy_snapshot_cleanup(
+    *,
+    provider_label: str,
+    instance: str,
+    snapshots: list[Snapshot],
+    delete_one,  # noqa: ANN001 — Callable[[Snapshot], int]
+    auto_confirm: bool,
+    show_status: bool,
+) -> None:
+    """Pre-destroy hook: surface existing snapshots and offer cleanup.
+
+    Implements FR-020 through FR-023:
+
+    * Empty list → silent no-op (FR-023).
+    * Interactive + accept → call ``delete_one`` for each snapshot.
+    * Interactive + decline → print orphan-cost warning (FR-022).
+    * ``auto_confirm`` → keep snapshots, print orphan-cost warning.
+      The destroy ``-y`` flag bypasses prompts but defaults to the safer
+      "keep data" outcome rather than silently deleting snapshots.
+
+    *delete_one* receives a single :class:`Snapshot` and returns an exit code
+    (non-zero means the deletion failed; we continue with the rest).
+    """
+    if not snapshots:
+        return  # FR-023 — instance has no snapshots; destroy proceeds unchanged.
+
+    print_warning(
+        f"Instance '{instance}' has {len(snapshots)} snapshot(s):"
+    )
+    print(format_snapshot_table(snapshots, show_status=show_status))
+    print()
+
+    if auto_confirm:
+        print_warning(
+            f"--yes is set; keeping the {len(snapshots)} snapshot(s) above. "
+            f"After destroy they become invisible to remo and (on paid providers) "
+            f"continue to incur storage cost. Manage via the {provider_label} console."
+        )
+        return
+
+    if confirm("Delete these snapshots as part of destroy?", default=False):
+        for snap in snapshots:
+            delete_one(snap)
+    else:
+        print_warning(
+            f"Snapshots will remain on {provider_label}. "
+            f"After destroy they become invisible to remo and (on paid providers) "
+            f"continue to incur storage cost. Manage via the provider console."
+        )
+    print_info("")  # blank line before the destroy prompt
 
 
 def format_snapshot_table(

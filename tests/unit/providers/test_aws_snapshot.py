@@ -359,3 +359,100 @@ class TestSnapshotDelete:
         )
         assert rc == 0
         ec2.delete_snapshot.assert_called_once_with(SnapshotId="snap-1")
+
+
+# ---------------------------------------------------------------------------
+# destroy integration (FR-020 — FR-023)
+# ---------------------------------------------------------------------------
+
+
+def _aws_snap(name: str = "pre-x") -> Snapshot:
+    return Snapshot(
+        provider="aws",
+        instance_name="dev1",
+        name=name,
+        backend_id=f"snap-{name}",
+        created_at=datetime(2026, 5, 24, tzinfo=timezone.utc),
+        size_bytes=20 * 1024**3,
+        description="",
+        status=SnapshotStatus.AVAILABLE,
+    )
+
+
+class TestDestroySnapshotCleanup:
+    def test_no_snapshots_no_extra_prompt(self, mocker):
+        mocker.patch(
+            "remo_cli.providers.aws.snapshot_list", return_value=[]
+        )
+        mocker.patch(
+            "remo_cli.providers.aws.run_playbook", return_value=0
+        )
+        mock_confirm = mocker.patch(
+            "remo_cli.providers.aws.confirm", return_value=True
+        )
+        spy = mocker.patch(
+            "remo_cli.providers.aws.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.aws.remove_known_host")
+        rc = providers_aws.destroy(name="dev1")
+        assert rc == 0
+        assert mock_confirm.call_count == 1
+        spy.assert_not_called()
+
+    def test_cleanup_accepted(self, mocker):
+        mocker.patch(
+            "remo_cli.providers.aws.snapshot_list",
+            return_value=[_aws_snap("a"), _aws_snap("b")],
+        )
+        mocker.patch(
+            "remo_cli.providers.aws.run_playbook", return_value=0
+        )
+        mocker.patch("remo_cli.core.snapshot.confirm", return_value=True)
+        mocker.patch("remo_cli.providers.aws.confirm", return_value=True)
+        spy = mocker.patch(
+            "remo_cli.providers.aws.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.aws.remove_known_host")
+        rc = providers_aws.destroy(name="dev1")
+        assert rc == 0
+        assert spy.call_count == 2
+
+    def test_cleanup_declined_warns(self, mocker, capsys):
+        mocker.patch(
+            "remo_cli.providers.aws.snapshot_list",
+            return_value=[_aws_snap()],
+        )
+        mocker.patch(
+            "remo_cli.providers.aws.run_playbook", return_value=0
+        )
+        mocker.patch("remo_cli.core.snapshot.confirm", return_value=False)
+        mocker.patch("remo_cli.providers.aws.confirm", return_value=True)
+        spy = mocker.patch(
+            "remo_cli.providers.aws.snapshot_delete", return_value=0
+        )
+        mocker.patch("remo_cli.providers.aws.remove_known_host")
+        rc = providers_aws.destroy(name="dev1")
+        assert rc == 0
+        spy.assert_not_called()
+        out = capsys.readouterr().out
+        assert "Snapshots will remain on AWS" in out
+
+    def test_auto_confirm_keeps(self, mocker, capsys):
+        mocker.patch(
+            "remo_cli.providers.aws.snapshot_list",
+            return_value=[_aws_snap()],
+        )
+        mocker.patch(
+            "remo_cli.providers.aws.run_playbook", return_value=0
+        )
+        spy = mocker.patch(
+            "remo_cli.providers.aws.snapshot_delete", return_value=0
+        )
+        mock_confirm = mocker.patch("remo_cli.providers.aws.confirm")
+        mocker.patch("remo_cli.providers.aws.remove_known_host")
+        rc = providers_aws.destroy(name="dev1", auto_confirm=True)
+        assert rc == 0
+        mock_confirm.assert_not_called()
+        spy.assert_not_called()
+        out = capsys.readouterr().out
+        assert "--yes is set" in out

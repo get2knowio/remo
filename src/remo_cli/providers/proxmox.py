@@ -27,7 +27,10 @@ from remo_cli.core.known_hosts import (
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_warning
-from remo_cli.core.snapshot import validate_name as validate_snapshot_name
+from remo_cli.core.snapshot import (
+    handle_destroy_snapshot_cleanup,
+    validate_name as validate_snapshot_name,
+)
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
@@ -310,6 +313,32 @@ def destroy(
     # Proxmox node SSH defaults to root when nothing else is known.
     if not user:
         user = "root"
+
+    # FR-020 through FR-023: surface remo-managed snapshots before destroying.
+    if vmid:
+        try:
+            _pre = _list_snapshots_for_vmid(host, user, vmid, name)
+        except RuntimeError as e:
+            print_warning(
+                f"Could not list snapshots before destroy ({e}); "
+                f"proceeding without snapshot cleanup."
+            )
+            _pre = []
+        handle_destroy_snapshot_cleanup(
+            provider_label="Proxmox",
+            instance=name,
+            snapshots=_pre,
+            delete_one=lambda snap: snapshot_delete(
+                container=name,
+                host=host,
+                user=user,
+                vmid=vmid,
+                snap_name=snap.name,
+                auto_confirm=True,
+            ),
+            auto_confirm=auto_confirm,
+            show_status=False,
+        )
 
     if not auto_confirm:
         prompt = f"Destroy Proxmox LXC container '{name}' on {host}? This cannot be undone."

@@ -24,7 +24,10 @@ from remo_cli.core.known_hosts import (
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
-from remo_cli.core.snapshot import validate_name as validate_snapshot_name
+from remo_cli.core.snapshot import (
+    handle_destroy_snapshot_cleanup,
+    validate_name as validate_snapshot_name,
+)
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
@@ -181,6 +184,28 @@ def destroy(
         print_warning(
             "WARNING: --remove-volume will destroy all data on the persistent volume!"
         )
+
+    # FR-020 through FR-023: surface remo-managed snapshot images before destroy.
+    try:
+        _pre = snapshot_list(server_name=server_name)
+    except Exception as e:  # noqa: BLE001
+        print_warning(
+            f"Could not list snapshots before destroy ({e}); "
+            f"proceeding without snapshot cleanup."
+        )
+        _pre = []
+    handle_destroy_snapshot_cleanup(
+        provider_label="Hetzner",
+        instance=server_name,
+        snapshots=_pre,
+        delete_one=lambda snap: snapshot_delete(
+            server_name=server_name,
+            snap_name=snap.name,
+            auto_confirm=True,
+        ),
+        auto_confirm=auto_confirm,
+        show_status=True,
+    )
 
     if not auto_confirm:
         prompt = f"Destroy Hetzner Cloud server '{server_name}'? This cannot be undone."

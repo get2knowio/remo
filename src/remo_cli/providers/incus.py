@@ -22,7 +22,10 @@ from remo_cli.core.known_hosts import (
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_warning
-from remo_cli.core.snapshot import validate_name as validate_snapshot_name
+from remo_cli.core.snapshot import (
+    handle_destroy_snapshot_cleanup,
+    validate_name as validate_snapshot_name,
+)
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
@@ -265,6 +268,31 @@ def destroy(
         print_warning(
             "WARNING: --remove-storage will delete host mount directories — all data on bound mounts will be lost!"
         )
+
+    # FR-020 through FR-023: surface any remo-managed snapshots and offer to
+    # clean them up alongside the instance, before the destructive prompt.
+    try:
+        _pre_destroy_snapshots = _list_snapshots_for_container(host, name, user)
+    except RuntimeError as e:
+        print_warning(
+            f"Could not list snapshots before destroy ({e}); "
+            f"proceeding without snapshot cleanup."
+        )
+        _pre_destroy_snapshots = []
+    handle_destroy_snapshot_cleanup(
+        provider_label="Incus",
+        instance=name,
+        snapshots=_pre_destroy_snapshots,
+        delete_one=lambda snap: snapshot_delete(
+            container=name,
+            host=host,
+            user=user,
+            snap_name=snap.name,
+            auto_confirm=True,
+        ),
+        auto_confirm=auto_confirm,
+        show_status=False,
+    )
 
     if not auto_confirm:
         location = f" on {host}" if host and host != "localhost" else ""

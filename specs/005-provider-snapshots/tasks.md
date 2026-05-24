@@ -162,15 +162,15 @@ Single-project Python CLI under `src/remo_cli/`, tests under `tests/unit/`. All 
 
 **Implementation note**: Uses `_list_snapshots_for_*` (from US1) and `snapshot_delete` (from US3). Modifies the existing `destroy()` functions in each provider's business-logic file.
 
-- [ ] T064 [US4] Modify `destroy()` in `src/remo_cli/providers/incus.py`: before the existing destruction logic, call `_list_snapshots_for_container(...)`. If list is empty, behave exactly as today (FR-023). If non-empty, print warning + use `core/snapshot.format_snapshot_table()` to display them, then `confirm("Delete these snapshots as part of destroy?", default=False)`. On accept, iterate and call `snapshot_delete(..., auto_confirm=True)`. On decline, print the orphan-cost warning (FR-022). Then proceed with the existing destroy.
-- [ ] T065 [P] [US4] Modify `destroy()` in `src/remo_cli/providers/proxmox.py` per T064's pattern
-- [ ] T066 [P] [US4] Modify `destroy()` in `src/remo_cli/providers/aws.py` per T064's pattern (note: also need to handle the case where the orphaned `remo-restore-orphan` volume tag exists — leave those alone; the prompt only covers snapshots, not orphan volumes)
-- [ ] T067 [P] [US4] Modify `destroy()` in `src/remo_cli/providers/hetzner.py` per T064's pattern
-- [ ] T068 [P] [US4] Extend `tests/unit/providers/test_incus.py` (the existing destroy test file, NOT the snapshot test file) with three new test cases: destroy with snapshots + cleanup accepted (assert each snapshot deleted then instance destroyed), destroy with snapshots + cleanup declined (assert snapshots NOT deleted but instance still destroyed + orphan-warning printed), destroy with no snapshots (assert behavior unchanged — no new prompts)
-- [ ] T069 [P] [US4] Extend `tests/unit/providers/test_proxmox.py` with the three destroy-with-snapshots scenarios
-- [ ] T070 [P] [US4] Extend `tests/unit/providers/test_aws.py` with the three destroy-with-snapshots scenarios
-- [ ] T071 [P] [US4] Extend `tests/unit/providers/test_hetzner.py` with the three destroy-with-snapshots scenarios
-- [ ] T072 [US4] Run the full test suite to confirm no regression in existing destroy tests: `uv run --extra dev pytest -v`
+- [X] T064 [US4] Modify `destroy()` in `src/remo_cli/providers/incus.py`: before the existing destruction logic, call `_list_snapshots_for_container(...)`. If list is empty, behave exactly as today (FR-023). If non-empty, print warning + use `core/snapshot.format_snapshot_table()` to display them, then `confirm("Delete these snapshots as part of destroy?", default=False)`. On accept, iterate and call `snapshot_delete(..., auto_confirm=True)`. On decline, print the orphan-cost warning (FR-022). Then proceed with the existing destroy.
+- [X] T065 [P] [US4] Modify `destroy()` in `src/remo_cli/providers/proxmox.py` per T064's pattern
+- [X] T066 [P] [US4] Modify `destroy()` in `src/remo_cli/providers/aws.py` per T064's pattern (note: also need to handle the case where the orphaned `remo-restore-orphan` volume tag exists — leave those alone; the prompt only covers snapshots, not orphan volumes)
+- [X] T067 [P] [US4] Modify `destroy()` in `src/remo_cli/providers/hetzner.py` per T064's pattern
+- [X] T068 [P] [US4] Extend `tests/unit/providers/test_incus.py` (the existing destroy test file, NOT the snapshot test file) with three new test cases: destroy with snapshots + cleanup accepted (assert each snapshot deleted then instance destroyed), destroy with snapshots + cleanup declined (assert snapshots NOT deleted but instance still destroyed + orphan-warning printed), destroy with no snapshots (assert behavior unchanged — no new prompts).  *(No `test_incus.py` destroy test file existed; the four destroy-integration scenarios were added to `test_incus_snapshot.py` where related tests live. Also added a 4th scenario covering `--yes`-keeps-snapshots-with-warning, matching the safer-default behavior.)*
+- [X] T069 [P] [US4] Extend `tests/unit/providers/test_proxmox.py` with the three destroy-with-snapshots scenarios.  *(Added to test_proxmox_snapshot.py — same reason as T068.)*
+- [X] T070 [P] [US4] Extend `tests/unit/providers/test_aws.py` with the three destroy-with-snapshots scenarios.  *(Added to test_aws_snapshot.py — same reason.)*
+- [X] T071 [P] [US4] Extend `tests/unit/providers/test_hetzner.py` with the three destroy-with-snapshots scenarios.  *(Added to test_hetzner_snapshot.py — same reason.)*
+- [X] T072 [US4] Run the full test suite to confirm no regression in existing destroy tests: `uv run --extra dev pytest -v`
 
 **Checkpoint**: User Story 4 complete. Destroy now cleans up (or warns about) snapshots on all four providers.
 
