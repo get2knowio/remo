@@ -7,6 +7,7 @@ import sys
 import click
 
 from remo_cli.core.completion import hetzner_name as _complete_name
+from remo_cli.core.snapshot import generate_default_name, validate_name as _validate_snap
 
 
 @click.group()
@@ -125,3 +126,58 @@ def sync() -> None:
     from remo_cli.providers.hetzner import sync as do_sync
 
     do_sync()
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+
+def _validate_snap_callback(ctx, param, value):  # noqa: ANN001
+    if value is None:
+        return value
+    _validate_snap(value)
+    return value
+
+
+@hetzner.group()
+def snapshot() -> None:
+    """Create / restore / delete snapshots of Hetzner Cloud VMs."""
+
+
+@snapshot.command("create")
+@click.argument("instance", shell_complete=_complete_name)
+@click.option(
+    "--name",
+    default=None,
+    callback=_validate_snap_callback,
+    help="Snapshot name (default: remo-YYYYMMDD-HHMMSS).",
+)
+@click.option(
+    "--description",
+    default="",
+    help="Free-text description shown in `snapshot list`.",
+)
+def snapshot_create_cmd(instance: str, name: str | None, description: str) -> None:
+    """Take a snapshot of a Hetzner Cloud VM."""
+    from remo_cli.providers.hetzner import snapshot_create
+
+    snap_name = name or generate_default_name()
+    rc = snapshot_create(
+        server_name=instance, snap_name=snap_name, description=description
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("restore")
+@click.argument("instance", shell_complete=_complete_name)
+@click.argument("snap_name")
+@click.option("--yes", "-y", is_flag=True, help="Bypass the confirmation prompt.")
+def snapshot_restore_cmd(instance: str, snap_name: str, yes: bool) -> None:
+    """Restore a Hetzner Cloud VM by rebuilding from a snapshot image."""
+    from remo_cli.providers.hetzner import snapshot_restore
+
+    rc = snapshot_restore(
+        server_name=instance, snap_name=snap_name, auto_confirm=yes
+    )
+    sys.exit(rc)

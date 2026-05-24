@@ -10,8 +10,11 @@ from __future__ import annotations
 import json
 import os
 import sys
-import urllib.request
+import time
 import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
 
 from remo_cli.core.ansible_runner import run_playbook
 from remo_cli.core.known_hosts import (
@@ -21,10 +24,12 @@ from remo_cli.core.known_hosts import (
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.snapshot import validate_name as validate_snapshot_name
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
+from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
 
 # ---------------------------------------------------------------------------
@@ -400,3 +405,298 @@ def sync() -> None:
         print_warning("No Hetzner VMs with 'remo' label found.")
     else:
         print_success(f"Synced {count} Hetzner VM(s).")
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+
+_HETZNER_API = "https://api.hetzner.cloud/v1"
+
+
+def _hetzner_api(
+    method: str, path: str, body: dict | None = None, timeout: int = 30
+) -> dict:
+    """Call the Hetzner Cloud REST API and return the decoded JSON body.
+
+    Raises :class:`RuntimeError` on non-2xx responses or transport errors so
+    callers can surface them.
+    """
+    token = os.environ.get("HETZNER_API_TOKEN", "")
+    if not token:
+        raise RuntimeError(
+            "HETZNER_API_TOKEN is not set; cannot reach the Hetzner Cloud API."
+        )
+
+    url = f"{_HETZNER_API}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json" if data else "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode()
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = json.loads(e.read().decode())
+            err_msg = err_body.get("error", {}).get("message", str(e))
+        except (ValueError, OSError):
+            err_msg = str(e)
+        raise RuntimeError(
+            f"Hetzner API {method} {path} failed: {e.code} {err_msg}"
+        ) from None
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Hetzner API {method} {path} failed: {e}") from None
+
+
+def _get_server_by_name(server_name: str) -> dict:
+    """Return the Hetzner server record for *server_name*.
+
+    Raises :class:`RuntimeError` if no matching server exists.
+    """
+    qs = urllib.parse.urlencode({"name": server_name})
+    payload = _hetzner_api("GET", f"/servers?{qs}")
+    servers = payload.get("servers", [])
+    if not servers:
+        raise RuntimeError(f"No Hetzner server found named '{server_name}'.")
+    return servers[0]
+
+
+def _parse_hetzner_timestamp(s: str) -> datetime:
+    if not s:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    cleaned = s.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(cleaned)
+    except ValueError:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def _hetzner_state_to_status(state: str) -> SnapshotStatus:
+    if state in {"creating"}:
+        return SnapshotStatus.PENDING
+    if state == "available":
+        return SnapshotStatus.AVAILABLE
+    return SnapshotStatus.FAILED
+
+
+def _list_snapshots_for_server(
+    server_id: int, server_name: str
+) -> list[Snapshot]:
+    """Return remo-managed snapshot images created from *server_id*.
+
+    Scoping by ``remo-source-server-id`` satisfies FR-027; the additional
+    ``remo=true`` label satisfies FR-026.
+    """
+    selector = f"remo=true,remo-source-server-id={server_id}"
+    qs = urllib.parse.urlencode(
+        {"type": "snapshot", "label_selector": selector}
+    )
+    payload = _hetzner_api("GET", f"/images?{qs}")
+    snapshots: list[Snapshot] = []
+    for img in payload.get("images", []):
+        labels = img.get("labels", {}) or {}
+        user_name = labels.get("remo-snapshot-name") or img.get("description", "")
+        size_gb = img.get("image_size") or img.get("disk_size") or 0
+        size_bytes = int(size_gb * (1024**3)) if size_gb else None
+        snapshots.append(
+            Snapshot(
+                provider="hetzner",
+                instance_name=server_name,
+                name=user_name,
+                backend_id=str(img.get("id", "")),
+                created_at=_parse_hetzner_timestamp(img.get("created", "")),
+                size_bytes=size_bytes,
+                description=img.get("description", "") or "",
+                status=_hetzner_state_to_status(img.get("status", "")),
+            )
+        )
+    return snapshots
+
+
+def snapshot_create(
+    server_name: str, snap_name: str, description: str = ""
+) -> int:
+    """Create a Hetzner Cloud snapshot of *server_name*.
+
+    Returns 0 once the provider accepts the request (no polling — per FR-004).
+    """
+    validate_snapshot_name(snap_name)
+
+    try:
+        server = _get_server_by_name(server_name)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    server_id = server.get("id", 0)
+    existing = _list_snapshots_for_server(server_id, server_name)
+    if any(s.name == snap_name for s in existing):
+        print_error(
+            f"Snapshot '{snap_name}' already exists for hetzner instance "
+            f"'{server_name}'."
+        )
+        return 1
+
+    body = {
+        "type": "snapshot",
+        "description": description or f"remo snapshot of {server_name}",
+        "labels": {
+            "remo": "true",
+            "remo-snapshot-name": snap_name,
+            "remo-source-server-id": str(server_id),
+        },
+    }
+    try:
+        _hetzner_api("POST", f"/servers/{server_id}/actions/create_image", body)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    print_info(
+        f"Snapshot '{snap_name}' creation started for {server_name}. "
+        f"This will take several minutes. "
+        f"Run `remo hetzner snapshot list {server_name}` to check status."
+    )
+    return 0
+
+
+def _wait_for_action(action_id: int, timeout: int = 600) -> bool:
+    """Poll a Hetzner action until ``status`` is ``success``.
+
+    Returns True on success, False on timeout/error. Sleeps 5s between polls.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            payload = _hetzner_api("GET", f"/actions/{action_id}")
+        except RuntimeError:
+            return False
+        status = payload.get("action", {}).get("status", "")
+        if status == "success":
+            return True
+        if status in {"error"}:
+            return False
+        time.sleep(5)
+    return False
+
+
+def snapshot_restore(
+    server_name: str, snap_name: str, auto_confirm: bool = False
+) -> int:
+    """Rebuild *server_name* from snapshot *snap_name*.
+
+    Hetzner's rebuild is atomic from the user's perspective: server ID and
+    IP are preserved (FR-013). We poll the rebuild action until success.
+    Returns 0 on success, 1 on any failure.
+    """
+    try:
+        server = _get_server_by_name(server_name)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    server_id = server.get("id", 0)
+    existing = _list_snapshots_for_server(server_id, server_name)
+    target = next((s for s in existing if s.name == snap_name), None)
+    if target is None:
+        print_error(
+            f"Snapshot '{snap_name}' not found for hetzner instance '{server_name}'."
+        )
+        return 1
+    if target.status is SnapshotStatus.PENDING:
+        print_error(
+            f"Snapshot '{snap_name}' is still pending; "
+            f"check `remo hetzner snapshot list {server_name}` for status."
+        )
+        return 1
+    if target.status is not SnapshotStatus.AVAILABLE:
+        print_error(
+            f"Snapshot '{snap_name}' is {target.status.value}; cannot restore."
+        )
+        return 1
+
+    if not auto_confirm:
+        if not confirm(
+            f"Restore '{snap_name}' to {server_name}? "
+            f"Server will be rebuilt from the snapshot image — "
+            f"typically 1-2 minutes of downtime.",
+            default=False,
+        ):
+            print_info("Aborted.")
+            return 1
+
+    try:
+        payload = _hetzner_api(
+            "POST",
+            f"/servers/{server_id}/actions/rebuild",
+            {"image": int(target.backend_id)},
+        )
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    action_id = payload.get("action", {}).get("id", 0)
+    if not _wait_for_action(action_id):
+        print_error(
+            f"Rebuild action {action_id} did not complete successfully; "
+            f"check the Hetzner Cloud console for details."
+        )
+        return 1
+
+    print_info(
+        f"Restored '{snap_name}' to {server_name}. "
+        f"You can reconnect with: remo shell {server_name}"
+    )
+    return 0
+
+
+def snapshot_delete(
+    server_name: str, snap_name: str, auto_confirm: bool = False
+) -> int:
+    """Delete the remo-managed Hetzner snapshot image *snap_name*."""
+    try:
+        server = _get_server_by_name(server_name)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    server_id = server.get("id", 0)
+    existing = _list_snapshots_for_server(server_id, server_name)
+    target = next((s for s in existing if s.name == snap_name), None)
+    if target is None:
+        print_error(
+            f"Snapshot '{snap_name}' not found for hetzner instance '{server_name}'."
+        )
+        return 1
+    if target.status is SnapshotStatus.PENDING:
+        print_error(
+            f"Snapshot '{snap_name}' is still pending; "
+            f"check `remo hetzner snapshot list {server_name}` for status."
+        )
+        return 1
+
+    if not auto_confirm:
+        if not confirm(
+            f"Delete snapshot '{snap_name}' of {server_name}?",
+            default=False,
+        ):
+            print_info("Aborted.")
+            return 1
+
+    try:
+        _hetzner_api("DELETE", f"/images/{target.backend_id}")
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    print_info(f"Deleted snapshot '{snap_name}' of {server_name}.")
+    return 0

@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 from remo_cli.core.ansible_runner import run_playbook
 from remo_cli.core.known_hosts import (
@@ -25,10 +27,12 @@ from remo_cli.core.known_hosts import (
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_warning
+from remo_cli.core.snapshot import validate_name as validate_snapshot_name
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
+from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
 
 # ---------------------------------------------------------------------------
@@ -652,3 +656,270 @@ def _parse_pct_json(stdout: str) -> list[dict[str, str]]:
     if not isinstance(data, list):
         return []
     return data
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+
+# Proxmox storage types that support snapshots.  Anything else (notably
+# plain `dir` and thick LVM) is rejected pre-flight with a clear error.
+_SNAPSHOT_CAPABLE_STORAGE = frozenset(
+    {"zfspool", "lvmthin", "btrfs", "cephfs", "rbd", "nfs", "cifs"}
+)
+
+
+def _detect_snapshot_capable_storage(
+    host: str, user: str, vmid: str
+) -> tuple[bool, str]:
+    """Return ``(supported, storage_type)`` for the rootfs of *vmid*.
+
+    Pre-flight check for FR-005.  Reads ``pct config <vmid>`` for the
+    rootfs storage name, then ``pvesm status`` for that storage's type.
+    Returns ``(False, "")`` if either probe fails — caller should then
+    bail with a clear error.
+    """
+    cfg = _ssh_run(host, user, f"pct config {shlex.quote(vmid)}")
+    if cfg.returncode != 0:
+        return False, ""
+
+    storage_name = ""
+    for line in cfg.stdout.splitlines():
+        if line.startswith("rootfs:"):
+            # Format:  rootfs: <storage>:<volume>,size=...
+            rest = line[len("rootfs:"):].strip()
+            storage_name, _, _ = rest.partition(":")
+            break
+    if not storage_name:
+        return False, ""
+
+    status = _ssh_run(host, user, "pvesm status")
+    if status.returncode != 0:
+        return False, ""
+
+    for line in status.stdout.splitlines():
+        parts = line.split()
+        # `pvesm status` columns: Name Type Status Total Used Available %Used
+        if parts and parts[0] == storage_name and len(parts) >= 2:
+            storage_type = parts[1]
+            return storage_type in _SNAPSHOT_CAPABLE_STORAGE, storage_type
+    return False, ""
+
+
+def _parse_pct_conf_snapshots(
+    conf_text: str, container_name: str
+) -> list[Snapshot]:
+    """Parse ``/etc/pve/lxc/<vmid>.conf`` and return the snapshots inside.
+
+    Snapshots appear as INI-style sections (``[<snap-name>]``) at the
+    bottom of the conf file; the top-level keys before any section are
+    the current container config.  Each section contains
+    ``snaptime: <epoch>`` and may contain ``description: <text>``.
+    """
+    snapshots: list[Snapshot] = []
+    current: dict[str, str] | None = None
+    current_name: str | None = None
+
+    def flush() -> None:
+        if current_name is None or current is None:
+            return
+        created_at = datetime.fromtimestamp(
+            int(current.get("snaptime", "0") or "0"), tz=timezone.utc
+        )
+        snapshots.append(
+            Snapshot(
+                provider="proxmox",
+                instance_name=container_name,
+                name=current_name,
+                backend_id=current_name,
+                created_at=created_at,
+                size_bytes=None,  # Proxmox doesn't report per-snapshot bytes
+                description=current.get("description", ""),
+                status=SnapshotStatus.AVAILABLE,
+            )
+        )
+
+    for raw in conf_text.splitlines():
+        line = raw.rstrip()
+        m = re.match(r"^\[([^\]]+)\]\s*$", line)
+        if m:
+            flush()
+            current_name = m.group(1)
+            current = {}
+            continue
+        if current is None:
+            # Top-level config; skip.
+            continue
+        if not line or line.startswith("#"):
+            continue
+        key, sep, val = line.partition(":")
+        if sep:
+            current[key.strip()] = val.strip()
+    flush()
+
+    return snapshots
+
+
+def _list_snapshots_for_vmid(
+    host: str, user: str, vmid: str, container_name: str
+) -> list[Snapshot]:
+    """Return the snapshots of LXC *vmid* on the Proxmox *host*.
+
+    Reads ``/etc/pve/lxc/<vmid>.conf`` over SSH and parses the
+    ``[<snap>]`` sections.  Raises :class:`RuntimeError` on SSH failure
+    so the caller can surface it per FR-011.
+    """
+    cmd = f"cat /etc/pve/lxc/{shlex.quote(vmid)}.conf"
+    result = _ssh_run(host, user, cmd)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"reading /etc/pve/lxc/{vmid}.conf failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+    return _parse_pct_conf_snapshots(result.stdout, container_name)
+
+
+def snapshot_create(
+    container: str,
+    host: str,
+    user: str,
+    vmid: str,
+    snap_name: str,
+    description: str = "",
+) -> int:
+    """Create a snapshot of LXC *vmid* on the Proxmox *host*.
+
+    Pre-flight checks snapshot-capable storage (FR-005) and duplicate
+    name (FR-006).  Returns 0 on success, 1 on any failure.
+    """
+    validate_snapshot_name(snap_name)
+
+    supported, storage_type = _detect_snapshot_capable_storage(host, user, vmid)
+    if not supported:
+        if storage_type:
+            print_error(
+                f"Storage backend '{storage_type}' for container '{container}' "
+                f"does not support snapshots. Supported backends: "
+                f"{', '.join(sorted(_SNAPSHOT_CAPABLE_STORAGE))}."
+            )
+        else:
+            print_error(
+                f"Could not determine rootfs storage for container "
+                f"'{container}' (vmid {vmid}); is it stopped or missing?"
+            )
+        return 1
+
+    try:
+        existing = _list_snapshots_for_vmid(host, user, vmid, container)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+    if any(s.name == snap_name for s in existing):
+        print_error(
+            f"Snapshot '{snap_name}' already exists for proxmox instance "
+            f"'{container}'."
+        )
+        return 1
+
+    cmd = (
+        f"pct snapshot {shlex.quote(vmid)} {shlex.quote(snap_name)}"
+    )
+    if description:
+        cmd += f" --description {shlex.quote(description)}"
+    result = _ssh_run(host, user, cmd)
+    if result.returncode != 0:
+        print_error(
+            f"pct snapshot failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+        return 1
+
+    print_info(
+        f"Created snapshot '{snap_name}' for proxmox instance '{container}'."
+    )
+    return 0
+
+
+def _get_pct_status(host: str, user: str, vmid: str) -> str:
+    """Return ``"running"`` / ``"stopped"`` or empty string on probe failure."""
+    result = _ssh_run(host, user, f"pct status {shlex.quote(vmid)}")
+    if result.returncode != 0:
+        return ""
+    # Output:  "status: running" or "status: stopped"
+    parts = result.stdout.strip().split()
+    if len(parts) >= 2 and parts[0] == "status:":
+        return parts[1]
+    return ""
+
+
+def snapshot_restore(
+    container: str,
+    host: str,
+    user: str,
+    vmid: str,
+    snap_name: str,
+    auto_confirm: bool = False,
+) -> int:
+    """Restore LXC *vmid* to *snap_name* via ``pct rollback``.
+
+    ``pct rollback`` stops the container internally as part of the
+    operation; we restart it afterwards if it was running pre-rollback
+    (FR-013).  Returns 0 on success, 1 on any failure.
+    """
+    try:
+        existing = _list_snapshots_for_vmid(host, user, vmid, container)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    target = next((s for s in existing if s.name == snap_name), None)
+    if target is None:
+        print_error(
+            f"Snapshot '{snap_name}' not found for proxmox instance '{container}'."
+        )
+        return 1
+
+    if target.status is not SnapshotStatus.AVAILABLE:
+        print_error(
+            f"Snapshot '{snap_name}' is {target.status.value}; "
+            f"run `remo proxmox snapshot list {container}` to check status."
+        )
+        return 1
+
+    if not auto_confirm:
+        if not confirm(
+            f"Restore '{snap_name}' to {container}? "
+            f"Container will be stopped during rollback.",
+            default=False,
+        ):
+            print_info("Aborted.")
+            return 1
+
+    pre_status = _get_pct_status(host, user, vmid)
+    was_running = pre_status == "running"
+
+    rollback = _ssh_run(
+        host, user, f"pct rollback {shlex.quote(vmid)} {shlex.quote(snap_name)}"
+    )
+    if rollback.returncode != 0:
+        print_error(
+            f"pct rollback failed (rc={rollback.returncode}): "
+            f"{rollback.stderr.strip() or rollback.stdout.strip()}"
+        )
+        return 1
+
+    if was_running:
+        start = _ssh_run(host, user, f"pct start {shlex.quote(vmid)}")
+        if start.returncode != 0:
+            print_error(
+                f"Container restored but failed to start: "
+                f"{start.stderr.strip() or start.stdout.strip()}"
+            )
+            return 1
+
+    print_info(
+        f"Restored '{snap_name}' to {container}. "
+        f"You can reconnect with: remo shell {container}"
+    )
+    return 0
