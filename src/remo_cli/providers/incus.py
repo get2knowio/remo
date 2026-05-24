@@ -919,7 +919,7 @@ def snapshot_delete(
     result = _ssh_run_on_incus_host(
         host,
         user,
-        f"incus snapshot delete {shlex.quote(container)}/{shlex.quote(snap_name)}",
+        f"incus snapshot delete {shlex.quote(container)} {shlex.quote(snap_name)}",
     )
     if result.returncode != 0:
         print_error(

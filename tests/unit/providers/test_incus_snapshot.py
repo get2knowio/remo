@@ -341,8 +341,9 @@ class TestSnapshotDelete:
         )
         assert rc == 0
         cmd = patch_ssh.call_args.args[2]
-        assert "incus snapshot delete" in cmd
-        assert "pre-x" in cmd
+        # Incus 6.x expects two positional args (container, snapshot), not
+        # the deprecated "<container>/<snapshot>" combined form.
+        assert "incus snapshot delete dev1 pre-x" in cmd
 
 
 # ---------------------------------------------------------------------------
