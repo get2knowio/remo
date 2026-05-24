@@ -850,11 +850,11 @@ def snapshot_restore(
     restore = _ssh_run_on_incus_host(
         host,
         user,
-        f"incus restore {shlex.quote(container)} {shlex.quote(snap_name)}",
+        f"incus snapshot restore {shlex.quote(container)} {shlex.quote(snap_name)}",
     )
     if restore.returncode != 0:
         print_error(
-            f"incus restore failed (rc={restore.returncode}): "
+            f"incus snapshot restore failed (rc={restore.returncode}): "
             f"{restore.stderr.strip() or restore.stdout.strip()}"
         )
         # Try to leave the container in the pre-restore state.

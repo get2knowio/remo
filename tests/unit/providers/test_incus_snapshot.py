@@ -254,7 +254,7 @@ class TestSnapshotRestore:
         # Verify the call sequence
         commands = [call.args[2] for call in patch_ssh.call_args_list]
         assert any("incus stop" in c for c in commands)
-        assert any("incus restore" in c for c in commands)
+        assert any("incus snapshot restore" in c for c in commands)
         assert any("incus start" in c for c in commands)
         out = capsys.readouterr().out
         assert "Restored 'pre-x'" in out
@@ -282,7 +282,7 @@ class TestSnapshotRestore:
         assert rc == 0
         commands = [call.args[2] for call in patch_ssh.call_args_list]
         # Restore was called; stop/start were NOT called
-        assert any("incus restore" in c for c in commands)
+        assert any("incus snapshot restore" in c for c in commands)
         assert not any("incus stop " in c for c in commands)
         assert not any("incus start " in c for c in commands)
 
