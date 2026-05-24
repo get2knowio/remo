@@ -53,7 +53,24 @@ def completion(shell: str) -> None:
 
     ctx = click.get_current_context()
     instance = completer_cls(ctx.find_root().command, {}, "remo", "_REMO_COMPLETE")
-    click.echo(instance.source())
+    source = instance.source()
+
+    if shell == "fish":
+        # Click's completion handler emits a bare newline when there are no
+        # matches (e.g., `remo upd<TAB>` — no such command). Some fish versions
+        # then iterate the for-loop once with an empty $completion, and
+        # `string split "," ""` errors out. Guard the loop body so empty
+        # candidates are skipped.
+        source = source.replace(
+            "for completion in $response;\n        set -l metadata",
+            "for completion in $response;\n"
+            "        if test -z \"$completion\";\n"
+            "            continue;\n"
+            "        end;\n"
+            "        set -l metadata",
+        )
+
+    click.echo(source)
 
 
 def _register_commands() -> None:
