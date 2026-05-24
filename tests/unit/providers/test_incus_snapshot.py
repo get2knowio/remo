@@ -83,7 +83,7 @@ class TestListSnapshots:
 
 
 class TestSnapshotCreate:
-    def test_happy_path(self, mocker, patch_ssh, capsys):
+    def test_happy_path_no_description(self, mocker, patch_ssh, capsys):
         mocker.patch(
             "remo_cli.providers.incus._list_snapshots_for_container",
             return_value=[],
@@ -94,16 +94,45 @@ class TestSnapshotCreate:
             host="localhost",
             user="",
             snap_name="pre-x",
-            description="before x",
         )
         assert rc == 0
-        # incus snapshot create was actually invoked
+        # `incus snapshot create` was invoked. Only one SSH call.
+        assert patch_ssh.call_count == 1
         cmd = patch_ssh.call_args[0][2]
         assert "incus snapshot create" in cmd
         assert "pre-x" in cmd
-        assert "--description" in cmd
+        # We must NOT pass --description as a CLI flag (incus doesn't accept it)
+        assert "--description" not in cmd
         out = capsys.readouterr().out
         assert "Created snapshot 'pre-x'" in out
+
+    def test_description_applied_via_patch(self, mocker, patch_ssh, capsys):
+        """When description is provided, snapshot_create runs the create CLI
+        then PATCHes the description via `incus query` (since the create
+        subcommand doesn't accept --description)."""
+        mocker.patch(
+            "remo_cli.providers.incus._list_snapshots_for_container",
+            return_value=[],
+        )
+        patch_ssh.return_value = _completed(0)
+        rc = providers_incus.snapshot_create(
+            container="dev1",
+            host="localhost",
+            user="",
+            snap_name="pre-x",
+            description="before risky upgrade",
+        )
+        assert rc == 0
+        assert patch_ssh.call_count == 2
+        cmds = [c.args[2] for c in patch_ssh.call_args_list]
+        # First call: bare create (no --description)
+        assert "incus snapshot create" in cmds[0]
+        assert "--description" not in cmds[0]
+        # Second call: PATCH via `incus query`
+        assert "incus query" in cmds[1]
+        assert "PATCH" in cmds[1]
+        assert "/1.0/instances/dev1/snapshots/pre-x" in cmds[1]
+        assert "before risky upgrade" in cmds[1]
 
     def test_duplicate_name_rejected(self, mocker, patch_ssh, capsys):
         existing = Snapshot(

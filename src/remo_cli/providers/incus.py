@@ -733,21 +733,39 @@ def snapshot_create(
         )
         return 1
 
-    cmd_parts = [
-        "incus", "snapshot", "create",
-        shlex.quote(container), shlex.quote(snap_name),
-    ]
-    if description:
-        cmd_parts += ["--description", shlex.quote(description)]
-    cmd = " ".join(cmd_parts)
-
-    result = _ssh_run_on_incus_host(host, user, cmd)
+    # `incus snapshot create` does not accept --description (the description
+    # is only settable via the REST API on the snapshot resource, not via the
+    # CLI flag). Run create first, then PATCH the description if supplied.
+    create_cmd = (
+        f"incus snapshot create {shlex.quote(container)} "
+        f"{shlex.quote(snap_name)}"
+    )
+    result = _ssh_run_on_incus_host(host, user, create_cmd)
     if result.returncode != 0:
         print_error(
             f"incus snapshot create failed (rc={result.returncode}): "
             f"{result.stderr.strip() or result.stdout.strip()}"
         )
         return 1
+
+    if description:
+        # PATCH /1.0/instances/<ct>/snapshots/<snap> {"description": ...}
+        # Use `incus query` so we don't take a dependency on curl/jq inside
+        # the container host.
+        body = json.dumps({"description": description})
+        patch_cmd = (
+            f"incus query --wait -X PATCH "
+            f"/1.0/instances/{shlex.quote(container)}/snapshots/"
+            f"{shlex.quote(snap_name)} --data {shlex.quote(body)}"
+        )
+        patch_result = _ssh_run_on_incus_host(host, user, patch_cmd)
+        if patch_result.returncode != 0:
+            # The snapshot itself was created; only the description failed.
+            # Warn but don't fail the whole operation.
+            print_warning(
+                f"Snapshot created but failed to set description: "
+                f"{patch_result.stderr.strip() or patch_result.stdout.strip()}"
+            )
 
     print_info(
         f"Created snapshot '{snap_name}' for incus instance '{container}'."
