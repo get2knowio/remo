@@ -223,27 +223,72 @@ The principal `remo` uses (your local IAM user, SSO session, or assumed role) ne
 | `snapshot restore` | Everything in `snapshot list` **plus** `StopInstances`, `DetachVolume`, `CreateVolume`, `AttachVolume`, `StartInstances`, `CreateTags` |
 | `destroy` (with existing snapshots, `-y` declined cleanup) | Adds `DescribeSnapshots` (to enumerate) and `DeleteSnapshot` (if cleanup accepted) on top of the regular `destroy` set |
 
-> **Note on `CreateSnapshot` resource scoping.** AWS doesn't allow `Resource: <arn>` scoping for `ec2:CreateSnapshot` — the policy must use `Resource: "*"`. If you want to constrain `remo` to snapshotting only its own volumes, add a `Condition` like `"StringEquals": {"ec2:ResourceTag/remo": "true"}` on the source-volume condition key.
+> **Two AWS constraints to know.** First: `Describe*` actions can't be ARN- or tag-scoped — `Resource: "*"` is the only allowed form (read-side metadata leaks broader than mutation does). Second: snapshot ARNs are auto-generated (`snap-xxxxxx`) at create time, so prefix-on-the-ARN scoping doesn't help. Tag-based scoping is the practical path.
 
-#### Minimum snapshot-only policy (attach as an inline policy to your `remo` role)
+#### Snapshot-only policy with tag-locked mutations (attach as an inline policy to your `remo` role)
+
+This is the recommended minimum. Reads stay broad (AWS limitation); mutations are locked to resources tagged `remo=true`, which is exactly what `remo` creates and never touches what it doesn't own.
 
 ```json
 {
   "Version": "2012-10-17",
-  "Statement": [{
-    "Effect": "Allow",
-    "Action": [
-      "ec2:CreateSnapshot",
-      "ec2:DescribeSnapshots",
-      "ec2:DeleteSnapshot",
-      "ec2:CreateTags"
-    ],
-    "Resource": "*"
-  }]
+  "Statement": [
+    {
+      "Sid": "CreateSnapshotRequiresRemoTag",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSnapshot",
+      "Resource": "arn:aws:ec2:*:*:snapshot/*",
+      "Condition": {
+        "StringEquals": {"aws:RequestTag/remo": "true"}
+      }
+    },
+    {
+      "Sid": "CreateSnapshotFromAnyVolume",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSnapshot",
+      "Resource": "arn:aws:ec2:*:*:volume/*"
+    },
+    {
+      "Sid": "TagSnapshotOnCreate",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:*:*:snapshot/*",
+      "Condition": {
+        "StringEquals": {"ec2:CreateAction": "CreateSnapshot"}
+      }
+    },
+    {
+      "Sid": "DeleteOnlyRemoSnapshots",
+      "Effect": "Allow",
+      "Action": "ec2:DeleteSnapshot",
+      "Resource": "arn:aws:ec2:*:*:snapshot/*",
+      "Condition": {
+        "StringEquals": {"ec2:ResourceTag/remo": "true"}
+      }
+    },
+    {
+      "Sid": "DescribeSnapshotsUnscopable",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeSnapshots",
+      "Resource": "*"
+    }
+  ]
 }
 ```
 
-For restore, also add `ec2:StopInstances`, `ec2:DetachVolume`, `ec2:CreateVolume`, `ec2:AttachVolume`, `ec2:StartInstances`.
+What each `Sid` enforces:
+
+| Sid | Enforces |
+|---|---|
+| `CreateSnapshotRequiresRemoTag` | The CreateSnapshot call must include `remo=true` in `TagSpecifications` (`remo` always does this). |
+| `CreateSnapshotFromAnyVolume` | Companion — `CreateSnapshot` evaluates against both source-volume and new-snapshot ARNs; both have to be allowed. |
+| `TagSnapshotOnCreate` | `CreateTags` is only allowed as part of a `CreateSnapshot` request — prevents the role from re-tagging arbitrary resources. |
+| `DeleteOnlyRemoSnapshots` | Can only delete snapshots tagged `remo=true`. Manual snapshots someone took via the console with no tag stay safe. |
+| `DescribeSnapshotsUnscopable` | Unavoidable — AWS doesn't allow Describe* scoping; this lets `list` work. |
+
+For `snapshot restore`, also add `ec2:StopInstances`, `ec2:DetachVolume`, `ec2:CreateVolume`, `ec2:AttachVolume`, `ec2:StartInstances`. Those can be tag-scoped on the instance / volume too — e.g., `Condition: {"StringLike": {"ec2:ResourceTag/Name": "remo-*"}}` to constrain to `remo`-named instances.
+
+If you want a looser starting point and don't need the tag-locking (e.g., you fully trust who can assume the role), `Resource: "*"` on `ec2:CreateSnapshot`, `ec2:DescribeSnapshots`, `ec2:DeleteSnapshot`, `ec2:CreateTags` is a one-statement minimal version.
 
 ### What's Created
 
