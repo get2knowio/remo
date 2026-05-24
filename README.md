@@ -141,6 +141,34 @@ Every remo environment includes:
 
 ---
 
+## Snapshots
+
+Capture a point-in-time copy of an instance before a risky change, then roll
+back if it breaks. Available on every provider, with the same command surface:
+
+```bash
+remo <provider> snapshot create <instance> [--name NAME] [--description TEXT]
+remo <provider> snapshot list    [INSTANCE]
+remo <provider> snapshot restore <instance> <snapshot> [-y]
+remo <provider> snapshot delete  <instance> <snapshot> [-y]
+```
+
+`--name` defaults to `remo-YYYYMMDD-HHMMSS`. `-y` / `--yes` bypasses the
+confirm prompt on destructive operations.
+
+| Provider | Create | Restore | Notes |
+|---|---|---|---|
+| **Incus**   | seconds | in-place rollback (container stopped briefly) | Free; uses native `incus snapshot`. |
+| **Proxmox** | seconds | in-place rollback (container stopped briefly) | Free; requires snapshot-capable rootfs storage (ZFS, LVM-thin, Btrfs, Ceph, NFS, CIFS). `dir` storage is rejected pre-flight. |
+| **AWS**     | async — several minutes | in-place EBS volume swap; stops the instance, swaps the root volume, restarts. Typically 2-5 min downtime. | Costs $ per GB-month in EBS. Pre-restore root volume is preserved as a tagged orphan — delete it manually once you've verified the restore. |
+| **Hetzner** | async — several minutes | server rebuild from the snapshot image, in-place. Typically 1-2 min downtime. | Costs € per GB-month. |
+
+`remo` does not estimate storage cost — check your provider's billing console.
+
+The `destroy` command on each provider checks for existing snapshots first and
+offers to clean them up. Decline and the snapshots remain (you'll be warned
+they continue to incur storage costs on AWS/Hetzner).
+
 ## CLI Reference
 
 ```bash
@@ -203,6 +231,15 @@ remo proxmox update --name <n>      # Update dev tools
 remo proxmox update --name <n> --volume-size 40 --cores 4 --memory 4096
 remo proxmox destroy --name <n> [--yes] [--purge]   # Destroy container
 remo proxmox bootstrap --host <node>  # Verify node + download LXC template
+
+# Snapshots (all four providers)
+remo <provider> snapshot create <instance>                       # Auto-named
+remo <provider> snapshot create <instance> --name pre-x --description "before upgrade"
+remo <provider> snapshot list                                    # All instances
+remo <provider> snapshot list <instance>                         # One instance
+remo <provider> snapshot restore <instance> <snap-name> [-y]     # In-place rollback
+remo <provider> snapshot delete <instance> <snap-name> [-y]      # Remove
+# `<provider> destroy` will list existing snapshots and offer to clean them up first.
 
 # Updates
 uv tool upgrade remo-cli            # Update CLI to latest version

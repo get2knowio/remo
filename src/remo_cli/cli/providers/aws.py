@@ -7,6 +7,13 @@ import sys
 import click
 
 from remo_cli.core.completion import aws_name as _complete_name
+from remo_cli.core.known_hosts import get_known_hosts
+from remo_cli.core.output import print_error
+from remo_cli.core.snapshot import (
+    format_snapshot_table,
+    generate_default_name,
+    validate_name as _validate_snap,
+)
 
 
 @click.group()
@@ -160,3 +167,121 @@ def info(name: str) -> None:
     from remo_cli.providers.aws import info as aws_info
 
     aws_info(name=name)
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+
+def _validate_snap_callback(ctx, param, value):  # noqa: ANN001
+    if value is None:
+        return value
+    _validate_snap(value)
+    return value
+
+
+@aws.group()
+def snapshot() -> None:
+    """Create / restore / delete snapshots of AWS EC2 instances."""
+
+
+@snapshot.command("create")
+@click.argument("instance", shell_complete=_complete_name)
+@click.option(
+    "--name",
+    default=None,
+    callback=_validate_snap_callback,
+    help="Snapshot name (default: remo-YYYYMMDD-HHMMSS).",
+)
+@click.option(
+    "--description",
+    default="",
+    help="Free-text description shown in `snapshot list`.",
+)
+@click.option("--region", default="", help="AWS region (defaults to instance's region).")
+def snapshot_create_cmd(
+    instance: str,
+    name: str | None,
+    description: str,
+    region: str,
+) -> None:
+    """Take an EBS snapshot of an AWS instance's root volume."""
+    from remo_cli.providers.aws import snapshot_create
+
+    snap_name = name or generate_default_name()
+    rc = snapshot_create(
+        instance_name=instance,
+        snap_name=snap_name,
+        description=description,
+        region=region,
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("restore")
+@click.argument("instance", shell_complete=_complete_name)
+@click.argument("snap_name")
+@click.option("--yes", "-y", is_flag=True, help="Bypass the confirmation prompt.")
+@click.option("--region", default="", help="AWS region (defaults to instance's region).")
+def snapshot_restore_cmd(
+    instance: str, snap_name: str, yes: bool, region: str
+) -> None:
+    """Restore an AWS instance via in-place EBS volume swap."""
+    from remo_cli.providers.aws import snapshot_restore
+
+    rc = snapshot_restore(
+        instance_name=instance,
+        snap_name=snap_name,
+        region=region,
+        auto_confirm=yes,
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("delete")
+@click.argument("instance", shell_complete=_complete_name)
+@click.argument("snap_name")
+@click.option("--yes", "-y", is_flag=True, help="Bypass the confirmation prompt.")
+@click.option("--region", default="", help="AWS region (defaults to instance's region).")
+def snapshot_delete_cmd(instance: str, snap_name: str, yes: bool, region: str) -> None:
+    """Delete an EBS snapshot from an AWS instance's root volume."""
+    from remo_cli.providers.aws import snapshot_delete
+
+    rc = snapshot_delete(
+        instance_name=instance,
+        snap_name=snap_name,
+        region=region,
+        auto_confirm=yes,
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("list")
+@click.argument("instance", required=False, default=None, shell_complete=_complete_name)
+@click.option("--region", default="", help="AWS region (defaults to instance's region).")
+def snapshot_list_cmd(instance: str | None, region: str) -> None:
+    """List EBS snapshots for an AWS instance (or all registered)."""
+    from remo_cli.providers.aws import snapshot_list
+
+    if instance is not None:
+        try:
+            snaps = snapshot_list(instance_name=instance, region=region)
+        except RuntimeError as e:
+            print_error(str(e))
+            sys.exit(1)
+        click.echo(
+            format_snapshot_table(snaps, show_status=True, instance_label=instance)
+        )
+        sys.exit(0)
+
+    all_snaps: list = []
+    any_failure = False
+    for entry in get_known_hosts(type_filter="aws"):
+        try:
+            all_snaps.extend(snapshot_list(instance_name=entry.name, region=region or entry.region))
+        except RuntimeError as e:
+            print_error(f"{entry.name}: {e}")
+            any_failure = True
+    click.echo(format_snapshot_table(all_snaps, show_status=True))
+    sys.exit(1 if any_failure else 0)

@@ -7,9 +7,12 @@ Click imports; CLI argument handling lives in the ``cli`` layer.
 
 from __future__ import annotations
 
+import json
 import re
+import shlex
 import subprocess
 import sys
+from datetime import datetime, timezone
 
 from remo_cli.core.ansible_runner import run_playbook
 from remo_cli.core.known_hosts import (
@@ -19,10 +22,15 @@ from remo_cli.core.known_hosts import (
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_warning
+from remo_cli.core.snapshot import (
+    handle_destroy_snapshot_cleanup,
+    validate_name as validate_snapshot_name,
+)
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
+from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +268,31 @@ def destroy(
         print_warning(
             "WARNING: --remove-storage will delete host mount directories — all data on bound mounts will be lost!"
         )
+
+    # FR-020 through FR-023: surface any remo-managed snapshots and offer to
+    # clean them up alongside the instance, before the destructive prompt.
+    try:
+        _pre_destroy_snapshots = _list_snapshots_for_container(host, name, user)
+    except RuntimeError as e:
+        print_warning(
+            f"Could not list snapshots before destroy ({e}); "
+            f"proceeding without snapshot cleanup."
+        )
+        _pre_destroy_snapshots = []
+    handle_destroy_snapshot_cleanup(
+        provider_label="Incus",
+        instance=name,
+        snapshots=_pre_destroy_snapshots,
+        delete_one=lambda snap: snapshot_delete(
+            container=name,
+            host=host,
+            user=user,
+            snap_name=snap.name,
+            auto_confirm=True,
+        ),
+        auto_confirm=auto_confirm,
+        show_status=False,
+    )
 
     if not auto_confirm:
         location = f" on {host}" if host and host != "localhost" else ""
@@ -582,3 +615,318 @@ def bootstrap(
         extra_vars.extend(["-e", "incus_bootstrap_verbosity=detailed"])
 
     return run_playbook("incus_bootstrap.yml", extra_vars, verbose=verbose)
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+
+def _ssh_run_on_incus_host(
+    host: str, user: str, command: str
+) -> subprocess.CompletedProcess[str]:
+    """Run *command* on the Incus host (or locally when ``host == 'localhost'``).
+
+    Returns the :class:`subprocess.CompletedProcess`; callers inspect
+    ``returncode``, ``stdout``, ``stderr``. ConnectTimeout=10s applies to
+    remote invocations only.
+    """
+    if host == "localhost":
+        return subprocess.run(
+            ["bash", "-c", command],
+            capture_output=True,
+            text=True,
+        )
+    ssh_target = f"{user}@{host}" if user else host
+    return subprocess.run(
+        ["ssh", "-o", "ConnectTimeout=10", ssh_target, command],
+        capture_output=True,
+        text=True,
+    )
+
+
+def _list_snapshots_for_container(
+    host: str, container: str, user: str
+) -> list[Snapshot]:
+    """Return the snapshots of *container* on the Incus host.
+
+    Queries ``incus query /1.0/instances/<container>/snapshots?recursion=1``
+    over SSH (or locally) and parses the JSON response. Returns an empty
+    list when the container has no snapshots. Raises
+    :class:`RuntimeError` if the Incus call itself fails so the caller can
+    surface the error per FR-011.
+    """
+    quoted = shlex.quote(container)
+    cmd = f"incus query /1.0/instances/{quoted}/snapshots?recursion=1"
+    result = _ssh_run_on_incus_host(host, user, cmd)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"incus query failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+    try:
+        items = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"incus query returned unparseable JSON: {e}") from e
+
+    snapshots: list[Snapshot] = []
+    for item in items:
+        # Incus snapshot name in the API is "<container>/<snap>"; we want
+        # just the snap part for the user-facing name.
+        full = item.get("name", "")
+        _, _, snap_name = full.partition("/")
+        created_raw = item.get("created_at") or ""
+        created_at = _parse_incus_timestamp(created_raw)
+        size_bytes = item.get("size") if isinstance(item.get("size"), int) else None
+        snapshots.append(
+            Snapshot(
+                provider="incus",
+                instance_name=container,
+                name=snap_name or full,
+                backend_id=full,
+                created_at=created_at,
+                size_bytes=size_bytes,
+                description=item.get("description") or "",
+                status=SnapshotStatus.AVAILABLE,
+            )
+        )
+    return snapshots
+
+
+def _parse_incus_timestamp(s: str) -> datetime:
+    """Parse an Incus ISO-8601 timestamp; return epoch on failure."""
+    if not s:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    # Incus uses RFC 3339 with optional fractional seconds and a 'Z' suffix.
+    cleaned = s.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(cleaned)
+    except ValueError:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def snapshot_create(
+    container: str,
+    host: str,
+    user: str,
+    snap_name: str,
+    description: str = "",
+) -> int:
+    """Create a snapshot of *container* on the Incus host.
+
+    Returns 0 on success, 1 on provider failure or duplicate-name conflict
+    (per FR-006). The snapshot name must already have been validated via
+    :func:`core.snapshot.validate_name` by the CLI layer.
+    """
+    validate_snapshot_name(snap_name)  # belt-and-suspenders
+
+    try:
+        existing = _list_snapshots_for_container(host, container, user)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    if any(s.name == snap_name for s in existing):
+        print_error(
+            f"Snapshot '{snap_name}' already exists for incus instance '{container}'."
+        )
+        return 1
+
+    # `incus snapshot create` does not accept --description (the description
+    # is only settable via the REST API on the snapshot resource, not via the
+    # CLI flag). Run create first, then PATCH the description if supplied.
+    create_cmd = (
+        f"incus snapshot create {shlex.quote(container)} "
+        f"{shlex.quote(snap_name)}"
+    )
+    result = _ssh_run_on_incus_host(host, user, create_cmd)
+    if result.returncode != 0:
+        print_error(
+            f"incus snapshot create failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+        return 1
+
+    if description:
+        # PATCH /1.0/instances/<ct>/snapshots/<snap> {"description": ...}
+        # Use `incus query` so we don't take a dependency on curl/jq inside
+        # the container host.
+        body = json.dumps({"description": description})
+        patch_cmd = (
+            f"incus query --wait -X PATCH "
+            f"/1.0/instances/{shlex.quote(container)}/snapshots/"
+            f"{shlex.quote(snap_name)} --data {shlex.quote(body)}"
+        )
+        patch_result = _ssh_run_on_incus_host(host, user, patch_cmd)
+        if patch_result.returncode != 0:
+            # The snapshot itself was created; only the description failed.
+            # Warn but don't fail the whole operation.
+            print_warning(
+                f"Snapshot created but failed to set description: "
+                f"{patch_result.stderr.strip() or patch_result.stdout.strip()}"
+            )
+
+    print_info(
+        f"Created snapshot '{snap_name}' for incus instance '{container}'."
+    )
+    return 0
+
+
+def _get_container_status(host: str, user: str, container: str) -> str:
+    """Return ``"Running"``, ``"Stopped"``, or ``""`` if status can't be read."""
+    quoted = shlex.quote(container)
+    result = _ssh_run_on_incus_host(
+        host, user, f"incus info {quoted} --format json"
+    )
+    if result.returncode != 0:
+        return ""
+    try:
+        info = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return ""
+    return info.get("status", "")
+
+
+def snapshot_restore(
+    container: str,
+    host: str,
+    user: str,
+    snap_name: str,
+    auto_confirm: bool = False,
+) -> int:
+    """Restore *container* to *snap_name*.
+
+    Validates that the snapshot exists and is :attr:`SnapshotStatus.AVAILABLE`
+    (always true on Incus once present). Confirms with the user unless
+    *auto_confirm* is True. Orchestrates stop → restore → start so the
+    container ends up reachable in whatever state it was before (FR-013).
+    Returns 0 on success, 1 on any failure.
+    """
+    try:
+        existing = _list_snapshots_for_container(host, container, user)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    target = next((s for s in existing if s.name == snap_name), None)
+    if target is None:
+        print_error(
+            f"Snapshot '{snap_name}' not found for incus instance '{container}'."
+        )
+        return 1
+
+    if target.status is not SnapshotStatus.AVAILABLE:
+        print_error(
+            f"Snapshot '{snap_name}' is {target.status.value}; "
+            f"run `remo incus snapshot list {container}` to check status."
+        )
+        return 1
+
+    if not auto_confirm:
+        if not confirm(
+            f"Restore '{snap_name}' to {container}? "
+            f"Container will be stopped during rollback.",
+            default=False,
+        ):
+            print_info("Aborted.")
+            return 1
+
+    # Orchestrate stop → restore → start
+    pre_status = _get_container_status(host, user, container)
+    was_running = pre_status == "Running"
+
+    if was_running:
+        stop = _ssh_run_on_incus_host(
+            host, user, f"incus stop {shlex.quote(container)}"
+        )
+        if stop.returncode != 0:
+            print_error(
+                f"Failed to stop container before restore: "
+                f"{stop.stderr.strip() or stop.stdout.strip()}"
+            )
+            return 1
+
+    restore = _ssh_run_on_incus_host(
+        host,
+        user,
+        f"incus snapshot restore {shlex.quote(container)} {shlex.quote(snap_name)}",
+    )
+    if restore.returncode != 0:
+        print_error(
+            f"incus snapshot restore failed (rc={restore.returncode}): "
+            f"{restore.stderr.strip() or restore.stdout.strip()}"
+        )
+        # Try to leave the container in the pre-restore state.
+        if was_running:
+            _ssh_run_on_incus_host(
+                host, user, f"incus start {shlex.quote(container)}"
+            )
+        return 1
+
+    if was_running:
+        start = _ssh_run_on_incus_host(
+            host, user, f"incus start {shlex.quote(container)}"
+        )
+        if start.returncode != 0:
+            print_error(
+                f"Container restored but failed to start: "
+                f"{start.stderr.strip() or start.stdout.strip()}"
+            )
+            return 1
+
+    print_info(
+        f"Restored '{snap_name}' to {container}. "
+        f"You can reconnect with: remo shell {container}"
+    )
+    return 0
+
+
+def snapshot_delete(
+    container: str,
+    host: str,
+    user: str,
+    snap_name: str,
+    auto_confirm: bool = False,
+) -> int:
+    """Delete a snapshot of *container*."""
+    try:
+        existing = _list_snapshots_for_container(host, container, user)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    target = next((s for s in existing if s.name == snap_name), None)
+    if target is None:
+        print_error(
+            f"Snapshot '{snap_name}' not found for incus instance '{container}'."
+        )
+        return 1
+    if target.status is not SnapshotStatus.AVAILABLE:
+        print_error(
+            f"Snapshot '{snap_name}' is {target.status.value}; "
+            f"run `remo incus snapshot list {container}` to check status."
+        )
+        return 1
+
+    if not auto_confirm:
+        if not confirm(
+            f"Delete snapshot '{snap_name}' of {container}?", default=False
+        ):
+            print_info("Aborted.")
+            return 1
+
+    result = _ssh_run_on_incus_host(
+        host,
+        user,
+        f"incus snapshot delete {shlex.quote(container)} {shlex.quote(snap_name)}",
+    )
+    if result.returncode != 0:
+        print_error(
+            f"incus snapshot delete failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+        return 1
+
+    print_info(f"Deleted snapshot '{snap_name}' of {container}.")
+    return 0

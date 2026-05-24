@@ -7,6 +7,13 @@ import sys
 import click
 
 from remo_cli.core.completion import proxmox_name as _complete_name
+from remo_cli.core.known_hosts import get_known_hosts
+from remo_cli.core.output import print_error
+from remo_cli.core.snapshot import (
+    format_snapshot_table,
+    generate_default_name,
+    validate_name as _validate_snap,
+)
 from remo_cli.providers import proxmox as providers_proxmox
 
 
@@ -221,3 +228,163 @@ def bootstrap(
         verbose=verbose,
     )
     sys.exit(rc)
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+
+def _validate_snap_callback(ctx, param, value):  # noqa: ANN001
+    if value is None:
+        return value
+    _validate_snap(value)
+    return value
+
+
+def _resolve_proxmox_target(
+    instance: str,
+) -> tuple[str, str, str] | None:
+    """Look up (host, user, vmid) for *instance* in known_hosts.
+
+    Returns ``None`` and prints an error if no matching registry entry is
+    found.  The Proxmox registry stores `host/container` in `name`, the
+    SSH user in `region`, and the VMID in `instance_id`.
+    """
+    host, user, vmid = providers_proxmox._lookup_proxmox_host(instance)  # noqa: SLF001
+    if not host or not vmid:
+        print_error(
+            f"No Proxmox registry entry found for '{instance}'. "
+            f"Use `remo proxmox sync <host>` to register containers first."
+        )
+        return None
+    if not user:
+        user = "root"
+    return host, user, vmid
+
+
+@proxmox.group()
+def snapshot() -> None:
+    """Create / restore / delete snapshots of Proxmox LXC containers."""
+
+
+@snapshot.command("create")
+@click.argument("instance", shell_complete=_complete_name)
+@click.option(
+    "--name",
+    default=None,
+    callback=_validate_snap_callback,
+    help="Snapshot name (default: remo-YYYYMMDD-HHMMSS).",
+)
+@click.option(
+    "--description",
+    default="",
+    help="Free-text description shown in `snapshot list`.",
+)
+def snapshot_create_cmd(
+    instance: str,
+    name: str | None,
+    description: str,
+) -> None:
+    """Take a snapshot of a Proxmox LXC container."""
+    target = _resolve_proxmox_target(instance)
+    if target is None:
+        sys.exit(1)
+    host, user, vmid = target
+    snap_name = name or generate_default_name()
+    rc = providers_proxmox.snapshot_create(
+        container=instance,
+        host=host,
+        user=user,
+        vmid=vmid,
+        snap_name=snap_name,
+        description=description,
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("restore")
+@click.argument("instance", shell_complete=_complete_name)
+@click.argument("snap_name")
+@click.option("--yes", "-y", is_flag=True, help="Bypass the confirmation prompt.")
+def snapshot_restore_cmd(instance: str, snap_name: str, yes: bool) -> None:
+    """Restore a Proxmox LXC container to a previously created snapshot."""
+    target = _resolve_proxmox_target(instance)
+    if target is None:
+        sys.exit(1)
+    host, user, vmid = target
+    rc = providers_proxmox.snapshot_restore(
+        container=instance,
+        host=host,
+        user=user,
+        vmid=vmid,
+        snap_name=snap_name,
+        auto_confirm=yes,
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("delete")
+@click.argument("instance", shell_complete=_complete_name)
+@click.argument("snap_name")
+@click.option("--yes", "-y", is_flag=True, help="Bypass the confirmation prompt.")
+def snapshot_delete_cmd(instance: str, snap_name: str, yes: bool) -> None:
+    """Delete a snapshot of a Proxmox LXC container."""
+    target = _resolve_proxmox_target(instance)
+    if target is None:
+        sys.exit(1)
+    host, user, vmid = target
+    rc = providers_proxmox.snapshot_delete(
+        container=instance,
+        host=host,
+        user=user,
+        vmid=vmid,
+        snap_name=snap_name,
+        auto_confirm=yes,
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("list")
+@click.argument("instance", required=False, default=None, shell_complete=_complete_name)
+def snapshot_list_cmd(instance: str | None) -> None:
+    """List snapshots for a Proxmox container (or all registered)."""
+    if instance is not None:
+        target = _resolve_proxmox_target(instance)
+        if target is None:
+            sys.exit(1)
+        host, user, vmid = target
+        try:
+            snaps = providers_proxmox._list_snapshots_for_vmid(  # noqa: SLF001
+                host=host, user=user, vmid=vmid, container_name=instance
+            )
+        except RuntimeError as e:
+            print_error(str(e))
+            sys.exit(1)
+        click.echo(
+            format_snapshot_table(snaps, show_status=False, instance_label=instance)
+        )
+        sys.exit(0)
+
+    all_snaps: list = []
+    any_failure = False
+    for entry in get_known_hosts(type_filter="proxmox"):
+        # name format: <host>/<container>
+        host, _, container = entry.name.partition("/")
+        if not container:
+            continue
+        user = entry.region or "root"
+        vmid = entry.instance_id
+        if not vmid:
+            continue
+        try:
+            all_snaps.extend(
+                providers_proxmox._list_snapshots_for_vmid(  # noqa: SLF001
+                    host=host, user=user, vmid=vmid, container_name=container
+                )
+            )
+        except RuntimeError as e:
+            print_error(f"{container}: {e}")
+            any_failure = True
+    click.echo(format_snapshot_table(all_snaps, show_status=False))
+    sys.exit(1 if any_failure else 0)

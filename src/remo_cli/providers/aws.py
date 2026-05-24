@@ -25,11 +25,18 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     save_known_host,
 )
+from datetime import datetime, timezone
+
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.snapshot import (
+    handle_destroy_snapshot_cleanup,
+    validate_name as validate_snapshot_name,
+)
 from remo_cli.core.ssh import detect_timezone, require_session_manager_plugin
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
+from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
 
 def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
@@ -512,6 +519,31 @@ def destroy(
 
     resource_name = name or os.environ.get("USER", "remo")
     region = get_aws_region(resource_name)
+
+    # FR-020 through FR-023: surface remo-managed EBS snapshots before destroy.
+    # Failure to enumerate (instance already gone, no creds, etc.) downgrades
+    # to a warning so the destroy itself can still proceed.
+    try:
+        _pre = snapshot_list(instance_name=resource_name, region=region)
+    except Exception as e:  # noqa: BLE001
+        print_warning(
+            f"Could not list snapshots before destroy ({e}); "
+            f"proceeding without snapshot cleanup."
+        )
+        _pre = []
+    handle_destroy_snapshot_cleanup(
+        provider_label="AWS",
+        instance=resource_name,
+        snapshots=_pre,
+        delete_one=lambda snap: snapshot_delete(
+            instance_name=resource_name,
+            snap_name=snap.name,
+            region=region,
+            auto_confirm=True,
+        ),
+        auto_confirm=auto_confirm,
+        show_status=True,
+    )
 
     if not auto_confirm:
         prompt = (
@@ -1025,3 +1057,476 @@ def info(name: str = "") -> None:
             )
         )
         print_info(f"Registered '{resource_name}' in known hosts.")
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+
+def _get_root_volume_info(
+    ec2, instance_id: str
+) -> tuple[str, int, str, str, str]:
+    """Return ``(volume_id, size_gib, az, device_name, volume_type)`` for the
+    instance's root EBS volume.
+
+    Raises :class:`RuntimeError` if the lookup fails.
+    """
+    resp = ec2.describe_instances(InstanceIds=[instance_id])
+    instances = [
+        inst
+        for r in resp.get("Reservations", [])
+        for inst in r.get("Instances", [])
+    ]
+    if not instances:
+        raise RuntimeError(f"No EC2 instance found for id {instance_id}")
+    inst = instances[0]
+    root_device = inst.get("RootDeviceName")
+    az = inst.get("Placement", {}).get("AvailabilityZone", "")
+    volume_id = ""
+    for mapping in inst.get("BlockDeviceMappings", []):
+        if mapping.get("DeviceName") == root_device:
+            volume_id = mapping.get("Ebs", {}).get("VolumeId", "")
+            break
+    if not volume_id:
+        raise RuntimeError(
+            f"Could not locate root volume for instance {instance_id}"
+        )
+    vol_resp = ec2.describe_volumes(VolumeIds=[volume_id])
+    volumes = vol_resp.get("Volumes", [])
+    if not volumes:
+        raise RuntimeError(f"describe_volumes returned nothing for {volume_id}")
+    vol = volumes[0]
+    return (
+        volume_id,
+        int(vol.get("Size", 0)),
+        az,
+        root_device or "/dev/sda1",
+        vol.get("VolumeType", "gp3"),
+    )
+
+
+def _tags_to_dict(tags: list[dict] | None) -> dict[str, str]:
+    return {t.get("Key", ""): t.get("Value", "") for t in (tags or [])}
+
+
+def _aws_state_to_status(state: str) -> SnapshotStatus:
+    if state in {"pending", "creating"}:
+        return SnapshotStatus.PENDING
+    if state == "completed":
+        return SnapshotStatus.AVAILABLE
+    return SnapshotStatus.FAILED
+
+
+def _list_snapshots_for_volume(
+    ec2, volume_id: str, instance_name: str
+) -> list[Snapshot]:
+    """Return remo-managed snapshots whose source is *volume_id*.
+
+    Scoping by volume-id satisfies FR-027 (provider-side identity scope);
+    the additional ``tag:remo=true`` filter satisfies FR-026.
+    """
+    resp = ec2.describe_snapshots(
+        Filters=[
+            {"Name": "volume-id", "Values": [volume_id]},
+            {"Name": "tag:remo", "Values": ["true"]},
+        ],
+        OwnerIds=["self"],
+    )
+    snapshots: list[Snapshot] = []
+    for snap in resp.get("Snapshots", []):
+        tags = _tags_to_dict(snap.get("Tags"))
+        user_name = tags.get("remo-snapshot-name") or snap.get("SnapshotId", "")
+        started = snap.get("StartTime")
+        if isinstance(started, datetime):
+            created_at = (
+                started.astimezone(timezone.utc)
+                if started.tzinfo
+                else started.replace(tzinfo=timezone.utc)
+            )
+        else:
+            created_at = datetime.fromtimestamp(0, tz=timezone.utc)
+        snapshots.append(
+            Snapshot(
+                provider="aws",
+                instance_name=instance_name,
+                name=user_name,
+                backend_id=snap.get("SnapshotId", ""),
+                created_at=created_at,
+                size_bytes=int(snap.get("VolumeSize", 0)) * (1024**3),
+                description=snap.get("Description", ""),
+                status=_aws_state_to_status(snap.get("State", "")),
+            )
+        )
+    return snapshots
+
+
+def snapshot_create(
+    instance_name: str,
+    snap_name: str,
+    description: str = "",
+    region: str = "",
+) -> int:
+    """Create an EBS snapshot of *instance_name*'s root volume.
+
+    Returns 0 after the provider accepts the request (no polling — per
+    FR-004 / Q1).
+    """
+    validate_snapshot_name(snap_name)
+
+    region = get_aws_region(instance_name) if not region else region
+    instance = _get_running_instance(instance_name, region)
+    if instance is None:
+        print_error(
+            f"No running AWS EC2 instance found for '{instance_name}' in {region}."
+        )
+        return 1
+    instance_id = instance.get("InstanceId", "")
+    if not instance_id:
+        print_error(f"Could not determine InstanceId for '{instance_name}'.")
+        return 1
+
+    session = _boto3_session(region)
+    ec2 = session.client("ec2")
+
+    try:
+        volume_id, _, _, _, _ = _get_root_volume_info(ec2, instance_id)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    existing = _list_snapshots_for_volume(ec2, volume_id, instance_name)
+    if any(s.name == snap_name for s in existing):
+        print_error(
+            f"Snapshot '{snap_name}' already exists for aws instance '{instance_name}'."
+        )
+        return 1
+
+    try:
+        resp = ec2.create_snapshot(
+            VolumeId=volume_id,
+            Description=description or f"remo snapshot of {instance_name}",
+            TagSpecifications=[
+                {
+                    "ResourceType": "snapshot",
+                    "Tags": [
+                        {"Key": "remo", "Value": "true"},
+                        {"Key": "remo-snapshot-name", "Value": snap_name},
+                        {"Key": "remo-instance", "Value": instance_name},
+                    ],
+                }
+            ],
+        )
+    except Exception as e:  # noqa: BLE001 — boto3 raises ClientError, surface verbatim
+        print_error(f"ec2.create_snapshot failed: {e}")
+        return 1
+
+    snap_id = resp.get("SnapshotId", "")
+    print_info(
+        f"Snapshot '{snap_name}' creation started for {instance_name} "
+        f"({snap_id}). This will take several minutes. "
+        f"Run `remo aws snapshot list {instance_name}` to check status."
+    )
+    return 0
+
+
+def _wait_for_instance_state(
+    ec2, instance_id: str, target: str, timeout: int = 600
+) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = ec2.describe_instances(InstanceIds=[instance_id])
+        for reservation in r.get("Reservations", []):
+            for inst in reservation.get("Instances", []):
+                state = inst.get("State", {}).get("Name", "")
+                if state == target:
+                    return True
+        time.sleep(5)
+    return False
+
+
+def _wait_for_volume_state(
+    ec2, volume_id: str, target: str, timeout: int = 600
+) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        r = ec2.describe_volumes(VolumeIds=[volume_id])
+        for vol in r.get("Volumes", []):
+            if vol.get("State") == target:
+                return True
+        time.sleep(3)
+    return False
+
+
+def snapshot_restore(
+    instance_name: str,
+    snap_name: str,
+    region: str = "",
+    auto_confirm: bool = False,
+) -> int:
+    """In-place AWS restore via volume swap (FR-013, FR-016, FR-029, FR-030).
+
+    Steps (per research.md):
+      1. Look up instance + root volume.
+      2. Look up snapshot; require AVAILABLE (FR-028).
+      3. Confirm with downtime warning.
+      4. Stop instance → wait stopped.
+      5. Detach root volume → wait available.
+      6. Create new volume from snapshot at MAX(current, snapshot) size.
+      7. Attach new volume at the original device → wait in-use.
+      8. Start instance → wait running.
+      9. Tag old volume ``remo-restore-orphan=<timestamp>`` and keep it (FR-030).
+    """
+    region = get_aws_region(instance_name) if not region else region
+
+    # We need the instance even if it's stopped; describe directly.
+    session = _boto3_session(region)
+    ec2 = session.client("ec2")
+
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "tag:Name", "Values": [f"remo-{instance_name}"]},
+            {"Name": "tag:remo", "Values": ["true"]},
+        ]
+    )
+    instances = [
+        inst
+        for r in resp.get("Reservations", [])
+        for inst in r.get("Instances", [])
+    ]
+    if not instances:
+        print_error(f"No AWS EC2 instance found for '{instance_name}' in {region}.")
+        return 1
+    inst = instances[0]
+    instance_id = inst.get("InstanceId", "")
+
+    try:
+        old_vol_id, cur_size, az, device, vol_type = _get_root_volume_info(
+            ec2, instance_id
+        )
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    existing = _list_snapshots_for_volume(ec2, old_vol_id, instance_name)
+    target = next((s for s in existing if s.name == snap_name), None)
+    if target is None:
+        print_error(
+            f"Snapshot '{snap_name}' not found for aws instance '{instance_name}'."
+        )
+        return 1
+    if target.status is SnapshotStatus.PENDING:
+        print_error(
+            f"Snapshot '{snap_name}' is still pending; "
+            f"check `remo aws snapshot list {instance_name}` for status."
+        )
+        return 1
+    if target.status is not SnapshotStatus.AVAILABLE:
+        print_error(
+            f"Snapshot '{snap_name}' is {target.status.value}; cannot restore."
+        )
+        return 1
+
+    snap_id = target.backend_id
+    snap_size_gib = (target.size_bytes or 0) // (1024**3)
+    new_size = max(cur_size, snap_size_gib)
+
+    if not auto_confirm:
+        if not confirm(
+            f"Restore '{snap_name}' to {instance_name}? "
+            f"Instance will be stopped, root volume swapped, and restarted — "
+            f"typically 2-5 minutes of downtime.",
+            default=False,
+        ):
+            print_info("Aborted.")
+            return 1
+
+    try:
+        # 4. Stop
+        print_info(f"Stopping instance {instance_id}...")
+        ec2.stop_instances(InstanceIds=[instance_id])
+        if not _wait_for_instance_state(ec2, instance_id, "stopped"):
+            raise RuntimeError("timed out waiting for instance to stop")
+
+        # 5. Detach root
+        print_info(f"Detaching root volume {old_vol_id}...")
+        ec2.detach_volume(VolumeId=old_vol_id)
+        if not _wait_for_volume_state(ec2, old_vol_id, "available"):
+            raise RuntimeError(
+                f"timed out waiting for {old_vol_id} to detach"
+            )
+
+        # 6. Create new volume from snapshot
+        print_info(
+            f"Creating new volume from {snap_id} at {new_size} GiB in {az}..."
+        )
+        cv = ec2.create_volume(
+            SnapshotId=snap_id,
+            AvailabilityZone=az,
+            Size=new_size,
+            VolumeType=vol_type,
+            TagSpecifications=[
+                {
+                    "ResourceType": "volume",
+                    "Tags": [
+                        {"Key": "remo", "Value": "true"},
+                        {"Key": "Name", "Value": f"remo-{instance_name}"},
+                    ],
+                }
+            ],
+        )
+        new_vol_id = cv.get("VolumeId", "")
+        if not _wait_for_volume_state(ec2, new_vol_id, "available"):
+            raise RuntimeError(
+                f"timed out waiting for new volume {new_vol_id} to become available"
+            )
+
+        # 7. Attach new volume
+        print_info(f"Attaching {new_vol_id} as {device}...")
+        ec2.attach_volume(
+            VolumeId=new_vol_id, InstanceId=instance_id, Device=device
+        )
+        if not _wait_for_volume_state(ec2, new_vol_id, "in-use"):
+            raise RuntimeError(
+                f"timed out waiting for {new_vol_id} to attach"
+            )
+
+        # 8. Start
+        print_info(f"Starting instance {instance_id}...")
+        ec2.start_instances(InstanceIds=[instance_id])
+        if not _wait_for_instance_state(ec2, instance_id, "running"):
+            raise RuntimeError("timed out waiting for instance to start")
+
+        # 9. Tag old volume as orphan (FR-030)
+        now = datetime.now(tz=timezone.utc).isoformat(timespec="seconds")
+        try:
+            ec2.create_tags(
+                Resources=[old_vol_id],
+                Tags=[{"Key": "remo-restore-orphan", "Value": now}],
+            )
+        except Exception as e:  # noqa: BLE001
+            print_warning(f"Failed to tag orphan volume {old_vol_id}: {e}")
+
+    except Exception as e:  # noqa: BLE001
+        print_error(
+            f"Restore failed: {e}. The pre-restore root volume '{old_vol_id}' "
+            f"is preserved in {az}. To recover, re-attach manually:\n"
+            f"  aws ec2 attach-volume --region {region} "
+            f"--volume-id {old_vol_id} --instance-id {instance_id} "
+            f"--device {device}\nThen: aws ec2 start-instances --instance-ids "
+            f"{instance_id}"
+        )
+        return 1
+
+    print_info(
+        f"Restored '{snap_name}' to {instance_name}. "
+        f"You can reconnect with: remo shell {instance_name}"
+    )
+    print_info(
+        f"Note: pre-restore root volume {old_vol_id} is preserved with tag "
+        f"`remo-restore-orphan`. After verifying the restore, delete it with:\n"
+        f"  aws ec2 delete-volume --region {region} --volume-id {old_vol_id}"
+    )
+    if new_size > snap_size_gib and snap_size_gib > 0:
+        print_info(
+            f"Filesystem currently occupies {snap_size_gib} GiB on a "
+            f"{new_size} GiB volume; grow it inside the instance with: "
+            f"sudo resize2fs $(findmnt -no SOURCE /)"
+        )
+    return 0
+
+
+def snapshot_list(instance_name: str, region: str = "") -> list[Snapshot]:
+    """Return remo-managed snapshots for *instance_name*'s root volume.
+
+    Raises :class:`RuntimeError` when the instance lookup fails so the CLI
+    can surface the error and exit 1 (FR-011).
+    """
+    region = get_aws_region(instance_name) if not region else region
+    session = _boto3_session(region)
+    ec2 = session.client("ec2")
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "tag:Name", "Values": [f"remo-{instance_name}"]},
+            {"Name": "tag:remo", "Values": ["true"]},
+        ]
+    )
+    instances = [
+        inst
+        for r in resp.get("Reservations", [])
+        for inst in r.get("Instances", [])
+    ]
+    if not instances:
+        raise RuntimeError(
+            f"No AWS EC2 instance found for '{instance_name}' in {region}."
+        )
+    instance_id = instances[0].get("InstanceId", "")
+    volume_id, _, _, _, _ = _get_root_volume_info(ec2, instance_id)
+    return _list_snapshots_for_volume(ec2, volume_id, instance_name)
+
+
+def snapshot_delete(
+    instance_name: str,
+    snap_name: str,
+    region: str = "",
+    auto_confirm: bool = False,
+) -> int:
+    """Delete a remo-managed AWS snapshot by its user-facing name."""
+    region = get_aws_region(instance_name) if not region else region
+    session = _boto3_session(region)
+    ec2 = session.client("ec2")
+
+    # Find instance → volume → snapshots, then filter by user-facing name.
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "tag:Name", "Values": [f"remo-{instance_name}"]},
+            {"Name": "tag:remo", "Values": ["true"]},
+        ]
+    )
+    instances = [
+        inst
+        for r in resp.get("Reservations", [])
+        for inst in r.get("Instances", [])
+    ]
+    if not instances:
+        print_error(
+            f"No AWS EC2 instance found for '{instance_name}' in {region}."
+        )
+        return 1
+    instance_id = instances[0].get("InstanceId", "")
+    try:
+        old_vol_id, _, _, _, _ = _get_root_volume_info(ec2, instance_id)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    existing = _list_snapshots_for_volume(ec2, old_vol_id, instance_name)
+    target = next((s for s in existing if s.name == snap_name), None)
+    if target is None:
+        print_error(
+            f"Snapshot '{snap_name}' not found for aws instance '{instance_name}'."
+        )
+        return 1
+    if target.status is SnapshotStatus.PENDING:
+        print_error(
+            f"Snapshot '{snap_name}' is still pending; "
+            f"check `remo aws snapshot list {instance_name}` for status."
+        )
+        return 1
+
+    if not auto_confirm:
+        if not confirm(
+            f"Delete snapshot '{snap_name}' of {instance_name}?",
+            default=False,
+        ):
+            print_info("Aborted.")
+            return 1
+
+    try:
+        ec2.delete_snapshot(SnapshotId=target.backend_id)
+    except Exception as e:  # noqa: BLE001
+        print_error(f"ec2.delete_snapshot failed: {e}")
+        return 1
+
+    print_info(f"Deleted snapshot '{snap_name}' of {instance_name}.")
+    return 0

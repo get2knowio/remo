@@ -139,9 +139,55 @@ jobs:
           echo "$OUT" | grep -q "EBS volume:"  || { echo "FAIL: missing EBS volume"; exit 1; }
           echo "aws info: PASS"
 
+      - name: Snapshot — create (async kickoff)
+        run: |
+          SNAP=ci-smoke-aws
+          echo "SNAP_NAME=$SNAP" >> "$GITHUB_ENV"
+          OUT=$(uv run remo aws snapshot create "$INSTANCE_NAME" --name "$SNAP" --description "smoke test")
+          echo "$OUT"
+          echo "$OUT" | grep -q "creation started" || { echo "FAIL: missing async-create hint"; exit 1; }
+          echo "$OUT" | grep -q "several minutes" || { echo "FAIL: missing duration hint"; exit 1; }
+          echo "aws snapshot create: PASS"
+
+      - name: Snapshot — list shows pending then available
+        run: |
+          # Initial list: pending (or already available if AWS is fast today)
+          uv run remo aws snapshot list "$INSTANCE_NAME" | tee /tmp/list-1.txt
+          grep -q "$SNAP_NAME" /tmp/list-1.txt || { echo "FAIL: snapshot missing from initial list"; exit 1; }
+          grep -q "STATUS" /tmp/list-1.txt || { echo "FAIL: AWS list missing STATUS column"; exit 1; }
+
+          # Poll up to 10 minutes for the snapshot to reach available state
+          for attempt in $(seq 1 60); do
+            OUT=$(uv run remo aws snapshot list "$INSTANCE_NAME")
+            if echo "$OUT" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" >/dev/null; then
+              echo "Snapshot $SNAP_NAME is available (attempt $attempt)"
+              break
+            fi
+            echo "Attempt $attempt: not yet available; sleeping 10s..."
+            sleep 10
+          done
+          uv run remo aws snapshot list "$INSTANCE_NAME" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" \
+            || { echo "FAIL: snapshot did not reach available within 10 min"; exit 1; }
+          echo "aws snapshot list: PASS"
+
+      - name: Snapshot — delete
+        run: |
+          uv run remo aws snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes
+          # Verify it's gone from list
+          OUT=$(uv run remo aws snapshot list "$INSTANCE_NAME")
+          if echo "$OUT" | grep -q "$SNAP_NAME"; then
+            echo "FAIL: snapshot still present after delete"; exit 1
+          fi
+          echo "aws snapshot delete: PASS"
+
       - name: Teardown
         if: always()
         run: |
+          # Best-effort cleanup of any leftover smoke snapshots (in case of
+          # mid-step failure) before tearing down the instance.
+          if [ -n "${SNAP_NAME:-}" ]; then
+            uv run remo aws snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes 2>/dev/null || true
+          fi
           uv run remo aws destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
 
   # ===========================================================================
@@ -217,9 +263,51 @@ jobs:
           echo "$OUT" | grep -q "Volume:"      || { echo "FAIL: missing Volume"; exit 1; }
           echo "hetzner info: PASS"
 
+      - name: Snapshot — create (async kickoff)
+        run: |
+          SNAP=ci-smoke-hetzner
+          echo "SNAP_NAME=$SNAP" >> "$GITHUB_ENV"
+          OUT=$(uv run remo hetzner snapshot create "$INSTANCE_NAME" --name "$SNAP" --description "smoke test")
+          echo "$OUT"
+          echo "$OUT" | grep -q "creation started" || { echo "FAIL: missing async-create hint"; exit 1; }
+          echo "$OUT" | grep -q "several minutes" || { echo "FAIL: missing duration hint"; exit 1; }
+          echo "hetzner snapshot create: PASS"
+
+      - name: Snapshot — list shows pending then available
+        run: |
+          uv run remo hetzner snapshot list "$INSTANCE_NAME" | tee /tmp/list-1.txt
+          grep -q "$SNAP_NAME" /tmp/list-1.txt || { echo "FAIL: snapshot missing from initial list"; exit 1; }
+          grep -q "STATUS" /tmp/list-1.txt || { echo "FAIL: Hetzner list missing STATUS column"; exit 1; }
+
+          # Poll up to 5 minutes for the snapshot to become available
+          for attempt in $(seq 1 30); do
+            OUT=$(uv run remo hetzner snapshot list "$INSTANCE_NAME")
+            if echo "$OUT" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" >/dev/null; then
+              echo "Snapshot $SNAP_NAME is available (attempt $attempt)"
+              break
+            fi
+            echo "Attempt $attempt: not yet available; sleeping 10s..."
+            sleep 10
+          done
+          uv run remo hetzner snapshot list "$INSTANCE_NAME" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" \
+            || { echo "FAIL: snapshot did not reach available within 5 min"; exit 1; }
+          echo "hetzner snapshot list: PASS"
+
+      - name: Snapshot — delete
+        run: |
+          uv run remo hetzner snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes
+          OUT=$(uv run remo hetzner snapshot list "$INSTANCE_NAME")
+          if echo "$OUT" | grep -q "$SNAP_NAME"; then
+            echo "FAIL: snapshot still present after delete"; exit 1
+          fi
+          echo "hetzner snapshot delete: PASS"
+
       - name: Teardown
         if: always()
         run: |
+          if [ -n "${SNAP_NAME:-}" ]; then
+            uv run remo hetzner snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes 2>/dev/null || true
+          fi
           uv run remo hetzner destroy --name "$INSTANCE_NAME" --yes --remove-volume || true
 
   # ===========================================================================
@@ -364,6 +452,93 @@ jobs:
           }
           verify_tools
           echo "Post-update dev tools verification: PASS"
+
+      - name: Snapshot — create
+        run: |
+          SNAP=ci-smoke-incus
+          echo "SNAP_NAME=$SNAP" >> "$GITHUB_ENV"
+          OUT=$(sg incus-admin -c "uv run remo incus snapshot create $CONTAINER_NAME --name $SNAP --description 'smoke test'")
+          echo "$OUT"
+          echo "$OUT" | grep -q "Created snapshot '$SNAP'" || { echo "FAIL: missing sync-create success message"; exit 1; }
+          echo "incus snapshot create: PASS"
+
+      - name: Snapshot — list shows the new snapshot
+        run: |
+          OUT=$(sg incus-admin -c "uv run remo incus snapshot list $CONTAINER_NAME")
+          echo "$OUT"
+          echo "$OUT" | grep -q "$SNAP_NAME" || { echo "FAIL: snapshot missing from list"; exit 1; }
+          # Incus list MUST NOT have a STATUS column (always AVAILABLE)
+          if echo "$OUT" | head -1 | grep -q "STATUS"; then
+            echo "FAIL: Incus list should not have a STATUS column"; exit 1
+          fi
+          echo "incus snapshot list: PASS"
+
+      - name: Snapshot — restore round-trip
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 -o BatchMode=yes -i ~/.ssh/id_rsa remo@$HOST"
+
+          # Plant a marker file inside the container AFTER the snapshot was
+          # taken. If restore works, this marker must be gone afterwards.
+          $SSH_CMD "echo post-snapshot > /tmp/should-be-gone-after-restore.txt"
+          $SSH_CMD "test -f /tmp/should-be-gone-after-restore.txt"
+          echo "Marker file planted post-snapshot."
+
+          # Restore. -y to bypass the confirm. The provider stops the
+          # container, restores, and starts it again.
+          sg incus-admin -c "uv run remo incus snapshot restore $CONTAINER_NAME $SNAP_NAME -y"
+
+          # Container may take a few seconds to come back online after start.
+          for attempt in $(seq 1 12); do
+            if $SSH_CMD "echo connection-ok" 2>/dev/null | grep -q "connection-ok"; then
+              echo "SSH back after restore (attempt $attempt)"
+              break
+            fi
+            sleep 5
+          done
+
+          # The post-snapshot marker MUST be gone (SC-001).
+          if $SSH_CMD "test -f /tmp/should-be-gone-after-restore.txt" 2>/dev/null; then
+            echo "FAIL: marker file still present after restore — rollback didn't happen"
+            exit 1
+          fi
+          echo "Post-restore: marker file is gone — rollback PASS"
+          echo "incus snapshot restore: PASS"
+
+      - name: Snapshot — delete
+        run: |
+          sg incus-admin -c "uv run remo incus snapshot delete $CONTAINER_NAME $SNAP_NAME -y"
+          OUT=$(sg incus-admin -c "uv run remo incus snapshot list $CONTAINER_NAME")
+          if echo "$OUT" | grep -q "$SNAP_NAME"; then
+            echo "FAIL: snapshot still present after delete"
+            echo "$OUT"
+            exit 1
+          fi
+          echo "incus snapshot delete: PASS"
+
+      - name: Snapshot — destroy-time cleanup prompt
+        run: |
+          # Create two snapshots, then destroy with -y. The destroy-time prompt
+          # is bypassed by -y, defaulting to KEEP snapshots (safer default).
+          # The destroy output must mention the snapshots and the keep-warning.
+          # We re-create the container after so the rest of the suite (cp tests)
+          # has a clean target.
+          sg incus-admin -c "uv run remo incus snapshot create $CONTAINER_NAME --name keep-1"
+          sg incus-admin -c "uv run remo incus snapshot create $CONTAINER_NAME --name keep-2"
+
+          # Capture destroy output to verify the prompt path fires
+          OUT=$(sg incus-admin -c "uv run remo incus destroy --name $CONTAINER_NAME --yes" 2>&1 || true)
+          echo "$OUT"
+          echo "$OUT" | grep -q "has 2 snapshot" || { echo "FAIL: destroy did not mention snapshots"; exit 1; }
+          echo "$OUT" | grep -q "keeping the 2 snapshot" || { echo "FAIL: destroy did not print --yes keep warning"; exit 1; }
+          echo "incus destroy snapshot-prompt: PASS"
+
+          # Re-create the container for downstream steps (cp tests etc.)
+          sg incus-admin -c "uv run remo incus create --name $CONTAINER_NAME"
+          # Refresh $HOST since the container was rebuilt
+          HOST=$(sudo incus list $CONTAINER_NAME --format=json | \
+            python3 -c "import sys,json; d=json.load(sys.stdin)[0]['state']['network']['eth0']['addresses']; print([a['address'] for a in d if a['family']=='inet'][0])")
+          echo "HOST=$HOST" >> "$GITHUB_ENV"
 
       - name: Prepare for remo cp tests
         run: |

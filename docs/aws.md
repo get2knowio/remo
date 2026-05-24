@@ -85,6 +85,14 @@ remo aws destroy --yes
 
 # Destroy instance AND EBS (removes all data)
 remo aws destroy --yes --remove-storage
+
+# Snapshots
+remo aws snapshot create <instance>                 # Auto-named (remo-YYYYMMDD-HHMMSS)
+remo aws snapshot create <instance> --name pre-x --description "before upgrade"
+remo aws snapshot list <instance>                   # Single instance
+remo aws snapshot list                              # All registered AWS instances
+remo aws snapshot restore <instance> <snap-name> [-y]   # In-place EBS volume swap
+remo aws snapshot delete <instance> <snap-name> [-y]    # Remove snapshot
 ```
 
 ### Create Options
@@ -128,6 +136,25 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | Option | Description |
 |--------|-------------|
 | `--name <name>` | Resource namespace (default: `$USER`) |
+
+### Snapshot Options
+
+| Option | Applies to | Description |
+|--------|------------|-------------|
+| `--name <snap>` | `create` | Snapshot name. Defaults to `remo-YYYYMMDD-HHMMSS`. Validated client-side: 1–40 chars, `^[A-Za-z0-9][A-Za-z0-9_-]*$`. |
+| `--description <text>` | `create` | Free-text description stored on the EBS snapshot and shown in `list`. |
+| `--region <region>` | all | AWS region. Defaults to the registered instance's region. |
+| `--yes`, `-y` | `restore`, `delete` | Bypass the confirmation prompt. |
+
+### Snapshot Behavior
+
+* **Create is asynchronous.** The command returns within a few seconds with a "creation started; will take several minutes" hint. Use `snapshot list` to watch the `STATUS` column transition from `pending` to `available`. Restore and delete refuse to operate on pending snapshots.
+* **Restore is an in-place volume swap.** The instance is stopped, the root EBS volume is detached, a new volume is created from the snapshot, attached as root, and the instance is restarted. Typical downtime: 2-5 minutes.
+* **Restored volume preserves current size.** If you grew the EBS volume after taking the snapshot, the restored volume is created at the current (larger) size. The filesystem inside stays at the snapshot's recorded size until you run `sudo resize2fs $(findmnt -no SOURCE /)` inside the instance — `remo` prints this hint on restore.
+* **Pre-restore volume is preserved as an orphan.** After a successful restore, the pre-restore root volume is *not* deleted; it stays in the AZ tagged `remo-restore-orphan=<ISO-8601-timestamp>` as a safety net. Once you've verified the restore is healthy, delete it manually with `aws ec2 delete-volume --volume-id <id>`. `remo` prints the exact command on restore.
+* **Snapshots are scoped by volume ID.** Snapshots are listed by filtering on the *current* root volume ID, so if you destroy an instance and create a new one with the same name, the old snapshots will not appear in `list` (they become orphans, invisible to `remo`, manageable only via the AWS console).
+* **No cost estimation.** `remo` does not estimate monthly EBS snapshot storage cost — check your AWS billing console.
+* **Destroy-time cleanup.** `remo aws destroy` lists existing snapshots and offers to delete them as part of teardown. Declining (or passing `-y`) keeps the snapshots, which will continue to incur storage cost.
 
 ## Features
 
@@ -179,6 +206,89 @@ df -h /home/remo
 ## Security
 
 All instances use SSM Session Manager — no inbound ports are opened.
+
+### IAM Permissions
+
+The principal `remo` uses (your local IAM user, SSO session, or assumed role) needs the following EC2 actions. If you scoped your `remo` policy tightly, you'll see `UnauthorizedOperation` errors the first time you try a subcommand whose actions aren't in your policy.
+
+| Subcommand | Required EC2 actions |
+|---|---|
+| `create` | `RunInstances`, `DescribeInstances`, `DescribeImages`, `DescribeVolumes`, `CreateTags`, `CreateVolume`, `DescribeSecurityGroups`, `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `CreateKeyPair`, `ImportKeyPair`, `DescribeKeyPairs`, `RunInstances`, `iam:PassRole`, `iam:GetRole`, `iam:CreateRole`, `iam:AttachRolePolicy`, `iam:GetInstanceProfile`, `iam:CreateInstanceProfile`, `iam:AddRoleToInstanceProfile` |
+| `destroy` | `DescribeInstances`, `TerminateInstances`, `DescribeVolumes`, `DeleteVolume`, `DescribeSecurityGroups`, `DeleteSecurityGroup`, `DescribeKeyPairs`, `DeleteKeyPair`, plus the IAM cleanup mirror of `create` |
+| `update`, `info`, `list`, `sync` | `DescribeInstances`, `DescribeVolumes` (+ `ModifyVolume` and `DescribeVolumesModifications` for `update --volume-size`) |
+| `stop`, `start`, `reboot` | `DescribeInstances`, `StopInstances` / `StartInstances` / `RebootInstances` |
+| `snapshot create` | `DescribeInstances`, `DescribeVolumes`, `DescribeSnapshots`, `CreateSnapshot`, `CreateTags` |
+| `snapshot list` | `DescribeInstances`, `DescribeVolumes`, `DescribeSnapshots` |
+| `snapshot delete` | `DescribeInstances`, `DescribeVolumes`, `DescribeSnapshots`, `DeleteSnapshot` |
+| `snapshot restore` | Everything in `snapshot list` **plus** `StopInstances`, `DetachVolume`, `CreateVolume`, `AttachVolume`, `StartInstances`, `CreateTags` |
+| `destroy` (with existing snapshots, `-y` declined cleanup) | Adds `DescribeSnapshots` (to enumerate) and `DeleteSnapshot` (if cleanup accepted) on top of the regular `destroy` set |
+
+> **Two AWS constraints to know.** First: `Describe*` actions can't be ARN- or tag-scoped — `Resource: "*"` is the only allowed form (read-side metadata leaks broader than mutation does). Second: snapshot ARNs are auto-generated (`snap-xxxxxx`) at create time, so prefix-on-the-ARN scoping doesn't help. Tag-based scoping is the practical path.
+
+#### Snapshot-only policy with tag-locked mutations (attach as an inline policy to your `remo` role)
+
+This is the recommended minimum. Reads stay broad (AWS limitation); mutations are locked to resources tagged `remo=true`, which is exactly what `remo` creates and never touches what it doesn't own.
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "CreateSnapshotRequiresRemoTag",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSnapshot",
+      "Resource": "arn:aws:ec2:*:*:snapshot/*",
+      "Condition": {
+        "StringEquals": {"aws:RequestTag/remo": "true"}
+      }
+    },
+    {
+      "Sid": "CreateSnapshotFromAnyVolume",
+      "Effect": "Allow",
+      "Action": "ec2:CreateSnapshot",
+      "Resource": "arn:aws:ec2:*:*:volume/*"
+    },
+    {
+      "Sid": "TagSnapshotOnCreate",
+      "Effect": "Allow",
+      "Action": "ec2:CreateTags",
+      "Resource": "arn:aws:ec2:*:*:snapshot/*",
+      "Condition": {
+        "StringEquals": {"ec2:CreateAction": "CreateSnapshot"}
+      }
+    },
+    {
+      "Sid": "DeleteOnlyRemoSnapshots",
+      "Effect": "Allow",
+      "Action": "ec2:DeleteSnapshot",
+      "Resource": "arn:aws:ec2:*:*:snapshot/*",
+      "Condition": {
+        "StringEquals": {"ec2:ResourceTag/remo": "true"}
+      }
+    },
+    {
+      "Sid": "DescribeSnapshotsUnscopable",
+      "Effect": "Allow",
+      "Action": "ec2:DescribeSnapshots",
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+What each `Sid` enforces:
+
+| Sid | Enforces |
+|---|---|
+| `CreateSnapshotRequiresRemoTag` | The CreateSnapshot call must include `remo=true` in `TagSpecifications` (`remo` always does this). |
+| `CreateSnapshotFromAnyVolume` | Companion — `CreateSnapshot` evaluates against both source-volume and new-snapshot ARNs; both have to be allowed. |
+| `TagSnapshotOnCreate` | `CreateTags` is only allowed as part of a `CreateSnapshot` request — prevents the role from re-tagging arbitrary resources. |
+| `DeleteOnlyRemoSnapshots` | Can only delete snapshots tagged `remo=true`. Manual snapshots someone took via the console with no tag stay safe. |
+| `DescribeSnapshotsUnscopable` | Unavoidable — AWS doesn't allow Describe* scoping; this lets `list` work. |
+
+For `snapshot restore`, also add `ec2:StopInstances`, `ec2:DetachVolume`, `ec2:CreateVolume`, `ec2:AttachVolume`, `ec2:StartInstances`. Those can be tag-scoped on the instance / volume too — e.g., `Condition: {"StringLike": {"ec2:ResourceTag/Name": "remo-*"}}` to constrain to `remo`-named instances.
+
+If you want a looser starting point and don't need the tag-locking (e.g., you fully trust who can assume the role), `Resource: "*"` on `ec2:CreateSnapshot`, `ec2:DescribeSnapshots`, `ec2:DeleteSnapshot`, `ec2:CreateTags` is a one-statement minimal version.
 
 ### What's Created
 
