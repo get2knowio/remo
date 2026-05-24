@@ -11,8 +11,7 @@ See `.specify/memory/constitution.md` for project principles and non-negotiable 
 - N/A (Incus storage pools already configured by 001-bootstrap-incus-host) (002-incus-container-support)
 - Python 3.11+ + Click (CLI framework), InquirerPy (interactive picker), boto3 (AWS, optional), hcloud (Hetzner, optional) (003-python-cli-rewrite)
 - Flat file (`~/.config/remo/known_hosts`, colon-delimited) (003-python-cli-rewrite)
-- Python 3.11+ + Click 8.1+ (CLI), InquirerPy 0.3.4+ (existing — not directly used by snapshot but available), boto3 (lazy-imported, AWS only), hcloud (lazy-imported, Hetzner only). Subprocess + ssh for Incus/Proxmox (matches existing pattern in `providers/incus.py` and `providers/proxmox.py`). (005-provider-snapshots)
-- `~/.config/remo/known_hosts` (existing flat file). No schema changes — snapshot data lives on the provider; the registry already has the per-instance identifiers we need (`KnownHost.host` for AWS volume lookup via the instance, `KnownHost.instance_id` for proxmox VMID and AWS instance ID). (005-provider-snapshots)
+- Cross-provider snapshot model (`models/snapshot.py`) + shared helpers in `core/snapshot.py` (name generator, validator, table formatter, destroy-time cleanup hook). No new runtime deps. (005-provider-snapshots)
 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module) (001-bootstrap-incus-host)
 
@@ -133,7 +132,7 @@ Provider SDKs (boto3, hcloud) are lazy-imported with clear error messages if mis
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
-- 005-provider-snapshots: Added Python 3.11+ + Click 8.1+ (CLI), InquirerPy 0.3.4+ (existing — not directly used by snapshot but available), boto3 (lazy-imported, AWS only), hcloud (lazy-imported, Hetzner only). Subprocess + ssh for Incus/Proxmox (matches existing pattern in `providers/incus.py` and `providers/proxmox.py`).
+- 005-provider-snapshots: Added cross-provider snapshot CLI (`remo <P> snapshot {create,list,restore,delete}`) + destroy-time cleanup hook across Incus / Proxmox / AWS / Hetzner.
 - 003-python-cli-rewrite: Added Python 3.11+ + Click (CLI framework), InquirerPy (interactive picker), boto3 (AWS, optional), hcloud (Hetzner, optional)
 - 002-incus-container-support: Added Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (existing), Incus CLI (local)
 
