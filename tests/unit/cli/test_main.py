@@ -170,3 +170,42 @@ class TestIncusGroup:
         expected = ["create", "destroy", "update", "list", "sync", "bootstrap"]
         for name in expected:
             assert name in result.output, f"Incus subcommand '{name}' missing from help output"
+
+
+# ---------------------------------------------------------------------------
+# remo completion <shell>
+# ---------------------------------------------------------------------------
+
+
+class TestCompletionCommand:
+    """Verify ``remo completion <shell>`` emits a usable activation script."""
+
+    def test_fish_completion_emits_script(self):
+        result = _invoke("completion", "fish")
+        assert result.exit_code == 0
+        assert "function _remo_completion" in result.output
+
+    def test_fish_completion_skips_empty_candidates(self):
+        """Click emits a bare newline when no completions match (e.g.,
+        `remo upd<TAB>`). Some fish versions iterate the for-loop once with
+        an empty $completion, which then breaks `string split "," ""`. The
+        emitted script must guard against this.
+        """
+        result = _invoke("completion", "fish")
+        assert result.exit_code == 0
+        assert 'if test -z "$completion"' in result.output
+        # Sanity: the guard sits *inside* the for-loop, before string split
+        loop_idx = result.output.index("for completion in $response;")
+        guard_idx = result.output.index('if test -z "$completion"')
+        split_idx = result.output.index('set -l metadata (string split')
+        assert loop_idx < guard_idx < split_idx
+
+    def test_bash_completion_emits_script(self):
+        result = _invoke("completion", "bash")
+        assert result.exit_code == 0
+        assert "_remo_completion" in result.output
+
+    def test_zsh_completion_emits_script(self):
+        result = _invoke("completion", "zsh")
+        assert result.exit_code == 0
+        assert "_remo_completion" in result.output
