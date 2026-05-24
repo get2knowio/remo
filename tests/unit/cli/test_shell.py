@@ -88,6 +88,40 @@ class TestShellVersionCheck:
         mock_update.assert_called_once_with(name="webserver")
 
     @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_update_failure_prompts_before_connect(self, runner, mocker):
+        """When tools update fails, user is prompted to confirm connect."""
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
+        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value="0.8.0")
+        # First confirm() = "Update?" → True; second = "Connect anyway?" → True
+        mock_confirm = mocker.patch(
+            "remo_cli.core.output.confirm", side_effect=[True, True]
+        )
+        mocker.patch("remo_cli.providers.hetzner.update", return_value=2)
+        mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, [])
+
+        assert result.exit_code == 0
+        assert mock_confirm.call_count == 2
+        assert "Connect anyway?" in mock_confirm.call_args_list[1][0][0]
+        mock_shell_connect.assert_called_once()
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_update_failure_decline_aborts(self, runner, mocker):
+        """When user declines after failed update, shell_connect is not called."""
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
+        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value="0.8.0")
+        # First confirm() = "Update?" → True; second = "Connect anyway?" → False
+        mocker.patch("remo_cli.core.output.confirm", side_effect=[True, False])
+        mocker.patch("remo_cli.providers.hetzner.update", return_value=2)
+        mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, [])
+
+        assert result.exit_code == 2
+        mock_shell_connect.assert_not_called()
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
     def test_remote_ahead_shows_warning(self, runner, mocker):
         """When remote is ahead of local, a warning is shown."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")

@@ -33,7 +33,7 @@ def shell(
 ) -> None:
     """Connect to a remo environment (auto-detects or picker)."""
     from remo_cli.core.ssh import check_remote_version, resolve_remo_host, shell_connect  # noqa: PLC0415
-    from remo_cli.core.output import confirm, print_warning  # noqa: PLC0415
+    from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
     from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415
     from remo_cli.providers.aws import auto_start_aws_if_stopped  # noqa: PLC0415
 
@@ -71,29 +71,45 @@ def shell(
                 )
 
             if should_update:
-                _run_provider_update(host)
+                rc = _run_provider_update(host)
+                if rc != 0:
+                    # The playbook log has already been dumped, but the SSH
+                    # connection (and any remote project picker) would scroll
+                    # it offscreen immediately. Pause so the user can read it.
+                    print_error(
+                        f"Tools update for '{host.name}' failed "
+                        f"(ansible-playbook exit code {rc})."
+                    )
+                    if not confirm(
+                        "Connect anyway?",
+                        default=False,
+                    ):
+                        raise SystemExit(rc)
 
     shell_connect(host, list(tunnels), no_open)
 
 
-def _run_provider_update(host) -> None:  # noqa: ANN001
-    """Run the appropriate provider update for the given host."""
+def _run_provider_update(host) -> int:  # noqa: ANN001
+    """Run the appropriate provider update for the given host.
+
+    Returns the provider update's exit code (0 on success).
+    """
     from remo_cli.core.output import print_info  # noqa: PLC0415
 
     print_info(f"Updating instance '{host.name}'...")
 
     if host.type == "aws":
         from remo_cli.providers.aws import update as aws_update  # noqa: PLC0415
-        aws_update(name=host.name)
-    elif host.type == "hetzner":
+        return aws_update(name=host.name)
+    if host.type == "hetzner":
         from remo_cli.providers.hetzner import update as hetzner_update  # noqa: PLC0415
-        hetzner_update(name=host.name)
-    elif host.type == "incus":
+        return hetzner_update(name=host.name)
+    if host.type == "incus":
         from remo_cli.providers.incus import update as incus_update  # noqa: PLC0415
         # Incus name in known_hosts is "host/container" — extract just the container name
         container_name = host.name.split("/", maxsplit=1)[-1] if "/" in host.name else host.name
-        incus_update(name=container_name)
-    elif host.type == "proxmox":
+        return incus_update(name=container_name)
+    if host.type == "proxmox":
         from remo_cli.providers.proxmox import update as proxmox_update  # noqa: PLC0415
         # Proxmox name in known_hosts is "node/container".
         # The proxmox SSH user is stored in the region slot (see providers.proxmox.create).
@@ -101,8 +117,9 @@ def _run_provider_update(host) -> None:  # noqa: ANN001
         if not container_name:
             container_name = host.name
             proxmox_host = ""
-        proxmox_update(
+        return proxmox_update(
             name=container_name,
             host=proxmox_host,
             user=host.region or "",
         )
+    return 0
