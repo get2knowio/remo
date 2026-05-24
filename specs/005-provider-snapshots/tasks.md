@@ -27,10 +27,10 @@ Single-project Python CLI under `src/remo_cli/`, tests under `tests/unit/`. All 
 
 **Purpose**: Project scaffolding for the new files.
 
-- [ ] T001 Create empty `src/remo_cli/models/snapshot.py` and `src/remo_cli/core/snapshot.py` placeholder files (just the `from __future__ import annotations` header) so subsequent tasks have stable import paths
-- [ ] T002 [P] Create empty per-provider snapshot test files: `tests/unit/providers/test_incus_snapshot.py`, `tests/unit/providers/test_proxmox_snapshot.py`, `tests/unit/providers/test_aws_snapshot.py`, `tests/unit/providers/test_hetzner_snapshot.py` (just module docstring + future-annotations import) so tests can be added per-story without import-path churn
-- [ ] T003 [P] Create empty per-provider CLI snapshot test files: `tests/unit/cli/providers/test_incus_snapshot.py`, `tests/unit/cli/providers/test_proxmox_snapshot.py`, `tests/unit/cli/providers/test_aws_snapshot.py`, `tests/unit/cli/providers/test_hetzner_snapshot.py`
-- [ ] T004 [P] Create empty `tests/unit/core/test_snapshot.py`
+- [X] T001 Create empty `src/remo_cli/models/snapshot.py` and `src/remo_cli/core/snapshot.py` placeholder files (just the `from __future__ import annotations` header) so subsequent tasks have stable import paths
+- [X] T002 [P] Create empty per-provider snapshot test files: `tests/unit/providers/test_incus_snapshot.py`, `tests/unit/providers/test_proxmox_snapshot.py`, `tests/unit/providers/test_aws_snapshot.py`, `tests/unit/providers/test_hetzner_snapshot.py` (just module docstring + future-annotations import) so tests can be added per-story without import-path churn
+- [X] T003 [P] Create empty per-provider CLI snapshot test files: `tests/unit/cli/providers/test_incus_snapshot.py`, `tests/unit/cli/providers/test_proxmox_snapshot.py`, `tests/unit/cli/providers/test_aws_snapshot.py`, `tests/unit/cli/providers/test_hetzner_snapshot.py`
+- [X] T004 [P] Create empty `tests/unit/core/test_snapshot.py`
 
 ---
 
@@ -40,10 +40,10 @@ Single-project Python CLI under `src/remo_cli/`, tests under `tests/unit/`. All 
 
 ⚠️ **CRITICAL**: All four providers depend on the Snapshot dataclass, the SnapshotStatus enum, and the name generator/validator.
 
-- [ ] T005 Implement `SnapshotStatus` enum and `Snapshot` frozen dataclass in `src/remo_cli/models/snapshot.py` per `data-model.md`
-- [ ] T006 Implement `generate_default_name()` and `validate_name()` in `src/remo_cli/core/snapshot.py` per `research.md` (rules: 1–40 chars, `^[A-Za-z0-9][A-Za-z0-9_-]*$`); `validate_name` raises `click.BadParameter` on violation
-- [ ] T007 [P] Write unit tests in `tests/unit/core/test_snapshot.py` covering: default-name format matches `remo-YYYYMMDD-HHMMSS`, lexicographic sort order is creation order, name-too-long rejected, leading-dash rejected, spaces rejected, special chars rejected, single-char accepted, 40-char-exact accepted
-- [ ] T008 Verify all unit tests pass: `uv run --extra dev pytest tests/unit/core/test_snapshot.py -v`
+- [X] T005 Implement `SnapshotStatus` enum and `Snapshot` frozen dataclass in `src/remo_cli/models/snapshot.py` per `data-model.md`
+- [X] T006 Implement `generate_default_name()` and `validate_name()` in `src/remo_cli/core/snapshot.py` per `research.md` (rules: 1–40 chars, `^[A-Za-z0-9][A-Za-z0-9_-]*$`); `validate_name` raises `click.BadParameter` on violation
+- [X] T007 [P] Write unit tests in `tests/unit/core/test_snapshot.py` covering: default-name format matches `remo-YYYYMMDD-HHMMSS`, lexicographic sort order is creation order, name-too-long rejected, leading-dash rejected, spaces rejected, special chars rejected, single-char accepted, 40-char-exact accepted
+- [X] T008 Verify all unit tests pass: `uv run --extra dev pytest tests/unit/core/test_snapshot.py -v`
 
 **Checkpoint**: Foundation ready — user story implementation can now begin in parallel across providers.
 
@@ -59,14 +59,14 @@ Single-project Python CLI under `src/remo_cli/`, tests under `tests/unit/`. All 
 
 ### Implementation for User Story 1 — Incus (MVP slice)
 
-- [ ] T009 [US1] Add internal helper `_ssh_run_on_incus_host(host, user, command) -> CompletedProcess` to `src/remo_cli/providers/incus.py` if not already present (matches the pattern in `providers/proxmox.py:_ssh_run`)
-- [ ] T010 [US1] Implement `_list_snapshots_for_container(incus_host, container, user) -> list[Snapshot]` in `src/remo_cli/providers/incus.py` using `incus query /1.0/instances/<container>/snapshots?recursion=1` over SSH and parsing JSON to Snapshot dataclasses
-- [ ] T011 [US1] Implement `snapshot_create(name, host, user, snap_name, description) -> int` in `src/remo_cli/providers/incus.py`. Calls T010 first to detect duplicate name (FR-006); on conflict exits 1 with a clear error. Otherwise runs `incus snapshot create <container> <snap_name>` (with `--description` if provided) over SSH. Returns 0 on success.
-- [ ] T012 [US1] Implement `snapshot_restore(name, host, user, snap_name, auto_confirm) -> int` in `src/remo_cli/providers/incus.py`. Calls T010 to verify the snapshot exists and is AVAILABLE (always true for Incus); rejects missing snapshot with exit 1 (FR-028 applies to pending only, missing is its own error). If `not auto_confirm`, calls `confirm("Restore '<snap>' to <container>? Container will be stopped during rollback. [y/N]", default=False)`. On accept, orchestrate: (1) query `incus info <container> --format json` over SSH and read `.status`; (2) if `Running`, run `incus stop <container>`; (3) run `incus restore <container> <snap_name>`; (4) if the container was Running pre-restore, run `incus start <container>` so the user is left with a reachable container (FR-013). Returns 0 on success and prints reconnect hint (SC-002).
-- [ ] T013 [US1] Add the `snapshot` Click subcommand group to `src/remo_cli/cli/providers/incus.py` using `@incus.group()`. Add `create` and `restore` commands that delegate to T011/T012. `create` accepts `--name` (calling `generate_default_name()` if omitted via Click `default_factory`), `--description`, and `--verbose`. `restore` accepts `-y`/`--yes` flag.
-- [ ] T014 [P] [US1] Write unit tests in `tests/unit/providers/test_incus_snapshot.py` covering rows 1–4 and 10–14 of the contracts test matrix for Incus: create happy path, create with name+description, create duplicate (mock T010 returns existing), create invalid name (delegated to T006 — covered in T007), restore confirm yes, restore confirm no, restore bypass with `--yes`, restore pending (always AVAILABLE on Incus — skip this row for Incus), restore missing snapshot
-- [ ] T015 [P] [US1] Write CLI unit tests in `tests/unit/cli/providers/test_incus_snapshot.py` using Click's `CliRunner` covering Click-level parsing + dispatch: `--name` default factory produces `remo-` prefix, `--description` passed through, `-y` short flag and `--yes` long flag both bypass confirm
-- [ ] T016 [US1] Run Incus tests and verify all pass: `uv run --extra dev pytest tests/unit/providers/test_incus_snapshot.py tests/unit/cli/providers/test_incus_snapshot.py -v`
+- [X] T009 [US1] Add internal helper `_ssh_run_on_incus_host(host, user, command) -> CompletedProcess` to `src/remo_cli/providers/incus.py` if not already present (matches the pattern in `providers/proxmox.py:_ssh_run`)
+- [X] T010 [US1] Implement `_list_snapshots_for_container(incus_host, container, user) -> list[Snapshot]` in `src/remo_cli/providers/incus.py` using `incus query /1.0/instances/<container>/snapshots?recursion=1` over SSH and parsing JSON to Snapshot dataclasses
+- [X] T011 [US1] Implement `snapshot_create(name, host, user, snap_name, description) -> int` in `src/remo_cli/providers/incus.py`. Calls T010 first to detect duplicate name (FR-006); on conflict exits 1 with a clear error. Otherwise runs `incus snapshot create <container> <snap_name>` (with `--description` if provided) over SSH. Returns 0 on success.
+- [X] T012 [US1] Implement `snapshot_restore(name, host, user, snap_name, auto_confirm) -> int` in `src/remo_cli/providers/incus.py`. Calls T010 to verify the snapshot exists and is AVAILABLE (always true for Incus); rejects missing snapshot with exit 1 (FR-028 applies to pending only, missing is its own error). If `not auto_confirm`, calls `confirm("Restore '<snap>' to <container>? Container will be stopped during rollback. [y/N]", default=False)`. On accept, orchestrate: (1) query `incus info <container> --format json` over SSH and read `.status`; (2) if `Running`, run `incus stop <container>`; (3) run `incus restore <container> <snap_name>`; (4) if the container was Running pre-restore, run `incus start <container>` so the user is left with a reachable container (FR-013). Returns 0 on success and prints reconnect hint (SC-002).
+- [X] T013 [US1] Add the `snapshot` Click subcommand group to `src/remo_cli/cli/providers/incus.py` using `@incus.group()`. Add `create` and `restore` commands that delegate to T011/T012. `create` accepts `--name` (calling `generate_default_name()` if omitted via Click `default_factory`), `--description`, and `--verbose`. `restore` accepts `-y`/`--yes` flag.
+- [X] T014 [P] [US1] Write unit tests in `tests/unit/providers/test_incus_snapshot.py` covering rows 1–4 and 10–14 of the contracts test matrix for Incus: create happy path, create with name+description, create duplicate (mock T010 returns existing), create invalid name (delegated to T006 — covered in T007), restore confirm yes, restore confirm no, restore bypass with `--yes`, restore pending (always AVAILABLE on Incus — skip this row for Incus), restore missing snapshot
+- [X] T015 [P] [US1] Write CLI unit tests in `tests/unit/cli/providers/test_incus_snapshot.py` using Click's `CliRunner` covering Click-level parsing + dispatch: `--name` default factory produces `remo-` prefix, `--description` passed through, `-y` short flag and `--yes` long flag both bypass confirm
+- [X] T016 [US1] Run Incus tests and verify all pass: `uv run --extra dev pytest tests/unit/providers/test_incus_snapshot.py tests/unit/cli/providers/test_incus_snapshot.py -v`
 
 **MVP Checkpoint**: Incus create + restore works. User Story 1 is independently testable on Incus.
 

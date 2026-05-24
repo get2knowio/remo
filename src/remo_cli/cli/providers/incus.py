@@ -7,6 +7,7 @@ import sys
 import click
 
 from remo_cli.core.completion import incus_name as _complete_name
+from remo_cli.core.snapshot import generate_default_name, validate_name as _validate_snap
 from remo_cli.providers import incus as providers_incus
 
 
@@ -202,5 +203,71 @@ def bootstrap(host: str, user: str, network_type: str, verbose: bool) -> None:
         user=user,
         network_type=network_type,
         verbose=verbose,
+    )
+    sys.exit(rc)
+
+
+# ---------------------------------------------------------------------------
+# Snapshots
+# ---------------------------------------------------------------------------
+
+
+def _validate_snap_callback(ctx, param, value):  # noqa: ANN001 — click signature
+    """Click parameter callback that runs snapshot-name validation."""
+    if value is None:
+        return value
+    _validate_snap(value)
+    return value
+
+
+@incus.group()
+def snapshot() -> None:
+    """Create / restore / delete snapshots of Incus containers."""
+
+
+@snapshot.command("create")
+@click.argument("instance", shell_complete=_complete_name)
+@click.option(
+    "--name",
+    default=None,
+    callback=_validate_snap_callback,
+    help="Snapshot name (default: remo-YYYYMMDD-HHMMSS).",
+)
+@click.option(
+    "--description",
+    default="",
+    help="Free-text description shown in `snapshot list`.",
+)
+def snapshot_create_cmd(
+    instance: str,
+    name: str | None,
+    description: str,
+) -> None:
+    """Take a snapshot of an Incus container."""
+    snap_name = name or generate_default_name()
+    host, user = providers_incus._lookup_incus_host(instance)  # noqa: SLF001
+    rc = providers_incus.snapshot_create(
+        container=instance,
+        host=host,
+        user=user,
+        snap_name=snap_name,
+        description=description,
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("restore")
+@click.argument("instance", shell_complete=_complete_name)
+@click.argument("snap_name")
+@click.option("--yes", "-y", is_flag=True, help="Bypass the confirmation prompt.")
+def snapshot_restore_cmd(instance: str, snap_name: str, yes: bool) -> None:
+    """Restore an Incus container to a previously created snapshot."""
+    host, user = providers_incus._lookup_incus_host(instance)  # noqa: SLF001
+    rc = providers_incus.snapshot_restore(
+        container=instance,
+        host=host,
+        user=user,
+        snap_name=snap_name,
+        auto_confirm=yes,
     )
     sys.exit(rc)
