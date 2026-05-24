@@ -309,3 +309,56 @@ class TestSnapshotRestore:
         commands = [c.args[2] for c in patch_ssh.call_args_list]
         assert any("pct rollback" in c for c in commands)
         assert not any("pct start" in c for c in commands)
+
+
+class TestSnapshotDelete:
+    def test_missing_snapshot(self, mocker, patch_ssh):
+        mocker.patch(
+            "remo_cli.providers.proxmox._list_snapshots_for_vmid", return_value=[]
+        )
+        rc = providers_proxmox.snapshot_delete(
+            container="dev1",
+            host="lab1",
+            user="root",
+            vmid="100",
+            snap_name="ghost",
+            auto_confirm=True,
+        )
+        assert rc == 1
+        patch_ssh.assert_not_called()
+
+    def test_confirm_decline(self, mocker, patch_ssh):
+        mocker.patch(
+            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
+            return_value=[_existing_snap()],
+        )
+        mocker.patch("remo_cli.providers.proxmox.confirm", return_value=False)
+        rc = providers_proxmox.snapshot_delete(
+            container="dev1",
+            host="lab1",
+            user="root",
+            vmid="100",
+            snap_name="pre-x",
+            auto_confirm=False,
+        )
+        assert rc == 1
+        patch_ssh.assert_not_called()
+
+    def test_happy_path(self, mocker, patch_ssh):
+        mocker.patch(
+            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
+            return_value=[_existing_snap()],
+        )
+        patch_ssh.return_value = _completed(0)
+        rc = providers_proxmox.snapshot_delete(
+            container="dev1",
+            host="lab1",
+            user="root",
+            vmid="100",
+            snap_name="pre-x",
+            auto_confirm=True,
+        )
+        assert rc == 0
+        cmd = patch_ssh.call_args.args[2]
+        assert "pct delsnapshot" in cmd
+        assert "pre-x" in cmd

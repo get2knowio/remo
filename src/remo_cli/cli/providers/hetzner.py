@@ -7,7 +7,13 @@ import sys
 import click
 
 from remo_cli.core.completion import hetzner_name as _complete_name
-from remo_cli.core.snapshot import generate_default_name, validate_name as _validate_snap
+from remo_cli.core.known_hosts import get_known_hosts
+from remo_cli.core.output import print_error
+from remo_cli.core.snapshot import (
+    format_snapshot_table,
+    generate_default_name,
+    validate_name as _validate_snap,
+)
 
 
 @click.group()
@@ -181,3 +187,46 @@ def snapshot_restore_cmd(instance: str, snap_name: str, yes: bool) -> None:
         server_name=instance, snap_name=snap_name, auto_confirm=yes
     )
     sys.exit(rc)
+
+
+@snapshot.command("delete")
+@click.argument("instance", shell_complete=_complete_name)
+@click.argument("snap_name")
+@click.option("--yes", "-y", is_flag=True, help="Bypass the confirmation prompt.")
+def snapshot_delete_cmd(instance: str, snap_name: str, yes: bool) -> None:
+    """Delete a Hetzner snapshot image."""
+    from remo_cli.providers.hetzner import snapshot_delete
+
+    rc = snapshot_delete(
+        server_name=instance, snap_name=snap_name, auto_confirm=yes
+    )
+    sys.exit(rc)
+
+
+@snapshot.command("list")
+@click.argument("instance", required=False, default=None, shell_complete=_complete_name)
+def snapshot_list_cmd(instance: str | None) -> None:
+    """List Hetzner snapshot images for a server (or all registered)."""
+    from remo_cli.providers.hetzner import snapshot_list
+
+    if instance is not None:
+        try:
+            snaps = snapshot_list(server_name=instance)
+        except RuntimeError as e:
+            print_error(str(e))
+            sys.exit(1)
+        click.echo(
+            format_snapshot_table(snaps, show_status=True, instance_label=instance)
+        )
+        sys.exit(0)
+
+    all_snaps: list = []
+    any_failure = False
+    for entry in get_known_hosts(type_filter="hetzner"):
+        try:
+            all_snaps.extend(snapshot_list(server_name=entry.name))
+        except RuntimeError as e:
+            print_error(f"{entry.name}: {e}")
+            any_failure = True
+    click.echo(format_snapshot_table(all_snaps, show_status=True))
+    sys.exit(1 if any_failure else 0)

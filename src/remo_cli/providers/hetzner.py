@@ -659,6 +659,15 @@ def snapshot_restore(
     return 0
 
 
+def snapshot_list(server_name: str) -> list[Snapshot]:
+    """Return remo-managed snapshots for *server_name*.
+
+    Raises :class:`RuntimeError` if the server cannot be found.
+    """
+    server = _get_server_by_name(server_name)
+    return _list_snapshots_for_server(server.get("id", 0), server_name)
+
+
 def snapshot_delete(
     server_name: str, snap_name: str, auto_confirm: bool = False
 ) -> int:

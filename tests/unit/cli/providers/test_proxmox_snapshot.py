@@ -92,3 +92,67 @@ class TestSnapshotRestoreCLI:
         result = runner.invoke(proxmox, ["snapshot", "restore", "dev1", "pre-x"])
         assert result.exit_code == 0
         assert spy.call_args.kwargs["auto_confirm"] is False
+
+
+class TestSnapshotListCLI:
+    def test_with_instance_renders_table(self, runner, mocker, stub_lookup):
+        from datetime import datetime, timezone
+
+        from remo_cli.models.snapshot import Snapshot, SnapshotStatus
+
+        mocker.patch(
+            "remo_cli.cli.providers.proxmox.providers_proxmox._list_snapshots_for_vmid",
+            return_value=[
+                Snapshot(
+                    provider="proxmox",
+                    instance_name="dev1",
+                    name="pre-x",
+                    backend_id="pre-x",
+                    created_at=datetime(2026, 5, 24, tzinfo=timezone.utc),
+                    size_bytes=None,
+                    description="",
+                    status=SnapshotStatus.AVAILABLE,
+                )
+            ],
+        )
+        result = runner.invoke(proxmox, ["snapshot", "list", "dev1"])
+        assert result.exit_code == 0
+        assert "pre-x" in result.output
+        assert "STATUS" not in result.output  # Proxmox: no status column
+
+    def test_empty(self, runner, mocker, stub_lookup):
+        mocker.patch(
+            "remo_cli.cli.providers.proxmox.providers_proxmox._list_snapshots_for_vmid",
+            return_value=[],
+        )
+        result = runner.invoke(proxmox, ["snapshot", "list", "dev1"])
+        assert result.exit_code == 0
+        assert "No snapshots found for instance 'dev1'" in result.output
+
+    def test_provider_failure(self, runner, mocker, stub_lookup):
+        mocker.patch(
+            "remo_cli.cli.providers.proxmox.providers_proxmox._list_snapshots_for_vmid",
+            side_effect=RuntimeError("ssh failed"),
+        )
+        result = runner.invoke(proxmox, ["snapshot", "list", "dev1"])
+        assert result.exit_code == 1
+
+
+class TestSnapshotDeleteCLI:
+    def test_yes_bypasses(self, runner, mocker, stub_lookup):
+        spy = mocker.patch(
+            "remo_cli.cli.providers.proxmox.providers_proxmox.snapshot_delete",
+            return_value=0,
+        )
+        result = runner.invoke(proxmox, ["snapshot", "delete", "dev1", "pre-x", "-y"])
+        assert result.exit_code == 0
+        assert spy.call_args.kwargs["auto_confirm"] is True
+
+    def test_default_does_not_bypass(self, runner, mocker, stub_lookup):
+        spy = mocker.patch(
+            "remo_cli.cli.providers.proxmox.providers_proxmox.snapshot_delete",
+            return_value=0,
+        )
+        result = runner.invoke(proxmox, ["snapshot", "delete", "dev1", "pre-x"])
+        assert result.exit_code == 0
+        assert spy.call_args.kwargs["auto_confirm"] is False

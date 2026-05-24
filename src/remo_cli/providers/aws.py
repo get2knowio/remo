@@ -1408,6 +1408,35 @@ def snapshot_restore(
     return 0
 
 
+def snapshot_list(instance_name: str, region: str = "") -> list[Snapshot]:
+    """Return remo-managed snapshots for *instance_name*'s root volume.
+
+    Raises :class:`RuntimeError` when the instance lookup fails so the CLI
+    can surface the error and exit 1 (FR-011).
+    """
+    region = get_aws_region(instance_name) if not region else region
+    session = _boto3_session(region)
+    ec2 = session.client("ec2")
+    resp = ec2.describe_instances(
+        Filters=[
+            {"Name": "tag:Name", "Values": [f"remo-{instance_name}"]},
+            {"Name": "tag:remo", "Values": ["true"]},
+        ]
+    )
+    instances = [
+        inst
+        for r in resp.get("Reservations", [])
+        for inst in r.get("Instances", [])
+    ]
+    if not instances:
+        raise RuntimeError(
+            f"No AWS EC2 instance found for '{instance_name}' in {region}."
+        )
+    instance_id = instances[0].get("InstanceId", "")
+    volume_id, _, _, _, _ = _get_root_volume_info(ec2, instance_id)
+    return _list_snapshots_for_volume(ec2, volume_id, instance_name)
+
+
 def snapshot_delete(
     instance_name: str,
     snap_name: str,

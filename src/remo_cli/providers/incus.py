@@ -834,3 +834,53 @@ def snapshot_restore(
         f"You can reconnect with: remo shell {container}"
     )
     return 0
+
+
+def snapshot_delete(
+    container: str,
+    host: str,
+    user: str,
+    snap_name: str,
+    auto_confirm: bool = False,
+) -> int:
+    """Delete a snapshot of *container*."""
+    try:
+        existing = _list_snapshots_for_container(host, container, user)
+    except RuntimeError as e:
+        print_error(str(e))
+        return 1
+
+    target = next((s for s in existing if s.name == snap_name), None)
+    if target is None:
+        print_error(
+            f"Snapshot '{snap_name}' not found for incus instance '{container}'."
+        )
+        return 1
+    if target.status is not SnapshotStatus.AVAILABLE:
+        print_error(
+            f"Snapshot '{snap_name}' is {target.status.value}; "
+            f"run `remo incus snapshot list {container}` to check status."
+        )
+        return 1
+
+    if not auto_confirm:
+        if not confirm(
+            f"Delete snapshot '{snap_name}' of {container}?", default=False
+        ):
+            print_info("Aborted.")
+            return 1
+
+    result = _ssh_run_on_incus_host(
+        host,
+        user,
+        f"incus snapshot delete {shlex.quote(container)}/{shlex.quote(snap_name)}",
+    )
+    if result.returncode != 0:
+        print_error(
+            f"incus snapshot delete failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+        return 1
+
+    print_info(f"Deleted snapshot '{snap_name}' of {container}.")
+    return 0

@@ -114,17 +114,17 @@ Single-project Python CLI under `src/remo_cli/`, tests under `tests/unit/`. All 
 
 **Implementation note**: The per-provider `_list_snapshots_for_*` functions already exist from US1 (used by restore). US2 adds the **public CLI command** and **table formatting**.
 
-- [ ] T040 [US2] Implement shared `format_snapshot_table(snapshots: list[Snapshot], *, show_status: bool) -> str` in `src/remo_cli/core/snapshot.py` that produces the column layout from `contracts/cli-surface.md` (`INSTANCE  SNAPSHOT  CREATED  SIZE  STATUS  DESCRIPTION`). The `show_status` arg is set by the caller based on provider — `True` for AWS/Hetzner (per FR-008), `False` for Incus/Proxmox. Size rendered as human-readable (e.g., `1.2 GiB`) using existing convention; `—` when `size_bytes is None`. Empty-list case returns the `No snapshots found for instance '<X>'` message (FR-010). T042/T043 pass `show_status=False`; T044/T045 pass `show_status=True`.
-- [ ] T041 [P] [US2] Add unit tests for `format_snapshot_table` in `tests/unit/core/test_snapshot.py`: status column omitted when `show_status=False`, status column present when `show_status=True`, size rendering for None/0/1024/1.5GB inputs, empty-list message, **and a negative assertion (FR-009) that the rendered output contains none of: `$`, `€`, the substring `cost` (case-insensitive), or `/mo`** — guards against accidental reintroduction of cost columns.
-- [ ] T042 [P] [US2] Add `snapshot list` command to `src/remo_cli/cli/providers/incus.py` that resolves instance from arg (or iterates all incus hosts from registry if omitted), calls T010's helper, formats via T040, prints. Exit 1 on SSH failure (FR-011).
-- [ ] T043 [P] [US2] Add `snapshot list` command to `src/remo_cli/cli/providers/proxmox.py` mirroring T042 (iterating known proxmox hosts when instance arg omitted)
-- [ ] T044 [P] [US2] Add `snapshot list` command to `src/remo_cli/cli/providers/aws.py` mirroring T042 (iterating known AWS instances + lazy boto3 import error per existing pattern)
-- [ ] T045 [P] [US2] Add `snapshot list` command to `src/remo_cli/cli/providers/hetzner.py` mirroring T042 (iterating known Hetzner servers + lazy hcloud import error)
-- [ ] T046 [P] [US2] Extend `tests/unit/providers/test_incus_snapshot.py` and `tests/unit/cli/providers/test_incus_snapshot.py` with list-scenario rows from the contracts matrix (happy path with rows, no snapshots, provider unreachable)
-- [ ] T047 [P] [US2] Extend `tests/unit/providers/test_proxmox_snapshot.py` and `tests/unit/cli/providers/test_proxmox_snapshot.py` with list-scenario rows
-- [ ] T048 [P] [US2] Extend `tests/unit/providers/test_aws_snapshot.py` and `tests/unit/cli/providers/test_aws_snapshot.py` with list-scenario rows (verify status column shows `pending`/`available`)
-- [ ] T049 [P] [US2] Extend `tests/unit/providers/test_hetzner_snapshot.py` and `tests/unit/cli/providers/test_hetzner_snapshot.py` with list-scenario rows
-- [ ] T050 [US2] Run all snapshot tests: `uv run --extra dev pytest tests/unit/cli/providers/ tests/unit/providers/ tests/unit/core/test_snapshot.py -v`
+- [X] T040 [US2] Implement shared `format_snapshot_table(snapshots: list[Snapshot], *, show_status: bool) -> str` in `src/remo_cli/core/snapshot.py` that produces the column layout from `contracts/cli-surface.md` (`INSTANCE  SNAPSHOT  CREATED  SIZE  STATUS  DESCRIPTION`). The `show_status` arg is set by the caller based on provider — `True` for AWS/Hetzner (per FR-008), `False` for Incus/Proxmox. Size rendered as human-readable (e.g., `1.2 GiB`) using existing convention; `—` when `size_bytes is None`. Empty-list case returns the `No snapshots found for instance '<X>'` message (FR-010). T042/T043 pass `show_status=False`; T044/T045 pass `show_status=True`.
+- [X] T041 [P] [US2] Add unit tests for `format_snapshot_table` in `tests/unit/core/test_snapshot.py`: status column omitted when `show_status=False`, status column present when `show_status=True`, size rendering for None/0/1024/1.5GB inputs, empty-list message, **and a negative assertion (FR-009) that the rendered output contains none of: `$`, `€`, the substring `cost` (case-insensitive), or `/mo`** — guards against accidental reintroduction of cost columns.
+- [X] T042 [P] [US2] Add `snapshot list` command to `src/remo_cli/cli/providers/incus.py` that resolves instance from arg (or iterates all incus hosts from registry if omitted), calls T010's helper, formats via T040, prints. Exit 1 on SSH failure (FR-011).
+- [X] T043 [P] [US2] Add `snapshot list` command to `src/remo_cli/cli/providers/proxmox.py` mirroring T042 (iterating known proxmox hosts when instance arg omitted)
+- [X] T044 [P] [US2] Add `snapshot list` command to `src/remo_cli/cli/providers/aws.py` mirroring T042 (iterating known AWS instances + lazy boto3 import error per existing pattern)
+- [X] T045 [P] [US2] Add `snapshot list` command to `src/remo_cli/cli/providers/hetzner.py` mirroring T042 (iterating known Hetzner servers + lazy hcloud import error)
+- [X] T046 [P] [US2] Extend `tests/unit/providers/test_incus_snapshot.py` and `tests/unit/cli/providers/test_incus_snapshot.py` with list-scenario rows from the contracts matrix (happy path with rows, no snapshots, provider unreachable)
+- [X] T047 [P] [US2] Extend `tests/unit/providers/test_proxmox_snapshot.py` and `tests/unit/cli/providers/test_proxmox_snapshot.py` with list-scenario rows
+- [X] T048 [P] [US2] Extend `tests/unit/providers/test_aws_snapshot.py` and `tests/unit/cli/providers/test_aws_snapshot.py` with list-scenario rows (verify status column shows `pending`/`available`)
+- [X] T049 [P] [US2] Extend `tests/unit/providers/test_hetzner_snapshot.py` and `tests/unit/cli/providers/test_hetzner_snapshot.py` with list-scenario rows
+- [X] T050 [US2] Run all snapshot tests: `uv run --extra dev pytest tests/unit/cli/providers/ tests/unit/providers/ tests/unit/core/test_snapshot.py -v`
 
 **Checkpoint**: User Story 2 complete. `remo <P> snapshot list` works on all four providers.
 
@@ -136,19 +136,19 @@ Single-project Python CLI under `src/remo_cli/`, tests under `tests/unit/`. All 
 
 **Independent Test**: From `quickstart.md` step 8: snapshot created in step 2 is removed; `list` no longer shows it.
 
-- [ ] T051 [P] [US3] Implement `snapshot_delete(...)` in `src/remo_cli/providers/incus.py` using `incus snapshot delete <container>/<snap_name>` over SSH. Reject if status != AVAILABLE (FR-028); reject if not found (exit 1). Confirm with default-False prompt unless `auto_confirm`.
-- [ ] T052 [P] [US3] Implement `snapshot_delete(...)` in `src/remo_cli/providers/proxmox.py` using `pct delsnapshot <vmid> <snap_name>` over SSH. Same validation pattern.
-- [ ] T053 [P] [US3] Implement `snapshot_delete(...)` in `src/remo_cli/providers/aws.py` using `ec2.delete_snapshot(SnapshotId=...)`. Same validation pattern.
-- [ ] T054 [P] [US3] Implement `snapshot_delete(...)` in `src/remo_cli/providers/hetzner.py` using `client.images.delete(image=...)`. Same validation pattern.
-- [ ] T055 [P] [US3] Add `snapshot delete` Click command to `src/remo_cli/cli/providers/incus.py` (positional `instance`, positional `snapshot`, `-y`/`--yes`)
-- [ ] T056 [P] [US3] Add `snapshot delete` Click command to `src/remo_cli/cli/providers/proxmox.py`
-- [ ] T057 [P] [US3] Add `snapshot delete` Click command to `src/remo_cli/cli/providers/aws.py`
-- [ ] T058 [P] [US3] Add `snapshot delete` Click command to `src/remo_cli/cli/providers/hetzner.py`
-- [ ] T059 [P] [US3] Extend `tests/unit/providers/test_incus_snapshot.py` and `tests/unit/cli/providers/test_incus_snapshot.py` with delete-scenario rows: confirm yes (provider call made), confirm no (provider call NOT made), bypass with --yes, pending → exit 1, missing → exit 1
-- [ ] T060 [P] [US3] Extend Proxmox test files with delete scenarios
-- [ ] T061 [P] [US3] Extend AWS test files with delete scenarios
-- [ ] T062 [P] [US3] Extend Hetzner test files with delete scenarios
-- [ ] T063 [US3] Run all snapshot tests: `uv run --extra dev pytest tests/unit/cli/providers/ tests/unit/providers/ tests/unit/core/test_snapshot.py -v`
+- [X] T051 [P] [US3] Implement `snapshot_delete(...)` in `src/remo_cli/providers/incus.py` using `incus snapshot delete <container>/<snap_name>` over SSH. Reject if status != AVAILABLE (FR-028); reject if not found (exit 1). Confirm with default-False prompt unless `auto_confirm`.
+- [X] T052 [P] [US3] Implement `snapshot_delete(...)` in `src/remo_cli/providers/proxmox.py` using `pct delsnapshot <vmid> <snap_name>` over SSH. Same validation pattern.
+- [X] T053 [P] [US3] Implement `snapshot_delete(...)` in `src/remo_cli/providers/aws.py` using `ec2.delete_snapshot(SnapshotId=...)`. Same validation pattern.  *(Delivered alongside AWS US1 expansion; CLI added in T057.)*
+- [X] T054 [P] [US3] Implement `snapshot_delete(...)` in `src/remo_cli/providers/hetzner.py` using `client.images.delete(image=...)`. Same validation pattern.  *(Delivered alongside Hetzner US1 expansion; CLI added in T058.)*
+- [X] T055 [P] [US3] Add `snapshot delete` Click command to `src/remo_cli/cli/providers/incus.py` (positional `instance`, positional `snapshot`, `-y`/`--yes`)
+- [X] T056 [P] [US3] Add `snapshot delete` Click command to `src/remo_cli/cli/providers/proxmox.py`
+- [X] T057 [P] [US3] Add `snapshot delete` Click command to `src/remo_cli/cli/providers/aws.py`
+- [X] T058 [P] [US3] Add `snapshot delete` Click command to `src/remo_cli/cli/providers/hetzner.py`
+- [X] T059 [P] [US3] Extend `tests/unit/providers/test_incus_snapshot.py` and `tests/unit/cli/providers/test_incus_snapshot.py` with delete-scenario rows: confirm yes (provider call made), confirm no (provider call NOT made), bypass with --yes, pending → exit 1, missing → exit 1
+- [X] T060 [P] [US3] Extend Proxmox test files with delete scenarios
+- [X] T061 [P] [US3] Extend AWS test files with delete scenarios
+- [X] T062 [P] [US3] Extend Hetzner test files with delete scenarios
+- [X] T063 [US3] Run all snapshot tests: `uv run --extra dev pytest tests/unit/cli/providers/ tests/unit/providers/ tests/unit/core/test_snapshot.py -v`
 
 **Checkpoint**: User Story 3 complete. Delete works on all four providers.
 
