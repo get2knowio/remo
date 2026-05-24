@@ -46,10 +46,20 @@ def shell(
     if not no_update_check:
         local_version = get_current_version()
         if local_version != "unknown":
-            remote_version = check_remote_version(host)
+            remote_version, remote_err = check_remote_version(host)
 
             should_update = False
-            if remote_version is None:
+            if remote_err is not None:
+                # SSH itself failed — we can't tell whether the marker exists
+                # or what version is on the box. Don't prompt to update from
+                # an unknown baseline; surface the error so the user can fix
+                # it (DNS, host key, auth, ...) and re-run.
+                print_warning(
+                    f"Could not check tools version on '{host.name}':\n"
+                    f"  {remote_err}\n"
+                    f"  Skipping update check; proceeding with connection."
+                )
+            elif remote_version is None:
                 # No marker file on remote
                 should_update = confirm(
                     f"Instance '{host.name}' has no version info. Update tools?",

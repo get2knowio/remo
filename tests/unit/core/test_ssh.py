@@ -395,51 +395,71 @@ class TestCheckRemoteVersion:
 
     @pytest.mark.usefixtures("_suppress_tz")
     def test_returns_version_on_success(self, hetzner_host, mocker):
-        """Returns the version string when SSH succeeds."""
+        """Returns (version, None) when SSH succeeds and marker is present."""
         mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
         mock_run = mocker.patch(
             "subprocess.run",
-            return_value=MagicMock(returncode=0, stdout="0.8.0rc1\n"),
+            return_value=MagicMock(returncode=0, stdout="0.8.0rc1\n", stderr=""),
         )
 
         from remo_cli.core.ssh import check_remote_version
 
-        result = check_remote_version(hetzner_host)
-        assert result == "0.8.0rc1"
+        assert check_remote_version(hetzner_host) == ("0.8.0rc1", None)
 
         # Verify SSH command includes cat ~/.remo-version
         call_args = mock_run.call_args[0][0]
         assert "cat ~/.remo-version 2>/dev/null" in call_args
+        # And uses BatchMode so it can't hang on host-key/auth prompts
+        assert "BatchMode=yes" in call_args
 
     @pytest.mark.usefixtures("_suppress_tz")
-    def test_returns_none_on_missing_file(self, hetzner_host, mocker):
-        """Returns None when the remote file doesn't exist (rc != 0)."""
+    def test_returns_no_marker_on_missing_file(self, hetzner_host, mocker):
+        """Returns (None, None) when the remote command failed (cat → marker missing)."""
         mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
         mocker.patch(
             "subprocess.run",
-            return_value=MagicMock(returncode=1, stdout=""),
+            return_value=MagicMock(returncode=1, stdout="", stderr=""),
         )
 
         from remo_cli.core.ssh import check_remote_version
 
-        assert check_remote_version(hetzner_host) is None
+        assert check_remote_version(hetzner_host) == (None, None)
 
     @pytest.mark.usefixtures("_suppress_tz")
-    def test_returns_none_on_empty_output(self, hetzner_host, mocker):
-        """Returns None when SSH succeeds but output is empty."""
+    def test_returns_no_marker_on_empty_output(self, hetzner_host, mocker):
+        """Returns (None, None) when SSH succeeds but the marker is empty."""
         mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
         mocker.patch(
             "subprocess.run",
-            return_value=MagicMock(returncode=0, stdout=""),
+            return_value=MagicMock(returncode=0, stdout="", stderr=""),
         )
 
         from remo_cli.core.ssh import check_remote_version
 
-        assert check_remote_version(hetzner_host) is None
+        assert check_remote_version(hetzner_host) == (None, None)
 
     @pytest.mark.usefixtures("_suppress_tz")
-    def test_returns_none_on_timeout(self, hetzner_host, mocker):
-        """Returns None when SSH times out."""
+    def test_returns_error_on_ssh_failure(self, hetzner_host, mocker):
+        """Returns (None, stderr) when SSH itself fails (rc 255)."""
+        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch(
+            "subprocess.run",
+            return_value=MagicMock(
+                returncode=255,
+                stdout="",
+                stderr="Host key verification failed.\n",
+            ),
+        )
+
+        from remo_cli.core.ssh import check_remote_version
+
+        version, err = check_remote_version(hetzner_host)
+        assert version is None
+        assert err == "Host key verification failed."
+
+    @pytest.mark.usefixtures("_suppress_tz")
+    def test_returns_error_on_timeout(self, hetzner_host, mocker):
+        """Returns (None, error) when SSH times out."""
         mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
         mocker.patch(
             "subprocess.run",
@@ -448,14 +468,20 @@ class TestCheckRemoteVersion:
 
         from remo_cli.core.ssh import check_remote_version
 
-        assert check_remote_version(hetzner_host) is None
+        version, err = check_remote_version(hetzner_host)
+        assert version is None
+        assert err is not None
+        assert "timed out" in err.lower()
 
     @pytest.mark.usefixtures("_suppress_tz")
-    def test_returns_none_on_os_error(self, hetzner_host, mocker):
-        """Returns None when SSH binary is not found."""
+    def test_returns_error_on_os_error(self, hetzner_host, mocker):
+        """Returns (None, error) when the ssh binary can't be invoked."""
         mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
         mocker.patch("subprocess.run", side_effect=OSError("No ssh"))
 
         from remo_cli.core.ssh import check_remote_version
 
-        assert check_remote_version(hetzner_host) is None
+        version, err = check_remote_version(hetzner_host)
+        assert version is None
+        assert err is not None
+        assert "No ssh" in err

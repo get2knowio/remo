@@ -257,24 +257,46 @@ def detect_timezone() -> str:
     return ""
 
 
-def check_remote_version(host: KnownHost) -> str | None:
+def check_remote_version(host: KnownHost) -> tuple[str | None, str | None]:
     """Read the remo version marker from the remote instance.
 
-    Runs ``cat ~/.remo-version`` over SSH and returns the version string,
-    or ``None`` if the file doesn't exist or SSH fails.
+    Runs ``cat ~/.remo-version`` over SSH. Returns a ``(version, error)``
+    tuple where exactly one element is non-None:
+
+    * ``(version, None)`` — marker present and readable.
+    * ``(None, None)``    — SSH succeeded but the marker is missing/empty.
+    * ``(None, error)``   — SSH itself failed (DNS, host key, network,
+      timeout, ...); *error* is the underlying message so the caller can
+      surface it to the user.
     """
     ssh_opts, ssh_target = build_ssh_opts(host)
-    cmd = ["ssh"] + ssh_opts + ["-o", "ConnectTimeout=10", ssh_target, "cat ~/.remo-version 2>/dev/null"]
+    cmd = ["ssh"] + ssh_opts + [
+        "-o", "ConnectTimeout=10",
+        "-o", "BatchMode=yes",
+        ssh_target,
+        "cat ~/.remo-version 2>/dev/null",
+    ]
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        version = result.stdout.strip()
-        if result.returncode == 0 and version:
-            return version
-    except (subprocess.TimeoutExpired, OSError):
-        pass
+    except subprocess.TimeoutExpired:
+        return None, "SSH timed out after 15s"
+    except OSError as e:
+        return None, f"SSH failed: {e}"
 
-    return None
+    # ssh exits with 255 for its own failures (auth, host key, DNS,
+    # connection refused, ...). Any other non-zero exit code comes from
+    # the remote command — here, `cat` failing because the marker is
+    # absent — which we treat as "no marker" rather than an SSH error.
+    if result.returncode == 255:
+        stderr = result.stderr.strip()
+        return None, stderr or "SSH connection failed (exit code 255)"
+
+    version = result.stdout.strip()
+    if result.returncode == 0 and version:
+        return version, None
+
+    return None, None
 
 
 def shell_connect(host: KnownHost, tunnels: list[str], no_open: bool) -> None:
