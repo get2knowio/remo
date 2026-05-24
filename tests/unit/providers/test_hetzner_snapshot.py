@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -35,7 +34,7 @@ def _img(
         "status": status,
         "image_size": size_gb,
         "disk_size": size_gb,
-        "description": description or f"remo snapshot of dev1",
+        "description": description or "remo snapshot of dev1",
         "created": "2026-05-24T10:15:30+00:00",
         "labels": {
             "remo": "true",

@@ -180,13 +180,13 @@ Single-project Python CLI under `src/remo_cli/`, tests under `tests/unit/`. All 
 
 **Purpose**: Documentation, validation, and cleanup before the PR.
 
-- [ ] T073 Update `README.md` with a new "Snapshots" section documenting `remo <provider> snapshot {create,list,restore,delete}` and the destroy-time prompt. Include a one-liner per-provider on restore semantics (in-place vs. volume-swap-with-downtime vs. server-rebuild-with-downtime).
-- [ ] T074 [P] Update `CLAUDE.md` "Active Technologies" section if the agent-context script's auto-insertion left stale wording (manually trim duplicates between this story and 003-python-cli-rewrite if needed)
-- [ ] T075 [P] Run `uv run mypy src/remo_cli` and fix any type errors introduced
-- [ ] T076 [P] Run `uv run ruff check src/remo_cli tests` and fix any lint findings introduced
-- [ ] T077 Execute `quickstart.md` end-to-end manually on one provider of your choice (Incus is fastest); confirm all 9 steps pass including the failure-path checks (unsupported storage, pending-snapshot op, name validation)
-- [ ] T078 Bump version in `pyproject.toml` to `2.0.0rc3` and run `uv lock` to refresh `uv.lock`
-- [ ] T079 Commit each user story as its own logical commit (US1 → US2 → US3 → US4 → polish); push branch and open PR against `main`
+- [X] T073 Update `README.md` with a new "Snapshots" section documenting `remo <provider> snapshot {create,list,restore,delete}` and the destroy-time prompt. Include a one-liner per-provider on restore semantics (in-place vs. volume-swap-with-downtime vs. server-rebuild-with-downtime).
+- [ ] T074 [P] Update `CLAUDE.md` "Active Technologies" section if the agent-context script's auto-insertion left stale wording (manually trim duplicates between this story and 003-python-cli-rewrite if needed)  *(Deferred: the auto-insertion from /speckit.plan is already in place and acceptable; no manual cleanup needed for this PR.)*
+- [X] T075 [P] Run `uv run mypy src/remo_cli` and fix any type errors introduced — no new errors; the one pre-existing boto3-untyped warning is unchanged.
+- [X] T076 [P] Run `uv run ruff check src/remo_cli tests` and fix any lint findings introduced — the two issues my code introduced (unused MagicMock import in hetzner test, extraneous f-prefix) were auto-fixed; remaining ruff warnings in the repo are pre-existing.
+- [ ] T077 Execute `quickstart.md` end-to-end manually on one provider of your choice (Incus is fastest); confirm all 9 steps pass including the failure-path checks (unsupported storage, pending-snapshot op, name validation)  *(Deferred to user — requires a live Incus/Proxmox/AWS/Hetzner environment.)*
+- [X] T078 Bump version in `pyproject.toml` to `2.0.0rc3` and run `uv lock` to refresh `uv.lock`
+- [ ] T079 Commit each user story as its own logical commit (US1 → US2 → US3 → US4 → polish); push branch and open PR against `main`  *(US1/US2+US3/US4 are committed as separate commits already; polish + version bump pending one final commit; push + PR is a user-driven action.)*
 
 ---
 
