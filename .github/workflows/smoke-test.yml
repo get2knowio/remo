@@ -803,6 +803,51 @@ jobs:
           $SSH_CMD "pkill -f 'python3 -m http.server 9090'" 2>/dev/null || true
           $SSH_CMD "pkill -f 'python3 -m http.server 3000'" 2>/dev/null || true
 
+      - name: Test remo shell -p / --exec / --detach (project-launch passthrough)
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 -o BatchMode=yes -i ~/.ssh/id_rsa remo@$HOST"
+
+          # Plant a project dir without a .devcontainer so we exercise the
+          # host-side branches of project-launch (no docker dance needed in CI).
+          $SSH_CMD "mkdir -p ~/projects/smoke-proj && \
+            echo 'placeholder' > ~/projects/smoke-proj/README"
+
+          # --- Foreground --exec on a no-devcontainer project (Case 4) ---
+          OUT=$(uv run remo shell -p smoke-proj --exec 'echo hello-$REMO_PROJECT-$REMO_INSTANCE && pwd' 2>&1)
+          echo "$OUT"
+          echo "$OUT" | grep -q "hello-smoke-proj-" || {
+            echo "FAIL: --exec did not run / env vars missing"; exit 1; }
+          echo "$OUT" | grep -q "/projects/smoke-proj" || {
+            echo "FAIL: --exec did not cd into project dir"; exit 1; }
+          echo "remo shell -p --exec (foreground): PASS"
+
+          # --- Detached --exec writes log file and returns immediately ---
+          DETACH_OUT=$(uv run remo shell -p smoke-proj --detach \
+            --exec 'sleep 1 && echo detached-marker-$REMO_PROJECT' 2>&1)
+          echo "$DETACH_OUT"
+          echo "$DETACH_OUT" | grep -q "Launched detached" || {
+            echo "FAIL: detach didn't print launched message"; exit 1; }
+          # Give the background command a moment to finish
+          sleep 3
+          LOG=$($SSH_CMD "cat ~/.local/state/remo/smoke-proj.log")
+          echo "log contents:"; echo "$LOG"
+          echo "$LOG" | grep -q "detached-marker-smoke-proj" || {
+            echo "FAIL: detached command did not run / log missing marker"; exit 1; }
+          echo "remo shell -p --detach --exec: PASS"
+
+          # --- Validation: --exec without -p exits 2 ---
+          if uv run remo shell --exec 'true' 2>/dev/null; then
+            echo "FAIL: --exec without -p should have errored"; exit 1
+          fi
+          echo "validation: --exec without -p errors as expected"
+
+          # --- Validation: --detach without --exec exits 2 ---
+          if uv run remo shell -p smoke-proj --detach 2>/dev/null; then
+            echo "FAIL: --detach without --exec should have errored"; exit 1
+          fi
+          echo "validation: --detach without --exec errors as expected"
+
       - name: Teardown
         if: always()
         run: |

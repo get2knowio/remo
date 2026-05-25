@@ -94,6 +94,42 @@ The `fzf`-powered menu shows your projects from `~/projects`:
 - **c**: Clone a new repository
 - **x**: Exit to shell
 
+### Jump Straight to a Project
+
+Skip the menu and land directly in a project (devcontainer auto-launches):
+
+```bash
+remo shell -p my-app
+```
+
+Run a one-shot command inside the project's devcontainer instead of opening
+a shell — quote the command as a single string:
+
+```bash
+remo shell -p my-app --exec 'pytest -x'
+remo shell -p my-app --exec 'claude --remote-control'
+```
+
+Fire-and-forget — kick off a command on the remote and exit SSH immediately:
+
+```bash
+remo shell -p my-app --detach --exec 'claude remote-control --name remo-rc'
+remo shell -p my-app --detach --exec './long-build.sh'
+```
+
+Detached output is captured to `~/.local/state/remo/<project>.log` on the
+remote, so you can tail it later (`remo shell -p my-app --exec 'tail -f
+~/.local/state/remo/my-app.log'`). The command's environment gets
+`REMO_INSTANCE` and `REMO_PROJECT` exported automatically — handy for
+deterministic naming, e.g.:
+
+```bash
+remo shell -p my-app --detach --exec \
+  'claude remote-control --name "remo-$REMO_INSTANCE-$REMO_PROJECT"'
+```
+
+Then on your phone, open claude.ai/code and pick the session by name.
+
 ### Port Forwarding
 
 Forward remote ports to your local machine during SSH sessions:
@@ -175,6 +211,9 @@ they continue to incur storage costs on AWS/Hetzner).
 # Connect to environment
 remo shell                          # Auto-connect (or picker if multiple)
 remo shell my-env                   # Connect to a specific environment
+remo shell -p my-app                # Skip the menu, jump to ~/projects/my-app
+remo shell -p my-app --exec 'pytest -x'              # Run command in devcontainer
+remo shell -p my-app --detach --exec 'claude remote-control --name rc'  # Fire and exit
 remo shell -L 8080                  # Shell + forward remote :8080 to local :8080
 remo shell -L 9000:8080             # Shell + forward remote :8080 to local :9000
 remo shell -L 8080 -L 3000          # Shell + forward multiple ports

@@ -1,0 +1,147 @@
+#!/bin/bash
+# project-launch - Launch a project session non-interactively.
+# Managed by Ansible - do not edit manually
+#
+# Usage:
+#   project-launch --project NAME [--detach] [--exec SHELL_COMMAND]
+#
+# SHELL_COMMAND is a single string run via `bash -lc`, so variable
+# expansion, pipes, `&&`, etc. all work as written.
+#
+# Modes:
+#   Interactive (default):
+#       Acts like "pick NAME in project-menu". Drops into the project's
+#       zellij session; the existing .bashrc DEVCONTAINER block brings
+#       up the devcontainer and execs the user's shell (or SHELL_COMMAND
+#       when --exec is supplied — passed via REMO_DEVCONTAINER_CMD).
+#
+#   Detached (--detach):
+#       Requires --exec. Brings up the devcontainer (or runs on the
+#       host project dir if no .devcontainer), launches the command in
+#       the background via nohup+setsid + `bash -lc`, captures
+#       stdout/stderr to ~/.local/state/remo/<project>.log, and
+#       returns immediately.
+#
+# Environment passed to SHELL_COMMAND (both modes):
+#   REMO_INSTANCE  - hostname of the remo instance
+#   REMO_PROJECT   - the project name
+
+set -e
+
+PROJECTS_DIR="{{ dev_workspace_dir }}"
+
+PROJECT=""
+DETACH=false
+EXEC_CMD=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --project)
+            PROJECT="$2"
+            shift 2
+            ;;
+        --detach)
+            DETACH=true
+            shift
+            ;;
+        --exec)
+            EXEC_CMD="$2"
+            shift 2
+            ;;
+        -h|--help)
+            sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            echo "project-launch: unknown argument: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+if [[ -z "$PROJECT" ]]; then
+    echo "project-launch: --project NAME is required" >&2
+    exit 2
+fi
+
+PROJECT_DIR="$PROJECTS_DIR/$PROJECT"
+if [[ ! -d "$PROJECT_DIR" ]]; then
+    echo "project-launch: project not found: $PROJECT_DIR" >&2
+    exit 1
+fi
+
+HAS_DC=false
+if [[ -d "$PROJECT_DIR/.devcontainer" ]] || [[ -f "$PROJECT_DIR/.devcontainer.json" ]]; then
+    HAS_DC=true
+fi
+
+REMO_INSTANCE="$(hostname)"
+export REMO_INSTANCE
+export REMO_PROJECT="$PROJECT"
+
+# ---------------------------------------------------------------------------
+# Detached mode: no zellij, no interactive shell. Run EXEC_CMD in background.
+# ---------------------------------------------------------------------------
+if $DETACH; then
+    if [[ -z "$EXEC_CMD" ]]; then
+        echo "project-launch: --detach requires --exec SHELL_COMMAND" >&2
+        exit 2
+    fi
+
+    LOG_DIR="$HOME/.local/state/remo"
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="$LOG_DIR/$PROJECT.log"
+
+    cd "$PROJECT_DIR"
+
+    if $HAS_DC; then
+        echo "Bringing up devcontainer for $PROJECT..."
+        devcontainer up --workspace-folder "$PROJECT_DIR" >/dev/null
+        printf -- '----- %s detached launch: %s -----\n' "$(date -Iseconds)" "$EXEC_CMD" >>"$LOG_FILE"
+        nohup setsid devcontainer exec --workspace-folder "$PROJECT_DIR" \
+            env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
+            bash -lc "$EXEC_CMD" >>"$LOG_FILE" 2>&1 </dev/null &
+    else
+        printf -- '----- %s detached launch: %s -----\n' "$(date -Iseconds)" "$EXEC_CMD" >>"$LOG_FILE"
+        nohup setsid env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
+            bash -lc "$EXEC_CMD" >>"$LOG_FILE" 2>&1 </dev/null &
+    fi
+
+    echo "Launched detached in $PROJECT (log: $LOG_FILE)"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# Interactive mode.
+# Cases:
+#   1. Project HAS .devcontainer, no EXEC_CMD  → zellij + devcontainer
+#                                                auto-start drops you into
+#                                                devcontainer shell
+#   2. Project HAS .devcontainer, EXEC_CMD     → zellij + devcontainer block
+#                                                runs EXEC_CMD via bash -lc
+#                                                (REMO_DEVCONTAINER_CMD)
+#   3. Project has NO .devcontainer, no CMD    → zellij with plain shell in
+#                                                project dir
+#   4. Project has NO .devcontainer, EXEC_CMD  → skip zellij, run via bash
+#                                                -lc directly on host
+# ---------------------------------------------------------------------------
+cd "$PROJECT_DIR"
+
+if ! $HAS_DC && [[ -n "$EXEC_CMD" ]]; then
+    # Case 4: bypass zellij, run command on host via login shell
+    exec env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
+        bash -lc "$EXEC_CMD"
+fi
+
+if [[ -n "$EXEC_CMD" ]]; then
+    # Case 2: pass command through env var that .bashrc DEVCONTAINER block
+    # honors and runs via `bash -lc`.
+    export REMO_DEVCONTAINER_CMD="$EXEC_CMD"
+fi
+
+# Clean up any exited session of the same name (mirrors project-menu)
+if zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -q "^$PROJECT.*EXITED"; then
+    zellij delete-session "$PROJECT" 2>/dev/null || true
+fi
+
+exec zellij attach --create "$PROJECT"

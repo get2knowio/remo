@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -299,8 +300,39 @@ def check_remote_version(host: KnownHost) -> tuple[str | None, str | None]:
     return None, None
 
 
-def shell_connect(host: KnownHost, tunnels: list[str], no_open: bool) -> None:
-    """Open an interactive SSH session to *host* with optional port tunnels.
+def build_project_launch_remote_cmd(
+    project: str,
+    detach: bool,
+    exec_cmd: str | None,
+) -> str:
+    """Build the remote command string passed to ``ssh`` for project-launch.
+
+    Returns a single shell-quoted string suitable for ``ssh <opts> <target>
+    <cmd>``. ``exec_cmd`` is treated as one opaque shell command (the user
+    typed it after ``--exec``) and forwarded as a single shell-quoted arg
+    to ``--exec`` on the remote. The remote runs it via ``bash -lc`` so
+    variable expansion, pipes, ``&&`` etc. all work as the user wrote them.
+    """
+    # Absolute path: SSH non-interactive commands don't source .bashrc, so
+    # ~/.local/bin isn't in PATH. The remote login shell expands ~ for us.
+    parts = ["~/.local/bin/project-launch", "--project", shlex.quote(project)]
+    if detach:
+        parts.append("--detach")
+    if exec_cmd:
+        parts.append("--exec")
+        parts.append(shlex.quote(exec_cmd))
+    return " ".join(parts)
+
+
+def shell_connect(
+    host: KnownHost,
+    tunnels: list[str],
+    no_open: bool,
+    project: str | None = None,
+    detach: bool = False,
+    exec_cmd: str | None = None,
+) -> None:
+    """Open an SSH session to *host* with optional port tunnels.
 
     Parameters
     ----------
@@ -311,7 +343,19 @@ def shell_connect(host: KnownHost, tunnels: list[str], no_open: bool) -> None:
         (same local and remote port) or ``"LOCAL:REMOTE"``.
     no_open:
         When ``True``, skip auto-opening the browser for the first tunnel.
+    project:
+        When set, skip the server-side picker and hand off to the
+        ``project-launch`` helper for this project name.
+    detach:
+        When ``True``, ask ``project-launch`` to run *exec_cmd* detached and
+        return immediately. Requires *exec_cmd* to be non-empty.
+    exec_cmd:
+        Single-string command to run via ``project-launch -- ...`` inside the
+        project's devcontainer (or in the host project dir if no
+        ``.devcontainer``).
     """
+    use_project_launch = bool(project)
+
     ssh_opts, ssh_target = build_ssh_opts(host, multiplex=True)
 
     print_info(f"Connecting to {host.type}: {host.name} ({host.host})...")
@@ -354,7 +398,18 @@ def shell_connect(host: KnownHost, tunnels: list[str], no_open: bool) -> None:
         print_info(f"Tunnel: localhost:{local_port} -> remote :{remote_port}")
         parsed_tunnels.append((local_port, remote_port))
 
+    if use_project_launch:
+        # -t forces TTY allocation so the interactive zellij+devcontainer flow
+        # inside project-launch behaves correctly. The detach branch also
+        # benefits — devcontainer up prints progress that should reach the
+        # user's terminal even though the command exits immediately after.
+        ssh_cmd.append("-t")
+
     ssh_cmd.append(ssh_target)
+
+    if use_project_launch:
+        assert project is not None  # narrowed by use_project_launch
+        ssh_cmd.append(build_project_launch_remote_cmd(project, detach, exec_cmd))
 
     # ------------------------------------------------------------------
     # Auto-open browser for first tunnel
