@@ -308,10 +308,10 @@ def build_project_launch_remote_cmd(
     """Build the remote command string passed to ``ssh`` for project-launch.
 
     Returns a single shell-quoted string suitable for ``ssh <opts> <target>
-    <cmd>``. ``exec_cmd`` is a single command string (as the user typed it
-    after ``--exec``); it is split with :func:`shlex.split` and re-quoted
-    arg-by-arg so embedded spaces survive both the local Click parse and the
-    remote shell parse.
+    <cmd>``. ``exec_cmd`` is treated as one opaque shell command (the user
+    typed it after ``--exec``) and forwarded as a single shell-quoted arg
+    to ``--exec`` on the remote. The remote runs it via ``bash -lc`` so
+    variable expansion, pipes, ``&&`` etc. all work as the user wrote them.
     """
     # Absolute path: SSH non-interactive commands don't source .bashrc, so
     # ~/.local/bin isn't in PATH. The remote login shell expands ~ for us.
@@ -319,10 +319,8 @@ def build_project_launch_remote_cmd(
     if detach:
         parts.append("--detach")
     if exec_cmd:
-        args = shlex.split(exec_cmd)
-        if args:
-            parts.append("--")
-            parts.extend(shlex.quote(arg) for arg in args)
+        parts.append("--exec")
+        parts.append(shlex.quote(exec_cmd))
     return " ".join(parts)
 
 

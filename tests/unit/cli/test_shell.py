@@ -296,11 +296,14 @@ class TestBuildProjectLaunchRemoteCmd:
     def test_project_with_exec(self):
         from remo_cli.core.ssh import build_project_launch_remote_cmd
 
+        # --exec value is forwarded as ONE shell-quoted arg so the remote
+        # `project-launch` script can pass it intact to `bash -lc`.
         assert (
             build_project_launch_remote_cmd(
                 "my-app", detach=False, exec_cmd="claude --remote-control"
             )
-            == "~/.local/bin/project-launch --project my-app -- claude --remote-control"
+            == "~/.local/bin/project-launch --project my-app "
+            "--exec 'claude --remote-control'"
         )
 
     def test_project_detach_with_exec(self):
@@ -312,21 +315,22 @@ class TestBuildProjectLaunchRemoteCmd:
                 detach=True,
                 exec_cmd="claude remote-control --name remo-rc",
             )
-            == "~/.local/bin/project-launch --project my-app --detach -- "
-            "claude remote-control --name remo-rc"
+            == "~/.local/bin/project-launch --project my-app --detach "
+            "--exec 'claude remote-control --name remo-rc'"
         )
 
-    def test_exec_arg_with_spaces_is_quoted(self):
+    def test_exec_preserves_shell_operators_and_vars(self):
         from remo_cli.core.ssh import build_project_launch_remote_cmd
 
-        # User quoted an inner arg containing a space; it must survive
-        # local shlex.split, our re-quoting, and the remote bash parse.
+        # Vars and operators stay literal in the outgoing command — they get
+        # interpreted by `bash -lc` on the remote, not by the local builder.
         out = build_project_launch_remote_cmd(
             "my-app",
             detach=False,
-            exec_cmd='claude remote-control --name "remo project"',
+            exec_cmd='echo $REMO_PROJECT && pwd',
         )
-        assert "'remo project'" in out
+        # Single-quoted by shlex.quote, so $ and && survive unmangled.
+        assert "'echo $REMO_PROJECT && pwd'" in out
 
     def test_project_with_special_chars_is_quoted(self):
         from remo_cli.core.ssh import build_project_launch_remote_cmd
