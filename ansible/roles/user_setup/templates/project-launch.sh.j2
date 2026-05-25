@@ -28,6 +28,10 @@ PROJECTS_DIR="{{ dev_workspace_dir }}"
 
 PROJECT=""
 DETACH=false
+# HAS_CMD tracks whether we got a passthrough command after --.
+# (We avoid bash array-length syntax in this template because Jinja2 reads
+# the dollar-brace-hash sequence as a comment-start token.)
+HAS_CMD=false
 CMD=()
 
 while [[ $# -gt 0 ]]; do
@@ -36,10 +40,6 @@ while [[ $# -gt 0 ]]; do
             PROJECT="$2"
             shift 2
             ;;
-        --project=*)
-            PROJECT="${1#--project=}"
-            shift
-            ;;
         --detach)
             DETACH=true
             shift
@@ -47,6 +47,9 @@ while [[ $# -gt 0 ]]; do
         --)
             shift
             CMD=("$@")
+            if [[ $# -gt 0 ]]; then
+                HAS_CMD=true
+            fi
             break
             ;;
         -h|--help)
@@ -84,7 +87,7 @@ export REMO_PROJECT="$PROJECT"
 # Detached mode: no zellij, no interactive shell. Run COMMAND in background.
 # ---------------------------------------------------------------------------
 if $DETACH; then
-    if [[ ${#CMD[@]} -eq 0 ]]; then
+    if ! $HAS_CMD; then
         echo "project-launch: --detach requires a command after --" >&2
         exit 2
     fi
@@ -125,12 +128,12 @@ fi
 # ---------------------------------------------------------------------------
 cd "$PROJECT_DIR"
 
-if ! $HAS_DC && [[ ${#CMD[@]} -gt 0 ]]; then
+if ! $HAS_DC && $HAS_CMD; then
     # Case 4: bypass zellij, run command on host
     exec env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" "${CMD[@]}"
 fi
 
-if [[ ${#CMD[@]} -gt 0 ]]; then
+if $HAS_CMD; then
     # Case 2: pass command through env var that .bashrc DEVCONTAINER block honors
     REMO_DEVCONTAINER_CMD="$(printf '%q ' "${CMD[@]}")"
     export REMO_DEVCONTAINER_CMD
