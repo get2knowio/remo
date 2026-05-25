@@ -79,6 +79,13 @@ def shell(
     if exec_cmd and not project:
         print_error("--exec requires -p/--project to know where to run the command")
         raise SystemExit(2)
+    if detach and tunnels:
+        print_error(
+            "-L port forwarding cannot be combined with --detach — the SSH "
+            "session exits immediately, so the tunnel would die before you "
+            "could use it. Drop one or the other."
+        )
+        raise SystemExit(2)
     from remo_cli.core.ssh import check_remote_version, resolve_remo_host, shell_connect  # noqa: PLC0415
     from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
     from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415

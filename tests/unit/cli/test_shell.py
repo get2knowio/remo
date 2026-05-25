@@ -242,6 +242,22 @@ class TestShellProjectLaunchFlags:
         assert "--detach requires --exec" in result.output
 
     @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_detach_with_tunnels_errors(self, runner, mocker):
+        # -L port forwarding is useless with --detach because the SSH session
+        # exits immediately; surface that as an error rather than silently
+        # forwarding to a tunnel that dies before the user can use it.
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(
+            shell, ["-p", "my-app", "-L", "8080", "--detach", "--exec", "true"]
+        )
+
+        assert result.exit_code == 2
+        mock_sc.assert_not_called()
+        assert "-L port forwarding cannot be combined with --detach" in result.output
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
     def test_exec_without_project_errors(self, runner, mocker):
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
         mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
