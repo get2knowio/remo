@@ -290,7 +290,7 @@ class TestBuildProjectLaunchRemoteCmd:
 
         assert (
             build_project_launch_remote_cmd("my-app", detach=False, exec_cmd=None)
-            == "project-launch --project my-app"
+            == "~/.local/bin/project-launch --project my-app"
         )
 
     def test_project_with_exec(self):
@@ -300,7 +300,7 @@ class TestBuildProjectLaunchRemoteCmd:
             build_project_launch_remote_cmd(
                 "my-app", detach=False, exec_cmd="claude --remote-control"
             )
-            == "project-launch --project my-app -- claude --remote-control"
+            == "~/.local/bin/project-launch --project my-app -- claude --remote-control"
         )
 
     def test_project_detach_with_exec(self):
@@ -312,7 +312,7 @@ class TestBuildProjectLaunchRemoteCmd:
                 detach=True,
                 exec_cmd="claude remote-control --name remo-rc",
             )
-            == "project-launch --project my-app --detach -- "
+            == "~/.local/bin/project-launch --project my-app --detach -- "
             "claude remote-control --name remo-rc"
         )
 
@@ -343,7 +343,7 @@ class TestBuildProjectLaunchRemoteCmd:
         # on the server). It collapses to project-only.
         assert (
             build_project_launch_remote_cmd("my-app", detach=False, exec_cmd="")
-            == "project-launch --project my-app"
+            == "~/.local/bin/project-launch --project my-app"
         )
 
 

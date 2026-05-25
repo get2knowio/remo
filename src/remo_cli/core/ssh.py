@@ -313,7 +313,9 @@ def build_project_launch_remote_cmd(
     arg-by-arg so embedded spaces survive both the local Click parse and the
     remote shell parse.
     """
-    parts = ["project-launch", "--project", shlex.quote(project)]
+    # Absolute path: SSH non-interactive commands don't source .bashrc, so
+    # ~/.local/bin isn't in PATH. The remote login shell expands ~ for us.
+    parts = ["~/.local/bin/project-launch", "--project", shlex.quote(project)]
     if detach:
         parts.append("--detach")
     if exec_cmd:
