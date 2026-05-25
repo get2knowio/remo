@@ -25,13 +25,67 @@ import click
     default=False,
     help="Skip remote version check before connecting",
 )
+@click.option(
+    "-p",
+    "--project",
+    "project",
+    default=None,
+    help="Skip the menu and jump straight to PROJECT under ~/projects",
+)
+@click.option(
+    "--exec",
+    "exec_cmd",
+    default=None,
+    help="Run COMMAND inside the project's devcontainer instead of opening a shell (requires -p)",
+    metavar="COMMAND",
+)
+@click.option(
+    "--detach",
+    is_flag=True,
+    default=False,
+    help="Run --exec COMMAND detached on the remote and return immediately",
+)
 def shell(
     name: str | None,
     tunnels: tuple[str, ...],
     no_open: bool,
     no_update_check: bool,
+    project: str | None,
+    exec_cmd: str | None,
+    detach: bool,
 ) -> None:
-    """Connect to a remo environment (auto-detects or picker)."""
+    """Connect to a remo environment (auto-detects or picker).
+
+    With -p PROJECT, skip the server-side picker and jump straight into that
+    project's session (devcontainer auto-launches if .devcontainer exists).
+
+    With --exec COMMAND, run COMMAND inside the project's devcontainer instead
+    of dropping into an interactive shell. Add --detach to fire-and-forget.
+
+    Examples:
+
+      remo shell -p my-app
+      remo shell -p my-app --exec 'claude --remote-control'
+      remo shell -p my-app --detach --exec 'claude remote-control --name my-rc'
+    """
+    from remo_cli.core.output import print_error  # noqa: PLC0415
+
+    if detach and not exec_cmd:
+        print_error(
+            "--detach requires --exec COMMAND (e.g., "
+            "'remo shell -p X --detach --exec \"claude remote-control\"')"
+        )
+        raise SystemExit(2)
+    if exec_cmd and not project:
+        print_error("--exec requires -p/--project to know where to run the command")
+        raise SystemExit(2)
+    if detach and tunnels:
+        print_error(
+            "-L port forwarding cannot be combined with --detach — the SSH "
+            "session exits immediately, so the tunnel would die before you "
+            "could use it. Drop one or the other."
+        )
+        raise SystemExit(2)
     from remo_cli.core.ssh import check_remote_version, resolve_remo_host, shell_connect  # noqa: PLC0415
     from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
     from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415
@@ -96,7 +150,14 @@ def shell(
                     ):
                         raise SystemExit(rc)
 
-    shell_connect(host, list(tunnels), no_open)
+    shell_connect(
+        host,
+        list(tunnels),
+        no_open,
+        project=project,
+        detach=detach,
+        exec_cmd=exec_cmd,
+    )
 
 
 def _run_provider_update(host) -> int:  # noqa: ANN001

@@ -179,6 +179,178 @@ class TestShellVersionCheck:
         mock_check.assert_not_called()
 
 
+class TestShellProjectLaunchFlags:
+    """Tests for the -p / --exec / --detach passthrough flags."""
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_project_flag_forwards_to_shell_connect(self, runner, mocker):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, ["-p", "my-app"])
+
+        assert result.exit_code == 0
+        _, kwargs = mock_sc.call_args
+        assert kwargs["project"] == "my-app"
+        assert kwargs["detach"] is False
+        assert kwargs["exec_cmd"] is None
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_exec_passthrough(self, runner, mocker):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(
+            shell, ["-p", "my-app", "--exec", "claude --remote-control"]
+        )
+
+        assert result.exit_code == 0
+        _, kwargs = mock_sc.call_args
+        assert kwargs["project"] == "my-app"
+        assert kwargs["exec_cmd"] == "claude --remote-control"
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_detach_with_exec(self, runner, mocker):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(
+            shell,
+            [
+                "-p",
+                "my-app",
+                "--detach",
+                "--exec",
+                "claude remote-control --name remo-rc",
+            ],
+        )
+
+        assert result.exit_code == 0
+        _, kwargs = mock_sc.call_args
+        assert kwargs["detach"] is True
+        assert kwargs["exec_cmd"] == "claude remote-control --name remo-rc"
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_detach_without_exec_errors(self, runner, mocker):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, ["-p", "my-app", "--detach"])
+
+        assert result.exit_code == 2
+        mock_sc.assert_not_called()
+        assert "--detach requires --exec" in result.output
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_detach_with_tunnels_errors(self, runner, mocker):
+        # -L port forwarding is useless with --detach because the SSH session
+        # exits immediately; surface that as an error rather than silently
+        # forwarding to a tunnel that dies before the user can use it.
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(
+            shell, ["-p", "my-app", "-L", "8080", "--detach", "--exec", "true"]
+        )
+
+        assert result.exit_code == 2
+        mock_sc.assert_not_called()
+        assert "-L port forwarding cannot be combined with --detach" in result.output
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_exec_without_project_errors(self, runner, mocker):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, ["--exec", "pytest"])
+
+        assert result.exit_code == 2
+        mock_sc.assert_not_called()
+        assert "-p/--project" in result.output
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_no_new_flags_preserves_legacy_call(self, runner, mocker):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, [])
+
+        assert result.exit_code == 0
+        _, kwargs = mock_sc.call_args
+        assert kwargs["project"] is None
+        assert kwargs["detach"] is False
+        assert kwargs["exec_cmd"] is None
+
+
+class TestBuildProjectLaunchRemoteCmd:
+    """Tests for the SSH remote-command string builder."""
+
+    def test_project_only(self):
+        from remo_cli.core.ssh import build_project_launch_remote_cmd
+
+        assert (
+            build_project_launch_remote_cmd("my-app", detach=False, exec_cmd=None)
+            == "~/.local/bin/project-launch --project my-app"
+        )
+
+    def test_project_with_exec(self):
+        from remo_cli.core.ssh import build_project_launch_remote_cmd
+
+        # --exec value is forwarded as ONE shell-quoted arg so the remote
+        # `project-launch` script can pass it intact to `bash -lc`.
+        assert (
+            build_project_launch_remote_cmd(
+                "my-app", detach=False, exec_cmd="claude --remote-control"
+            )
+            == "~/.local/bin/project-launch --project my-app "
+            "--exec 'claude --remote-control'"
+        )
+
+    def test_project_detach_with_exec(self):
+        from remo_cli.core.ssh import build_project_launch_remote_cmd
+
+        assert (
+            build_project_launch_remote_cmd(
+                "my-app",
+                detach=True,
+                exec_cmd="claude remote-control --name remo-rc",
+            )
+            == "~/.local/bin/project-launch --project my-app --detach "
+            "--exec 'claude remote-control --name remo-rc'"
+        )
+
+    def test_exec_preserves_shell_operators_and_vars(self):
+        from remo_cli.core.ssh import build_project_launch_remote_cmd
+
+        # Vars and operators stay literal in the outgoing command — they get
+        # interpreted by `bash -lc` on the remote, not by the local builder.
+        out = build_project_launch_remote_cmd(
+            "my-app",
+            detach=False,
+            exec_cmd='echo $REMO_PROJECT && pwd',
+        )
+        # Single-quoted by shlex.quote, so $ and && survive unmangled.
+        assert "'echo $REMO_PROJECT && pwd'" in out
+
+    def test_project_with_special_chars_is_quoted(self):
+        from remo_cli.core.ssh import build_project_launch_remote_cmd
+
+        out = build_project_launch_remote_cmd(
+            "weird name", detach=False, exec_cmd=None
+        )
+        assert "'weird name'" in out
+
+    def test_exec_empty_string_is_ignored(self):
+        from remo_cli.core.ssh import build_project_launch_remote_cmd
+
+        # `--exec ""` shouldn't append `--` with no args (would be an error
+        # on the server). It collapses to project-only.
+        assert (
+            build_project_launch_remote_cmd("my-app", detach=False, exec_cmd="")
+            == "~/.local/bin/project-launch --project my-app"
+        )
+
+
 class TestRunProviderUpdate:
     """Tests for _run_provider_update()."""
 
