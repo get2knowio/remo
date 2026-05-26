@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -110,13 +111,109 @@ def _lookup_hetzner_host(server_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _push_bootstrap_token(server_ip: str, token: str, ssh_user: str = "root") -> None:
+def _fetch_hetzner_host_keys(server_id: int) -> list[tuple[str, str]]:
+    """Return SSH host keys for *server_id* as ``[(algo, base64_key), ...]``.
+
+    Best-effort: returns an empty list when the API token is missing, the
+    request fails, or the server resource doesn't expose host keys. Hetzner
+    Cloud's v1 API exposes host fingerprints under ``server.host_keys`` on
+    the detail endpoint; we also try a couple of nested fallbacks for
+    robustness against minor field-name drift across API revisions.
+    """
+    token = _get_hetzner_api_token()
+    if not token:
+        return []
+    url = f"https://api.hetzner.cloud/v1/servers/{server_id}"
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = json.loads(resp.read().decode())
+    except (urllib.error.URLError, json.JSONDecodeError, ValueError):
+        return []
+
+    server = payload.get("server") or {}
+    candidates = (
+        server.get("host_keys")
+        or (server.get("public_net") or {}).get("host_keys")
+        or []
+    )
+    out: list[tuple[str, str]] = []
+    for entry in candidates:
+        if not isinstance(entry, dict):
+            continue
+        algo = entry.get("type") or entry.get("algorithm") or ""
+        key = entry.get("key") or entry.get("public_key") or ""
+        if algo and key:
+            out.append((str(algo), str(key)))
+    return out
+
+
+def _verify_ssh_host_key(
+    server_ip: str, expected: list[tuple[str, str]]
+) -> bool:
+    """Verify the live SSH host key on *server_ip* matches one of *expected*.
+
+    Runs ``ssh-keyscan -T 10 -t rsa,ed25519,ecdsa <server_ip>`` and parses
+    each ``<host> <algo> <base64-key>`` line. Returns True iff at least one
+    scanned ``(algo, key)`` is in *expected*. Returns False on any
+    transport error.
+    """
+    if not expected:
+        return False
+    try:
+        proc = subprocess.run(
+            [
+                "ssh-keyscan",
+                "-T", "10",
+                "-t", "rsa,ed25519,ecdsa",
+                server_ip,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if proc.returncode != 0 and not proc.stdout:
+        return False
+
+    expected_set = {(algo, key) for algo, key in expected}
+    for line in (proc.stdout or "").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        algo, key = parts[1], parts[2]
+        if (algo, key) in expected_set:
+            return True
+    return False
+
+
+def _push_bootstrap_token(
+    server_ip: str,
+    token: str,
+    ssh_user: str = "root",
+    server_id: int | None = None,
+) -> None:
     """SSH-push the bootstrap token to /etc/remo-broker/bootstrap-token (mode 0400 root).
 
     Token bytes are piped on stdin so they never appear in argv / ps output.
     Per research R2 + contracts/bootstrap-delivery.md.
 
-    Raises subprocess.CalledProcessError on SSH failure; caller surfaces.
+    When *server_id* is supplied, fetches the Hetzner-reported SSH host keys
+    and verifies the live key matches before pushing — closing the MITM
+    window on freshly-allocated public IPs. Falls back to
+    ``StrictHostKeyChecking=accept-new`` (with a warning) when the API
+    surface doesn't expose host keys.
+
+    Raises :class:`RuntimeError` on SSH failure or when Hetzner-reported
+    host keys disagree with the live server.
     """
     if not server_ip:
         raise ValueError("server_ip must be non-empty")
@@ -127,20 +224,71 @@ def _push_bootstrap_token(server_ip: str, token: str, ssh_user: str = "root") ->
         "install -D -m 0400 -o root -g root /dev/stdin "
         "/etc/remo-broker/bootstrap-token"
     )
-    ssh_cmd = [
-        "ssh",
-        "-o", "StrictHostKeyChecking=accept-new",
-        "-o", "BatchMode=yes",
-        f"{ssh_user}@{server_ip}",
-        remote_cmd,
-    ]
-    proc = subprocess.run(
-        ssh_cmd,
-        input=token,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+
+    expected_keys: list[tuple[str, str]] = []
+    if server_id is not None:
+        expected_keys = _fetch_hetzner_host_keys(server_id)
+
+    known_hosts_file: str | None = None
+    if expected_keys:
+        if not _verify_ssh_host_key(server_ip, expected_keys):
+            raise RuntimeError(
+                "Hetzner-reported host keys do not match live server; "
+                "refusing to push bootstrap token. Possible MITM."
+            )
+        # Materialise the verified keys into a temp known_hosts file so the
+        # actual ssh push can run with StrictHostKeyChecking=yes.
+        fd, known_hosts_file = tempfile.mkstemp(prefix="remo-hetzner-kh-")
+        try:
+            with os.fdopen(fd, "w") as fp:
+                for algo, key in expected_keys:
+                    fp.write(f"{server_ip} {algo} {key}\n")
+        except OSError:
+            # If we can't write the temp file, fall back to accept-new path.
+            try:
+                os.unlink(known_hosts_file)
+            except OSError:
+                pass
+            known_hosts_file = None
+    else:
+        print_warning(
+            "Hetzner did not return SSH host keys for this server; falling "
+            "back to StrictHostKeyChecking=accept-new for the bootstrap-token "
+            "push. Residual MITM risk on a freshly-allocated public IP — "
+            "see docs/credential-broker.md threat model."
+        )
+
+    if known_hosts_file is not None:
+        ssh_cmd = [
+            "ssh",
+            "-o", "StrictHostKeyChecking=yes",
+            "-o", f"UserKnownHostsFile={known_hosts_file}",
+            "-o", "BatchMode=yes",
+            f"{ssh_user}@{server_ip}",
+            remote_cmd,
+        ]
+    else:
+        ssh_cmd = [
+            "ssh",
+            "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "BatchMode=yes",
+            f"{ssh_user}@{server_ip}",
+            remote_cmd,
+        ]
+    try:
+        proc = subprocess.run(
+            ssh_cmd,
+            input=token,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+    finally:
+        if known_hosts_file is not None:
+            try:
+                os.unlink(known_hosts_file)
+            except OSError:
+                pass
     if proc.returncode != 0:
         stderr = (proc.stderr or "").strip() or "(no stderr)"
         raise RuntimeError(
@@ -220,12 +368,16 @@ def _deliver_bootstrap_token(
     if not token:
         raise RuntimeError("mint_bootstrap_token returned no token")
 
-    _push_bootstrap_token(server_ip, token)
+    # Resolve the server id up-front so `_push_bootstrap_token` can fetch
+    # Hetzner-reported SSH host keys for verification (Finding 15).
+    server_id = _hetzner_server_id(server_name)
+    _push_bootstrap_token(server_ip, token, server_id=server_id)
 
-    if token_id:
-        server_id = _hetzner_server_id(server_name)
-        if server_id:
-            _set_server_label(server_id, "remo:bootstrap-token-id", token_id)
+    if token_id and server_id:
+        # Hetzner Cloud label keys disallow `:` (validation regex returns
+        # HTTP 400). Use underscore form on writes; readers fall back to
+        # the legacy colon-delimited key for pre-fix instances.
+        _set_server_label(server_id, "remo_bootstrap_token_id", token_id)
 
 
 # ---------------------------------------------------------------------------
@@ -295,7 +447,8 @@ def create(
         # Phase 3, US1: deliver bootstrap token to the broker via SSH push.
         # Backend + dev_id selection lands in Phase 5 (`remo init`). Until then,
         # fall back to environment hints / no-op.
-        backend = os.environ.get("REMO_BROKER_BACKEND", "")
+        from remo_cli.core.broker_config import get_backend  # noqa: PLC0415
+        backend = get_backend()
         dev_id = os.environ.get("REMO_DEV_ID", "") or os.environ.get("USER", "")
         if backend:
             try:

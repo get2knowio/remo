@@ -3,7 +3,7 @@
 # Provisioning credentials are fetched from the developer's laptop-side fnox
 # keystore (https://github.com/jdx/fnox), not from the laptop shell env.
 # Per spec 005-credential-broker FR-006 / contracts/ansible-changes.md.
-hetzner_api_token: "{{ lookup('pipe', 'fnox get hetzner_api_token') }}"
+hetzner_api_token: "{{ lookup('pipe', 'fnox get hetzner_api_token 2>/dev/null || true') | default('', true) }}"
 hetzner_server_name: "remo"
 hetzner_server_type: "cx23"  # Smallest shared vCPU (2 vCPU, 4GB RAM) - cheapest option
 hetzner_image: "ubuntu-24.04"
@@ -16,8 +16,8 @@ hetzner_volume_size: 20  # GB (minimum 10)
 
 # AWS Configuration
 # Provisioning credentials fetched from laptop fnox (FR-006).
-aws_access_key_id: "{{ lookup('pipe', 'fnox get aws_access_key_id') }}"
-aws_secret_access_key: "{{ lookup('pipe', 'fnox get aws_secret_access_key') }}"
+aws_access_key_id: "{{ lookup('pipe', 'fnox get aws_access_key_id 2>/dev/null || true') | default('', true) }}"
+aws_secret_access_key: "{{ lookup('pipe', 'fnox get aws_secret_access_key 2>/dev/null || true') | default('', true) }}"
 aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
 
 # User Configuration

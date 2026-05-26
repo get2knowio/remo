@@ -311,17 +311,22 @@ def _ensure_broker_instance_role(
     iam,  # noqa: ANN001
     dev_id: str,
     region: str,
+    instance_id: str,
 ) -> tuple[str, str]:
-    """Idempotently create the per-developer broker role + instance profile.
+    """Idempotently create the per-instance broker role + instance profile.
 
     Returns ``(role_name, profile_name)``. The role grants:
       - sts:AssumeRole from ec2.amazonaws.com (trust policy)
       - AmazonSSMManagedInstanceCore (managed) — keeps SSM access working
       - secretsmanager:GetSecretValue on arn:aws:secretsmanager:*:*:secret:remo/<dev>/* (inline)
 
-    Per research R3 + contracts/bootstrap-delivery.md.
+    Per research R3 + contracts/bootstrap-delivery.md. Scoped per-instance (not
+    per-developer) so destroying one instance's role can't break IMDS creds on
+    a sibling instance owned by the same developer.
     """
-    role_name = f"remo-broker-instance-{dev_id}"
+    from remo_cli.providers.broker import _safe_role_slug  # noqa: PLC0415
+
+    role_name = f"remo-broker-instance-{dev_id}-{_safe_role_slug(instance_id)}"
     profile_name = role_name  # Same name simplifies tear-down lookup.
 
     assume_role_policy = json.dumps(
@@ -558,7 +563,8 @@ def create(
 
     # Determine IAM instance profile
     iam_created = False
-    backend = os.environ.get("REMO_BROKER_BACKEND", "")
+    from remo_cli.core.broker_config import get_backend  # noqa: PLC0415
+    backend = get_backend()
     dev_id = os.environ.get("REMO_DEV_ID", "") or os.environ.get("USER", "remo")
     if iam_profile:
         print_info(f"Using provided IAM instance profile: {iam_profile}")
@@ -568,7 +574,7 @@ def create(
         session = _boto3_session(effective_region)
         iam = session.client("iam")
         _role_name, profile_name = _ensure_broker_instance_role(
-            iam, dev_id=dev_id, region=effective_region
+            iam, dev_id=dev_id, region=effective_region, instance_id=resource_name
         )
         selected_profile = profile_name
         iam_created = True
@@ -667,10 +673,12 @@ def destroy(
     auto_confirm: bool = False,
     remove_storage: bool = False,
     verbose: bool = False,
+    force_broker: bool = False,
 ) -> int:
     """Destroy an AWS EC2 instance.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Returns the ansible-playbook exit code (0 on success). Exit code 5 if
+    broker revocation fails and force_broker is False (FR-020).
     """
     if name:
         validate_name(name, "instance name")
@@ -682,6 +690,22 @@ def destroy(
 
     resource_name = name or os.environ.get("USER", "remo")
     region = get_aws_region(resource_name)
+
+    # FR-020: revoke bootstrap token at the backend BEFORE terminating the
+    # instance. The per-instance IAM role is safe to deny-all + delete pre-
+    # terminate (cached STS creds keep the in-flight broker alive until EC2
+    # tears it down); failing closed here is the desired behavior.
+    from remo_cli.core import broker_revoke as _broker_revoke  # noqa: PLC0415
+    candidate = KnownHost(
+        type="aws",
+        name=resource_name,
+        host="",
+        user="",
+        instance_id="",
+        region=region,
+    )
+    if not _broker_revoke.revoke_before_destroy(candidate, force=force_broker):
+        return 5
 
     # FR-020 through FR-023: surface remo-managed EBS snapshots before destroy.
     # Failure to enumerate (instance already gone, no creds, etc.) downgrades

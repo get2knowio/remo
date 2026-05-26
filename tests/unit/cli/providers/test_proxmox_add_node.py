@@ -46,3 +46,32 @@ def test_add_node_conflict_exits_6(tmp_config_dir, mocker):
          "--ssh-user", "root", "--admin-sa-fnox-key", "k_admin_sa"],
     )
     assert r2.exit_code == 6
+
+
+def test_add_node_helper_install_does_not_touch_helper_file(tmp_config_dir, mocker):
+    """Regression for finding 10: pre-creating an empty
+    /usr/local/libexec/remo-broker-tokens shadowed the role's copy task
+    (force: false), silently breaking per-developer token management.
+    The helper-install SSH command must NOT touch/chmod that file — only
+    the parent dir + per-developer token dir."""
+    captured: list[str] = []
+
+    def _capture(host, user, command):  # noqa: ARG001
+        captured.append(command)
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout="OK\n", stderr="")
+
+    mocker.patch("remo_cli.providers.proxmox._ssh_run", side_effect=_capture)
+    runner = CliRunner()
+    r = runner.invoke(
+        proxmox,
+        ["add-node", "lab-prox-02", "--host", "10.0.0.42",
+         "--ssh-user", "root", "--admin-sa-fnox-key", "k_admin_sa"],
+    )
+    assert r.exit_code == 0, r.output
+    assert captured, "expected helper-install SSH command"
+    cmd = captured[0]
+    assert "touch /usr/local/libexec/remo-broker-tokens" not in cmd
+    assert "chmod 0755 /usr/local/libexec/remo-broker-tokens" not in cmd
+    assert "install -d -m 0755 /usr/local/libexec" in cmd
+    assert "/var/lib/remo-broker/instance-tokens/" in cmd
+    assert "echo OK" in cmd

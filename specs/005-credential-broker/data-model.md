@@ -51,7 +51,7 @@ State transitions:
 - `mint` → `deliver` → `serve` → `rotate` (mints fresh, delivers, revokes old) → `revoke` (on destroy, before instance deletion per FR-020).
 - Default rotation cadence: 7 days (Clarifications Q3 → FR-021).
 
-Rotation metadata: cadence days and last-rotation timestamp are stored as provider-side tags/labels (`remo:rotation-cadence-days`, `remo:last-rotation-at`) — never on the laptop. This keeps cadence with the instance across multi-device use and preserves KnownHost's "unchanged" contract.
+Rotation metadata: cadence days and last-rotation timestamp are stored as provider-side tags/labels (Hetzner labels `remo_rotation_cadence_days`, `remo_last_rotation_at`; AWS tags `remo:rotation-cadence-days`, `remo:last-rotation-at`) — never on the laptop. Hetzner label keys disallow `:`, so the underscore form is the canonical key on that provider. This keeps cadence with the instance across multi-device use and preserves KnownHost's "unchanged" contract.
 
 ## Entity: ProjectManifest (NEW)
 

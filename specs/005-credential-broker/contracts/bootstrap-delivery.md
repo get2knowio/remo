@@ -19,6 +19,7 @@ Each provider's bootstrap-token delivery mechanism is a separate transport-level
 | On-disk token? | No. |
 | Scoping | Role's inline policy allows `secretsmanager:GetSecretValue` on `arn:aws:secretsmanager:*:*:secret:remo/<dev>/*` only (research R3). |
 | Idempotency | `iam:GetRole`/`iam:CreateRole`; instance-profile creation skipped if exists. |
+| Role/profile naming | `remo-broker-instance-<dev_id>-<safe_instance_id>` (per-instance, **not** per-developer). Role and instance-profile share the name. `safe_instance_id` is the human-friendly resource name from `remo aws create` sanitized to `[A-Za-z0-9_-]` and truncated to 32 chars. Per-instance scoping is mandatory: revocation attaches a deny-all policy and deletes the role, which would break IMDS creds on sibling instances if any role were shared. |
 | Revoke at destroy | After `ec2.terminate_instances`: update assume-role policy to deny-all, then delete the role+profile. ≤60 s STS propagation budget (SC-005). |
 
 ## Hetzner — SSH push

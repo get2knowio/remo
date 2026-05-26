@@ -142,6 +142,12 @@ def create(
     help="Also remove the container from backup/replication/HA job configs (pct destroy --purge). The rootfs is destroyed regardless.",
 )
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm prompts.")
+@click.option(
+    "--force-broker",
+    is_flag=True,
+    default=False,
+    help="Proceed with destroy even if broker token revocation fails (FR-020).",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def destroy(
     name: str,
@@ -149,6 +155,7 @@ def destroy(
     user: str,
     purge: bool,
     yes: bool,
+    force_broker: bool,
     verbose: bool,
 ) -> None:
     """Destroy a Proxmox LXC container."""
@@ -159,6 +166,7 @@ def destroy(
         purge=purge,
         auto_confirm=yes,
         verbose=verbose,
+        force_broker=force_broker,
     )
     sys.exit(rc)
 

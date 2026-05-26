@@ -5,3 +5,4 @@
     state: restarted
     daemon_reload: true
   become: true
+  when: broker_token_present | default(false)

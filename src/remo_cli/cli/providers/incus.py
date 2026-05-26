@@ -136,6 +136,12 @@ def create(
     help="Also remove host mount directories (e.g. /home, /workspace) bound into the container.",
 )
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm prompts.")
+@click.option(
+    "--force-broker",
+    is_flag=True,
+    default=False,
+    help="Proceed with destroy even if broker token revocation fails (FR-020).",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def destroy(
     name: str,
@@ -143,6 +149,7 @@ def destroy(
     user: str,
     remove_storage: bool,
     yes: bool,
+    force_broker: bool,
     verbose: bool,
 ) -> None:
     """Destroy an Incus container."""
@@ -153,6 +160,7 @@ def destroy(
         remove_storage=remove_storage,
         auto_confirm=yes,
         verbose=verbose,
+        force_broker=force_broker,
     )
     sys.exit(rc)
 

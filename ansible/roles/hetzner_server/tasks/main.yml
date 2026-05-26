@@ -1,11 +1,18 @@
 ---
 # Preflight validation
 - name: Validate Hetzner API token is set
-  ansible.builtin.fail:
-    msg: |
+  ansible.builtin.assert:
+    that:
+      - hetzner_api_token | default('') | length > 0
+    fail_msg: |
       Hetzner API token is not configured.
-      Set the HETZNER_API_TOKEN environment variable or pass -e hetzner_api_token=<token>
-  when: hetzner_api_token | default('') | length == 0
+
+      remo reads provisioning secrets from the laptop fnox keystore
+      (https://github.com/jdx/fnox). Install fnox, then store the token:
+
+        fnox set hetzner_api_token <token>
+
+      Or override on the command line: -e hetzner_api_token=<token>
 
 - name: Check if hcloud Python library is available
   delegate_to: localhost

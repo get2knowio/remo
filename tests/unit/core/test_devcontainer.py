@@ -102,3 +102,53 @@ def test_synthesize_devcontainer_idempotent(tmp_path: Path):
     devcontainer.synthesize_devcontainer_json(tmp_path)
     # File unchanged
     assert json.loads(target.read_text()) == {"name": "custom"}
+
+
+def test_strip_jsonc_preserves_double_slash_in_string():
+    raw = '{"path": "a//b"}'
+    parsed = json.loads(devcontainer._strip_jsonc(raw))
+    assert parsed["path"] == "a//b"
+
+
+def test_strip_jsonc_preserves_block_comment_chars_in_string():
+    raw = '{"glob": "/* literal */"}'
+    parsed = json.loads(devcontainer._strip_jsonc(raw))
+    assert parsed["glob"] == "/* literal */"
+
+
+def test_strip_jsonc_removes_line_comment():
+    raw = '{"a": 1 // comment\n, "b": 2}'
+    parsed = json.loads(devcontainer._strip_jsonc(raw))
+    assert parsed == {"a": 1, "b": 2}
+
+
+def test_strip_jsonc_removes_block_comment():
+    raw = '{"a": /* c */ 1}'
+    parsed = json.loads(devcontainer._strip_jsonc(raw))
+    assert parsed == {"a": 1}
+
+
+def test_strip_jsonc_double_slash_inside_string_with_leading_space():
+    raw = '{"x": " //inside"}'
+    parsed = json.loads(devcontainer._strip_jsonc(raw))
+    assert parsed["x"] == " //inside"
+
+
+def test_strip_jsonc_handles_escaped_quote_in_string():
+    raw = r'{"q": "he said \"hi //there\""}'
+    parsed = json.loads(devcontainer._strip_jsonc(raw))
+    assert parsed["q"] == 'he said "hi //there"'
+
+
+def test_ensure_socket_mount_with_jsonc_string_containing_slashes(tmp_path: Path):
+    (tmp_path / ".devcontainer").mkdir()
+    dc = tmp_path / ".devcontainer" / "devcontainer.json"
+    dc.write_text(
+        '{\n  "name": "x",\n  "image": "img",\n  "workspaceFolder": "/a//b" // trailing\n}\n',
+        encoding="utf-8",
+    )
+    changed = devcontainer.ensure_socket_mount(dc, tmp_path)
+    assert changed is True
+    data = json.loads(dc.read_text())
+    assert data["workspaceFolder"] == "/a//b"
+    assert any("/run/remo-broker/sock" in m for m in data["mounts"])

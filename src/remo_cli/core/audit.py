@@ -99,9 +99,15 @@ def _parse_ts(ts: str) -> datetime:
     try:
         if ts.endswith("Z"):
             ts = ts[:-1] + "+00:00"
-        return datetime.fromisoformat(ts)
+        result = datetime.fromisoformat(ts)
     except ValueError:
         return datetime.fromtimestamp(0, tz=timezone.utc)
+    if result.tzinfo is None:
+        # Bare-ISO timestamps without an offset are interpreted as UTC so the
+        # `_parse_ts(ln.ts) >= cutoff` comparison in `fetch()` doesn't raise
+        # "can't compare offset-naive and offset-aware datetimes".
+        result = result.replace(tzinfo=timezone.utc)
+    return result
 
 
 _DUR_RE = re.compile(r"^(\d+)\s*([smhd])$", re.IGNORECASE)

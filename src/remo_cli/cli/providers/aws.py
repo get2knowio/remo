@@ -65,11 +65,18 @@ def create(
 @click.option("--name", default="", help="Instance name (defaults to $USER).", shell_complete=_complete_name)
 @click.option("--remove-storage", is_flag=True, default=False, help="Also remove EBS storage volume.")
 @click.option("--yes", "-y", "auto_confirm", is_flag=True, default=False, help="Skip confirmation prompts.")
+@click.option(
+    "--force-broker",
+    is_flag=True,
+    default=False,
+    help="Proceed with destroy even if broker token revocation fails (FR-020).",
+)
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose output.")
 def destroy(
     name: str,
     remove_storage: bool,
     auto_confirm: bool,
+    force_broker: bool,
     verbose: bool,
 ) -> None:
     """Destroy an AWS EC2 instance."""
@@ -80,6 +87,7 @@ def destroy(
         auto_confirm=auto_confirm,
         remove_storage=remove_storage,
         verbose=verbose,
+        force_broker=force_broker,
     )
     sys.exit(rc)
 

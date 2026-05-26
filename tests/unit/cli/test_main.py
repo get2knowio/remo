@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import sys
 
 from click.testing import CliRunner
 
@@ -212,3 +213,59 @@ class TestCompletionCommand:
         result = _invoke("completion", "zsh")
         assert result.exit_code == 0
         assert "_remo_completion" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Post-command hook (Finding 4): subcommand sys.exit(0) must not skip the hook
+# ---------------------------------------------------------------------------
+
+
+class TestPostCommandHook:
+    """The post-command hook must run even when subcommands raise SystemExit.
+
+    Click's `@result_callback` only fires on a normal return. Every real
+    subcommand ends with `sys.exit(rc)` (SystemExit), so the callback was
+    silently dead. The `_RemoGroup` subclass wraps `invoke()` in try/finally
+    to guarantee the hook always runs.
+    """
+
+    def test_hook_runs_when_subcommand_sys_exits(self, mocker):
+        @cli.command("_test_sys_exit")
+        def _fake() -> None:
+            sys.exit(0)
+
+        try:
+            mock_overdue = mocker.patch(
+                "remo_cli.core.broker_revoke.overdue_reminders",
+                return_value=["overdue-instance: rotation overdue"],
+            )
+            mocker.patch(
+                "remo_cli.core.version.check_for_updates_passive",
+                return_value=None,
+            )
+            result = CliRunner().invoke(cli, ["_test_sys_exit"], catch_exceptions=False)
+            assert result.exit_code == 0
+            mock_overdue.assert_called_once()
+            assert "overdue-instance" in result.output
+        finally:
+            cli.commands.pop("_test_sys_exit", None)
+
+    def test_hook_skipped_for_version_flag(self, mocker):
+        mock_overdue = mocker.patch(
+            "remo_cli.core.broker_revoke.overdue_reminders",
+            return_value=["should-not-appear"],
+        )
+        result = _invoke("--version")
+        assert result.exit_code == 0
+        assert "should-not-appear" not in result.output
+        mock_overdue.assert_not_called()
+
+    def test_hook_skipped_for_help_flag(self, mocker):
+        mock_overdue = mocker.patch(
+            "remo_cli.core.broker_revoke.overdue_reminders",
+            return_value=["should-not-appear"],
+        )
+        result = _invoke("--help")
+        assert result.exit_code == 0
+        assert "should-not-appear" not in result.output
+        mock_overdue.assert_not_called()

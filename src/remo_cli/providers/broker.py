@@ -10,12 +10,24 @@ module only handles the laptop-side admin operations (sub-token mint + revoke).
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
 from typing import Any
 
 SUPPORTED_BACKENDS: tuple[str, ...] = ("1password", "vault", "aws-sm", "age-git")
+
+
+def _safe_role_slug(instance_id: str) -> str:
+    """Sanitize a remo resource name to a fragment safe for IAM role names.
+
+    Why: IAM role names accept `[A-Za-z0-9+=,.@_-]` up to 64 chars total. We
+    compose `remo-broker-instance-<dev>-<slug>`, so we strip the instance slug
+    to the conservative `[A-Za-z0-9_-]` subset and cap it at 32 chars to leave
+    headroom for the developer id prefix.
+    """
+    return re.sub(r"[^A-Za-z0-9_-]", "-", instance_id)[:32]
 
 
 class BackendError(RuntimeError):
@@ -83,7 +95,11 @@ def _onepassword_mint(admin_sa: str, instance_id: str, dev_id: str) -> dict[str,
     token = payload.get("token") or payload.get("value") or ""
     token_id = str(payload.get("id") or payload.get("scim_id") or "")
     if not token or not token_id:
-        raise BackendError(f"1Password mint returned no token/id: {payload!r}")
+        # Never include payload values in the message — the token may be present
+        # under an unexpected key during schema drift. Only surface key names.
+        raise BackendError(
+            f"1Password mint returned no token/id; payload keys: {sorted(payload.keys())}"
+        )
     return {"token": token, "token_id": token_id}
 
 
@@ -143,7 +159,12 @@ def _vault_mint(
     token = auth.get("client_token") or ""
     accessor = auth.get("accessor") or ""
     if not token or not accessor:
-        raise BackendError(f"Vault mint returned no token/accessor: {payload!r}")
+        # Never include payload values in the message — the token may be present
+        # under an unexpected key during schema drift. Only surface key names.
+        raise BackendError(
+            f"Vault mint returned no token/accessor; "
+            f"payload keys: {sorted(payload.keys())}; auth keys: {sorted(auth.keys())}"
+        )
     return {"token": token, "token_id": accessor}
 
 
@@ -178,10 +199,16 @@ def _aws_sm_mint(instance_id: str, dev_id: str) -> dict[str, str]:
     Returns a sentinel; the actual delivery happens via
     `providers.aws._ensure_broker_instance_role`. We hand back the role name
     as token_id so the revoke path can find it later.
+
+    Why per-instance: a single developer can have multiple concurrent remo
+    instances; sharing one role across them means destroying one would attach
+    the deny-all policy + delete the role and break IMDS creds on the others.
+    `instance_id` here is the human-friendly resource name passed by the caller.
     """
+    safe = _safe_role_slug(instance_id)
     return {
         "token": "",  # No on-disk token for AWS — IMDS gives the role creds.
-        "token_id": f"remo-broker-instance-{dev_id}",
+        "token_id": f"remo-broker-instance-{dev_id}-{safe}",
     }
 
 
@@ -200,6 +227,12 @@ def _aws_sm_revoke(token_id: str) -> None:
             "Install with `uv pip install boto3` or `uv sync --extra aws`."
         )
     iam = boto3.client("iam")
+    # Belt-and-suspenders: if the role is already gone (idempotent re-revoke,
+    # or never minted), skip the deny-all + delete dance silently.
+    try:
+        iam.get_role(RoleName=token_id)
+    except iam.exceptions.NoSuchEntityException:
+        return
     from remo_cli.providers import aws as aws_provider
     aws_provider._attach_broker_deny_all_policy(iam, token_id)  # noqa: SLF001
     aws_provider._delete_broker_instance_role(iam, token_id, token_id)  # noqa: SLF001

@@ -126,7 +126,7 @@ Changes take effect on next devcontainer restart.
 | `remo audit` exits 8 | Broker not installed / audit log missing | Re-run `remo {provider} create` (the configure flow includes broker_install) |
 | Broker won't start on instance | `bootstrap-token` file missing | Re-run the per-provider configure playbook; check `journalctl -u remo-broker` |
 | `gh auth status` fails inside devcontainer | Secret not in manifest | Add it to `[mcp].secrets` and restart the devcontainer |
-| Overdue rotation reminder appears | `remo:rotation-cadence-days` exceeded since `remo:last-rotation-at` | Run `remo rotate-bootstrap <instance>` |
+| Overdue rotation reminder appears | `remo_rotation_cadence_days` exceeded since `remo_last_rotation_at` (Hetzner) | Run `remo rotate-bootstrap <instance>` |
 
 ## Cross-repo split
 

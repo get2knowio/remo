@@ -949,7 +949,7 @@
     owner: root
     group: root
     mode: "0755"
-    force: false
+    force: true
   when: (registered_developers | default([])) | length > 0
   tags:
     - broker

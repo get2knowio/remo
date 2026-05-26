@@ -44,6 +44,15 @@
     broker_expected_sha256: "{{ (broker_sha256_result.content | default('')).split() | first | default('') }}"
   when: broker_download_needed | default(false)
 
+- name: Validate broker checksum is 64-char hex (refuse empty / whitespace-only .sha256)
+  ansible.builtin.assert:
+    that:
+      - broker_expected_sha256 | default('') is match('^[0-9a-fA-F]{64}$')
+    fail_msg: >-
+      Refusing to download broker binary: .sha256 body did not yield a valid 64-char hex digest
+      (got: {{ broker_expected_sha256 | default('') | string | truncate(80) }}).
+  when: broker_download_needed | default(false)
+
 - name: Download broker binary
   ansible.builtin.get_url:
     url: "{{ broker_url_template }}"

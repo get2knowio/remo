@@ -78,7 +78,7 @@ Exit codes: `0` (success) / `7` (one or more rotations failed; partial-success r
 
 ### Passive overdue reminder
 
-Every `remo` invocation (any subcommand) ends by printing a one-line yellow warning per instance whose `remo:last-rotation-at` + `remo:rotation-cadence-days` indicates an overdue rotation. The check is short-circuited if any of: cadence=0 (disabled), no metadata tags present (pre-feature instance), or the user passed `--quiet`.
+Every `remo` invocation (any subcommand) ends by printing a one-line yellow warning per instance whose `remo_last_rotation_at` + `remo_rotation_cadence_days` (Hetzner labels) — or equivalent AWS tags `remo:last-rotation-at` + `remo:rotation-cadence-days` — indicates an overdue rotation. The check is short-circuited if any of: cadence=0 (disabled), no metadata tags present (pre-feature instance), or the user passed `--quiet`.
 
 ### `remo audit <instance> [--tail N] [--json] [--since DURATION]`
 

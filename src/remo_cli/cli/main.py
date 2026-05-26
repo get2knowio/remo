@@ -7,20 +7,18 @@ import click
 import remo_cli
 
 
-@click.group(context_settings={"help_option_names": ["-h", "--help"]})
-@click.version_option(
-    version=remo_cli.__version__, prog_name="remo", message="%(prog)s %(version)s"
-)
-def cli() -> None:
-    """Remote development environment CLI."""
-
-
-@cli.result_callback()
-def _post_command_hook(result: object, **kwargs: object) -> None:
-    """Run passive update check + overdue-rotation reminder after every command."""
+def _run_post_command_hook() -> None:
     try:
-        from remo_cli.core.version import check_for_updates_passive
+        ctx = click.get_current_context(silent=True)
+        if ctx is None or ctx.invoked_subcommand is None:
+            # No subcommand was dispatched (e.g. `remo --version`, `remo --help`,
+            # or a bare `remo` invocation) — skip the passive hooks so they
+            # don't pollute one-shot informational output.
+            return
+
+        from remo_cli.core.broker_revoke import overdue_reminders
         from remo_cli.core.output import print_info, print_warning
+        from remo_cli.core.version import check_for_updates_passive
 
         hint = check_for_updates_passive()
         if hint:
@@ -28,11 +26,29 @@ def _post_command_hook(result: object, **kwargs: object) -> None:
             print_info(hint)
 
         # 005-credential-broker T083a: passive overdue-rotation reminder.
-        from remo_cli.core.broker_revoke import overdue_reminders
         for reminder in overdue_reminders():
             print_warning(reminder)
     except Exception:
         pass
+
+
+class _RemoGroup(click.Group):
+    # Subcommands end with `sys.exit(rc)`, which raises SystemExit and skips
+    # `@result_callback`. Wrap invoke() in try/finally so passive post-command
+    # hooks (update check, overdue rotation reminders) always fire.
+    def invoke(self, ctx: click.Context) -> object:
+        try:
+            return super().invoke(ctx)
+        finally:
+            _run_post_command_hook()
+
+
+@click.group(cls=_RemoGroup, context_settings={"help_option_names": ["-h", "--help"]})
+@click.version_option(
+    version=remo_cli.__version__, prog_name="remo", message="%(prog)s %(version)s"
+)
+def cli() -> None:
+    """Remote development environment CLI."""
 
 
 @cli.command()

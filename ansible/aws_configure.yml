@@ -105,9 +105,16 @@
       ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
 
     # 005-credential-broker: install the broker daemon and assert IMDSv2 reachability.
+    # Skipped until the user opts in via REMO_BROKER_BACKEND (release not yet published).
     - name: Install remo credential broker
       ansible.builtin.include_role:
         name: broker_install
+      when: lookup('env', 'REMO_BROKER_BACKEND') | default('', true) | length > 0
+
+    - name: Notify that broker install was skipped
+      ansible.builtin.debug:
+        msg: "Skipping remo-broker install: REMO_BROKER_BACKEND is not set on the laptop env."
+      when: lookup('env', 'REMO_BROKER_BACKEND') | default('', true) | length == 0
 
     - name: Assert IMDSv2 reachable and instance role attached
       ansible.builtin.include_role:

@@ -53,11 +53,50 @@ def _strip_jsonc(text: str) -> str:
     """Remove `//` line comments and `/* */` block comments from JSONC text.
 
     devcontainer.json files routinely use comments; tomllib is wrong here and
-    Python stdlib doesn't ship a JSONC parser. This is a pragmatic best-effort.
+    Python stdlib doesn't ship a JSONC parser. Walks char-by-char tracking
+    string-literal state so content inside `"..."` is never touched. Preserves
+    newlines inside stripped block comments so JSON line numbers don't shift.
     """
-    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
-    text = re.sub(r"(^|[^:])//[^\n]*", lambda m: m.group(1), text)
-    return text
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    in_string = False
+    while i < n:
+        ch = text[i]
+        if in_string:
+            if ch == "\\" and i + 1 < n:
+                out.append(ch)
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                in_string = False
+            out.append(ch)
+            i += 1
+            continue
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "/" and i + 1 < n:
+            nxt = text[i + 1]
+            if nxt == "/":
+                i += 2
+                while i < n and text[i] != "\n":
+                    i += 1
+                continue
+            if nxt == "*":
+                i += 2
+                while i < n and not (text[i] == "*" and i + 1 < n and text[i + 1] == "/"):
+                    if text[i] == "\n":
+                        out.append("\n")
+                    i += 1
+                i += 2 if i < n else 0
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def ensure_socket_mount(devcontainer_json_path: Path, project_dir: Path) -> bool:

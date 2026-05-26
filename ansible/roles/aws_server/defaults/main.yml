@@ -15,8 +15,8 @@ aws_instance_name: "remo-{{ aws_resource_name }}"
 # canonical source is laptop fnox; AWS_PROFILE remains an env-level hint
 # because it is an identity selector, not a secret.
 aws_profile: "{{ lookup('env', 'AWS_PROFILE') | default('', true) }}"
-aws_access_key_id: "{{ lookup('pipe', 'fnox get aws_access_key_id') }}"
-aws_secret_access_key: "{{ lookup('pipe', 'fnox get aws_secret_access_key') }}"
+aws_access_key_id: "{{ lookup('pipe', 'fnox get aws_access_key_id 2>/dev/null || true') | default('', true) }}"
+aws_secret_access_key: "{{ lookup('pipe', 'fnox get aws_secret_access_key 2>/dev/null || true') | default('', true) }}"
 aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
 
 # Instance configuration

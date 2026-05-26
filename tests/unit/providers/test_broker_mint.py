@@ -24,12 +24,64 @@ class _MockResp:
         return False
 
 
-def test_aws_sm_mint_returns_per_dev_role_name():
+def test_aws_sm_mint_returns_per_instance_role_name():
     out = broker.mint_bootstrap_token(
         "aws-sm", instance_id="i-abc", dev_id="alice"
     )
     assert out["token"] == ""
-    assert out["token_id"] == "remo-broker-instance-alice"
+    assert out["token_id"] == "remo-broker-instance-alice-i-abc"
+
+
+def test_aws_sm_mint_sanitizes_instance_id():
+    out = broker.mint_bootstrap_token(
+        "aws-sm", instance_id="web/1 prod!", dev_id="alice"
+    )
+    # Slashes/spaces/bangs are all replaced; result stays within IAM's allowed set.
+    assert out["token_id"] == "remo-broker-instance-alice-web-1-prod-"
+
+
+def test_aws_sm_mint_truncates_long_instance_id():
+    out = broker.mint_bootstrap_token(
+        "aws-sm", instance_id="a" * 100, dev_id="alice"
+    )
+    # Slug capped at 32 chars to leave headroom under IAM's 64-char role-name limit.
+    assert out["token_id"] == "remo-broker-instance-alice-" + ("a" * 32)
+
+
+def test_onepassword_mint_does_not_leak_token_in_error(mocker):
+    secret = "secret-token-value-DO-NOT-LEAK"
+    mocker.patch(
+        "remo_cli.providers.broker.urllib.request.urlopen",
+        return_value=_MockResp({"unexpected_key": secret}),
+    )
+    with pytest.raises(broker.BackendError) as exc_info:
+        broker.mint_bootstrap_token(
+            "1password", instance_id="i-1", dev_id="alice", admin_sa="adminsa"
+        )
+    assert secret not in str(exc_info.value)
+    # The diagnostic *should* surface key names so schema drift is debuggable.
+    assert "unexpected_key" in str(exc_info.value)
+
+
+def test_vault_mint_does_not_leak_token_in_error(mocker):
+    secret = "secret-token-value-DO-NOT-LEAK"
+    # Token present at the top level under a wrong key, and inside `auth` under
+    # a wrong key — both must stay out of the exception message.
+    payload = {
+        "unexpected_key": secret,
+        "auth": {"wrong_token_key": secret, "wrong_accessor_key": "acc"},
+    }
+    mocker.patch(
+        "remo_cli.providers.broker.urllib.request.urlopen",
+        return_value=_MockResp(payload),
+    )
+    with pytest.raises(broker.BackendError) as exc_info:
+        broker.mint_bootstrap_token(
+            "vault", instance_id="i-2", dev_id="alice", admin_sa="root",
+        )
+    assert secret not in str(exc_info.value)
+    assert "unexpected_key" in str(exc_info.value)
+    assert "wrong_token_key" in str(exc_info.value)
 
 
 def test_age_git_mint_rejects():

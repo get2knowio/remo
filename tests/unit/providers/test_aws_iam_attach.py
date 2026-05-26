@@ -67,22 +67,24 @@ def test_ensure_creates_role_and_profile(mocker):
     iam = _FakeIAM()
 
     role_name, profile_name = aws._ensure_broker_instance_role(  # noqa: SLF001
-        iam, dev_id="alice", region="us-west-2"
+        iam, dev_id="alice", region="us-west-2", instance_id="web-1"
     )
 
-    assert role_name == "remo-broker-instance-alice"
-    assert profile_name == "remo-broker-instance-alice"
-    assert "remo-broker-instance-alice" in iam._roles  # noqa: SLF001
-    assert "remo-broker-instance-alice" in iam._profiles  # noqa: SLF001
+    assert role_name == "remo-broker-instance-alice-web-1"
+    assert profile_name == "remo-broker-instance-alice-web-1"
+    assert "remo-broker-instance-alice-web-1" in iam._roles  # noqa: SLF001
+    assert "remo-broker-instance-alice-web-1" in iam._profiles  # noqa: SLF001
 
 
 def test_inline_policy_scopes_to_dev_arn(mocker):
     mocker.patch("remo_cli.providers.aws.time.sleep", return_value=None)
     iam = _FakeIAM()
-    aws._ensure_broker_instance_role(iam, dev_id="alice", region="us-west-2")  # noqa: SLF001
+    aws._ensure_broker_instance_role(  # noqa: SLF001
+        iam, dev_id="alice", region="us-west-2", instance_id="web-1"
+    )
 
     inline = iam._role_policies[  # noqa: SLF001
-        ("remo-broker-instance-alice", "remo-broker-secretsmanager-scoped")
+        ("remo-broker-instance-alice-web-1", "remo-broker-secretsmanager-scoped")
     ]
     parsed = json.loads(inline)
     statements = parsed["Statement"]
@@ -95,10 +97,12 @@ def test_inline_policy_scopes_to_dev_arn(mocker):
 def test_ensure_idempotent_when_role_exists(mocker):
     mocker.patch("remo_cli.providers.aws.time.sleep", return_value=None)
     iam = _FakeIAM()
-    iam._roles["remo-broker-instance-bob"] = {}  # noqa: SLF001
-    iam._profiles["remo-broker-instance-bob"] = {}  # noqa: SLF001
+    iam._roles["remo-broker-instance-bob-web-1"] = {}  # noqa: SLF001
+    iam._profiles["remo-broker-instance-bob-web-1"] = {}  # noqa: SLF001
 
-    aws._ensure_broker_instance_role(iam, dev_id="bob", region="us-west-2")  # noqa: SLF001
+    aws._ensure_broker_instance_role(  # noqa: SLF001
+        iam, dev_id="bob", region="us-west-2", instance_id="web-1"
+    )
 
     create_calls = [n for n, _ in iam.calls if n in {"create_role", "create_instance_profile"}]
     assert create_calls == []  # Already exists → no creates.

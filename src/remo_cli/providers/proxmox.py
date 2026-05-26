@@ -121,12 +121,13 @@ def add_node(
 
     dev_id = _os.environ.get("REMO_DEV_ID", "") or _os.environ.get("USER", "remo")
 
+    # NOTE: do NOT touch /usr/local/libexec/remo-broker-tokens here — the
+    # incus_bootstrap Ansible role copies the stub script body, and an empty
+    # pre-existing file would shadow it (force: true on the copy task).
     helper_install = (
         "set -e; "
         "install -d -m 0755 /usr/local/libexec; "
         f"install -d -m 0700 -o root -g root /var/lib/remo-broker/instance-tokens/{shlex.quote(dev_id)}; "
-        "touch /usr/local/libexec/remo-broker-tokens; "
-        "chmod 0755 /usr/local/libexec/remo-broker-tokens; "
         "echo OK"
     )
     result = _ssh_run(host, ssh_user, helper_install)
@@ -360,12 +361,21 @@ def destroy(
     purge: bool = False,
     auto_confirm: bool = False,
     verbose: bool = False,
+    force_broker: bool = False,
 ) -> int:
     """Destroy a Proxmox LXC container.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Returns the ansible-playbook exit code (0 on success). Exit code 5 if
+    broker revocation fails and force_broker is False (FR-020).
     """
     validate_name(name, "container name")
+
+    # FR-020: revoke bootstrap token at the backend BEFORE deleting the
+    # container.
+    from remo_cli.core import broker_revoke as _broker_revoke  # noqa: PLC0415
+    candidate = KnownHost(type="proxmox", name=name, host="", user="")
+    if not _broker_revoke.revoke_before_destroy(candidate, force=force_broker):
+        return 5
 
     vmid = ""
     if not host:

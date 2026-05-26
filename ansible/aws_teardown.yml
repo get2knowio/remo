@@ -23,8 +23,8 @@
 
     # AWS credentials (FR-006: secrets from laptop fnox)
     aws_profile: "{{ lookup('env', 'AWS_PROFILE') | default('', true) }}"
-    aws_access_key_id: "{{ lookup('pipe', 'fnox get aws_access_key_id') }}"
-    aws_secret_access_key: "{{ lookup('pipe', 'fnox get aws_secret_access_key') }}"
+    aws_access_key_id: "{{ lookup('pipe', 'fnox get aws_access_key_id 2>/dev/null || true') | default('', true) }}"
+    aws_secret_access_key: "{{ lookup('pipe', 'fnox get aws_secret_access_key 2>/dev/null || true') | default('', true) }}"
     aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
 
   environment: >-
@@ -35,6 +35,28 @@
            'AWS_SECRET_ACCESS_KEY': aws_secret_access_key | default('')
          })
     }}
+
+  pre_tasks:
+    # When aws_profile is unset we rely on static credentials from the
+    # laptop fnox keystore (FR-006). Fail fast with an actionable message
+    # if fnox isn't installed or the keys aren't set.
+    - name: Validate AWS static credentials are available (skipped when aws_profile is set)
+      ansible.builtin.assert:
+        that:
+          - aws_access_key_id | default('') | length > 0
+          - aws_secret_access_key | default('') | length > 0
+        fail_msg: |
+          AWS credentials are not configured.
+
+          remo reads provisioning secrets from the laptop fnox keystore
+          (https://github.com/jdx/fnox). Install fnox, then store both keys:
+
+            fnox set aws_access_key_id <key-id>
+            fnox set aws_secret_access_key <secret>
+
+          Or, for AWS SSO, set AWS_PROFILE in your environment (or pass
+          -e aws_profile=<profile-name>) to skip static credentials.
+      when: aws_profile | default('') | length == 0
 
   tasks:
 

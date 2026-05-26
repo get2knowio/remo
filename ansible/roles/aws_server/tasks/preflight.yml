@@ -2,6 +2,27 @@
 # Preflight checks - validate credentials and auto-detect current IP
 # Supports both explicit credentials (env vars) and AWS SSO
 
+# When aws_profile is unset we rely on static credentials sourced from the
+# laptop fnox keystore (FR-006). If fnox isn't installed or the keys aren't
+# set, surface an actionable error before any AWS API call is attempted.
+- name: Validate AWS static credentials are available (skipped when aws_profile is set)
+  ansible.builtin.assert:
+    that:
+      - aws_access_key_id | default('') | length > 0
+      - aws_secret_access_key | default('') | length > 0
+    fail_msg: |
+      AWS credentials are not configured.
+
+      remo reads provisioning secrets from the laptop fnox keystore
+      (https://github.com/jdx/fnox). Install fnox, then store both keys:
+
+        fnox set aws_access_key_id <key-id>
+        fnox set aws_secret_access_key <secret>
+
+      Or, for AWS SSO, set AWS_PROFILE in your environment (or pass
+      -e aws_profile=<profile-name>) to skip static credentials.
+  when: aws_profile | default('') | length == 0
+
 - name: Check if boto3 Python library is available
   delegate_to: localhost
   become: false

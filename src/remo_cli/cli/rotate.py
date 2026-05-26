@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import click
 
+from remo_cli.core.broker_config import get_admin_sa_fnox_key, get_backend
 from remo_cli.core.known_hosts import get_known_hosts
 from remo_cli.core.output import print_error, print_info, print_success, print_warning
 from remo_cli.models.host import KnownHost
@@ -21,9 +22,15 @@ def _parse_iso(ts: str) -> datetime | None:
     try:
         if ts.endswith("Z"):
             ts = ts[:-1] + "+00:00"
-        return datetime.fromisoformat(ts)
+        result = datetime.fromisoformat(ts)
     except ValueError:
         return None
+    if result.tzinfo is None:
+        # Broker-written timestamps without an offset are interpreted as UTC
+        # so downstream `_now() - last_rotation` arithmetic doesn't raise
+        # "can't subtract offset-naive and offset-aware datetimes".
+        result = result.replace(tzinfo=timezone.utc)
+    return result
 
 
 def _now() -> datetime:
@@ -53,9 +60,9 @@ def _read_rotation_metadata(host: KnownHost) -> tuple[int, datetime | None, str 
                 with _ur.urlopen(req, timeout=10) as resp:
                     payload = _json.loads(resp.read().decode())
                 labels = (payload.get("server") or {}).get("labels") or {}
-                cadence = int(labels.get("remo:rotation-cadence-days", "7"))
-                last = _parse_iso(labels.get("remo:last-rotation-at", ""))
-                token_id = labels.get("remo:bootstrap-token-id")
+                cadence = int(labels.get("remo_rotation_cadence_days") or "7")
+                last = _parse_iso(labels.get("remo_last_rotation_at") or "")
+                token_id = labels.get("remo_bootstrap_token_id")
                 return cadence, last, token_id
             except Exception:  # noqa: BLE001
                 pass
@@ -82,7 +89,7 @@ def _rotate_one(host: KnownHost, force: bool) -> bool:
         )
         return True
 
-    backend = os.environ.get("REMO_BROKER_BACKEND", "")
+    backend = get_backend()
     dev_id = os.environ.get("REMO_DEV_ID", "") or os.environ.get("USER", "remo")
     if not backend:
         print_error(
@@ -95,7 +102,7 @@ def _rotate_one(host: KnownHost, force: bool) -> bool:
     try:
         minted = broker_mod.mint_bootstrap_token(
             backend, instance_id=host.name, dev_id=dev_id,
-            admin_sa_fnox_key=os.environ.get("REMO_BROKER_ADMIN_SA_KEY"),
+            admin_sa_fnox_key=get_admin_sa_fnox_key(),
         )
     except broker_mod.BackendError as exc:
         print_error(f"{host.name}: mint failed: {exc}")
@@ -109,7 +116,7 @@ def _rotate_one(host: KnownHost, force: bool) -> bool:
         try:
             broker_mod.revoke_bootstrap_token(
                 backend, token_id=current_token_id,
-                admin_sa_fnox_key=os.environ.get("REMO_BROKER_ADMIN_SA_KEY"),
+                admin_sa_fnox_key=get_admin_sa_fnox_key(),
             )
         except broker_mod.BackendError as exc:
             print_warning(
