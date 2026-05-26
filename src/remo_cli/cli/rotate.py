@@ -37,6 +37,37 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _incus_target(host: KnownHost) -> tuple[str, str, str]:
+    """Return ``(incus_host, incus_host_user, container)`` for an Incus *host*.
+
+    Per the legacy storage convention in :func:`providers.incus.create`:
+    ``host.name`` is ``"<incus-host>/<container>"`` and ``host.instance_id``
+    carries the *host-side* SSH user. Returns ``("localhost", "", name)``
+    when the name lacks a ``/`` (defensive — shouldn't happen for entries
+    written by the current code path).
+    """
+    if "/" in host.name:
+        incus_host, container = host.name.split("/", maxsplit=1)
+    else:
+        incus_host, container = "localhost", host.name
+    return incus_host, host.instance_id or "", container
+
+
+def _proxmox_target(host: KnownHost) -> tuple[str, str, str]:
+    """Return ``(proxmox_host, host_user, vmid)`` for a Proxmox *host*.
+
+    Per the legacy storage convention in :func:`providers.proxmox.create`:
+    ``host.name`` is ``"<proxmox-host>/<container>"``, ``host.instance_id``
+    carries the *vmid* (e.g. ``"100"``), and ``host.region`` carries the
+    host-side SSH user (an oddly-named field, but stable).
+    """
+    if "/" in host.name:
+        proxmox_host, _ = host.name.split("/", maxsplit=1)
+    else:
+        proxmox_host = host.name
+    return proxmox_host, host.region or "root", host.instance_id or ""
+
+
 def _read_rotation_metadata(host: KnownHost) -> tuple[int, datetime | None, str | None]:
     """Return `(cadence_days, last_rotation, token_id)` from provider-side metadata.
 
@@ -81,6 +112,79 @@ def _read_rotation_metadata(host: KnownHost) -> tuple[int, datetime | None, str 
             return cadence, last, None
         except Exception:  # noqa: BLE001
             pass
+    if host.type == "incus":
+        from remo_cli.providers.incus import _ssh_run_on_incus_host  # noqa: PLC0415
+        import shlex as _shlex  # noqa: PLC0415
+        incus_host, host_user, container = _incus_target(host)
+        try:
+            cadence = 7
+            last: datetime | None = None
+            token_id: str | None = None
+            for key, setter in (
+                ("rotation_cadence_days", "cadence"),
+                ("last_rotation_at", "last"),
+                ("bootstrap_token_id", "token_id"),
+            ):
+                cmd = (
+                    f"incus config get {_shlex.quote(container)} "
+                    f"user.remo.{key}"
+                )
+                result = _ssh_run_on_incus_host(incus_host, host_user, cmd)
+                if result.returncode != 0:
+                    return 7, None, None
+                value = (result.stdout or "").strip()
+                if not value:
+                    continue
+                if setter == "cadence":
+                    try:
+                        cadence = int(value)
+                    except ValueError:
+                        cadence = 7
+                elif setter == "last":
+                    last = _parse_iso(value)
+                elif setter == "token_id":
+                    token_id = value
+            return cadence, last, token_id
+        except Exception:  # noqa: BLE001
+            return 7, None, None
+    if host.type == "proxmox":
+        from remo_cli.providers.proxmox import _ssh_run  # noqa: PLC0415
+        import shlex as _shlex  # noqa: PLC0415
+        proxmox_host, host_user, vmid = _proxmox_target(host)
+        if not vmid:
+            return 7, None, None
+        try:
+            cadence = 7
+            last_px: datetime | None = None
+            token_id_px: str | None = None
+            for key, setter in (
+                ("rotation_cadence_days", "cadence"),
+                ("last_rotation_at", "last"),
+                ("bootstrap_token_id", "token_id"),
+            ):
+                # `cat … || true` keeps a missing file from making rc!=0.
+                cmd = (
+                    f"pct exec {_shlex.quote(str(vmid))} -- sh -c "
+                    f"{_shlex.quote(f'cat /etc/remo-broker/{key} 2>/dev/null || true')}"
+                )
+                result = _ssh_run(proxmox_host, host_user, cmd)
+                if result.returncode != 0:
+                    return 7, None, None
+                value = (result.stdout or "").strip()
+                if not value:
+                    continue
+                if setter == "cadence":
+                    try:
+                        cadence = int(value)
+                    except ValueError:
+                        cadence = 7
+                elif setter == "last":
+                    last_px = _parse_iso(value)
+                elif setter == "token_id":
+                    token_id_px = value
+            return cadence, last_px, token_id_px
+        except Exception:  # noqa: BLE001
+            return 7, None, None
     # Default: cadence 7 days, no record of last rotation, no token_id.
     return 7, None, None
 
@@ -115,6 +219,37 @@ def _deliver_and_reload(host: KnownHost, token: str) -> None:
         broker_admin.rotate_bootstrap(ssh_host=host.host, ssh_user="root")
         return
 
+    if host.type == "incus":
+        from remo_cli.providers import incus as incus_mod  # noqa: PLC0415
+        incus_host, host_user, container = _incus_target(host)
+        incus_mod._push_bootstrap_token_to_container(
+            incus_host, host_user, container, token
+        )
+        broker_admin.rotate_bootstrap_via_incus(
+            incus_host=incus_host,
+            incus_host_user=host_user,
+            container=container,
+        )
+        return
+
+    if host.type == "proxmox":
+        from remo_cli.providers import proxmox as proxmox_mod  # noqa: PLC0415
+        proxmox_host, host_user, vmid = _proxmox_target(host)
+        if not vmid:
+            raise RuntimeError(
+                f"{host.name}: cannot rotate Proxmox container without a vmid "
+                "(re-run `remo proxmox sync` to refresh known_hosts)."
+            )
+        proxmox_mod._push_bootstrap_token_to_container(
+            proxmox_host, host_user, vmid, token
+        )
+        broker_admin.rotate_bootstrap_via_proxmox(
+            proxmox_host=proxmox_host,
+            host_user=host_user,
+            vmid=vmid,
+        )
+        return
+
     raise NotImplementedError(
         f"rotate-bootstrap delivery not wired for {host.type!r} yet "
         "(token minted/revoked at backend but instance still has the old token)."
@@ -146,6 +281,37 @@ def _record_rotation(host: KnownHost, new_token_id: str) -> None:
             Resources=[host.instance_id],
             Tags=[{"Key": "remo:last-rotation-at", "Value": _now().isoformat()}],
         )
+        return
+    if host.type == "incus":
+        from remo_cli.providers.incus import _ssh_run_on_incus_host  # noqa: PLC0415
+        import shlex as _shlex  # noqa: PLC0415
+        incus_host, host_user, container = _incus_target(host)
+        writes = [("last_rotation_at", _now().isoformat())]
+        if new_token_id:
+            writes.append(("bootstrap_token_id", new_token_id))
+        for key, value in writes:
+            cmd = (
+                f"incus config set {_shlex.quote(container)} "
+                f"user.remo.{key} {_shlex.quote(value)}"
+            )
+            _ssh_run_on_incus_host(incus_host, host_user, cmd)
+        return
+    if host.type == "proxmox":
+        from remo_cli.providers.proxmox import _ssh_run  # noqa: PLC0415
+        import shlex as _shlex  # noqa: PLC0415
+        proxmox_host, host_user, vmid = _proxmox_target(host)
+        if not vmid:
+            return
+        writes = [("last_rotation_at", _now().isoformat())]
+        if new_token_id:
+            writes.append(("bootstrap_token_id", new_token_id))
+        for key, value in writes:
+            inner = f"echo {_shlex.quote(value)} > /etc/remo-broker/{key}"
+            cmd = (
+                f"pct exec {_shlex.quote(str(vmid))} -- sh -c {_shlex.quote(inner)}"
+            )
+            _ssh_run(proxmox_host, host_user, cmd)
+        return
 
 
 def _rotate_one(host: KnownHost, force: bool) -> bool:

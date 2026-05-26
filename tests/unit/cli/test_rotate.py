@@ -131,26 +131,32 @@ def test_rotate_calls_push_and_admin_reload_for_hetzner(tmp_config_dir, mocker, 
     reload_.assert_called_once_with(ssh_host="1.1.1.1", ssh_user="root")
 
 
-def test_rotate_warns_for_unsupported_provider(tmp_config_dir, mocker, monkeypatch):
-    # Pick a provider where delivery isn't wired yet — incus.
-    save_known_host(KnownHost(type="incus", name="ic-1", host="incus-host", user="ubuntu"))
+def test_rotate_calls_push_and_admin_reload_for_proxmox(tmp_config_dir, mocker, monkeypatch):
+    save_known_host(KnownHost(
+        type="proxmox", name="px-host/px-1", host="px-1", user="remo",
+        instance_id="200", region="root", access_mode="direct",
+    ))
     monkeypatch.setenv("REMO_BROKER_BACKEND", "1password")
     mocker.patch(
         "remo_cli.cli.rotate._read_rotation_metadata",
-        return_value=(7, datetime.now(timezone.utc) - timedelta(days=8), None),
+        return_value=(7, datetime.now(timezone.utc) - timedelta(days=8), "tok-old"),
     )
     mocker.patch(
         "remo_cli.providers.broker.mint_bootstrap_token",
-        return_value={"token": "fresh", "token_id": "tid"},
+        return_value={"token": "fresh-secret", "token_id": "tok-new"},
     )
     mocker.patch("remo_cli.providers.broker.revoke_bootstrap_token", return_value=None)
+    mocker.patch("remo_cli.cli.rotate._record_rotation")
+    push = mocker.patch("remo_cli.providers.proxmox._push_bootstrap_token_to_container")
+    reload_ = mocker.patch("remo_cli.core.broker_admin.rotate_bootstrap_via_proxmox")
 
     runner = CliRunner()
-    r = runner.invoke(rotate_command, ["ic-1", "--force"])
-    # Mint succeeded so the run is "rotated" overall, but the user sees a
-    # warning that the instance still has the old token.
+    r = runner.invoke(rotate_command, ["px-1"])
     assert r.exit_code == 0
-    assert "not wired for 'incus'" in r.output
+    push.assert_called_once_with("px-host", "root", "200", "fresh-secret")
+    reload_.assert_called_once_with(
+        proxmox_host="px-host", host_user="root", vmid="200"
+    )
 
 
 def test_rotate_delivery_failure_returns_partial_exit(tmp_config_dir, mocker, monkeypatch):
@@ -244,6 +250,140 @@ def test_read_rotation_metadata_aws_tags(mocker):
     assert last is not None
     assert last.tzinfo is not None
     assert token_id is None  # AWS token_id is derived, not stored.
+
+
+def test_rotate_calls_push_and_admin_reload_for_incus(tmp_config_dir, mocker, monkeypatch):
+    save_known_host(
+        KnownHost(
+            type="incus",
+            name="incus-host/lxc-1",
+            host="lxc-1",
+            user="remo",
+            instance_id="ubuntu",
+            access_mode="direct",
+        )
+    )
+    monkeypatch.setenv("REMO_BROKER_BACKEND", "1password")
+    mocker.patch(
+        "remo_cli.cli.rotate._read_rotation_metadata",
+        return_value=(7, datetime.now(timezone.utc) - timedelta(days=8), "tok-old"),
+    )
+    mocker.patch(
+        "remo_cli.providers.broker.mint_bootstrap_token",
+        return_value={"token": "fresh-secret", "token_id": "tok-new"},
+    )
+    mocker.patch("remo_cli.providers.broker.revoke_bootstrap_token", return_value=None)
+    mocker.patch("remo_cli.cli.rotate._record_rotation")
+    push = mocker.patch(
+        "remo_cli.providers.incus._push_bootstrap_token_to_container"
+    )
+    reload_ = mocker.patch(
+        "remo_cli.core.broker_admin.rotate_bootstrap_via_incus"
+    )
+
+    runner = CliRunner()
+    r = runner.invoke(rotate_command, ["lxc-1"])
+    assert r.exit_code == 0, r.output
+    push.assert_called_once_with("incus-host", "ubuntu", "lxc-1", "fresh-secret")
+    reload_.assert_called_once_with(
+        incus_host="incus-host", incus_host_user="ubuntu", container="lxc-1"
+    )
+
+
+def test_record_rotation_writes_incus_config(mocker):
+    from remo_cli.cli.rotate import _record_rotation
+    host = KnownHost(
+        type="incus",
+        name="incus-host/lxc-1",
+        host="lxc-1",
+        user="remo",
+        instance_id="ubuntu",
+        access_mode="direct",
+    )
+
+    class _Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    ssh_run = mocker.patch(
+        "remo_cli.providers.incus._ssh_run_on_incus_host", return_value=_Proc()
+    )
+
+    _record_rotation(host, "tok-new")
+
+    # Expect two writes: last_rotation_at, then bootstrap_token_id.
+    assert ssh_run.call_count == 2
+    calls = [call.args for call in ssh_run.call_args_list]
+    # (host, user, command)
+    assert calls[0][0] == "incus-host"
+    assert calls[0][1] == "ubuntu"
+    assert "incus config set lxc-1 user.remo.last_rotation_at" in calls[0][2]
+    assert "incus config set lxc-1 user.remo.bootstrap_token_id" in calls[1][2]
+    assert "tok-new" in calls[1][2]
+
+
+def test_read_rotation_metadata_incus_config(mocker):
+    from remo_cli.cli.rotate import _read_rotation_metadata
+    host = KnownHost(
+        type="incus",
+        name="incus-host/lxc-1",
+        host="lxc-1",
+        user="remo",
+        instance_id="ubuntu",
+        access_mode="direct",
+    )
+
+    def _run(h, u, cmd):
+        class _Proc:
+            returncode = 0
+            stderr = ""
+            stdout = ""
+
+        p = _Proc()
+        if "rotation_cadence_days" in cmd:
+            p.stdout = "14\n"
+        elif "last_rotation_at" in cmd:
+            p.stdout = "2026-05-26T12:00:00+00:00\n"
+        elif "bootstrap_token_id" in cmd:
+            p.stdout = "tok-current\n"
+        return p
+
+    mocker.patch(
+        "remo_cli.providers.incus._ssh_run_on_incus_host", side_effect=_run
+    )
+
+    cadence, last, token_id = _read_rotation_metadata(host)
+    assert cadence == 14
+    assert last is not None
+    assert last.tzinfo is not None
+    assert token_id == "tok-current"
+
+
+def test_read_rotation_metadata_incus_missing_keys_default(mocker):
+    from remo_cli.cli.rotate import _read_rotation_metadata
+    host = KnownHost(
+        type="incus",
+        name="incus-host/lxc-1",
+        host="lxc-1",
+        user="remo",
+        instance_id="ubuntu",
+        access_mode="direct",
+    )
+
+    class _Proc:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    mocker.patch(
+        "remo_cli.providers.incus._ssh_run_on_incus_host", return_value=_Proc()
+    )
+
+    cadence, last, token_id = _read_rotation_metadata(host)
+    assert cadence == 7
+    assert last is None
+    assert token_id is None
 
 
 def test_rotate_no_backend_fails(tmp_config_dir, mocker, monkeypatch):

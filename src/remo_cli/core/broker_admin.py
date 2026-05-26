@@ -105,3 +105,144 @@ def rotate_bootstrap(
         raise BrokerAdminError(
             f"broker rotate-bootstrap returned {code}: {message}"
         )
+
+
+def _send_via_incus(
+    request: dict[str, Any],
+    *,
+    incus_host: str,
+    incus_host_user: str,
+    container: str,
+) -> dict[str, Any]:
+    """Run the admin-socket bridge inside an Incus *container*.
+
+    Same NDJSON wire protocol as :func:`_send`, but the bridge script is
+    executed via ``incus exec <container> -- sudo python3 -c ...`` instead
+    of a direct SSH login to the instance. When *incus_host* is
+    ``"localhost"`` the ``incus exec`` runs locally (no outer SSH).
+    """
+    payload = json.dumps(request, separators=(",", ":"))
+    inner_cmd = (
+        f"incus exec {shlex.quote(container)} -- "
+        f"sudo python3 -c {shlex.quote(_BRIDGE_SCRIPT)} {shlex.quote(payload)}"
+    )
+    if incus_host == "localhost":
+        cmd = ["bash", "-c", inner_cmd]
+    else:
+        cmd = [
+            "ssh",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+            f"{incus_host_user}@{incus_host}",
+            inner_cmd,
+        ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip() or "(no stderr)"
+        raise BrokerAdminError(
+            f"admin-socket incus-exec bridge failed (rc={proc.returncode}): {stderr}"
+        )
+    raw = (proc.stdout or "").strip()
+    if not raw:
+        raise BrokerAdminError(
+            "admin-socket returned no response (broker daemon may not be running)"
+        )
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BrokerAdminError(
+            f"admin-socket returned non-JSON: {raw[:200]!r}"
+        ) from exc
+
+
+def rotate_bootstrap_via_incus(
+    *,
+    incus_host: str,
+    incus_host_user: str,
+    container: str,
+) -> None:
+    """Tell the broker daemon inside an Incus *container* to re-read its token.
+
+    Wraps :func:`rotate_bootstrap` semantics in an ``incus exec`` indirection
+    so the admin-socket bridge runs inside the container. *incus_host* is
+    the Incus host (``"localhost"`` or remote), *incus_host_user* is the
+    host-side SSH user (ignored when *incus_host* is ``"localhost"``).
+    """
+    resp = _send_via_incus(
+        {"op": "rotate-bootstrap"},
+        incus_host=incus_host,
+        incus_host_user=incus_host_user,
+        container=container,
+    )
+    if not resp.get("ok"):
+        code = resp.get("error") or "unknown_error"
+        message = resp.get("message") or "(no message)"
+        raise BrokerAdminError(
+            f"broker rotate-bootstrap returned {code}: {message}"
+        )
+
+
+def _send_via_proxmox(
+    request: dict[str, Any],
+    *,
+    proxmox_host: str,
+    host_user: str,
+    vmid: str,
+) -> dict[str, Any]:
+    """Run the admin-socket bridge inside a Proxmox LXC container by *vmid*.
+
+    Mirror of :func:`_send_via_incus`. Proxmox hosts are always remote
+    (no localhost flavour); the bridge always tunnels via
+    ``ssh <host_user>@<proxmox_host> 'pct exec <vmid> -- sudo python3 …'``.
+    """
+    payload = json.dumps(request, separators=(",", ":"))
+    inner_cmd = (
+        f"pct exec {shlex.quote(str(vmid))} -- "
+        f"sudo python3 -c {shlex.quote(_BRIDGE_SCRIPT)} {shlex.quote(payload)}"
+    )
+    ssh_target = f"{host_user}@{proxmox_host}" if host_user else proxmox_host
+    cmd = [
+        "ssh",
+        "-o", "BatchMode=yes",
+        "-o", "ConnectTimeout=10",
+        ssh_target,
+        inner_cmd,
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip() or "(no stderr)"
+        raise BrokerAdminError(
+            f"admin-socket pct-exec bridge failed (rc={proc.returncode}): {stderr}"
+        )
+    raw = (proc.stdout or "").strip()
+    if not raw:
+        raise BrokerAdminError(
+            "admin-socket returned no response (broker daemon may not be running)"
+        )
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BrokerAdminError(
+            f"admin-socket returned non-JSON: {raw[:200]!r}"
+        ) from exc
+
+
+def rotate_bootstrap_via_proxmox(
+    *,
+    proxmox_host: str,
+    host_user: str,
+    vmid: str,
+) -> None:
+    """Tell the broker daemon inside a Proxmox LXC *vmid* to re-read its token."""
+    resp = _send_via_proxmox(
+        {"op": "rotate-bootstrap"},
+        proxmox_host=proxmox_host,
+        host_user=host_user,
+        vmid=vmid,
+    )
+    if not resp.get("ok"):
+        code = resp.get("error") or "unknown_error"
+        message = resp.get("message") or "(no message)"
+        raise BrokerAdminError(
+            f"broker rotate-bootstrap returned {code}: {message}"
+        )

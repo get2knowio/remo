@@ -166,6 +166,128 @@ def test_hetzner_lookup_reads_underscore_label(mocker):
     assert broker_revoke._lookup_token_id(_hetz_host()) == "the-id"
 
 
+# Phase 3 / US3: Incus token_id lookup from container config. ----------------
+
+
+def _incus_host() -> KnownHost:
+    return KnownHost(
+        type="incus",
+        name="incus-host/lxc-1",
+        host="lxc-1",
+        user="remo",
+        instance_id="ubuntu",
+        access_mode="direct",
+    )
+
+
+def test_incus_lookup_reads_config_key(mocker):
+    class _Proc:
+        returncode = 0
+        stdout = "tok-current\n"
+        stderr = ""
+
+    ssh_run = mocker.patch(
+        "remo_cli.providers.incus._ssh_run_on_incus_host", return_value=_Proc()
+    )
+
+    result = broker_revoke._lookup_token_id(_incus_host())
+
+    assert result == "tok-current"
+    args = ssh_run.call_args.args
+    # (incus_host, host_user, command)
+    assert args[0] == "incus-host"
+    assert args[1] == "ubuntu"
+    assert "incus config get lxc-1 user.remo.bootstrap_token_id" in args[2]
+
+
+def test_incus_lookup_missing_key_returns_none(mocker):
+    class _Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    mocker.patch(
+        "remo_cli.providers.incus._ssh_run_on_incus_host", return_value=_Proc()
+    )
+
+    assert broker_revoke._lookup_token_id(_incus_host()) is None
+
+
+def test_incus_lookup_transport_failure_raises(mocker):
+    class _Proc:
+        returncode = 255
+        stdout = ""
+        stderr = "ssh refused"
+
+    mocker.patch(
+        "remo_cli.providers.incus._ssh_run_on_incus_host", return_value=_Proc()
+    )
+
+    with pytest.raises(broker_revoke.TokenLookupError, match="incus config read failed"):
+        broker_revoke._lookup_token_id(_incus_host())
+
+
+# Phase 3: Proxmox token_id lookup from in-container file. -------------------
+
+
+def _proxmox_host() -> KnownHost:
+    return KnownHost(
+        type="proxmox",
+        name="prox-host/px-1",
+        host="px-1",
+        user="remo",
+        instance_id="200",
+        region="root",
+        access_mode="direct",
+    )
+
+
+def test_proxmox_lookup_reads_container_file(mocker):
+    class _Proc:
+        returncode = 0
+        stdout = "tok-current\n"
+        stderr = ""
+
+    ssh_run = mocker.patch(
+        "remo_cli.providers.proxmox._ssh_run", return_value=_Proc()
+    )
+
+    result = broker_revoke._lookup_token_id(_proxmox_host())
+
+    assert result == "tok-current"
+    args = ssh_run.call_args.args
+    # (proxmox_host, host_user, command)
+    assert args[0] == "prox-host"
+    assert args[1] == "root"
+    assert "pct exec 200 --" in args[2]
+    assert "cat /etc/remo-broker/bootstrap_token_id" in args[2]
+
+
+def test_proxmox_lookup_missing_file_returns_none(mocker):
+    class _Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    mocker.patch("remo_cli.providers.proxmox._ssh_run", return_value=_Proc())
+
+    assert broker_revoke._lookup_token_id(_proxmox_host()) is None
+
+
+def test_proxmox_lookup_transport_failure_raises(mocker):
+    class _Proc:
+        returncode = 255
+        stdout = ""
+        stderr = "ssh refused"
+
+    mocker.patch("remo_cli.providers.proxmox._ssh_run", return_value=_Proc())
+
+    with pytest.raises(
+        broker_revoke.TokenLookupError, match="proxmox config read failed"
+    ):
+        broker_revoke._lookup_token_id(_proxmox_host())
+
+
 # Finding 14 (broker_revoke half): naive timestamps in cadence metadata. ------
 
 

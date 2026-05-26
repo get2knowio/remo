@@ -61,6 +61,46 @@ def _lookup_proxmox_host(name: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def _push_bootstrap_token_to_container(
+    host: str,
+    host_user: str,
+    vmid: str,
+    token: str,
+) -> None:
+    """Pipe a fresh bootstrap token into a Proxmox LXC container by *vmid*.
+
+    Mirror of :func:`providers.incus._push_bootstrap_token_to_container`.
+    Token goes via stdin → ssh → ``pct exec <vmid> -- install`` so it never
+    appears in argv / ps output. Proxmox hosts are always remote (no
+    localhost flavour, unlike Incus).
+    """
+    if not vmid:
+        raise ValueError("vmid must be non-empty")
+    if not token:
+        raise ValueError("bootstrap token must be non-empty")
+
+    vmid_q = shlex.quote(str(vmid))
+    inner_cmd = (
+        f"pct exec {vmid_q} -- "
+        "install -D -m 0400 -o root -g root /dev/stdin "
+        "/etc/remo-broker/bootstrap-token"
+    )
+    ssh_target = f"{host_user}@{host}" if host_user else host
+    proc = subprocess.run(
+        ["ssh", "-o", "ConnectTimeout=10", ssh_target, inner_cmd],
+        input=token,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip() or "(no stderr)"
+        raise RuntimeError(
+            f"failed to push bootstrap token to proxmox vmid {vmid!r} "
+            f"on {host!r}: {stderr}"
+        )
+
+
 def _ssh_run(host: str, user: str, command: str) -> subprocess.CompletedProcess[str]:
     """Run *command* on *host* via SSH and return the completed process.
 
@@ -352,16 +392,21 @@ def create(
                 verbose=verbose,
             )
 
-        if cadence_days is not None:
-            # Proxmox LXC lacks a clean `user.*` config primitive (vs. Incus
-            # `incus config set user.*`). Persistence + rotation for this
-            # provider is deferred — surface the no-op honestly rather than
-            # silently dropping the flag.
-            print_warning(
-                f"--cadence-days={cadence_days} is not yet persisted for "
-                "Proxmox; per-instance rotation is deferred (see spec 005 "
-                "T078). The default 7-day overdue reminder applies."
+        if cadence_days is not None and vmid:
+            # Proxmox LXC has no host-side `user.*` config primitive (unlike
+            # Incus). Store metadata as an in-container file under
+            # /etc/remo-broker/ — same lifetime as the bootstrap-token file
+            # the broker itself reads.
+            cfg_cmd = (
+                f"pct exec {shlex.quote(str(vmid))} -- sh -c "
+                f"{shlex.quote(f'echo {int(cadence_days)} > /etc/remo-broker/rotation_cadence_days')}"
             )
+            result = _ssh_run(host, user, cfg_cmd)
+            if result.returncode != 0:
+                print_warning(
+                    f"Could not set rotation cadence on vmid {vmid}: "
+                    f"{result.stderr.strip() or result.stdout.strip()}"
+                )
 
     return rc
 
@@ -382,18 +427,28 @@ def destroy(
     """
     validate_name(name, "container name")
 
-    # FR-020: revoke bootstrap token at the backend BEFORE deleting the
-    # container.
-    from remo_cli.core import broker_revoke as _broker_revoke  # noqa: PLC0415
-    candidate = KnownHost(type="proxmox", name=name, host="", user="")
-    if not _broker_revoke.revoke_before_destroy(candidate, force=force_broker):
-        return 5
-
+    # Resolve host/user/vmid up-front so the broker-revoke candidate carries
+    # the fields _lookup_token_id needs (proxmox branch reads vmid from
+    # `instance_id` and host-side SSH user from `region`).
     vmid = ""
     if not host:
         host, looked_up_user, vmid = _lookup_proxmox_host(name)
         if not user and looked_up_user:
             user = looked_up_user
+
+    # FR-020: revoke bootstrap token at the backend BEFORE deleting the
+    # container.
+    from remo_cli.core import broker_revoke as _broker_revoke  # noqa: PLC0415
+    candidate = KnownHost(
+        type="proxmox",
+        name=f"{host}/{name}" if host else name,
+        host="",
+        user="",
+        instance_id=vmid or "",
+        region=user or "root",
+    )
+    if not _broker_revoke.revoke_before_destroy(candidate, force=force_broker):
+        return 5
 
     if not host:
         print_error(

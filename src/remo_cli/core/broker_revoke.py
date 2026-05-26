@@ -131,8 +131,55 @@ def _lookup_token_id(host: KnownHost) -> str | None:
         from remo_cli.providers.broker import _safe_role_slug  # noqa: PLC0415
         dev_id = os.environ.get("REMO_DEV_ID", "") or os.environ.get("USER", "remo")
         return f"remo-broker-instance-{dev_id}-{_safe_role_slug(host.name)}"
-    # Incus/Proxmox: token_id storage is in container config — defer to a
-    # future enhancement once the on-node helper persists it.
+    if host.type == "incus":
+        from remo_cli.providers.incus import _ssh_run_on_incus_host  # noqa: PLC0415
+        from remo_cli.cli.rotate import _incus_target  # noqa: PLC0415
+        import shlex as _shlex  # noqa: PLC0415
+        incus_host, host_user, container = _incus_target(host)
+        cmd = (
+            f"incus config get {_shlex.quote(container)} "
+            "user.remo.bootstrap_token_id"
+        )
+        try:
+            result = _ssh_run_on_incus_host(incus_host, host_user, cmd)
+        except Exception as exc:  # noqa: BLE001
+            raise TokenLookupError(
+                f"incus config read failed for {host.name}: {exc}"
+            ) from exc
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip() or "(no stderr)"
+            raise TokenLookupError(
+                f"incus config read failed for {host.name} "
+                f"(rc={result.returncode}): {stderr}"
+            )
+        value = (result.stdout or "").strip()
+        return value or None
+    if host.type == "proxmox":
+        from remo_cli.providers.proxmox import _ssh_run  # noqa: PLC0415
+        from remo_cli.cli.rotate import _proxmox_target  # noqa: PLC0415
+        import shlex as _shlex  # noqa: PLC0415
+        proxmox_host, host_user, vmid = _proxmox_target(host)
+        if not vmid:
+            return None
+        # `cat … || true` means rc==0 even when the file is missing — we
+        # distinguish "no token" (empty stdout) from transport failure (the
+        # outer ssh / pct-exec rc).
+        inner = "cat /etc/remo-broker/bootstrap_token_id 2>/dev/null || true"
+        cmd = f"pct exec {_shlex.quote(str(vmid))} -- sh -c {_shlex.quote(inner)}"
+        try:
+            result = _ssh_run(proxmox_host, host_user, cmd)
+        except Exception as exc:  # noqa: BLE001
+            raise TokenLookupError(
+                f"proxmox config read failed for {host.name}: {exc}"
+            ) from exc
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip() or "(no stderr)"
+            raise TokenLookupError(
+                f"proxmox config read failed for {host.name} "
+                f"(rc={result.returncode}): {stderr}"
+            )
+        value = (result.stdout or "").strip()
+        return value or None
     return None
 
 

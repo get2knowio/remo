@@ -98,7 +98,7 @@ def test_incus_create_sets_user_config_cadence(mocker):
     assert found, f"cadence write not in SSH calls: {ssh_run.call_args_list}"
 
 
-def test_proxmox_create_warns_cadence_deferred(mocker, capsys):
+def test_proxmox_create_writes_cadence_via_pct_exec(mocker):
     from remo_cli.providers import proxmox as prox_mod
 
     mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=0)
@@ -107,8 +107,17 @@ def test_proxmox_create_warns_cadence_deferred(mocker, capsys):
     mocker.patch("remo_cli.providers.proxmox._resolve_vmid", return_value="200")
     mocker.patch("remo_cli.providers.proxmox.get_current_version", return_value="2.1.0")
     mocker.patch("remo_cli.providers.proxmox.detect_timezone", return_value="")
+    ssh_run = mocker.patch(
+        "remo_cli.providers.proxmox._ssh_run",
+        return_value=MagicMock(returncode=0, stdout="", stderr=""),
+    )
 
     rc = prox_mod.create(name="dev1", host="prox-host", cadence_days=14)
     assert rc == 0
-    out = capsys.readouterr()
-    assert "not yet persisted for" in (out.out + out.err)
+    found = any(
+        "pct exec 200 --" in call.args[2]
+        and "/etc/remo-broker/rotation_cadence_days" in call.args[2]
+        and "echo 14" in call.args[2]
+        for call in ssh_run.call_args_list
+    )
+    assert found, f"pct exec cadence write not in SSH calls: {ssh_run.call_args_list}"

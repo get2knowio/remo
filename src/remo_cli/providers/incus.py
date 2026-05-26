@@ -276,19 +276,27 @@ def destroy(
     """
     validate_name(name, "container name")
 
-    # FR-020: revoke bootstrap token at the backend BEFORE deleting the
-    # container. No-op today for Incus (token_id storage deferred) but the
-    # hook is in place for when persistence lands.
-    from remo_cli.core import broker_revoke as _broker_revoke  # noqa: PLC0415
-    candidate = KnownHost(type="incus", name=name, host="", user="")
-    if not _broker_revoke.revoke_before_destroy(candidate, force=force_broker):
-        return 5
-
     # If --host not specified, look up container in known_hosts.
     if not host:
         host, looked_up_user = _lookup_incus_host(name)
         if not user and looked_up_user:
             user = looked_up_user
+
+    # FR-020: revoke bootstrap token at the backend BEFORE deleting the
+    # container. The KnownHost stub encodes the Incus host in `name` and the
+    # host-side user in `instance_id` per legacy convention so
+    # `_lookup_token_id` / `_incus_target` can recover them.
+    from remo_cli.core import broker_revoke as _broker_revoke  # noqa: PLC0415
+    revoke_name = f"{host}/{name}" if host else name
+    candidate = KnownHost(
+        type="incus",
+        name=revoke_name,
+        host="",
+        user="",
+        instance_id=user,
+    )
+    if not _broker_revoke.revoke_before_destroy(candidate, force=force_broker):
+        return 5
 
     if remove_storage:
         print_warning(
@@ -704,6 +712,56 @@ def _bind_mount_token(
         raise RuntimeError(
             f"`lxc config device add` failed (rc={result.returncode}): "
             f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
+def _push_bootstrap_token_to_container(
+    host: str,
+    host_user: str,
+    container: str,
+    token: str,
+) -> None:
+    """Pipe a fresh bootstrap token into an Incus *container*.
+
+    The token is delivered via stdin → ``incus exec <container> -- install``
+    so it never appears in argv / ps output. When *host* is ``"localhost"``
+    the ``incus exec`` runs locally; otherwise it tunnels through ``ssh
+    <host_user>@<host>``.
+
+    Raises :class:`RuntimeError` on non-zero exit.
+    """
+    if not container:
+        raise ValueError("container must be non-empty")
+    if not token:
+        raise ValueError("bootstrap token must be non-empty")
+
+    container_q = shlex.quote(container)
+    # The inner command runs *inside* the container; --it can't be used here
+    # because we're piping stdin from the laptop, through ssh, through
+    # `incus exec`, into the install process.
+    inner_cmd = (
+        f"incus exec {container_q} -- "
+        "install -D -m 0400 -o root -g root /dev/stdin "
+        "/etc/remo-broker/bootstrap-token"
+    )
+    if host == "localhost":
+        cmd = ["bash", "-c", inner_cmd]
+    else:
+        ssh_target = f"{host_user}@{host}" if host_user else host
+        cmd = ["ssh", "-o", "ConnectTimeout=10", ssh_target, inner_cmd]
+
+    proc = subprocess.run(
+        cmd,
+        input=token,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip() or "(no stderr)"
+        raise RuntimeError(
+            f"failed to push bootstrap token to incus container "
+            f"{container!r} on {host!r}: {stderr}"
         )
 
 
