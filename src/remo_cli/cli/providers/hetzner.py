@@ -28,6 +28,12 @@ def hetzner() -> None:
 @click.option("--volume-size", default="", help="Volume size in GB (default: 10).")
 @click.option("--only", multiple=True, help="Only install these tools.")
 @click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option(
+    "--cadence-days",
+    type=int,
+    default=None,
+    help="Bootstrap-token rotation cadence in days (default 7; 0 disables).",
+)
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output.")
 def create(
@@ -37,6 +43,7 @@ def create(
     volume_size: str,
     only: tuple[str, ...],
     skip: tuple[str, ...],
+    cadence_days: int | None,
     yes: bool,
     verbose: bool,
 ) -> None:
@@ -50,6 +57,7 @@ def create(
         volume_size=volume_size,
         tools_only=only,
         tools_skip=skip,
+        cadence_days=cadence_days,
         verbose=verbose,
     )
     sys.exit(rc)

@@ -179,6 +179,73 @@ def test_rotate_delivery_failure_returns_partial_exit(tmp_config_dir, mocker, mo
     assert "delivery to instance failed" in r.output
 
 
+def test_rotate_records_metadata_after_success(tmp_config_dir, mocker, monkeypatch):
+    save_known_host(KnownHost(type="hetzner", name="hetz-1", host="1.1.1.1", user="remo"))
+    monkeypatch.setenv("REMO_BROKER_BACKEND", "1password")
+    mocker.patch(
+        "remo_cli.cli.rotate._read_rotation_metadata",
+        return_value=(7, datetime.now(timezone.utc) - timedelta(days=8), "tok-old"),
+    )
+    mocker.patch(
+        "remo_cli.providers.broker.mint_bootstrap_token",
+        return_value={"token": "fresh", "token_id": "tok-new"},
+    )
+    mocker.patch("remo_cli.providers.broker.revoke_bootstrap_token", return_value=None)
+    mocker.patch("remo_cli.cli.rotate._deliver_and_reload")
+    mocker.patch("remo_cli.providers.hetzner._hetzner_server_id", return_value=42)
+    set_label = mocker.patch("remo_cli.providers.hetzner._set_server_label")
+
+    runner = CliRunner()
+    r = runner.invoke(rotate_command, ["hetz-1", "--force"])
+    assert r.exit_code == 0
+    # Two label writes: last_rotation_at + bootstrap_token_id.
+    keys_written = [call.args[1] for call in set_label.call_args_list]
+    assert "remo_last_rotation_at" in keys_written
+    assert "remo_bootstrap_token_id" in keys_written
+
+
+def test_record_rotation_writes_aws_tag(mocker):
+    from remo_cli.cli.rotate import _record_rotation
+    host = KnownHost(
+        type="aws", name="dev", host="i-abc", user="remo",
+        instance_id="i-abc", region="us-west-2",
+    )
+    ec2 = mocker.MagicMock()
+    session = mocker.MagicMock()
+    session.client.return_value = ec2
+    mocker.patch("remo_cli.providers.aws._boto3_session", return_value=session)
+
+    _record_rotation(host, "ignored-on-aws")
+
+    ec2.create_tags.assert_called_once()
+    tags = ec2.create_tags.call_args.kwargs["Tags"]
+    assert any(t["Key"] == "remo:last-rotation-at" for t in tags)
+
+
+def test_read_rotation_metadata_aws_tags(mocker):
+    from remo_cli.cli.rotate import _read_rotation_metadata
+    host = KnownHost(
+        type="aws", name="dev", host="i-abc", user="remo",
+        instance_id="i-abc", region="us-west-2",
+    )
+    ec2 = mocker.MagicMock()
+    ec2.describe_tags.return_value = {
+        "Tags": [
+            {"Key": "remo:rotation-cadence-days", "Value": "14"},
+            {"Key": "remo:last-rotation-at", "Value": "2026-05-26T12:00:00+00:00"},
+        ]
+    }
+    session = mocker.MagicMock()
+    session.client.return_value = ec2
+    mocker.patch("remo_cli.providers.aws._boto3_session", return_value=session)
+
+    cadence, last, token_id = _read_rotation_metadata(host)
+    assert cadence == 14
+    assert last is not None
+    assert last.tzinfo is not None
+    assert token_id is None  # AWS token_id is derived, not stored.
+
+
 def test_rotate_no_backend_fails(tmp_config_dir, mocker, monkeypatch):
     save_known_host(KnownHost(type="hetzner", name="hetz-1", host="1.1.1.1", user="remo"))
     monkeypatch.delenv("REMO_BROKER_BACKEND", raising=False)

@@ -174,6 +174,7 @@ def create(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     use_ip: bool = False,
+    cadence_days: int | None = None,
     verbose: bool = False,
 ) -> int:
     """Create a new Incus container and configure it with dev tools.
@@ -240,6 +241,21 @@ def create(
                 memory=memory,
                 verbose=verbose,
             )
+
+        # Persist rotation cadence as a container user-config key (FR-021
+        # / T078). Rotation flow itself isn't wired for Incus yet, but the
+        # overdue reminder will start respecting this value once it lands.
+        if cadence_days is not None:
+            cfg_cmd = (
+                f"incus config set {shlex.quote(name)} "
+                f"user.remo.rotation_cadence_days {int(cadence_days)}"
+            )
+            result = _ssh_run_on_incus_host(host, user, cfg_cmd)
+            if result.returncode != 0:
+                print_warning(
+                    f"Could not set rotation cadence on {name}: "
+                    f"{result.stderr.strip() or result.stdout.strip()}"
+                )
 
     return rc
 

@@ -66,6 +66,21 @@ def _read_rotation_metadata(host: KnownHost) -> tuple[int, datetime | None, str 
                 return cadence, last, token_id
             except Exception:  # noqa: BLE001
                 pass
+    if host.type == "aws" and host.instance_id:
+        try:
+            from remo_cli.providers.aws import _boto3_session  # noqa: PLC0415
+            ec2 = _boto3_session(host.region or "us-west-2").client("ec2")
+            resp = ec2.describe_tags(Filters=[
+                {"Name": "resource-id", "Values": [host.instance_id]},
+            ])
+            tags = {t["Key"]: t["Value"] for t in resp.get("Tags", [])}
+            cadence = int(tags.get("remo:rotation-cadence-days") or "7")
+            last = _parse_iso(tags.get("remo:last-rotation-at") or "")
+            # token_id is derived from the per-instance role name; not stored
+            # in tags. broker_revoke._lookup_token_id reconstructs it.
+            return cadence, last, None
+        except Exception:  # noqa: BLE001
+            pass
     # Default: cadence 7 days, no record of last rotation, no token_id.
     return 7, None, None
 
@@ -104,6 +119,33 @@ def _deliver_and_reload(host: KnownHost, token: str) -> None:
         f"rotate-bootstrap delivery not wired for {host.type!r} yet "
         "(token minted/revoked at backend but instance still has the old token)."
     )
+
+
+def _record_rotation(host: KnownHost, new_token_id: str) -> None:
+    """Persist `last_rotation_at` + the new `bootstrap_token_id` post-rotation.
+
+    Best-effort: a write failure here doesn't roll back the rotation. The
+    next overdue check just won't see the fresh timestamp.
+    """
+    if host.type == "hetzner":
+        from remo_cli.providers.hetzner import (  # noqa: PLC0415
+            _hetzner_server_id,
+            _set_server_label,
+        )
+        sid = _hetzner_server_id(host.name)
+        if not sid:
+            return
+        _set_server_label(sid, "remo_last_rotation_at", _now().isoformat())
+        if new_token_id:
+            _set_server_label(sid, "remo_bootstrap_token_id", new_token_id)
+        return
+    if host.type == "aws" and host.instance_id:
+        from remo_cli.providers.aws import _boto3_session  # noqa: PLC0415
+        ec2 = _boto3_session(host.region or "us-west-2").client("ec2")
+        ec2.create_tags(
+            Resources=[host.instance_id],
+            Tags=[{"Key": "remo:last-rotation-at", "Value": _now().isoformat()}],
+        )
 
 
 def _rotate_one(host: KnownHost, force: bool) -> bool:
@@ -172,6 +214,11 @@ def _rotate_one(host: KnownHost, force: bool) -> bool:
                 f"{host.name}: fresh token minted ({minted.get('token_id')}) "
                 f"but revoking previous failed: {exc}"
             )
+
+    try:
+        _record_rotation(host, minted.get("token_id", ""))
+    except Exception as exc:  # noqa: BLE001
+        print_warning(f"{host.name}: rotation succeeded but metadata write failed: {exc}")
 
     print_success(f"{host.name}: rotated (new token_id={minted.get('token_id')}).")
     return True

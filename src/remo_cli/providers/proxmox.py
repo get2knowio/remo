@@ -259,6 +259,7 @@ def create(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     use_ip: bool = False,
+    cadence_days: int | None = None,
     verbose: bool = False,
 ) -> int:
     """Create a new Proxmox LXC container and configure dev tools.
@@ -349,6 +350,17 @@ def create(
                 memory=memory,
                 vmid=vmid,
                 verbose=verbose,
+            )
+
+        if cadence_days is not None:
+            # Proxmox LXC lacks a clean `user.*` config primitive (vs. Incus
+            # `incus config set user.*`). Persistence + rotation for this
+            # provider is deferred — surface the no-op honestly rather than
+            # silently dropping the flag.
+            print_warning(
+                f"--cadence-days={cadence_days} is not yet persisted for "
+                "Proxmox; per-instance rotation is deferred (see spec 005 "
+                "T078). The default 7-day overdue reminder applies."
             )
 
     return rc

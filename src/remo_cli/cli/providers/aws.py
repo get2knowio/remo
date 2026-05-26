@@ -30,6 +30,12 @@ def aws() -> None:
 @click.option("--iam-profile", default="", help="IAM instance profile name.")
 @click.option("--only", multiple=True, help="Only configure these tools.")
 @click.option("--skip", multiple=True, help="Skip configuring these tools.")
+@click.option(
+    "--cadence-days",
+    type=int,
+    default=None,
+    help="Bootstrap-token rotation cadence in days (default 7; 0 disables).",
+)
 @click.option("--yes", "-y", "auto_confirm", is_flag=True, default=False, help="Skip confirmation prompts.")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose output.")
 def create(
@@ -41,6 +47,7 @@ def create(
     iam_profile: str,
     only: tuple[str, ...],
     skip: tuple[str, ...],
+    cadence_days: int | None,
     auto_confirm: bool,
     verbose: bool,
 ) -> None:
@@ -56,6 +63,7 @@ def create(
         iam_profile=iam_profile,
         tools_only=only,
         tools_skip=skip,
+        cadence_days=cadence_days,
         verbose=verbose,
     )
     sys.exit(rc)

@@ -89,6 +89,12 @@ def add_node_cmd(name: str, host: str, ssh_user: str, admin_sa_fnox_key: str) ->
     is_flag=True,
     help="Store the container's IP address in known_hosts instead of its name (for setups without DNS/MagicDNS).",
 )
+@click.option(
+    "--cadence-days",
+    type=int,
+    default=None,
+    help="Bootstrap-token rotation cadence in days (default 7; 0 disables).",
+)
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm prompts.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def create(
@@ -107,6 +113,7 @@ def create(
     only: tuple[str, ...],
     skip: tuple[str, ...],
     use_ip: bool,
+    cadence_days: int | None,
     yes: bool,
     verbose: bool,
 ) -> None:
@@ -127,6 +134,7 @@ def create(
         tools_only=only,
         tools_skip=skip,
         use_ip=use_ip,
+        cadence_days=cadence_days,
         verbose=verbose,
     )
     sys.exit(rc)

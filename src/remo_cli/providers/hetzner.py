@@ -392,6 +392,7 @@ def create(
     volume_size: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
+    cadence_days: int | None = None,
     verbose: bool = False,
 ) -> int:
     """Create a new Hetzner Cloud VM and configure it with dev tools.
@@ -456,6 +457,12 @@ def create(
             except Exception as exc:  # noqa: BLE001
                 print_error(f"bootstrap-token delivery failed: {exc}")
                 return 1
+
+        # Persist rotation cadence when the user opted in (FR-021 / T078).
+        if cadence_days is not None:
+            sid = _hetzner_server_id(server_name)
+            if sid:
+                _set_server_label(sid, "remo_rotation_cadence_days", str(cadence_days))
 
     # Print post-create summary.
     print("")

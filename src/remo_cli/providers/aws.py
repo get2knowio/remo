@@ -543,6 +543,7 @@ def create(
     iam_profile: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
+    cadence_days: int | None = None,
     verbose: bool = False,
 ) -> int:
     """Create a new AWS EC2 instance and configure it with dev tools.
@@ -633,6 +634,19 @@ def create(
                     region=effective_region,
                 )
             )
+
+        # Persist rotation cadence as an EC2 tag (FR-021 / T078). AWS tag
+        # keys accept `:` so the canonical `remo:rotation-cadence-days`
+        # form is fine — only Hetzner needed the underscore rename.
+        if cadence_days is not None and instance_id:
+            try:
+                session = _boto3_session(effective_region)
+                session.client("ec2").create_tags(
+                    Resources=[instance_id],
+                    Tags=[{"Key": "remo:rotation-cadence-days", "Value": str(cadence_days)}],
+                )
+            except Exception as exc:  # noqa: BLE001
+                print_warning(f"Could not tag rotation cadence on {instance_id}: {exc}")
     else:
         print_warning(
             "Could not detect instance IP. Run 'remo aws info' to register the host."
