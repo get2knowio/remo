@@ -22,6 +22,45 @@ def proxmox() -> None:
     """Manage Proxmox VE LXC containers."""
 
 
+@proxmox.command("add-node")
+@click.argument("name")
+@click.option("--host", required=True, help="SSH-reachable hostname or IP of the Proxmox node.")
+@click.option("--ssh-user", default="root", help="SSH user on the node (default: root).")
+@click.option(
+    "--admin-sa-fnox-key",
+    required=True,
+    help="fnox key under which this developer's admin SA token is stored.",
+)
+def add_node_cmd(name: str, host: str, ssh_user: str, admin_sa_fnox_key: str) -> None:
+    """Register a Proxmox node and install the broker token-manager helper.
+
+    Idempotent: re-running with identical fields prints `already registered` and exits 0.
+    Conflicting fields exit 6.
+    """
+    from remo_cli.core import nodes as nodes_mod
+    from remo_cli.core.output import print_info, print_success
+
+    try:
+        node = providers_proxmox.add_node(
+            name=name,
+            host=host,
+            ssh_user=ssh_user,
+            admin_sa_fnox_key=admin_sa_fnox_key,
+        )
+    except nodes_mod.NodesError as exc:
+        if "already registered" in str(exc):
+            print_error(str(exc))
+            sys.exit(6)
+        print_error(str(exc))
+        sys.exit(1)
+    except RuntimeError as exc:
+        print_error(str(exc))
+        sys.exit(1)
+    print_info(f"Registered Proxmox node {name} (host={host}).")
+    print_success(f"Wrote ~/.config/remo/nodes.yml entry. admin_sa_fnox_key={admin_sa_fnox_key}.")
+    _ = node
+
+
 @proxmox.command()
 @click.option("--name", default="dev1", help="Container hostname (default: dev1).")
 @click.option("--host", required=True, help="Proxmox node SSH host.")

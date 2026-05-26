@@ -16,6 +16,8 @@ import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
+import subprocess
+
 from remo_cli.core.ansible_runner import run_playbook
 from remo_cli.core.known_hosts import (
     clear_known_hosts_by_type,
@@ -28,6 +30,7 @@ from remo_cli.core.snapshot import (
     handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
 )
+from remo_cli.providers import broker as broker_helpers
 from remo_cli.core.ssh import detect_timezone
 from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
 from remo_cli.core.version import get_current_version
@@ -40,14 +43,34 @@ from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 # ---------------------------------------------------------------------------
 
 
+def _get_hetzner_api_token() -> str:
+    """Fetch the Hetzner API token from laptop fnox (FR-006).
+
+    Falls back to ``HETZNER_API_TOKEN`` env var for backward compatibility
+    until the next major release; emits a deprecation note when used.
+    Returns empty string if neither source has a token.
+    """
+    try:
+        from remo_cli.core import fnox as _fnox_mod  # noqa: PLC0415
+        if _fnox_mod.is_installed():
+            try:
+                return _fnox_mod.get("hetzner_api_token")
+            except _fnox_mod.FnoxError:
+                pass
+    except Exception:  # noqa: BLE001
+        pass
+    # Backward-compatible fallback (will be removed in 3.0).
+    return os.environ.get("HETZNER_API_TOKEN", "")
+
+
 def _query_hetzner_server_ip(server_name: str) -> str:
     """Query the Hetzner API for the IPv4 address of *server_name*.
 
-    Uses ``HETZNER_API_TOKEN`` from the environment.  Returns an empty string
-    when the token is missing, the API call fails, or no matching server is
-    found.
+    Token from laptop fnox via :func:`_get_hetzner_api_token`. Returns an
+    empty string when the token is missing, the API call fails, or no
+    matching server is found.
     """
-    token = os.environ.get("HETZNER_API_TOKEN", "")
+    token = _get_hetzner_api_token()
     if not token:
         return ""
 
@@ -80,6 +103,129 @@ def _lookup_hetzner_host(server_name: str) -> str:
         if entry.name == server_name:
             return entry.host
     return ""
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap-token delivery (Phase 3, US1)
+# ---------------------------------------------------------------------------
+
+
+def _push_bootstrap_token(server_ip: str, token: str, ssh_user: str = "root") -> None:
+    """SSH-push the bootstrap token to /etc/remo-broker/bootstrap-token (mode 0400 root).
+
+    Token bytes are piped on stdin so they never appear in argv / ps output.
+    Per research R2 + contracts/bootstrap-delivery.md.
+
+    Raises subprocess.CalledProcessError on SSH failure; caller surfaces.
+    """
+    if not server_ip:
+        raise ValueError("server_ip must be non-empty")
+    if not token:
+        raise ValueError("bootstrap token must be non-empty")
+
+    remote_cmd = (
+        "install -D -m 0400 -o root -g root /dev/stdin "
+        "/etc/remo-broker/bootstrap-token"
+    )
+    ssh_cmd = [
+        "ssh",
+        "-o", "StrictHostKeyChecking=accept-new",
+        "-o", "BatchMode=yes",
+        f"{ssh_user}@{server_ip}",
+        remote_cmd,
+    ]
+    proc = subprocess.run(
+        ssh_cmd,
+        input=token,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip() or "(no stderr)"
+        raise RuntimeError(
+            f"failed to push bootstrap token to {server_ip}: {stderr}"
+        )
+
+
+def _set_server_label(server_id: int, key: str, value: str) -> None:
+    """Set a Hetzner server label for later revocation lookup."""
+    token = _get_hetzner_api_token()
+    if not token:
+        return
+    url = f"https://api.hetzner.cloud/v1/servers/{server_id}"
+    body = json.dumps({"labels": {key: value}}).encode()
+    req = urllib.request.Request(
+        url,
+        data=body,
+        method="PUT",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            resp.read()
+    except urllib.error.URLError:
+        # Best-effort. Tag missing → rotation/destroy will fail with a clear message later.
+        pass
+
+
+def _hetzner_server_id(server_name: str) -> int | None:
+    token = _get_hetzner_api_token()
+    if not token:
+        return None
+    url = f"https://api.hetzner.cloud/v1/servers?name={server_name}"
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+        servers = data.get("servers", [])
+        if servers:
+            return int(servers[0].get("id", 0)) or None
+    except (urllib.error.URLError, json.JSONDecodeError, KeyError, IndexError, ValueError):
+        return None
+    return None
+
+
+def _deliver_bootstrap_token(
+    server_name: str,
+    server_ip: str,
+    backend: str,
+    dev_id: str,
+) -> None:
+    """Mint a sub-token at the backend, push it to the instance, record the token-id label.
+
+    Best-effort: if the backend isn't configured / minting isn't implemented yet,
+    surfaces a warning and returns (the broker simply won't start until the token
+    arrives — the configure playbook's `bootstrap_token_file` role will fail loudly).
+    """
+    try:
+        minted = broker_helpers.mint_bootstrap_token(
+            backend, instance_id=server_name, dev_id=dev_id
+        )
+    except NotImplementedError as exc:
+        print_warning(
+            f"Skipping bootstrap delivery: {exc}. "
+            "Broker service will not start until a token is provisioned."
+        )
+        return
+    except broker_helpers.BackendError as exc:
+        print_error(f"Bootstrap minting failed: {exc}")
+        raise
+
+    token = minted.get("token", "")
+    token_id = minted.get("token_id", "")
+    if not token:
+        raise RuntimeError("mint_bootstrap_token returned no token")
+
+    _push_bootstrap_token(server_ip, token)
+
+    if token_id:
+        server_id = _hetzner_server_id(server_name)
+        if server_id:
+            _set_server_label(server_id, "remo:bootstrap-token-id", token_id)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +292,18 @@ def create(
             )
         )
 
+        # Phase 3, US1: deliver bootstrap token to the broker via SSH push.
+        # Backend + dev_id selection lands in Phase 5 (`remo init`). Until then,
+        # fall back to environment hints / no-op.
+        backend = os.environ.get("REMO_BROKER_BACKEND", "")
+        dev_id = os.environ.get("REMO_DEV_ID", "") or os.environ.get("USER", "")
+        if backend:
+            try:
+                _deliver_bootstrap_token(server_name, server_ip, backend, dev_id)
+            except Exception as exc:  # noqa: BLE001
+                print_error(f"bootstrap-token delivery failed: {exc}")
+                return 1
+
     # Print post-create summary.
     print("")
     print_success("==================================================")
@@ -170,15 +328,23 @@ def destroy(
     auto_confirm: bool = False,
     remove_volume: bool = False,
     verbose: bool = False,
+    force_broker: bool = False,
 ) -> int:
     """Destroy a Hetzner Cloud VM.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Returns the ansible-playbook exit code (0 on success). Exit code 5 if
+    broker revocation fails and force_broker is False (FR-020).
     """
     if name:
         validate_name(name, "server name")
 
     server_name = name or "remo"
+
+    # FR-020: revoke bootstrap token at the backend BEFORE deleting the instance.
+    from remo_cli.core import broker_revoke as _broker_revoke  # noqa: PLC0415
+    candidate = KnownHost(type="hetzner", name=server_name, host="", user="")
+    if not _broker_revoke.revoke_before_destroy(candidate, force=force_broker):
+        return 5
 
     if remove_volume:
         print_warning(
@@ -314,9 +480,11 @@ def info(name: str = "") -> int:
     paired ``<name>-home`` volume (size). Requires ``HETZNER_API_TOKEN``.
     Returns 0 on success or 1 on failure.
     """
-    token = os.environ.get("HETZNER_API_TOKEN", "")
+    token = _get_hetzner_api_token()
     if not token:
-        print_error("HETZNER_API_TOKEN is not set.")
+        print_error(
+            "Hetzner API token unavailable. Store it via `fnox set hetzner_api_token`."
+        )
         return 1
 
     server_name = name or "remo"
@@ -385,9 +553,11 @@ def sync() -> None:
     existing hetzner entries from the known-hosts registry, and re-registers
     each discovered server.
     """
-    token = os.environ.get("HETZNER_API_TOKEN", "")
+    token = _get_hetzner_api_token()
     if not token:
-        print_error("HETZNER_API_TOKEN environment variable is not set.")
+        print_error(
+            "Hetzner API token unavailable. Store it via `fnox set hetzner_api_token`."
+        )
         sys.exit(1)
 
     url = "https://api.hetzner.cloud/v1/servers?label_selector=remo"
@@ -448,10 +618,10 @@ def _hetzner_api(
     Raises :class:`RuntimeError` on non-2xx responses or transport errors so
     callers can surface them.
     """
-    token = os.environ.get("HETZNER_API_TOKEN", "")
+    token = _get_hetzner_api_token()
     if not token:
         raise RuntimeError(
-            "HETZNER_API_TOKEN is not set; cannot reach the Hetzner Cloud API."
+            "Hetzner API token unavailable. Store it via `fnox set hetzner_api_token`."
         )
 
     url = f"{_HETZNER_API}{path}"

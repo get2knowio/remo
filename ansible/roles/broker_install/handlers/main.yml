@@ -1,0 +1,7 @@
+---
+- name: restart remo-broker
+  ansible.builtin.systemd:
+    name: remo-broker.service
+    state: restarted
+    daemon_reload: true
+  become: true

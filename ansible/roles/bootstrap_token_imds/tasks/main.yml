@@ -1,0 +1,46 @@
+---
+# Assertion role: confirms IMDSv2 reachable and the instance role attaches a name.
+# Pure read-only; performs no token writes (AWS bootstrap is on-disk-less).
+- name: IMDSv2 — fetch session token
+  ansible.builtin.uri:
+    url: http://169.254.169.254/latest/api/token
+    method: PUT
+    headers:
+      X-aws-ec2-metadata-token-ttl-seconds: "60"
+    return_content: true
+    status_code: 200
+  register: imds_token_result
+  changed_when: false
+  failed_when: false
+
+- name: Assert IMDSv2 reachable
+  ansible.builtin.fail:
+    msg: >-
+      IMDSv2 not reachable from this instance — broker cannot fetch its
+      bootstrap credential. Check VPC routing, hop limit, and that
+      MetadataOptions has HttpTokens=required, HttpPutResponseHopLimit>=2.
+  when: (imds_token_result.status | default(0)) != 200
+
+- name: IMDSv2 — fetch instance role name
+  ansible.builtin.uri:
+    url: http://169.254.169.254/latest/meta-data/iam/security-credentials/
+    headers:
+      X-aws-ec2-metadata-token: "{{ imds_token_result.content | default('') }}"
+    return_content: true
+    status_code: 200
+  register: imds_role_result
+  changed_when: false
+  failed_when: false
+
+- name: Assert an IAM instance profile is attached
+  ansible.builtin.fail:
+    msg: >-
+      No IAM instance profile attached (IMDS returned status
+      {{ imds_role_result.status | default(0) }}). The broker has no
+      identity to use upward. Re-run `remo aws create` so the instance
+      profile is attached.
+  when: (imds_role_result.status | default(0)) != 200
+
+- name: Capture instance role for diagnostics
+  ansible.builtin.set_fact:
+    broker_instance_role: "{{ (imds_role_result.content | default('')).splitlines() | first | default('') }}"

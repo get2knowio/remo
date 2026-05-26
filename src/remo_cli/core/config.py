@@ -5,6 +5,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+BROKER_PINNED_VERSION = "0.1.0"
+BROKER_BINARY_URL_TEMPLATE = (
+    "https://github.com/get2knowio/remo-broker/releases/download/v{version}/"
+    "remo-broker-v{version}-{arch}-unknown-linux-gnu"
+)
+BROKER_SHA256_URL_TEMPLATE = BROKER_BINARY_URL_TEMPLATE + ".sha256"
+
+NODES_FILE_MODE = 0o600
+NODES_DIR_MODE = 0o700
+
 
 def get_remo_home() -> Path:
     """Return the remo config directory path.
@@ -82,6 +92,16 @@ def get_project_root() -> Path:
 def get_known_hosts_path() -> Path:
     """Return the path to the remo known_hosts file."""
     return get_remo_home() / "known_hosts"
+
+
+def get_nodes_file_path() -> Path:
+    """Return the path to the remo nodes.yml file (Incus/Proxmox registry)."""
+    return get_remo_home() / "nodes.yml"
+
+
+def get_state_file_path() -> Path:
+    """Return the path to the remo state.yml file (one-time warnings, etc.)."""
+    return get_remo_home() / "state.yml"
 
 
 def is_verbose() -> bool:

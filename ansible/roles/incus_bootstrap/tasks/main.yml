@@ -911,3 +911,46 @@
   tags:
     - verification
     - incus_verify
+
+# ============================================================================
+# 005-credential-broker: per-developer token-manager helper (node-side)
+# ============================================================================
+# Skipped when no developers have registered the node via `remo incus add-node`.
+- name: Detect registered developers (token-helper guard)
+  ansible.builtin.find:
+    paths: /var/lib/remo-broker/instance-tokens
+    file_type: directory
+  register: registered_developers_find
+  failed_when: false
+  changed_when: false
+  tags:
+    - broker
+    - broker_helper
+
+- name: Set registered_developers fact
+  ansible.builtin.set_fact:
+    registered_developers: "{{ (registered_developers_find.files | default([])) | map(attribute='path') | list }}"
+  tags:
+    - broker
+    - broker_helper
+
+- name: Install remo-broker-tokens helper
+  ansible.builtin.copy:
+    dest: /usr/local/libexec/remo-broker-tokens
+    content: |
+      #!/usr/bin/env bash
+      # Stub helper placed by remo incus_bootstrap role.
+      # Real implementation comes from `remo incus add-node` (which writes a
+      # per-developer aware version) — this stub ensures the executable exists
+      # for any node-side automation that asks for it.
+      set -euo pipefail
+      echo "remo-broker-tokens stub (replace via 'remo incus add-node')" >&2
+      exit 1
+    owner: root
+    group: root
+    mode: "0755"
+    force: false
+  when: (registered_developers | default([])) | length > 0
+  tags:
+    - broker
+    - broker_helper

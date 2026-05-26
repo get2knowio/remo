@@ -1,0 +1,48 @@
+---
+# Assertion role: confirms /etc/remo-broker/bootstrap-token is a bind-mount,
+# and that it is readonly inside the Incus/Proxmox container.
+- name: Stat bootstrap-token path
+  ansible.builtin.stat:
+    path: "{{ broker_token_path | default('/etc/remo-broker/bootstrap-token') }}"
+  register: token_stat
+  changed_when: false
+
+- name: Assert bootstrap-token present
+  ansible.builtin.fail:
+    msg: >-
+      Bootstrap token bind-mount missing at
+      {{ broker_token_path | default('/etc/remo-broker/bootstrap-token') }}.
+      Has the node-side `add-device` step run? See
+      `remo {incus,proxmox} add-node` for setup.
+  when: not (token_stat.stat.exists | default(false))
+
+- name: Read /proc/self/mountinfo (find the bind-mount entry)
+  ansible.builtin.command: cat /proc/self/mountinfo
+  register: mountinfo
+  changed_when: false
+  failed_when: false
+
+- name: Detect bootstrap-token mount entry
+  ansible.builtin.set_fact:
+    token_mount_line: >-
+      {{ (mountinfo.stdout | default('')).splitlines()
+         | select('search', broker_token_path | default('/etc/remo-broker/bootstrap-token'))
+         | list | first | default('') }}
+
+- name: Assert bootstrap-token is mounted (bind-mount entry visible)
+  ansible.builtin.fail:
+    msg: >-
+      Bootstrap token at {{ broker_token_path | default('/etc/remo-broker/bootstrap-token') }}
+      is not a bind-mount inside this container. Re-run
+      `remo {incus,proxmox} create` to add the disk device.
+  when: (token_mount_line | default('')) == ''
+
+- name: Assert the bind-mount is readonly
+  ansible.builtin.fail:
+    msg: >-
+      Bootstrap token bind-mount is not readonly inside the container
+      (mountinfo line: {{ token_mount_line | default('') }}). Re-create with
+      readonly=true (Incus) or ro=1 (Proxmox).
+  when:
+    - (token_mount_line | default('')) != ''
+    - "' ro,' not in (token_mount_line | default('')) and not (token_mount_line | default('')).endswith(' ro')"

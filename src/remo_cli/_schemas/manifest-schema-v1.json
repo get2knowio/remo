@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://get2knowio.github.io/remo-broker/schemas/manifest-schema-v1.json",
+  "title": "Remo Broker Project Manifest",
+  "description": "Schema v1 — declarative allowlist of backend secret names for one project's devcontainer.",
+  "type": "object",
+  "required": ["schema_version", "mcp"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "mcp": {
+      "type": "object",
+      "required": ["secrets"],
+      "additionalProperties": false,
+      "properties": {
+        "secrets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "minItems": 0,
+          "uniqueItems": false
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

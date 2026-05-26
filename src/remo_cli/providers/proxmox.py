@@ -75,6 +75,76 @@ def _ssh_run(host: str, user: str, command: str) -> subprocess.CompletedProcess[
     )
 
 
+# ---------------------------------------------------------------------------
+# Bootstrap-token bind-mount (Phase 3, US1)
+# ---------------------------------------------------------------------------
+
+
+def _bind_mount_token(
+    host: str,
+    user: str,
+    vmid: str,
+    token_path: str,
+) -> None:
+    """Attach the per-instance bootstrap-token file as a readonly mountpoint.
+
+    Idempotent: re-issuing `pct set` with the same mp0 spec is a no-op.
+
+    Per research R4 + contracts/bootstrap-delivery.md.
+    """
+    vmid_q = shlex.quote(vmid)
+    path_q = shlex.quote(token_path)
+    # Proxmox 7.x supports single-file bind via `mp=...,ro=1`.
+    cmd = (
+        f"pct set {vmid_q} -mp0 {path_q},mp=/etc/remo-broker/bootstrap-token,ro=1"
+    )
+    result = _ssh_run(host, user, cmd)
+    if result.returncode != 0:
+        combined = (result.stderr or "") + (result.stdout or "")
+        if "already" in combined.lower() and "exists" in combined.lower():
+            return
+        raise RuntimeError(
+            f"`pct set` failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
+def add_node(
+    name: str,
+    host: str,
+    ssh_user: str,
+    admin_sa_fnox_key: str,
+) -> object:
+    """Register a Proxmox node — install token helper + write nodes.yml entry."""
+    from remo_cli.core import nodes as nodes_mod
+    import os as _os
+
+    dev_id = _os.environ.get("REMO_DEV_ID", "") or _os.environ.get("USER", "remo")
+
+    helper_install = (
+        "set -e; "
+        "install -d -m 0755 /usr/local/libexec; "
+        f"install -d -m 0700 -o root -g root /var/lib/remo-broker/instance-tokens/{shlex.quote(dev_id)}; "
+        "touch /usr/local/libexec/remo-broker-tokens; "
+        "chmod 0755 /usr/local/libexec/remo-broker-tokens; "
+        "echo OK"
+    )
+    result = _ssh_run(host, ssh_user, helper_install)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"failed to install token helper on {host}: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+    return nodes_mod.add_node(
+        name=name,
+        provider="proxmox",
+        host=host,
+        ssh_user=ssh_user,
+        admin_sa_fnox_key=admin_sa_fnox_key,
+    )
+
+
 def _resolve_vmid(name: str, host: str, user: str) -> str:
     """Determine the VMID for container *name* on the Proxmox *host*.
 

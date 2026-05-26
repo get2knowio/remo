@@ -1,0 +1,83 @@
+"""US1 T045: assert `remo incus add-node` is idempotent and writes 0600 nodes.yml."""
+
+import os
+import stat
+import subprocess
+
+import pytest
+from click.testing import CliRunner
+
+from remo_cli.cli.providers.incus import incus
+
+
+def _fake_ssh_ok(host, user, command):  # noqa: ARG001
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout="OK\n", stderr="")
+
+
+def test_add_node_writes_nodes_yml_0600(tmp_config_dir, mocker):
+    mocker.patch("remo_cli.providers.incus._ssh_run_on_incus_host", side_effect=_fake_ssh_ok)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        incus,
+        [
+            "add-node",
+            "ws-01",
+            "--host", "192.168.4.10",
+            "--ssh-user", "incusadmin",
+            "--admin-sa-fnox-key", "incus_ws_01_admin_sa",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    path = tmp_config_dir / "nodes.yml"
+    assert path.exists()
+    mode = stat.S_IMODE(path.stat().st_mode)
+    assert mode == 0o600
+
+
+def test_add_node_idempotent_same_fields(tmp_config_dir, mocker):
+    mocker.patch("remo_cli.providers.incus._ssh_run_on_incus_host", side_effect=_fake_ssh_ok)
+    runner = CliRunner()
+    args = [
+        "add-node",
+        "ws-01",
+        "--host", "192.168.4.10",
+        "--ssh-user", "incusadmin",
+        "--admin-sa-fnox-key", "incus_ws_01_admin_sa",
+    ]
+    r1 = runner.invoke(incus, args)
+    assert r1.exit_code == 0
+    r2 = runner.invoke(incus, args)
+    assert r2.exit_code == 0
+
+
+def test_add_node_conflict_exits_6(tmp_config_dir, mocker):
+    mocker.patch("remo_cli.providers.incus._ssh_run_on_incus_host", side_effect=_fake_ssh_ok)
+    runner = CliRunner()
+    r1 = runner.invoke(
+        incus,
+        ["add-node", "ws-01", "--host", "1.1.1.1",
+         "--ssh-user", "incusadmin",
+         "--admin-sa-fnox-key", "incus_ws_01_admin_sa"],
+    )
+    assert r1.exit_code == 0
+    r2 = runner.invoke(
+        incus,
+        ["add-node", "ws-01", "--host", "2.2.2.2",
+         "--ssh-user", "incusadmin",
+         "--admin-sa-fnox-key", "incus_ws_01_admin_sa"],
+    )
+    assert r2.exit_code == 6
+
+
+def test_add_node_ssh_failure_exits_nonzero(tmp_config_dir, mocker):
+    fail = subprocess.CompletedProcess(args=[], returncode=255, stdout="", stderr="ssh: connect failed")
+    mocker.patch("remo_cli.providers.incus._ssh_run_on_incus_host", return_value=fail)
+    runner = CliRunner()
+    r = runner.invoke(
+        incus,
+        ["add-node", "ws-01", "--host", "1.1.1.1",
+         "--ssh-user", "incusadmin",
+         "--admin-sa-fnox-key", "incus_ws_01_admin_sa"],
+    )
+    assert r.exit_code != 0

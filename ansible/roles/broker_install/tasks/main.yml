@@ -1,0 +1,123 @@
+---
+- name: Resolve broker target architecture
+  ansible.builtin.set_fact:
+    broker_arch: "{{ 'aarch64' if (ansible_architecture | default('')) in ['aarch64', 'arm64'] else 'x86_64' }}"
+
+- name: Ensure broker filesystem layout
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ broker_etc_dir }}", mode: "0750" }
+    - { path: "{{ broker_log_dir }}", mode: "0700" }
+  become: true
+
+- name: Probe currently-installed broker version
+  ansible.builtin.command: "{{ broker_binary_path }} --version"
+  register: broker_version_probe
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Decide whether broker download is needed
+  ansible.builtin.set_fact:
+    broker_download_needed: >-
+      {{ (broker_version_probe.rc | default(1)) != 0
+         or (broker_version not in (broker_version_probe.stdout | default(''))) }}
+
+- name: Fetch broker SHA-256 checksum
+  ansible.builtin.uri:
+    url: "{{ broker_sha256_template }}"
+    return_content: true
+  register: broker_sha256_result
+  when: broker_download_needed | default(false)
+  failed_when: >-
+    (broker_sha256_result.status | default(0)) != 200
+    or (broker_sha256_result.content | default('')) == ''
+  changed_when: false
+
+- name: Extract broker checksum hex
+  ansible.builtin.set_fact:
+    broker_expected_sha256: "{{ (broker_sha256_result.content | default('')).split() | first | default('') }}"
+  when: broker_download_needed | default(false)
+
+- name: Download broker binary
+  ansible.builtin.get_url:
+    url: "{{ broker_url_template }}"
+    dest: "{{ broker_binary_path }}"
+    owner: root
+    group: root
+    mode: "0755"
+    checksum: "sha256:{{ broker_expected_sha256 | default('') }}"
+    force: true
+  when: broker_download_needed | default(false)
+  notify: restart remo-broker
+  become: true
+
+- name: Detect presence of bootstrap-token file
+  ansible.builtin.stat:
+    path: "{{ broker_token_path }}"
+  register: broker_token_stat
+  changed_when: false
+
+- name: Mark whether bootstrap-token is present (for systemd LoadCredential)
+  ansible.builtin.set_fact:
+    broker_token_present: "{{ broker_token_stat.stat.exists | default(false) }}"
+
+- name: Render remo-broker.service systemd unit
+  ansible.builtin.template:
+    src: remo-broker.service.j2
+    dest: "{{ broker_unit_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart remo-broker
+  become: true
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  become: true
+  changed_when: false
+
+- name: Ensure tmpfiles.d entry for /run/remo-broker
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/remo-broker.conf
+    content: |
+      d {{ broker_run_dir }} 0755 root root - -
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+
+- name: Enable remo-broker.service
+  ansible.builtin.systemd:
+    name: remo-broker.service
+    enabled: true
+    state: "{{ 'started' if (broker_token_present | default(false)) else 'stopped' }}"
+  become: true
+  register: broker_enable_result
+  failed_when: >-
+    (broker_enable_result.failed | default(false))
+    and (broker_token_present | default(false))
+
+- name: Post-install verify (broker service active)
+  ansible.builtin.command: systemctl is-active remo-broker.service
+  register: broker_active_check
+  changed_when: false
+  failed_when: false
+  when: broker_token_present | default(false)
+  become: true
+
+- name: Fail-fast if broker did not come up after install (US2 post-install verify)
+  ansible.builtin.fail:
+    msg: >-
+      remo-broker.service did not enter the 'active' state after install
+      (got: {{ broker_active_check.stdout | default('unknown') }}).
+      Investigate with `journalctl -u remo-broker --no-pager -n 50`.
+  when:
+    - broker_token_present | default(false)
+    - (broker_active_check.stdout | default('')) != 'active'

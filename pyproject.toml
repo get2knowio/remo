@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "remo-cli"
-version = "2.0.0rc4"
+version = "2.1.0rc1"
 description = "Remote development environment CLI"
 readme = "README.md"
 license = "MIT"
@@ -15,6 +15,7 @@ dependencies = [
     "boto3",
     "hcloud",
     "ansible-core>=2.18.0,<2.20.0",
+    "jsonschema>=4.21,<5",
 ]
 
 [project.optional-dependencies]

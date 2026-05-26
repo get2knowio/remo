@@ -228,6 +228,14 @@ remo cp --progress big.tar :/tmp/   # Show progress
 
 # Setup
 remo init                           # Install Ansible collections
+remo init --backend 1password       # Configure credential broker backend (see docs/credential-broker.md)
+# Backends: 1password | vault | aws-sm | age-git
+
+# Credential broker (per spec 005-credential-broker)
+remo incus add-node <name> --host H --admin-sa-fnox-key KEY   # Register Incus node
+remo proxmox add-node <name> --host H --admin-sa-fnox-key KEY # Register Proxmox node
+remo audit <instance> [--tail N | --since 1h] [--json]        # Inspect broker audit log
+remo rotate-bootstrap [<instance>] [--all] [--force]          # Rotate per-instance sub-token
 
 # Hetzner Cloud
 remo hetzner create                 # Provision VM

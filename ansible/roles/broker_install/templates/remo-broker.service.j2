@@ -1,0 +1,27 @@
+[Unit]
+Description=Remo credential broker
+Documentation=https://github.com/get2knowio/remo-broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart={{ broker_binary_path }} --run-dir {{ broker_run_dir }} --log-dir {{ broker_log_dir }}
+{% if broker_token_present | default(false) %}
+LoadCredential=bootstrap-token:{{ broker_token_path }}
+{% endif %}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths={{ broker_run_dir }} {{ broker_log_dir }}
+RuntimeDirectory=remo-broker
+RuntimeDirectoryMode=0755
+LogsDirectory=remo-broker
+LogsDirectoryMode=0700
+StateDirectory=remo-broker
+
+[Install]
+WantedBy=multi-user.target

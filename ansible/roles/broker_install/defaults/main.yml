@@ -1,0 +1,20 @@
+---
+# Pinned broker version per Remo release. Overridable via `-e broker_version=...`.
+broker_version: "0.1.0"
+
+# URL templates — {{ broker_version }} and {{ broker_arch }} are substituted.
+# Override these when consuming a custom release feed.
+broker_url_template: >-
+  https://github.com/get2knowio/remo-broker/releases/download/v{{ broker_version }}/remo-broker-v{{ broker_version }}-{{ broker_arch }}-unknown-linux-gnu
+broker_sha256_template: >-
+  https://github.com/get2knowio/remo-broker/releases/download/v{{ broker_version }}/remo-broker-v{{ broker_version }}-{{ broker_arch }}-unknown-linux-gnu.sha256
+
+# On-disk layout — fixed by spec; overrides discouraged.
+broker_binary_path: /usr/local/bin/remo-broker
+broker_etc_dir: /etc/remo-broker
+broker_run_dir: /run/remo-broker
+broker_log_dir: /var/log/remo-broker
+broker_token_path: "{{ broker_etc_dir }}/bootstrap-token"
+
+# systemd unit path. Override only on non-systemd distros.
+broker_unit_path: /etc/systemd/system/remo-broker.service

@@ -71,6 +71,16 @@
     - name: Configure dev tools
       ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
 
+    # 005-credential-broker: install the broker daemon and assert bind-mount.
+    - name: Install remo credential broker
+      ansible.builtin.include_role:
+        name: broker_install
+
+    - name: Assert bootstrap-token bind-mount present and readonly
+      ansible.builtin.include_role:
+        name: bootstrap_token_mount
+      when: lookup('env', 'REMO_BROKER_BACKEND') | default('', true) | length > 0
+
   post_tasks:
     - name: Display completion message
       ansible.builtin.debug:

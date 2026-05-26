@@ -645,6 +645,84 @@ def _ssh_run_on_incus_host(
     )
 
 
+# ---------------------------------------------------------------------------
+# Bootstrap-token bind-mount (Phase 3, US1)
+# ---------------------------------------------------------------------------
+
+
+def _bind_mount_token(
+    host: str,
+    user: str,
+    instance: str,
+    token_path: str,
+) -> None:
+    """Attach the per-instance bootstrap-token file as a readonly bind-mount.
+
+    Idempotent: if the device already exists on the container, the second
+    `add` returns non-zero with a "device already exists" message which we
+    treat as success.
+
+    Per research R4 + contracts/bootstrap-delivery.md.
+    """
+    instance_q = shlex.quote(instance)
+    path_q = shlex.quote(token_path)
+    cmd = (
+        f"lxc config device add {instance_q} remo-broker-token disk "
+        f"source={path_q} path=/etc/remo-broker/bootstrap-token readonly=true"
+    )
+    result = _ssh_run_on_incus_host(host, user, cmd)
+    if result.returncode != 0:
+        combined = (result.stderr or "") + (result.stdout or "")
+        if "already exists" in combined.lower():
+            return
+        raise RuntimeError(
+            f"`lxc config device add` failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
+def add_node(
+    name: str,
+    host: str,
+    ssh_user: str,
+    admin_sa_fnox_key: str,
+) -> object:
+    """Register an Incus node — install the token helper + write nodes.yml entry.
+
+    Per contracts/cli-surface.md + nodes-registry.md. Idempotent: re-running
+    with identical fields returns the existing entry. Conflicting fields
+    raise NodesError.
+    """
+    from remo_cli.core import nodes as nodes_mod
+    import os
+
+    dev_id = os.environ.get("REMO_DEV_ID", "") or os.environ.get("USER", "remo")
+
+    # Install the token-manager helper + per-dev directory (idempotent).
+    helper_install = (
+        "set -e; "
+        "sudo install -d -m 0755 /usr/local/libexec; "
+        f"sudo install -d -m 0700 -o root -g root /var/lib/remo-broker/instance-tokens/{shlex.quote(dev_id)}; "
+        "sudo touch /usr/local/libexec/remo-broker-tokens; "
+        "sudo chmod 0755 /usr/local/libexec/remo-broker-tokens; "
+        "echo OK"
+    )
+    result = _ssh_run_on_incus_host(host, ssh_user, helper_install)
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"failed to install token helper on {host}: "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
+
+    return nodes_mod.add_node(
+        name=name,
+        provider="incus",
+        host=host,
+        ssh_user=ssh_user,
+        admin_sa_fnox_key=admin_sa_fnox_key,
+    )
+
+
 def _list_snapshots_for_container(
     host: str, container: str, user: str
 ) -> list[Snapshot]:

@@ -1,0 +1,34 @@
+---
+# Assertion role: confirms /etc/remo-broker/bootstrap-token exists with mode 0400 root:root.
+# Actual delivery happens via SSH push (providers/hetzner._push_bootstrap_token).
+- name: Stat bootstrap-token file
+  ansible.builtin.stat:
+    path: "{{ broker_token_path | default('/etc/remo-broker/bootstrap-token') }}"
+  register: token_stat
+  changed_when: false
+
+- name: Assert bootstrap-token present
+  ansible.builtin.fail:
+    msg: >-
+      Bootstrap token file absent at
+      {{ broker_token_path | default('/etc/remo-broker/bootstrap-token') }}.
+      Has `remo {provider} create` finished the SSH-push step?
+  when: not (token_stat.stat.exists | default(false))
+
+- name: Assert bootstrap-token mode 0400
+  ansible.builtin.fail:
+    msg: >-
+      Bootstrap token file has mode {{ token_stat.stat.mode | default('?') }};
+      expected '0400'. Refusing to use a wider-than-0400 token file.
+  when:
+    - token_stat.stat.exists | default(false)
+    - (token_stat.stat.mode | default('')) != '0400'
+
+- name: Assert bootstrap-token owned by root
+  ansible.builtin.fail:
+    msg: >-
+      Bootstrap token file owner is {{ token_stat.stat.pw_name | default('?') }};
+      expected 'root'.
+  when:
+    - token_stat.stat.exists | default(false)
+    - (token_stat.stat.pw_name | default('')) != 'root'

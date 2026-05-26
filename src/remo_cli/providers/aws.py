@@ -307,6 +307,157 @@ def select_ssm_instance_profile(
     return selected
 
 
+def _ensure_broker_instance_role(
+    iam,  # noqa: ANN001
+    dev_id: str,
+    region: str,
+) -> tuple[str, str]:
+    """Idempotently create the per-developer broker role + instance profile.
+
+    Returns ``(role_name, profile_name)``. The role grants:
+      - sts:AssumeRole from ec2.amazonaws.com (trust policy)
+      - AmazonSSMManagedInstanceCore (managed) — keeps SSM access working
+      - secretsmanager:GetSecretValue on arn:aws:secretsmanager:*:*:secret:remo/<dev>/* (inline)
+
+    Per research R3 + contracts/bootstrap-delivery.md.
+    """
+    role_name = f"remo-broker-instance-{dev_id}"
+    profile_name = role_name  # Same name simplifies tear-down lookup.
+
+    assume_role_policy = json.dumps(
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {"Service": "ec2.amazonaws.com"},
+                    "Action": "sts:AssumeRole",
+                }
+            ],
+        }
+    )
+
+    broker_policy = json.dumps(
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Action": ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+                    "Resource": f"arn:aws:secretsmanager:*:*:secret:remo/{dev_id}/*",
+                }
+            ],
+        }
+    )
+
+    # Role
+    try:
+        iam.get_role(RoleName=role_name)
+    except iam.exceptions.NoSuchEntityException:
+        iam.create_role(
+            RoleName=role_name,
+            AssumeRolePolicyDocument=assume_role_policy,
+            Description=f"remo broker access for developer {dev_id}",
+            Tags=[
+                {"Key": "remo", "Value": "true"},
+                {"Key": "remo:dev_id", "Value": dev_id},
+                {"Key": "remo:region", "Value": region},
+            ],
+        )
+
+    # Managed policy: SSM (idempotent — attach_role_policy is safe to re-call)
+    try:
+        iam.attach_role_policy(
+            RoleName=role_name,
+            PolicyArn="arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+        )
+    except Exception:
+        # Already attached → ignore.
+        pass
+
+    # Inline policy: scoped secretsmanager access
+    iam.put_role_policy(
+        RoleName=role_name,
+        PolicyName="remo-broker-secretsmanager-scoped",
+        PolicyDocument=broker_policy,
+    )
+
+    # Instance profile
+    try:
+        iam.get_instance_profile(InstanceProfileName=profile_name)
+    except iam.exceptions.NoSuchEntityException:
+        iam.create_instance_profile(
+            InstanceProfileName=profile_name,
+            Tags=[
+                {"Key": "remo", "Value": "true"},
+                {"Key": "remo:dev_id", "Value": dev_id},
+            ],
+        )
+        # IAM eventual consistency.
+        time.sleep(10)
+
+    # Attach role to profile (idempotent)
+    try:
+        resp = iam.get_instance_profile(InstanceProfileName=profile_name)
+        attached = [r.get("RoleName") for r in resp.get("InstanceProfile", {}).get("Roles", [])]
+        if role_name not in attached:
+            iam.add_role_to_instance_profile(
+                InstanceProfileName=profile_name, RoleName=role_name
+            )
+    except Exception as exc:
+        print_warning(f"Could not verify role-to-profile attachment: {exc}")
+
+    return role_name, profile_name
+
+
+def _attach_broker_deny_all_policy(iam, role_name: str) -> None:  # noqa: ANN001
+    """Revocation primitive: replace inline policy with deny-all on every action.
+
+    Per research R9: revocation = STS deny-all update + (post-terminate) role/profile delete.
+    """
+    deny_all = json.dumps(
+        {
+            "Version": "2012-10-17",
+            "Statement": [{"Effect": "Deny", "Action": "*", "Resource": "*"}],
+        }
+    )
+    iam.put_role_policy(
+        RoleName=role_name,
+        PolicyName="remo-broker-secretsmanager-scoped",
+        PolicyDocument=deny_all,
+    )
+
+
+def _delete_broker_instance_role(iam, role_name: str, profile_name: str) -> None:  # noqa: ANN001
+    """Tear down the per-developer broker role + profile after `terminate_instances`."""
+    try:
+        iam.remove_role_from_instance_profile(
+            InstanceProfileName=profile_name, RoleName=role_name
+        )
+    except Exception:
+        pass
+    try:
+        iam.delete_instance_profile(InstanceProfileName=profile_name)
+    except Exception:
+        pass
+    for policy_name in ("remo-broker-secretsmanager-scoped",):
+        try:
+            iam.delete_role_policy(RoleName=role_name, PolicyName=policy_name)
+        except Exception:
+            pass
+    try:
+        iam.detach_role_policy(
+            RoleName=role_name,
+            PolicyArn="arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore",
+        )
+    except Exception:
+        pass
+    try:
+        iam.delete_role(RoleName=role_name)
+    except Exception:
+        pass
+
+
 def _create_ssm_resources(iam, resource_name: str) -> str:  # noqa: ANN001
     """Create a new IAM role and instance profile for SSM.
 
@@ -407,9 +558,21 @@ def create(
 
     # Determine IAM instance profile
     iam_created = False
+    backend = os.environ.get("REMO_BROKER_BACKEND", "")
+    dev_id = os.environ.get("REMO_DEV_ID", "") or os.environ.get("USER", "remo")
     if iam_profile:
         print_info(f"Using provided IAM instance profile: {iam_profile}")
         selected_profile = iam_profile
+    elif backend:
+        # Phase 3, US1: per-developer broker instance profile (research R3).
+        session = _boto3_session(effective_region)
+        iam = session.client("iam")
+        _role_name, profile_name = _ensure_broker_instance_role(
+            iam, dev_id=dev_id, region=effective_region
+        )
+        selected_profile = profile_name
+        iam_created = True
+        print_info(f"Using broker IAM instance profile: {selected_profile}")
     else:
         selected_profile = select_ssm_instance_profile(resource_name, effective_region)
         iam_created = True  # May or may not have been created; safe default

@@ -17,15 +17,20 @@ def cli() -> None:
 
 @cli.result_callback()
 def _post_command_hook(result: object, **kwargs: object) -> None:
-    """Run passive update check after every command."""
+    """Run passive update check + overdue-rotation reminder after every command."""
     try:
         from remo_cli.core.version import check_for_updates_passive
-        from remo_cli.core.output import print_info
+        from remo_cli.core.output import print_info, print_warning
 
         hint = check_for_updates_passive()
         if hint:
             print()
             print_info(hint)
+
+        # 005-credential-broker T083a: passive overdue-rotation reminder.
+        from remo_cli.core.broker_revoke import overdue_reminders
+        for reminder in overdue_reminders():
+            print_warning(reminder)
     except Exception:
         pass
 
@@ -79,6 +84,9 @@ def _register_commands() -> None:
     # when only --version or --help is requested.
     from remo_cli.cli.shell import shell  # noqa: F811
     from remo_cli.cli.cp import cp  # noqa: F811
+    from remo_cli.cli.init import init_command  # noqa: F811
+    from remo_cli.cli.audit import audit_command  # noqa: F811
+    from remo_cli.cli.rotate import rotate_command  # noqa: F811
     from remo_cli.cli.providers.incus import incus  # noqa: F811
     from remo_cli.cli.providers.proxmox import proxmox  # noqa: F811
     from remo_cli.cli.providers.hetzner import hetzner  # noqa: F811
@@ -86,6 +94,9 @@ def _register_commands() -> None:
 
     cli.add_command(shell)
     cli.add_command(cp)
+    cli.add_command(init_command)
+    cli.add_command(audit_command)
+    cli.add_command(rotate_command)
     cli.add_command(incus)
     cli.add_command(proxmox)
     cli.add_command(hetzner)

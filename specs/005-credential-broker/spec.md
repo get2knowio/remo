@@ -5,6 +5,16 @@
 **Status**: Draft
 **Input**: User description: "Defend against malicious-dependency supply-chain attacks by removing long-lived developer credentials from Remo instances. Replace ambient environment variables and dotfile-resident secrets with an on-instance broker process that surfaces narrowly-scoped, allowlisted credentials into each devcontainer via per-project Unix sockets."
 
+## Clarifications
+
+### Session 2026-05-25
+
+- Q: Should the project socket be created per-devcontainer-lifetime or per-project-lifetime? → A: Per-devcontainer-lifetime (socket created when devcontainer starts, removed when it exits).
+- Q: How should the broker behave when a backend requires interactive auth (1Password biometric, hardware tap, browser SSO)? → A: Forbid interactive backends for instance/broker use; `remo init` refuses to configure them. Only non-interactive identities (SA tokens, AppRole, IAM) are accepted.
+- Q: Default bootstrap-token rotation cadence? → A: 7 days, with per-instance override via FR-021.
+- Q: In-memory secret cache TTL? → A: Honor backend-issued lease/TTL where available; default 15 min when backend has no native TTL.
+- Q: How is the node admin identity bootstrapped for Incus/Proxmox nodes hosting instances from multiple developers? → A: Per-developer admin SAs — each developer registers the node with their own backend admin identity; the node's token-manager helper dispatches by instance owner.
+
 ## Background and Motivation
 
 Recent supply-chain attacks against npm (Shai-Hulud, Mini Shai-Hulud against `@antv`), PyPI, and other ecosystems share a pattern: a malicious dependency's install or postinstall script runs with the developer's full ambient environment and reads `GITHUB_TOKEN`, `NPM_TOKEN`, `AWS_*`, `~/.aws/credentials`, `~/.netrc`, `~/.npmrc`, SSH private keys, and similar. The Remo instance — being where most active dev credentials accumulate — is a high-value target.
@@ -143,7 +153,7 @@ When `remo destroy` runs against any instance, Remo revokes the bootstrap token 
 **Acceptance Scenarios**:
 
 1. **Given** an instance with an active bootstrap token, **When** `remo destroy` runs, **Then** the token is revoked at the backend before any instance-deletion API call.
-2. **Given** a rotation policy is configured, **When** the rotation interval elapses, **Then** a fresh bootstrap token is provisioned to the instance and the previous one is revoked.
+2. **Given** a rotation cadence is configured, **When** the cadence elapses, **Then** the next `remo` invocation surfaces an overdue reminder; running `remo rotate-bootstrap <instance>` mints a fresh token and revokes the previous one.
 3. **Given** rotation fails for any reason, **When** the broker detects auth failures against the backend, **Then** it surfaces an actionable error and continues serving in-memory-cached credentials until they expire.
 
 ---
@@ -184,6 +194,7 @@ The current project menu launches `devcontainer up` only when a project contains
 - **FR-001**: System MUST support pluggable backends for the credential store, with first-class support for 1Password, HashiCorp Vault, AWS Secrets Manager, and age-encrypted git for the v1 cut.
 - **FR-002**: System MUST allow per-installation backend choice via `remo init`, persisted to laptop-side fnox configuration.
 - **FR-003**: System MUST warn the user at `init` time when their selected backend lacks per-instance scoping primitives (age + git) and offer a more secure alternative or a clearly-described downgrade.
+- **FR-003a**: System MUST reject (at `remo init` time) backend identity types that require interactive authentication for retrieval (1Password biometric unlock, hardware-key tap, browser SSO). Only non-interactive identities — 1Password Service Account tokens, Vault AppRole, AWS IAM instance profiles, age key files, or equivalent — are accepted for instance/broker use, so that autonomous overnight agent sessions (US2 AS#3) can be honored. The broker MUST surface a clear error if a configured backend ever returns an interactive-auth challenge at runtime.
 
 **Provisioning credentials**
 - **FR-004**: System MUST read provisioning credentials (HETZNER_API_TOKEN, AWS access keys, Incus/Proxmox API tokens) from the laptop's fnox rather than the laptop's shell environment.
@@ -195,12 +206,12 @@ The current project menu launches `devcontainer up` only when a project contains
 - **FR-008**: For AWS, system MUST attach an instance-scoped IAM role at create time and configure the broker to use IMDS for credentials. No bootstrap token shall be written to disk.
 - **FR-009**: For Hetzner, system MUST mint an instance-scoped bootstrap token on the laptop, SSH-push it to `/etc/remo-broker/bootstrap-token` (mode 0400, root) after first boot, and not include the token in any cloud-init user-data.
 - **FR-010**: For Incus and Proxmox, system MUST mint the bootstrap token on the laptop, place it under `/var/lib/remo-broker/instance-tokens/<instance>` on the *node* (not in any instance), and bind-mount it read-only into the instance at `/etc/remo-broker/bootstrap-token`. The node itself MUST NOT inspect or store project information.
-- **FR-011**: System MUST register the node (one-time per Incus/Proxmox node) via a new `remo incus add-node` and `remo proxmox add-node` command, installing the token-manager helper.
+- **FR-011**: System MUST register the node (one-time per Incus/Proxmox node *per developer*) via a new `remo incus add-node` and `remo proxmox add-node` command, installing the token-manager helper. Each developer registers the node with their own backend admin SA (stored in their laptop's fnox); the node-side token-manager dispatches by instance owner so that one developer's admin SA cannot mint bootstrap tokens for another developer's instances. A shared node ends up with one helper installation plus one admin-SA entry per registered developer.
 
 **Project sockets and manifests**
 - **FR-012**: System MUST discover project manifests in priority order: `.devcontainer/remo-broker.toml` (committed) → `.remo/broker.toml` (auto-synthesized, gitignored).
 - **FR-013**: System MUST auto-synthesize a minimal default manifest declaring `github_token` for projects with no existing manifest.
-- **FR-014**: System MUST create one project socket per active project at `/run/remo-broker/<project>.sock` on the instance, enforcing the project's manifest allowlist.
+- **FR-014**: System MUST create one project socket per running devcontainer at `/run/remo-broker/<project>.sock` on the instance at devcontainer start time, enforcing the project's manifest allowlist for the lifetime of that devcontainer.
 - **FR-015**: System MUST mount the appropriate project socket into the project's devcontainer at `/run/remo-broker/sock` via devcontainer bind-mount configuration.
 - **FR-016**: System MUST remove a project socket when its associated devcontainer exits.
 
@@ -211,7 +222,7 @@ The current project menu launches `devcontainer up` only when a project contains
 
 **Lifecycle**
 - **FR-020**: `remo destroy` MUST revoke an instance's bootstrap token at the backend *before* destroying the instance.
-- **FR-021**: System MUST support periodic rotation of bootstrap tokens via a `remo rotate-bootstrap [instance]` command, configurable to run automatically on a cadence.
+- **FR-021**: System MUST support periodic rotation of bootstrap tokens via a `remo rotate-bootstrap [instance]` command. Default cadence is **7 days**; users may override per-instance (including disabling automatic rotation by setting cadence to `0`). The CLI MUST surface a passive reminder ("instance `<name>` is overdue for bootstrap rotation by N days — run `remo rotate-bootstrap <name>`") at the end of any `remo` invocation when an instance has exceeded its cadence. Automatic background scheduling (cron/systemd timer) is out of scope for this release.
 - **FR-022**: The broker MUST hold user-secret values in memory only, never writing them to disk on the instance.
 
 **Auditability**
@@ -222,11 +233,12 @@ The current project menu launches `devcontainer up` only when a project contains
 
 - **NFR-001**: A broker-mediated secret fetch in the steady state (warm cache) MUST add no more than 50 ms latency over a direct env-var read.
 - **NFR-002**: The broker MUST survive `systemd` restarts and instance reboots without manual reconfiguration.
-- **NFR-003**: An instance's broker MUST function for all configured backends across a backend network outage by serving the last in-memory-cached value until that value's TTL expires.
+- **NFR-003**: An instance's broker MUST function for all configured backends across a backend network outage by serving the last in-memory-cached value until that value's TTL expires (see NFR-004).
+- **NFR-004**: The broker's in-memory secret cache MUST honor the backend-issued lease/TTL when one is present (e.g., Vault leases, AWS STS expirations). For backends with no native TTL on retrieved values (1Password, age + git, OS keychain), the cache MUST use a default TTL of **15 minutes**. Per-secret overrides MAY be permitted via project-manifest or instance configuration; cached values MUST NOT be served past expiry.
 
 ### Key Entities
 
-- **Node** (new model): represents an Incus or Proxmox node registered with Remo. Fields include `name`, `host` (SSH target), `provider`, `bootstrap_admin_identity` (an SA admin token capable of minting per-instance sub-tokens, stored in laptop's fnox). Not used for AWS or Hetzner.
+- **Node** (new model): represents an Incus or Proxmox node registered with Remo. Fields include `name`, `host` (SSH target), `provider`, and `bootstrap_admin_identities` (a map keyed by developer identifier, where each value is that developer's backend admin SA token capable of minting per-instance sub-tokens scoped to *their* secrets only; the developer's entry is stored in their own laptop's fnox). The node-side token-manager dispatches by instance owner so that one developer's admin SA cannot mint tokens for another developer's instances. Not used for AWS or Hetzner.
 - **Bootstrap token** (no Remo model — opaque string): the per-instance backend identity. Located at `/etc/remo-broker/bootstrap-token` on instance, `/var/lib/remo-broker/instance-tokens/<name>` on node (self-hosted only). On instances with a TPM, the token SHOULD be sealed at rest via systemd's `LoadCredentialEncrypted` / TPM2 binding so that an offline disk read does not yield a usable token.
 - **Project manifest** (TOML file in repo or `.remo/`): declares the set of backend secret names this project requires. Read by the broker when minting a project socket.
 - **Project socket** (Unix domain socket): per-project, per-instance, ephemeral, enforces the manifest's allowlist.
@@ -303,14 +315,11 @@ Schema-drift mitigations between the two repos: (1) JSON Schema generated from R
 - **Backend selection UI improvements** beyond the minimum needed at `remo init`. A full backend management TUI is future work.
 - **Secret rotation at the user-secret level**: this spec rotates *bootstrap tokens* (the broker's identity). Rotation of the actual GitHub PAT, NPM token, etc. is the backend's concern and the user's policy choice.
 - **Multi-user instances**: this spec assumes each instance has one developer user. Multi-tenant instances would need per-user project-socket isolation, deferred to future work.
+- **Automatic background scheduling of bootstrap rotation**: this release ships rotation as a manual command + passive overdue reminder. A cron/systemd-timer-based scheduler is deferred to a follow-up feature.
 
 ## Open Questions
 
-- **OQ-1**: Should the project socket be created per-devcontainer-lifetime or per-project-lifetime? The former gives strict ephemerality but may complicate background tasks like `cargo build` running across `devcontainer exec` invocations. The latter is operationally simpler.
-- **OQ-2**: For Incus/Proxmox nodes that host instances from multiple developers, how is the node's admin identity (used to mint sub-tokens for each developer's instances) bootstrapped? Per-developer admin SAs, or a single node admin SA with logical sub-scoping?
 - **OQ-3**: Should the broker also serve the `gh` git credential helper protocol natively, or is `gh auth login --with-token` against a broker-fetched token sufficient?
-- **OQ-4**: Default rotation cadence for bootstrap tokens — 24h, 7d, or "never (revoke only on destroy)"? Trade-off is operational noise vs. exposure window.
-- **OQ-5**: How should the broker behave when a backend requires interactive auth (e.g., 1Password biometric prompt) and the requesting context is non-interactive (autonomous AI agent at 3am)? Refuse and surface the requirement, or rely entirely on non-interactive backend identities (SA tokens) and forbid interactive ones for instance use?
 - **OQ-6**: Should the broker make the bootstrap-token file's TPM2 sealing mandatory on instances where a TPM is available, or remain opt-in via configuration? Mandatory closes the offline-disk-read attack reliably; opt-in avoids surprises for users on older hardware or with custom systemd setups.
 - **OQ-7**: Should the broker embed fnox as a Rust library (tight coupling, one process, faster) or shell out to the `fnox` binary as a subprocess (loose coupling, version-independent, slower)? Subprocess is simpler to ship and lets users upgrade fnox independently; library is faster and avoids a fork+exec per uncached fetch but locks the broker to a specific fnox version.
 - **OQ-8**: What's the wire protocol on the project socket — a simple line-based `GET <name>\n` / `<value>\n` shape, a fnox-CLI-compatible protocol (so tools that already speak fnox work unchanged), or something richer (gRPC, JSON-RPC) that supports streaming, watches, and structured errors? Simpler is easier to audit; richer enables future features like credential-change notifications.
