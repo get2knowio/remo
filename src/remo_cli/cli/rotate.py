@@ -78,6 +78,34 @@ def _is_overdue(cadence_days: int, last_rotation: datetime | None) -> bool:
     return _now() - last_rotation >= timedelta(days=cadence_days)
 
 
+def _deliver_and_reload(host: KnownHost, token: str) -> None:
+    """Push *token* to the instance and trigger the broker's rotate-bootstrap op.
+
+    Provider-specific: today only Hetzner is wired. For other providers the
+    token-delivery path differs (AWS-SM reads creds from IMDS so there is
+    nothing to push; Incus/Proxmox use container-mount delivery and a
+    different SSH target shape). Raises NotImplementedError for non-Hetzner
+    callers so the rotate-bootstrap CLI surfaces it as a partial result
+    rather than silently leaving stale state on the box.
+    """
+    from remo_cli.core import broker_admin  # noqa: PLC0415
+
+    if host.type == "hetzner":
+        from remo_cli.providers.hetzner import (  # noqa: PLC0415
+            _hetzner_server_id,
+            _push_bootstrap_token,
+        )
+        server_id = _hetzner_server_id(host.name)
+        _push_bootstrap_token(host.host, token, ssh_user="root", server_id=server_id)
+        broker_admin.rotate_bootstrap(ssh_host=host.host, ssh_user="root")
+        return
+
+    raise NotImplementedError(
+        f"rotate-bootstrap delivery not wired for {host.type!r} yet "
+        "(token minted/revoked at backend but instance still has the old token)."
+    )
+
+
 def _rotate_one(host: KnownHost, force: bool) -> bool:
     """Rotate a single instance. Returns True on success or skip-fresh; False on failure."""
     cadence, last_rotation, current_token_id = _read_rotation_metadata(host)
@@ -97,6 +125,7 @@ def _rotate_one(host: KnownHost, force: bool) -> bool:
         )
         return False
 
+    from remo_cli.core import broker_admin  # noqa: PLC0415
     from remo_cli.providers import broker as broker_mod  # noqa: PLC0415
 
     try:
@@ -108,10 +137,30 @@ def _rotate_one(host: KnownHost, force: bool) -> bool:
         print_error(f"{host.name}: mint failed: {exc}")
         return False
 
-    # TODO(broker daemon SIGHUP) — once remo-broker supports a reload signal we
-    # send it here. For now, we trust the systemd unit's Restart=on-failure.
+    token = minted.get("token", "")
+    if token:
+        try:
+            _deliver_and_reload(host, token)
+        except NotImplementedError as exc:
+            print_warning(f"{host.name}: {exc}")
+        except (broker_admin.BrokerAdminError, RuntimeError) as exc:
+            print_error(
+                f"{host.name}: fresh token minted ({minted.get('token_id')}) "
+                f"but delivery to instance failed: {exc}. The previous token "
+                "is still serving — re-run after fixing connectivity, or "
+                "revoke manually at the backend if compromise is suspected."
+            )
+            return False
+    # AWS-SM mint returns token=="" (creds come from IMDS); the broker still
+    # needs to be told to re-fetch via the admin socket.
+    elif host.type == "aws":
+        try:
+            broker_admin.rotate_bootstrap(ssh_host=host.host, ssh_user=host.user or "remo")
+        except broker_admin.BrokerAdminError as exc:
+            print_warning(
+                f"{host.name}: backend rotated but broker reload failed: {exc}"
+            )
 
-    # Revoke the previous token (if any) after the fresh one is in place.
     if current_token_id:
         try:
             broker_mod.revoke_bootstrap_token(
