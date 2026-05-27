@@ -52,18 +52,13 @@
     - name: Configure dev tools
       ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
 
-    # 005-credential-broker: install the broker daemon and assert the
-    # bootstrap-token file is in place (SSH-pushed earlier by `remo hetzner create`).
-    # Skipped until the user opts in via REMO_BROKER_BACKEND (release not yet published).
+    # 005-credential-broker: install the broker daemon (binary published as
+    # of remo-broker v0.1.0). The systemd unit installs enabled-but-stopped
+    # until a bootstrap token is provisioned, so it's safe to run on every
+    # create regardless of whether the user has configured a backend yet.
     - name: Install remo credential broker
       ansible.builtin.include_role:
         name: broker_install
-      when: lookup('env', 'REMO_BROKER_BACKEND') | default('', true) | length > 0
-
-    - name: Notify that broker install was skipped
-      ansible.builtin.debug:
-        msg: "Skipping remo-broker install: REMO_BROKER_BACKEND is not set on the laptop env."
-      when: lookup('env', 'REMO_BROKER_BACKEND') | default('', true) | length == 0
 
     - name: Assert bootstrap token file present and mode 0400 root
       ansible.builtin.include_role:
