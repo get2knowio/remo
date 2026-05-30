@@ -396,10 +396,12 @@ def create(
             # Proxmox LXC has no host-side `user.*` config primitive (unlike
             # Incus). Store metadata as an in-container file under
             # /etc/remo-broker/ — same lifetime as the bootstrap-token file
-            # the broker itself reads.
+            # the broker itself reads. `mkdir -p` because cadence is written
+            # at create time, before broker_install has run to provision the
+            # directory.
             cfg_cmd = (
                 f"pct exec {shlex.quote(str(vmid))} -- sh -c "
-                f"{shlex.quote(f'echo {int(cadence_days)} > /etc/remo-broker/rotation_cadence_days')}"
+                f"{shlex.quote(f'mkdir -p /etc/remo-broker && echo {int(cadence_days)} > /etc/remo-broker/rotation_cadence_days')}"
             )
             result = _ssh_run(host, user, cfg_cmd)
             if result.returncode != 0:

@@ -116,6 +116,7 @@ def test_proxmox_create_writes_cadence_via_pct_exec(mocker):
     assert rc == 0
     found = any(
         "pct exec 200 --" in call.args[2]
+        and "mkdir -p /etc/remo-broker" in call.args[2]
         and "/etc/remo-broker/rotation_cadence_days" in call.args[2]
         and "echo 14" in call.args[2]
         for call in ssh_run.call_args_list
