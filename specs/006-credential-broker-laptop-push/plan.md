@@ -125,9 +125,9 @@ See [remo-broker spec 002 §Sequencing](https://github.com/get2knowio/remo-broke
 | 5 | 005 spec disposition | ✅ Leave intact as historical reference; this spec links back |
 | 6 | PR #32 disposition | ✅ Close with explanatory comment |
 | 7 | remo-broker 001 spec | ✅ Superseded by remo-broker 002 |
-| 8 | `age` library on laptop: `pyrage` (binding) vs. shelling out to `age` CLI | Open — Phase 0 decision |
+| 8 | `age` library on laptop: `pyrage` (binding) vs. shelling out to `age` CLI | ✅ `pyrage` — no user-side `age` install required; in-process; typed errors; testable |
 | 9 | `secrets.enc` path: under `StateDirectory=` (`/var/lib/remo-broker/secrets.enc`) | ✅ Per audit recommendation |
-| 10 | First-contact pubkey trust model: TOFU + warn-on-change, or strict | Open — Phase 0 decision (lean TOFU; matches SSH known_hosts UX) |
+| 10 | First-contact pubkey trust model: TOFU + warn-on-change, or strict | ✅ TOFU. Pin silently on first contact (during `remo create`, SSH layer is already trusted); warn loudly on any subsequent change; provide `remo {provider} repin <instance>` to acknowledge legitimate rebuilds. Matches SSH host-key UX. Optional `--strict-pin` flag deferred until demand. |
 | 11 | Per-project vs. single global encrypted blob on the instance | Open — Phase 2 decision (lean single blob; simpler swap semantics) |
 
 ## What happens to 005 artifacts
