@@ -59,14 +59,48 @@
   ansible.builtin.apt:
     update_cache: true
 
+- name: Check Docker repository package availability
+  ansible.builtin.command:
+    cmd: >-
+      apt-cache policy
+      docker-ce
+      docker-ce-cli
+      containerd.io
+      docker-buildx-plugin
+      docker-compose-plugin
+  register: docker_repo_package_policy
+  changed_when: false
+
+- name: Select Docker package source
+  ansible.builtin.set_fact:
+    docker_package_names: >-
+      {{
+        [
+          'docker-ce',
+          'docker-ce-cli',
+          'containerd.io',
+          'docker-buildx-plugin',
+          'docker-compose-plugin',
+        ]
+        if 'Candidate: (none)' not in docker_repo_package_policy.stdout
+        else [
+          'docker.io',
+          'containerd',
+          'docker-buildx-plugin',
+          'docker-compose-v2',
+        ]
+      }}
+
+- name: Report Docker package fallback
+  ansible.builtin.debug:
+    msg: >-
+      Docker's upstream apt repo does not publish the required packages for
+      this host; falling back to Ubuntu's docker.io package set.
+  when: "'Candidate: (none)' in docker_repo_package_policy.stdout"
+
 - name: Install Docker packages
   ansible.builtin.apt:
-    name:
-      - docker-ce
-      - docker-ce-cli
-      - containerd.io
-      - docker-buildx-plugin
-      - docker-compose-plugin
+    name: "{{ docker_package_names }}"
     state: present
 
 - name: Ensure Docker service is started and enabled
