@@ -31,6 +31,12 @@ build/
 *.egg-info/
 *.egg
 
+# Test / coverage artifacts
+.coverage
+.coverage.*
+.pytest_cache/
+htmlcov/
+
 # Python virtual environment
 venv/
 .venv/

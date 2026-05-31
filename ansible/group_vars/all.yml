@@ -27,3 +27,12 @@ zellij_session_name: "main"  # Session name for SSH auto-attach
 
 # Node.js Configuration
 nodejs_version: "24"  # LTS version
+
+# ============================================================================
+# Remo Notifier (spec 007)
+# ============================================================================
+# Notifier sidecar that delivers agentsh approval requests to Telegram and
+# returns the human's decision. Deployed by the remo_notifier role.
+
+remo_notifier_telegram_bot_token: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_BOT_TOKEN') }}"
+remo_notifier_telegram_chat_id: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_CHAT_ID') }}"

@@ -76,6 +76,11 @@
     name: zellij
   when: configure_zellij | default(true) | bool
 
+- name: Deploy Remo Notifier
+  ansible.builtin.include_role:
+    name: remo_notifier
+  when: configure_remo_notifier | default(true) | bool
+
 - name: Write remo version marker
   ansible.builtin.copy:
     content: "{{ remo_version | default('') }}"

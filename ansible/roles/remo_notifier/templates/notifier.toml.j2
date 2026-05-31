@@ -1,0 +1,23 @@
+{{ ansible_managed | comment }}
+# Rendered by the remo_notifier Ansible role. Do not edit by hand.
+
+[server]
+listen_host = "0.0.0.0"
+listen_port = 18181
+log_level = "{{ remo_notifier_log_level }}"
+
+[approval]
+default_timeout_seconds = {{ remo_notifier_default_timeout_seconds | int }}
+max_timeout_seconds = {{ remo_notifier_max_timeout_seconds | int }}
+max_pending_approvals = {{ remo_notifier_max_pending_approvals | int }}
+
+[transport]
+type = "telegram"
+
+[transport.telegram]
+bot_token_file = "/run/secrets/telegram_bot_token"
+authorized_chat_id = {{ remo_notifier_telegram_chat_id | int }}
+message_parse_mode = "{{ remo_notifier_message_parse_mode }}"
+
+[instance]
+id = "{{ remo_notifier_instance_id }}"

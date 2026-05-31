@@ -1,0 +1,137 @@
+openapi: 3.1.0
+info:
+  title: Remo Notifier — agentsh approval wire protocol
+  version: "1.0.0"
+  description: >
+    Durable contract between agentsh (or any future approval emitter) and the
+    notifier sidecar. The notifier listens on 0.0.0.0:18181 inside its container;
+    the host binds it to the Docker bridge address (e.g. 172.17.0.1:18181),
+    reachable only by co-located devcontainers. No transport encryption and no
+    caller authentication in v1 (see spec FR-021). Fail-secure: no outcome other
+    than an explicit authorized human Approve ever yields "allow".
+servers:
+  - url: http://172.17.0.1:18181
+    description: Host Docker-bridge binding (example)
+paths:
+  /v1/approve:
+    post:
+      summary: Submit an approval request and block until a decision exists
+      description: >
+        The connection is held open until a human decides, the timeout fires, or
+        the service shuts down. Exactly one response is returned.
+      operationId: approve
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ApprovalRequest" }
+      responses:
+        "200":
+          description: A decision was made (allow or deny) by an authorized human.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalResponse" }
+        "400":
+          description: Schema validation failure (unknown field, bad type, bad UUID).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "408":
+          description: >
+            No human responded within the (clamped) timeout. Fail-secure: body is
+            a full ApprovalResponse with decision=deny, reason="timeout".
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApprovalResponse" }
+        "409":
+          description: >
+            The supplied approval_id matches an approval already pending (FR-003a).
+            The original pending approval is left running; no second notification.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "503":
+          description: >
+            Service unavailable — shutting down, transport unreachable, no
+            human-side configuration loaded, at max pending-approval capacity
+            (FR-034), or the notification for THIS request failed to send
+            (FR-010a). No pending slot is held in the send-failure case.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+  /v1/health:
+    get:
+      summary: Liveness probe (no auth)
+      operationId: health
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthResponse" }
+components:
+  schemas:
+    Operation:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [command, file, network, signal] }
+        command: { type: string }
+        args: { type: array, items: { type: string }, default: [] }
+        path: { type: string }
+        remote_host: { type: string }
+        remote_port: { type: integer, minimum: 1, maximum: 65535 }
+        context: { type: string, enum: [direct, nested], default: direct }
+        depth: { type: integer, minimum: 0, default: 0 }
+    ApprovalRequest:
+      type: object
+      additionalProperties: false
+      required: [operation, policy_rule_name, policy_message]
+      properties:
+        approval_id:
+          type: string
+          format: uuid
+          description: Optional; server generates if absent. Duplicate-of-pending → 409.
+        session_id: { type: string, description: Opaque agentsh session id. }
+        operation: { $ref: "#/components/schemas/Operation" }
+        policy_rule_name: { type: string }
+        policy_message: { type: string }
+        workspace: { type: string, description: DEBUG-log only; never logged at INFO+. }
+        instance_id: { type: string, description: Falls back to configured instance id. }
+        project: { type: string }
+        timeout_seconds:
+          type: integer
+          minimum: 1
+          description: Clamped to [1, max_timeout_seconds]; defaults to default_timeout_seconds.
+        submitted_at: { type: string, format: date-time }
+    ApprovalResponse:
+      type: object
+      required: [approval_id, decision, responder, reason, decided_at, latency_ms]
+      properties:
+        approval_id: { type: string }
+        decision: { type: string, enum: [allow, deny] }
+        responder:
+          type: string
+          description: e.g. "telegram:paulofallon" or "system:timeout".
+        reason: { type: string, description: May be empty; "timeout" on 408. }
+        decided_at: { type: string, format: date-time }
+        latency_ms: { type: integer, minimum: 0 }
+    HealthResponse:
+      type: object
+      required: [status, version, transport, uptime_seconds, pending_approvals]
+      properties:
+        status: { type: string, example: ok }
+        version: { type: string }
+        transport: { type: string, example: telegram }
+        uptime_seconds: { type: integer, minimum: 0 }
+        pending_approvals: { type: integer, minimum: 0 }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [validation_error, duplicate_approval_id, unavailable]
+        detail: { type: string, description: Human-readable; never contains secrets. }
+        approval_id: { type: string, description: Present on 409. }

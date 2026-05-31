@@ -205,6 +205,46 @@ The `destroy` command on each provider checks for existing snapshots first and
 offers to clean them up. Decline and the snapshots remain (you'll be warned
 they continue to incur storage costs on AWS/Hetzner).
 
+## Notifier
+
+The **notifier** is a small approval bridge that runs as a hardened container on
+a remo host. When an agentsh-secured devcontainer needs human sign-off for an
+operation, it POSTs an approval request to the notifier, which messages you on
+Telegram with **Approve** / **Deny** buttons and returns your decision. It fails
+secure: a timeout, a shutdown, or a lost connection all mean *deny*. The wire
+protocol is documented in
+[`src/remo_cli/notifier/docs/wire-protocol.md`](src/remo_cli/notifier/docs/wire-protocol.md).
+
+The notifier's runtime dependencies (FastAPI, python-telegram-bot, …) live in an
+optional `notifier` extra and are installed only inside the container — a normal
+`remo` install does not pull them in.
+
+### Notifier setup
+
+1. **Create a Telegram bot**: message [`@BotFather`](https://t.me/BotFather), run
+   `/newbot`, follow the prompts, and save the bot token.
+2. **Find your chat id**: message `@userinfobot` from your own account; it
+   replies with your numeric user id — that's your `authorized_chat_id`.
+3. **Message your new bot once** (any message) so it can DM you.
+4. **Export credentials** on the machine where `remo` runs:
+   ```bash
+   export REMO_NOTIFIER_TELEGRAM_BOT_TOKEN="12345:ABC...your-token"
+   export REMO_NOTIFIER_TELEGRAM_CHAT_ID="987654321"
+   ```
+5. **Deploy**: `remo notifier deploy <host>` (omit `<host>` to fuzzy-pick).
+6. **Verify**: `remo notifier test <host>` — you should get a Telegram message
+   within ~2 s; tapping Approve or Deny returns the decision to the CLI.
+
+### Notifier commands
+
+```bash
+remo notifier deploy  <host> [--rebuild]   # apply the role; --rebuild forces a fresh image
+remo notifier status  <host>               # GET /v1/health
+remo notifier logs    <host> [-f] [-n N]   # journalctl -u remo-notifier.service
+remo notifier test    <host>               # push a test approval, print the decision
+remo notifier restart <host>               # systemctl restart remo-notifier.service
+```
+
 ## CLI Reference
 
 ```bash
