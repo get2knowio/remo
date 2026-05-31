@@ -1,7 +1,6 @@
 """Shared fixtures for remo tests."""
 
 import os
-import tempfile
 
 import pytest
 

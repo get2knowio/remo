@@ -43,8 +43,8 @@ def proxmox() -> None:
     help="Run as unprivileged container (default: unprivileged).",
 )
 @click.option("--domain", default="", help="Domain name for the container.")
-@click.option("--only", multiple=True, help="Only install these tools.")
-@click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option("--only", multiple=True, help="Only install these tools (broker and _remo-vault still reconcile).")
+@click.option("--skip", multiple=True, help="Skip these tools (broker and _remo-vault still reconcile).")
 @click.option(
     "--use-ip",
     is_flag=True,
@@ -71,7 +71,7 @@ def create(
     yes: bool,
     verbose: bool,
 ) -> None:
-    """Create a Proxmox LXC container."""
+    """Create a Proxmox LXC container and reconcile the managed broker sidecar."""
     rc = providers_proxmox.create(
         name=name,
         host=host,
@@ -145,8 +145,8 @@ def destroy(
     type=int,
     help="Set the memory limit in MiB via pct set (live).",
 )
-@click.option("--only", multiple=True, help="Only install these tools.")
-@click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option("--only", multiple=True, help="Only install these tools (broker and _remo-vault still reconcile).")
+@click.option("--skip", multiple=True, help="Skip these tools (broker and _remo-vault still reconcile).")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def update(
     name: str,
@@ -159,7 +159,7 @@ def update(
     skip: tuple[str, ...],
     verbose: bool,
 ) -> None:
-    """Update tools on a Proxmox LXC container."""
+    """Update tools while reconciling the managed broker sidecar."""
     rc = providers_proxmox.update(
         name=name,
         host=host,

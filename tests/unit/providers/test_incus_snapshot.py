@@ -83,6 +83,34 @@ class TestListSnapshots:
 
 
 class TestSnapshotCreate:
+    def test_create_reports_broker_reconciliation_and_vault_summary(self, mocker, capsys):
+        mocker.patch("remo_cli.providers.incus.detect_timezone", return_value="")
+        mocker.patch("remo_cli.providers.incus.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.providers.incus.run_playbook", return_value=0)
+        mocker.patch("remo_cli.providers.incus.remove_known_host")
+        mocker.patch("remo_cli.providers.incus.save_known_host")
+        reconcile = mocker.patch("remo_cli.providers.incus.print_broker_reconciliation")
+
+        rc = providers_incus.create(name="dev1")
+
+        assert rc == 0
+        reconcile.assert_called_once_with("Reconciling")
+        out = capsys.readouterr().out
+        assert "Vault sidecar available at: remo shell -p _remo-vault" in out
+
+    def test_update_reports_broker_reconfiguration(self, mocker):
+        mocker.patch("remo_cli.providers.incus.detect_timezone", return_value="")
+        mocker.patch("remo_cli.providers.incus.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.providers.incus.run_playbook", return_value=0)
+        mocker.patch("remo_cli.providers.incus._resolve_container_ip", return_value="10.0.0.5")
+        mocker.patch("remo_cli.providers.incus.save_known_host")
+        reconcile = mocker.patch("remo_cli.providers.incus.print_broker_reconciliation")
+
+        rc = providers_incus.update(name="dev1")
+
+        assert rc == 0
+        reconcile.assert_called_once_with("Reconfiguring")
+
     def test_happy_path_no_description(self, mocker, patch_ssh, capsys):
         mocker.patch(
             "remo_cli.providers.incus._list_snapshots_for_container",

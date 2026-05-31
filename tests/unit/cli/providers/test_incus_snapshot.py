@@ -19,6 +19,13 @@ def runner():
 
 
 class TestSnapshotCreateCLI:
+    def test_create_help_mentions_managed_vault_reconciliation(self, runner):
+        result = runner.invoke(incus, ["create", "--help"])
+        assert result.exit_code == 0
+        assert "managed broker sidecar" in result.output
+        assert "_remo-vault" in result.output
+        assert "still reconcile" in result.output
+
     def test_default_name_factory_generates_remo_prefix(self, runner, mocker):
         mocker.patch(
             "remo_cli.cli.providers.incus.providers_incus._lookup_incus_host",

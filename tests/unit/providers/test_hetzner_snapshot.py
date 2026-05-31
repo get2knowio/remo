@@ -92,6 +92,37 @@ class TestListSnapshotsForServer:
 
 
 class TestSnapshotCreate:
+    def test_create_reports_broker_reconciliation_and_vault_summary(self, mocker, capsys):
+        mocker.patch("remo_cli.providers.hetzner.detect_timezone", return_value="")
+        mocker.patch("remo_cli.providers.hetzner.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.providers.hetzner.run_playbook", return_value=0)
+        mocker.patch(
+            "remo_cli.providers.hetzner._query_hetzner_server_ip",
+            return_value="5.6.7.8",
+        )
+        mocker.patch("remo_cli.providers.hetzner.save_known_host")
+        reconcile = mocker.patch("remo_cli.providers.hetzner.print_broker_reconciliation")
+
+        rc = providers_hetzner.create(name="dev1")
+
+        assert rc == 0
+        reconcile.assert_called_once_with("Reconciling")
+        out = capsys.readouterr().out
+        assert "Vault:    remo shell -p _remo-vault" in out
+
+    def test_update_reports_broker_reconfiguration(self, mocker):
+        mocker.patch("remo_cli.providers.hetzner.detect_timezone", return_value="")
+        mocker.patch("remo_cli.providers.hetzner.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.providers.hetzner.run_playbook", return_value=0)
+        mocker.patch("remo_cli.providers.hetzner._lookup_hetzner_host", return_value="5.6.7.8")
+        mocker.patch("remo_cli.providers.hetzner.save_known_host")
+        reconcile = mocker.patch("remo_cli.providers.hetzner.print_broker_reconciliation")
+
+        rc = providers_hetzner.update(name="dev1")
+
+        assert rc == 0
+        reconcile.assert_called_once_with("Reconfiguring")
+
     def test_happy_path_async_hint(self, mocker, api, capsys):
         api.side_effect = [
             SERVER_RESPONSE,  # GET /servers?name=dev1

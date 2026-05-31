@@ -26,8 +26,8 @@ def hetzner() -> None:
 @click.option("--type", "server_type", default="", help="Server type (default: cx22).")
 @click.option("--location", default="", help="Location (default: hel1).")
 @click.option("--volume-size", default="", help="Volume size in GB (default: 10).")
-@click.option("--only", multiple=True, help="Only install these tools.")
-@click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option("--only", multiple=True, help="Only install these tools (broker and _remo-vault still reconcile).")
+@click.option("--skip", multiple=True, help="Skip these tools (broker and _remo-vault still reconcile).")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompts.")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output.")
 def create(
@@ -40,7 +40,7 @@ def create(
     yes: bool,
     verbose: bool,
 ) -> None:
-    """Provision a new Hetzner Cloud VM."""
+    """Provision a new Hetzner Cloud VM and reconcile the managed broker sidecar."""
     from remo_cli.providers.hetzner import create as do_create
 
     rc = do_create(
@@ -85,8 +85,8 @@ def destroy(
     default="",
     help="Grow the persistent Hetzner volume to this size in GB and grow the filesystem in place. Hetzner only supports growing.",
 )
-@click.option("--only", multiple=True, help="Only install these tools.")
-@click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option("--only", multiple=True, help="Only install these tools (broker and _remo-vault still reconcile).")
+@click.option("--skip", multiple=True, help="Skip these tools (broker and _remo-vault still reconcile).")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output.")
 def update(
     name: str,
@@ -95,7 +95,7 @@ def update(
     skip: tuple[str, ...],
     verbose: bool,
 ) -> None:
-    """Update dev tools on an existing VM."""
+    """Update dev tools while reconciling the managed broker sidecar."""
     from remo_cli.providers.hetzner import update as do_update
 
     rc = do_update(

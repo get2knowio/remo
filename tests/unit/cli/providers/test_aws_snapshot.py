@@ -14,6 +14,12 @@ def runner():
 
 
 class TestSnapshotCreateCLI:
+    def test_create_help_mentions_managed_vault_reconciliation(self, runner):
+        result = runner.invoke(aws, ["create", "--help"])
+        assert result.exit_code == 0
+        assert "managed broker sidecar" in result.output
+        assert "_remo-vault" in result.output
+
     def test_default_name(self, runner, mocker):
         spy = mocker.patch(
             "remo_cli.providers.aws.snapshot_create", return_value=0

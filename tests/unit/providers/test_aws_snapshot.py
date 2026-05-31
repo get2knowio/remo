@@ -135,6 +135,46 @@ class TestListSnapshotsForVolume:
 
 
 class TestSnapshotCreate:
+    def test_create_reports_broker_reconciliation_and_vault_summary(self, mocker, capsys):
+        mocker.patch("remo_cli.providers.aws.require_session_manager_plugin")
+        mocker.patch(
+            "remo_cli.providers.aws.select_ssm_instance_profile",
+            return_value="remo-profile",
+        )
+        mocker.patch("remo_cli.providers.aws.detect_timezone", return_value="")
+        mocker.patch("remo_cli.providers.aws.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        mocker.patch(
+            "remo_cli.providers.aws._get_running_instance",
+            return_value={"InstanceId": "i-abc", "PublicIpAddress": "1.2.3.4"},
+        )
+        mocker.patch("remo_cli.providers.aws.save_known_host")
+        reconcile = mocker.patch("remo_cli.providers.aws.print_broker_reconciliation")
+
+        rc = providers_aws.create(name="dev1", region="us-west-2")
+
+        assert rc == 0
+        reconcile.assert_called_once_with("Reconciling")
+        out = capsys.readouterr().out
+        assert "Vault:    remo shell -p _remo-vault" in out
+
+    def test_update_reports_broker_reconfiguration(self, mocker):
+        mocker.patch("remo_cli.providers.aws.detect_timezone", return_value="")
+        mocker.patch("remo_cli.providers.aws.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
+        mocker.patch(
+            "remo_cli.providers.aws._get_running_instance",
+            return_value={"InstanceId": "i-abc", "PublicIpAddress": "1.2.3.4"},
+        )
+        mocker.patch("remo_cli.providers.aws.save_known_host")
+        mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        reconcile = mocker.patch("remo_cli.providers.aws.print_broker_reconciliation")
+
+        rc = providers_aws.update(name="dev1")
+
+        assert rc == 0
+        reconcile.assert_called_once_with("Reconfiguring")
+
     def test_happy_path_async_hint(self, mocker, ec2, capsys):
         mocker.patch(
             "remo_cli.providers.aws._get_running_instance",

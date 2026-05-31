@@ -1,9 +1,6 @@
 """Unit tests for remo.core.ansible_runner module."""
 
 from __future__ import annotations
-
-import os
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -291,7 +288,7 @@ class TestRunPlaybookFiltered:
         mock_proc = MagicMock()
         mock_proc.poll.return_value = 2
         mock_proc.wait.return_value = 2
-        mock_popen = mocker.patch("remo_cli.core.ansible_runner.subprocess.Popen", return_value=mock_proc)
+        mocker.patch("remo_cli.core.ansible_runner.subprocess.Popen", return_value=mock_proc)
         mocker.patch("remo_cli.core.ansible_runner.time.sleep")
         mocker.patch("remo_cli.core.ansible_runner.signal.signal")
         mocker.patch("remo_cli.core.ansible_runner.print_error")

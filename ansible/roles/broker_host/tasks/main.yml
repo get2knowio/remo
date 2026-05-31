@@ -1,0 +1,44 @@
+---
+- name: Create broker host directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /etc/remo-broker
+    - /etc/remo-broker/projects
+    - /etc/remo-broker/credentials
+    - /etc/systemd/system/remo-broker.service.d
+    - /var/log/remo-broker
+
+- name: Install broker manifest schema reference
+  ansible.builtin.template:
+    src: manifest.schema.toml.j2
+    dest: /etc/remo-broker/manifest.schema.toml
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install broker environment defaults
+  ansible.builtin.copy:
+    dest: /etc/default/remo-broker
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      REMO_BROKER_PROTOCOL_VERSION=2
+      REMO_BROKER_ADMIN_SOCKET=/run/remo-broker/admin.sock
+      REMO_BROKER_PROJECTS_DIR=/etc/remo-broker/projects
+      REMO_BROKER_AUDIT_LOG=/var/log/remo-broker/audit.log
+
+- name: Install broker service override
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/remo-broker.service.d/override.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Service]
+      EnvironmentFile=-/etc/default/remo-broker

@@ -1,0 +1,54 @@
+---
+- name: Create remo secrets feature directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0755'
+  loop:
+    - "/home/{{ remo_user }}/.local/share/remo-secrets"
+    - "/home/{{ remo_user }}/.cache/remo-secrets"
+
+- name: Install manifest schema reference
+  ansible.builtin.template:
+    src: manifest.schema.toml
+    dest: "/home/{{ remo_user }}/.local/share/remo-secrets/manifest.schema.toml"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+
+- name: Install secrets feature devcontainer snippet
+  ansible.builtin.template:
+    src: feature-devcontainer.json.j2
+    dest: "/home/{{ remo_user }}/.local/share/remo-secrets/feature-devcontainer.json"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+
+- name: Install remo-fetch-secrets helper
+  ansible.builtin.template:
+    src: remo-fetch-secrets.sh.j2
+    dest: "/home/{{ remo_user }}/.local/bin/remo-fetch-secrets"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0755'
+
+- name: Verify remo secrets feature assets are installed
+  ansible.builtin.command:
+    cmd: >-
+      /bin/bash -lc
+      'test -f "/home/{{ remo_user }}/.local/share/remo-secrets/manifest.schema.toml" &&
+       test -f "/home/{{ remo_user }}/.local/share/remo-secrets/feature-devcontainer.json" &&
+       test -x "/home/{{ remo_user }}/.local/bin/remo-fetch-secrets"'
+  register: remo_secrets_feature_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail when remo secrets feature assets are incomplete
+  ansible.builtin.fail:
+    msg: >-
+      Failed to install remo secrets feature assets completely. Expected the
+      manifest schema, feature devcontainer snippet, and remo-fetch-secrets
+      helper to exist for {{ remo_user }}.
+  when: remo_secrets_feature_check.rc | default(1) != 0

@@ -28,8 +28,8 @@ def aws() -> None:
 @click.option("--volume-size", default="", help="EBS volume size in GB.")
 @click.option("--spot", is_flag=True, default=False, help="Use spot instance.")
 @click.option("--iam-profile", default="", help="IAM instance profile name.")
-@click.option("--only", multiple=True, help="Only configure these tools.")
-@click.option("--skip", multiple=True, help="Skip configuring these tools.")
+@click.option("--only", multiple=True, help="Only configure these tools (broker and _remo-vault still reconcile).")
+@click.option("--skip", multiple=True, help="Skip configuring these tools (broker and _remo-vault still reconcile).")
 @click.option("--yes", "-y", "auto_confirm", is_flag=True, default=False, help="Skip confirmation prompts.")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose output.")
 def create(
@@ -44,7 +44,7 @@ def create(
     auto_confirm: bool,
     verbose: bool,
 ) -> None:
-    """Create a new AWS EC2 instance."""
+    """Create a new AWS EC2 instance and reconcile the managed broker sidecar."""
     from remo_cli.providers.aws import create as aws_create
 
     rc = aws_create(
@@ -91,8 +91,8 @@ def destroy(
     default="",
     help="Grow the persistent EBS volume to this size in GB and grow the filesystem in place. AWS only supports growing.",
 )
-@click.option("--only", multiple=True, help="Only configure these tools.")
-@click.option("--skip", multiple=True, help="Skip configuring these tools.")
+@click.option("--only", multiple=True, help="Only configure these tools (broker and _remo-vault still reconcile).")
+@click.option("--skip", multiple=True, help="Skip configuring these tools (broker and _remo-vault still reconcile).")
 @click.option("-v", "--verbose", is_flag=True, default=False, help="Verbose output.")
 def update(
     name: str,
@@ -101,7 +101,7 @@ def update(
     skip: tuple[str, ...],
     verbose: bool,
 ) -> None:
-    """Re-configure dev tools on an existing AWS instance."""
+    """Re-configure dev tools while reconciling the managed broker sidecar."""
     from remo_cli.providers.aws import update as aws_update
 
     rc = aws_update(

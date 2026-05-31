@@ -18,6 +18,9 @@ remo incus create dev1 --host incus-host --user youruser
 
 # Connect
 remo shell
+
+# Open the managed credential sidecar
+remo shell -p _remo-vault
 ```
 
 ## Configuration
@@ -96,6 +99,8 @@ remo incus info --name dev1
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
+`remo incus create` and `remo incus update` always reconcile the managed broker service and `_remo-vault` sidecar. `--only` and `--skip` narrow the optional tool bundle only.
+
 ### Destroy Options
 
 | Option | Description |
@@ -114,6 +119,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **Hostname DNS** | Works if your router registers DHCP hostnames |
 | **Host Mounts** | Optional persistent data directories from the Incus host |
 | **macvlan Network** | Containers appear as separate devices on your LAN |
+| **Managed `_remo-vault` sidecar** | Broker admin workspace for credential vending and manifest reloads |
 
 ## Bootstrap
 

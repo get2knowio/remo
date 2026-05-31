@@ -26,9 +26,10 @@
 #   REMO_INSTANCE  - hostname of the remo instance
 #   REMO_PROJECT   - the project name
 
-set -e
+set -euo pipefail
 
 PROJECTS_DIR="{{ dev_workspace_dir }}"
+MANAGED_VAULT_PROJECT="_remo-vault"
 
 PROJECT=""
 DETACH=false
@@ -64,6 +65,11 @@ if [[ -z "$PROJECT" ]]; then
     exit 2
 fi
 
+if [[ "$PROJECT" != "$MANAGED_VAULT_PROJECT" ]] && [[ ! "$PROJECT" =~ ^[a-zA-Z0-9][a-zA-Z0-9._/-]*$ ]]; then
+    echo "project-launch: invalid project name: $PROJECT" >&2
+    exit 2
+fi
+
 PROJECT_DIR="$PROJECTS_DIR/$PROJECT"
 if [[ ! -d "$PROJECT_DIR" ]]; then
     echo "project-launch: project not found: $PROJECT_DIR" >&2
@@ -74,6 +80,73 @@ HAS_DC=false
 if [[ -d "$PROJECT_DIR/.devcontainer" ]] || [[ -f "$PROJECT_DIR/.devcontainer.json" ]]; then
     HAS_DC=true
 fi
+
+prepare_devcontainer_config() {
+    local project_dir="$1"
+    local project_name="$2"
+    local base_config=""
+    local feature_config="$HOME/.local/share/remo-secrets/feature-devcontainer.json"
+    local generated_dir="$HOME/.cache/remo-devcontainer-configs"
+    local generated_config="$generated_dir/$project_name.json"
+
+    if [[ -f "$project_dir/.devcontainer/devcontainer.json" ]]; then
+        base_config="$project_dir/.devcontainer/devcontainer.json"
+    elif [[ -f "$project_dir/.devcontainer.json" ]]; then
+        base_config="$project_dir/.devcontainer.json"
+    else
+        echo "project-launch: no devcontainer.json found for $project_name" >&2
+        return 1
+    fi
+
+    if [[ ! -f "$feature_config" ]]; then
+        echo "project-launch: missing remo secrets feature config: $feature_config" >&2
+        return 1
+    fi
+
+    mkdir -p "$generated_dir"
+    python3 - "$base_config" "$feature_config" "$generated_config" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+
+def merge(base: object, feature: object) -> object:
+    if isinstance(base, dict) and isinstance(feature, dict):
+        merged = dict(base)
+        for key, value in feature.items():
+            if key in {"mounts", "runArgs", "features"}:
+                existing = merged.get(key, [] if key != "features" else {})
+                if isinstance(existing, list) and isinstance(value, list):
+                    combined: list[object] = []
+                    for item in [*existing, *value]:
+                        if item not in combined:
+                            combined.append(item)
+                    merged[key] = combined
+                else:
+                    merged[key] = merge(existing, value)
+            elif key in merged:
+                merged[key] = merge(merged[key], value)
+            else:
+                merged[key] = value
+        return merged
+    if isinstance(base, list) and isinstance(feature, list):
+        combined: list[object] = []
+        for item in [*base, *feature]:
+            if item not in combined:
+                combined.append(item)
+        return combined
+    return feature
+
+
+base = json.loads(Path(sys.argv[1]).read_text())
+feature = json.loads(Path(sys.argv[2]).read_text())
+merged = merge(base, feature)
+Path(sys.argv[3]).write_text(json.dumps(merged, indent=2) + "\n")
+PY
+    printf '%s\n' "$generated_config"
+}
 
 REMO_INSTANCE="$(hostname)"
 export REMO_INSTANCE
@@ -94,13 +167,27 @@ if $DETACH; then
 
     cd "$PROJECT_DIR"
 
-    if $HAS_DC; then
+    if $HAS_DC && [[ "$PROJECT" != "$MANAGED_VAULT_PROJECT" ]]; then
+        REMO_DEVCONTAINER_CONFIG="$(prepare_devcontainer_config "$PROJECT_DIR" "$PROJECT")"
+        export REMO_DEVCONTAINER_CONFIG
+        echo "Bringing up devcontainer for $PROJECT..."
+        devcontainer up --workspace-folder "$PROJECT_DIR" --config "$REMO_DEVCONTAINER_CONFIG" >/dev/null
+        printf -- '----- %s detached launch: %s -----\n' "$(date -Iseconds)" "$EXEC_CMD" >>"$LOG_FILE"
+        nohup setsid env REMO_STARTUP_CMD="$EXEC_CMD" \
+            devcontainer exec --workspace-folder "$PROJECT_DIR" \
+            --config "$REMO_DEVCONTAINER_CONFIG" \
+            env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
+                REMO_STARTUP_CMD="$EXEC_CMD" \
+            /bin/bash -lc 'set -euo pipefail; eval "$(remo-fetch-secrets "$REMO_PROJECT")"; exec bash -lc "$REMO_STARTUP_CMD"' >>"$LOG_FILE" 2>&1 </dev/null &
+    elif $HAS_DC; then
         echo "Bringing up devcontainer for $PROJECT..."
         devcontainer up --workspace-folder "$PROJECT_DIR" >/dev/null
         printf -- '----- %s detached launch: %s -----\n' "$(date -Iseconds)" "$EXEC_CMD" >>"$LOG_FILE"
-        nohup setsid devcontainer exec --workspace-folder "$PROJECT_DIR" \
+        nohup setsid env REMO_STARTUP_CMD="$EXEC_CMD" \
+            devcontainer exec --workspace-folder "$PROJECT_DIR" \
             env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
-            bash -lc "$EXEC_CMD" >>"$LOG_FILE" 2>&1 </dev/null &
+                REMO_STARTUP_CMD="$EXEC_CMD" \
+            /bin/bash -lc 'set -euo pipefail; exec bash -lc "$REMO_STARTUP_CMD"' >>"$LOG_FILE" 2>&1 </dev/null &
     else
         printf -- '----- %s detached launch: %s -----\n' "$(date -Iseconds)" "$EXEC_CMD" >>"$LOG_FILE"
         nohup setsid env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
@@ -133,10 +220,28 @@ if ! $HAS_DC && [[ -n "$EXEC_CMD" ]]; then
         bash -lc "$EXEC_CMD"
 fi
 
-if [[ -n "$EXEC_CMD" ]]; then
-    # Case 2: pass command through env var that .bashrc DEVCONTAINER block
-    # honors and runs via `bash -lc`.
-    export REMO_DEVCONTAINER_CMD="$EXEC_CMD"
+if $HAS_DC; then
+    if [[ "$PROJECT" != "$MANAGED_VAULT_PROJECT" ]]; then
+        REMO_DEVCONTAINER_CONFIG="$(prepare_devcontainer_config "$PROJECT_DIR" "$PROJECT")"
+        export REMO_DEVCONTAINER_CONFIG
+        export REMO_DEVCONTAINER_SECRETS="1"
+        if [[ -n "$EXEC_CMD" ]]; then
+            export REMO_DEVCONTAINER_EXEC_MODE="command"
+            export REMO_DEVCONTAINER_STARTUP_CMD="$EXEC_CMD"
+        else
+            export REMO_DEVCONTAINER_EXEC_MODE="shell"
+            unset REMO_DEVCONTAINER_STARTUP_CMD
+        fi
+    else
+        export REMO_DEVCONTAINER_SECRETS="0"
+        unset REMO_DEVCONTAINER_CONFIG
+        unset REMO_DEVCONTAINER_EXEC_MODE
+        if [[ -n "$EXEC_CMD" ]]; then
+            export REMO_DEVCONTAINER_STARTUP_CMD="$EXEC_CMD"
+        else
+            unset REMO_DEVCONTAINER_STARTUP_CMD
+        fi
+    fi
 fi
 
 # Clean up any exited session of the same name (mirrors project-menu)

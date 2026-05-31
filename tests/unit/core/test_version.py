@@ -7,8 +7,6 @@ import os
 import time
 from unittest.mock import MagicMock
 
-import pytest
-
 from remo_cli.core.version import (
     _parse_version,
     check_for_updates_passive,

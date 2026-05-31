@@ -16,6 +16,7 @@ show_usage() {
     echo "Commands:"
     echo "  devshell <repo>                    Start/attach to devcontainer for <repo>"
     echo "  devshell <repo> clone <github-url> Clone repo and start devcontainer"
+    echo "  devshell _remo-vault               Open the managed credential sidecar"
     echo ""
     echo "Available projects in $PROJECTS_DIR:"
     if [ -d "$PROJECTS_DIR" ] && [ "$(ls -A "$PROJECTS_DIR" 2>/dev/null)" ]; then

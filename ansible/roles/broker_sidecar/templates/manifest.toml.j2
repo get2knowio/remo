@@ -1,0 +1,20 @@
+schema_version = 1
+project = "_remo-vault"
+
+[secrets.gh]
+fetch_as = "env"
+env_var = "GH_TOKEN"
+
+[secrets.aws]
+fetch_as = "file"
+file_path = "~/.aws/credentials"
+file_mode = "0600"
+template = """
+[default]
+{% raw %}aws_access_key_id={{aws_access_key_id}}
+aws_secret_access_key={{aws_secret_access_key}}{% endraw %}
+"""
+
+[cache]
+default_ttl_seconds = 900
+default_max_entries = 50

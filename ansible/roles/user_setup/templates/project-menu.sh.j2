@@ -5,6 +5,7 @@
 set -e
 
 PROJECTS_DIR="{{ dev_workspace_dir }}"
+MANAGED_VAULT_PROJECT="_remo-vault"
 {% if remo_version %}
 REMO_VERSION="{{ remo_version }}"
 {% else %}
@@ -34,7 +35,18 @@ cleanup_exited_sessions() {
 # Get list of project directories
 get_project_dirs() {
     if [ -d "$PROJECTS_DIR" ]; then
-        find "$PROJECTS_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | sort
+        local dirs=()
+        mapfile -t dirs < <(find "$PROJECTS_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | sort)
+        for dir in "${dirs[@]}"; do
+            if [ "$dir" = "$MANAGED_VAULT_PROJECT" ]; then
+                printf '%s\n' "$dir"
+            fi
+        done
+        for dir in "${dirs[@]}"; do
+            if [ "$dir" != "$MANAGED_VAULT_PROJECT" ]; then
+                printf '%s\n' "$dir"
+            fi
+        done
     fi
 }
 
@@ -283,6 +295,12 @@ handle_delete() {
     local warnings=()
 
     echo ""
+
+    if [ "$project_name" = "$MANAGED_VAULT_PROJECT" ]; then
+        printf '\033[33m  %s is managed by remo and cannot be deleted from project-menu.\033[0m\n' "$MANAGED_VAULT_PROJECT"
+        sleep 2
+        return 1
+    fi
 
     if [ ! -d "$project_dir" ]; then
         echo "  Not a project directory, skipping."

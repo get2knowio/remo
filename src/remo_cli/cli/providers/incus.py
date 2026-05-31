@@ -45,8 +45,8 @@ def incus() -> None:
     type=int,
     help="Set the memory limit in MiB (limits.memory).",
 )
-@click.option("--only", multiple=True, help="Only install these tools.")
-@click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option("--only", multiple=True, help="Only install these tools (broker and _remo-vault still reconcile).")
+@click.option("--skip", multiple=True, help="Skip these tools (broker and _remo-vault still reconcile).")
 @click.option(
     "--use-ip",
     is_flag=True,
@@ -69,7 +69,7 @@ def create(
     yes: bool,
     verbose: bool,
 ) -> None:
-    """Create an Incus container."""
+    """Create an Incus container and reconcile the managed broker sidecar."""
     rc = providers_incus.create(
         name=name,
         host=host,
@@ -139,8 +139,8 @@ def destroy(
     type=int,
     help="Set the memory limit in MiB (limits.memory).",
 )
-@click.option("--only", multiple=True, help="Only install these tools.")
-@click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option("--only", multiple=True, help="Only install these tools (broker and _remo-vault still reconcile).")
+@click.option("--skip", multiple=True, help="Skip these tools (broker and _remo-vault still reconcile).")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def update(
     name: str,
@@ -153,7 +153,7 @@ def update(
     skip: tuple[str, ...],
     verbose: bool,
 ) -> None:
-    """Update tools on an Incus container."""
+    """Update tools while reconciling the managed broker sidecar."""
     rc = providers_incus.update(
         name=name,
         host=host,

@@ -59,6 +59,21 @@ You land in an interactive project menu. Pick a project, and you're in a persist
   [Exit to shell]
 ```
 
+### Managed credential sidecar
+
+Every `remo <provider> create` and `remo <provider> update` now reconciles a managed broker service plus a reserved `_remo-vault` workspace on the remote host. `--only` and `--skip` still control the optional tool bundle, but they do **not** disable broker or sidecar reconciliation.
+
+```bash
+remo shell -p _remo-vault
+```
+
+Use `_remo-vault` to log into `gh` / `aws`, inspect broker state with `remo-vend-status`, and reload project allowlists after editing `~/projects/<project>/.remo/manifest.toml`:
+
+```bash
+remo-reload <project>
+remo-test-project <project>
+```
+
 ---
 
 ## Choose Your Platform
@@ -129,6 +144,8 @@ remo shell -p my-app --detach --exec \
 ```
 
 Then on your phone, open claude.ai/code and pick the session by name.
+
+For normal projects, Remo generates a temporary merged devcontainer config at startup so the checked-in `.devcontainer/devcontainer.json` stays untouched while the broker socket and read-only manifest mount are injected. Secrets are fetched before the interactive shell, `--exec`, or `--detach` command starts. The reserved `_remo-vault` project keeps its own sidecar devcontainer config and does not get the project-secrets wrapper.
 
 ### Port Forwarding
 

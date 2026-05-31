@@ -132,6 +132,37 @@ class TestDetectStorage:
 
 
 class TestSnapshotCreate:
+    def test_create_reports_broker_reconciliation_and_vault_summary(self, mocker, capsys):
+        mocker.patch("remo_cli.providers.proxmox.detect_timezone", return_value="")
+        mocker.patch("remo_cli.providers.proxmox.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=0)
+        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
+        mocker.patch("remo_cli.providers.proxmox._resolve_vmid", return_value="100")
+        mocker.patch("remo_cli.providers.proxmox._resolve_container_ip", return_value="10.0.0.6")
+        mocker.patch("remo_cli.providers.proxmox.save_known_host")
+        reconcile = mocker.patch("remo_cli.providers.proxmox.print_broker_reconciliation")
+
+        rc = providers_proxmox.create(name="dev1", host="lab1")
+
+        assert rc == 0
+        reconcile.assert_called_once_with("Reconciling")
+        out = capsys.readouterr().out
+        assert "Vault sidecar available at: remo shell -p _remo-vault" in out
+
+    def test_update_reports_broker_reconfiguration(self, mocker):
+        mocker.patch("remo_cli.providers.proxmox.detect_timezone", return_value="")
+        mocker.patch("remo_cli.providers.proxmox.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=0)
+        mocker.patch("remo_cli.providers.proxmox._lookup_proxmox_host", return_value=("lab1", "root", "100"))
+        mocker.patch("remo_cli.providers.proxmox._resolve_container_ip", return_value="10.0.0.6")
+        mocker.patch("remo_cli.providers.proxmox.save_known_host")
+        reconcile = mocker.patch("remo_cli.providers.proxmox.print_broker_reconciliation")
+
+        rc = providers_proxmox.update(name="dev1")
+
+        assert rc == 0
+        reconcile.assert_called_once_with("Reconfiguring")
+
     def test_unsupported_storage_rejected(self, mocker, patch_ssh, capsys):
         mocker.patch(
             "remo_cli.providers.proxmox._detect_snapshot_capable_storage",

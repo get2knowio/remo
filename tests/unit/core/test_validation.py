@@ -7,8 +7,11 @@ import click
 
 from remo_cli.core.validation import (
     ALL_TOOLS,
+    MANAGED_VAULT_PROJECT,
     build_tool_args,
+    is_reserved_project_name,
     parse_volume_size,
+    validate_project_name,
     validate_name,
     validate_port,
     validate_region,
@@ -82,6 +85,34 @@ class TestValidateName:
     def test_error_message_includes_invalid_value(self):
         with pytest.raises(click.BadParameter, match="-bad"):
             validate_name("-bad")
+
+
+class TestValidateProjectName:
+    """Tests for validate_project_name()."""
+
+    def test_regular_project_name_accepted(self):
+        validate_project_name("my-app")
+
+    def test_reserved_vault_project_rejected_by_default(self):
+        with pytest.raises(click.BadParameter, match=MANAGED_VAULT_PROJECT):
+            validate_project_name(MANAGED_VAULT_PROJECT)
+
+    def test_reserved_vault_project_allowed_when_explicit(self):
+        validate_project_name(MANAGED_VAULT_PROJECT, allow_reserved=True)
+
+    def test_invalid_name_still_rejected_with_allow_reserved(self):
+        with pytest.raises(click.BadParameter):
+            validate_project_name("bad name", allow_reserved=True)
+
+
+class TestIsReservedProjectName:
+    """Tests for is_reserved_project_name()."""
+
+    def test_managed_vault_project_is_reserved(self):
+        assert is_reserved_project_name(MANAGED_VAULT_PROJECT) is True
+
+    def test_normal_project_is_not_reserved(self):
+        assert is_reserved_project_name("my-app") is False
 
 
 class TestValidatePort:

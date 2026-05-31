@@ -14,6 +14,12 @@ NC = "\033[0m"  # No Color / Reset
 # Affirmative responses accepted by confirm()
 _AFFIRMATIVE = {"yes", "y", "ye", "yeah", "yep", "yup", "sure", "ok"}
 
+BROKER_RECONCILIATION_STEPS: tuple[str, ...] = (
+    "credential broker service",
+    "managed _remo-vault sidecar",
+    "project secret helper scripts",
+)
+
 
 def print_error(msg: str) -> None:
     """Print an error message in red to stderr, prefixed with 'Error:'."""
@@ -33,6 +39,17 @@ def print_info(msg: str) -> None:
 def print_warning(msg: str) -> None:
     """Print a warning message in yellow to stdout."""
     print(f"{YELLOW}{msg}{NC}")
+
+
+def format_broker_reconciliation_message(action: str) -> str:
+    items = ", ".join(BROKER_RECONCILIATION_STEPS[:-1])
+    tail = BROKER_RECONCILIATION_STEPS[-1]
+    return f"{action} {items}, and {tail}..."
+
+
+def print_broker_reconciliation(action: str) -> None:
+    """Print a consistent broker/sidecar reconciliation status line."""
+    print_info(format_broker_reconciliation_message(action))
 
 
 def confirm(prompt: str, default: bool = False) -> bool:

@@ -23,6 +23,13 @@ def stub_lookup(mocker):
 
 
 class TestSnapshotCreateCLI:
+    def test_create_help_mentions_managed_vault_reconciliation(self, runner):
+        result = runner.invoke(proxmox, ["create", "--help"])
+        assert result.exit_code == 0
+        assert "managed broker sidecar" in result.output
+        assert "_remo-vault" in result.output
+        assert "still reconcile" in result.output
+
     def test_default_name(self, runner, mocker, stub_lookup):
         spy = mocker.patch(
             "remo_cli.cli.providers.proxmox.providers_proxmox.snapshot_create",

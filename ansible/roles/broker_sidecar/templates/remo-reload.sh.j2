@@ -1,0 +1,46 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+    echo "Usage: remo-reload <project>" >&2
+    exit 2
+fi
+
+PROJECT="$1"
+MANIFEST="{{ dev_workspace_dir }}/$PROJECT/.remo/manifest.toml"
+ADMIN_SOCKET="${REMO_BROKER_ADMIN_SOCKET:-/run/remo-broker/admin.sock}"
+
+if [ ! -f "$MANIFEST" ]; then
+    echo "remo-reload: manifest not found: $MANIFEST" >&2
+    exit 1
+fi
+
+python3 - "$ADMIN_SOCKET" "$PROJECT" <<'PY'
+from __future__ import annotations
+
+import json
+import socket
+import sys
+
+sock_path = sys.argv[1]
+project = sys.argv[2]
+payload = json.dumps({"op": "reload", "name": project}).encode() + b"\n"
+
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(sock_path)
+        client.sendall(payload)
+        response = client.recv(65536)
+except FileNotFoundError as exc:
+    raise SystemExit(f"remo-reload: admin socket not found: {sock_path}") from exc
+except OSError as exc:
+    raise SystemExit(f"remo-reload: broker reload failed: {exc}") from exc
+
+data = json.loads(response.decode().strip())
+if not data.get("ok"):
+    raise SystemExit(f"remo-reload: broker returned error: {data}")
+
+allowlist = ", ".join(data.get("allowlist", [])) or "(empty)"
+print(f"reloaded {project}")
+print(f"allowlist: {allowlist}")
+PY

@@ -1,0 +1,37 @@
+#!/bin/bash
+set -euo pipefail
+
+ADMIN_SOCKET="${REMO_BROKER_ADMIN_SOCKET:-/run/remo-broker/admin.sock}"
+
+python3 - "$ADMIN_SOCKET" <<'PY'
+from __future__ import annotations
+
+import json
+import socket
+import sys
+
+sock_path = sys.argv[1]
+payload = json.dumps({"op": "status"}).encode() + b"\n"
+
+try:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(sock_path)
+        client.sendall(payload)
+        response = client.recv(65536)
+except FileNotFoundError as exc:
+    raise SystemExit(f"remo-vend-status: admin socket not found: {sock_path}") from exc
+except OSError as exc:
+    raise SystemExit(f"remo-vend-status: could not query broker status: {exc}") from exc
+
+data = json.loads(response.decode().strip())
+if not data.get("ok"):
+    raise SystemExit(f"remo-vend-status: broker returned error: {data}")
+if data.get("protocol_version") != 2:
+    raise SystemExit(
+        f"remo-vend-status: incompatible broker protocol {data.get('protocol_version')}, expected 2"
+    )
+
+print(f"protocol_version: {data['protocol_version']}")
+print(f"secret_count: {data.get('secret_count', 0)}")
+print(f"secrets_loaded_at: {data.get('secrets_loaded_at', 'n/a')}")
+PY

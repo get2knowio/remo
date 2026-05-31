@@ -1,0 +1,53 @@
+---
+- name: Create managed vault workspace directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0755'
+  loop:
+    - "{{ dev_workspace_dir }}/_remo-vault"
+    - "{{ dev_workspace_dir }}/_remo-vault/.remo"
+    - "{{ dev_workspace_dir }}/_remo-vault/bin"
+
+- name: Install managed vault manifest
+  ansible.builtin.template:
+    src: manifest.toml.j2
+    dest: "{{ dev_workspace_dir }}/_remo-vault/.remo/manifest.toml"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+
+- name: Install managed vault README
+  ansible.builtin.copy:
+    dest: "{{ dev_workspace_dir }}/_remo-vault/README.txt"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+    content: |
+      _remo-vault is the remo-managed credential broker sidecar workspace.
+      Store login state and encrypted secret material here, then use:
+
+        remo-list-creds
+        remo-vend-status
+        remo-reload <project>
+
+      The sidecar is created automatically and should not be deleted manually.
+
+- name: Install broker helper scripts
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/home/{{ remo_user }}/.local/bin/{{ item.dest }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0755'
+  loop:
+    - src: remo-vend-status.sh.j2
+      dest: remo-vend-status
+    - src: remo-list-creds.sh.j2
+      dest: remo-list-creds
+    - src: remo-reload.sh.j2
+      dest: remo-reload
+    - src: remo-fetch-secrets.sh.j2
+      dest: remo-fetch-secrets

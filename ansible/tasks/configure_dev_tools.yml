@@ -61,6 +61,18 @@
     name: devcontainers
   when: configure_devcontainers | default(true) | bool
 
+- name: Configure credential broker host assets
+  ansible.builtin.include_role:
+    name: remo_broker
+
+- name: Install managed vault devcontainer
+  ansible.builtin.include_role:
+    name: vault_devcontainer
+
+- name: Install project secrets feature assets
+  ansible.builtin.include_role:
+    name: remo_secrets_feature
+
 - name: Install GitHub CLI
   ansible.builtin.include_role:
     name: github_cli

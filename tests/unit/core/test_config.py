@@ -1,9 +1,5 @@
 """Tests for remo.core.config module."""
 
-import os
-
-import pytest
-
 from remo_cli.core.config import (
     get_ansible_dir,
     get_known_hosts_path,

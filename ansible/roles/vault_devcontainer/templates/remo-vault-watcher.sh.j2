@@ -1,0 +1,51 @@
+#!/bin/bash
+set -euo pipefail
+
+ADMIN_SOCKET="${REMO_BROKER_ADMIN_SOCKET:-/run/remo-broker/admin.sock}"
+STATE_FILE="${REMO_VAULT_STATE_FILE:-/var/lib/remo-vault/watch/push-creds.json}"
+
+if [ ! -s "$STATE_FILE" ]; then
+    echo "remo-vault-watcher: no staged credential snapshot at $STATE_FILE" >&2
+    exit 1
+fi
+
+python3 - "$ADMIN_SOCKET" "$STATE_FILE" <<'PY'
+from __future__ import annotations
+
+import json
+import socket
+import sys
+from pathlib import Path
+
+sock_path = sys.argv[1]
+state_file = Path(sys.argv[2])
+
+
+def exchange(payload: dict[str, object]) -> dict[str, object]:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(sock_path)
+        client.sendall(json.dumps(payload).encode() + b"\n")
+        response = client.recv(65536)
+    return json.loads(response.decode().strip())
+
+
+status = exchange({"op": "status"})
+if not status.get("ok"):
+    raise SystemExit(f"remo-vault-watcher: broker returned status error: {status}")
+if status.get("protocol_version") != 2:
+    raise SystemExit(
+        "remo-vault-watcher: incompatible broker protocol "
+        f"{status.get('protocol_version')}, expected 2"
+    )
+
+payload = {"op": "push-creds", "secrets": json.loads(state_file.read_text())}
+
+data = exchange(payload)
+if not data.get("ok"):
+    raise SystemExit(f"remo-vault-watcher: broker returned error: {data}")
+
+print(
+    f"pushed {data.get('secret_count', 0)} secret(s) at "
+    f"{data.get('loaded_at', 'unknown time')}"
+)
+PY
