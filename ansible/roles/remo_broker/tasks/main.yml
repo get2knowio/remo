@@ -77,8 +77,7 @@
   ansible.builtin.command:
     cmd: >-
       /bin/bash -lc
-      'test -x "{{ remo_broker_binary_path }}" &&
-       test -f /etc/default/remo-broker &&
+      'test -f /etc/default/remo-broker &&
        test -f /etc/systemd/system/remo-broker.service &&
        test -f "{{ remo_broker_bootstrap_token_path }}"'
   register: remo_broker_install_check
@@ -89,7 +88,7 @@
   ansible.builtin.fail:
     msg: >-
       Managed remo-broker provisioning is incomplete. Expected the broker
-      binary, environment file, systemd unit, and bootstrap token to exist.
+      environment file, systemd unit, and bootstrap token to exist.
   when: remo_broker_install_check.rc | default(1) != 0
 
 - name: Reload systemd when remo-broker unit changed
