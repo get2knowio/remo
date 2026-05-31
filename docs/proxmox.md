@@ -23,6 +23,9 @@ remo proxmox create --name dev1 --host prox01 --user root
 
 # Connect
 remo shell
+
+# Open the managed credential sidecar
+remo shell -p _remo-vault
 ```
 
 ## CLI Commands
@@ -107,6 +110,8 @@ remo proxmox info --name dev1
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
+`remo proxmox create` and `remo proxmox update` always reconcile the managed broker service and `_remo-vault` sidecar. `--only` and `--skip` narrow the optional tool bundle only.
+
 ### Destroy Options
 
 | Option | Description |
@@ -125,6 +130,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **Unprivileged + Nesting** | Default security posture; Docker-in-Docker works out of the box |
 | **Auto-start on boot** | `--onboot 1` — survives node reboots |
 | **Same dev tools as Incus/Hetzner** | Docker, Node.js, fzf, github_cli, devcontainers, zellij, user_setup |
+| **Managed `_remo-vault` sidecar** | Broker admin workspace for credential vending and manifest reloads |
 
 ## Bootstrap
 

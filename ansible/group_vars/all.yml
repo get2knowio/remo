@@ -27,3 +27,17 @@ zellij_session_name: "main"  # Session name for SSH auto-attach
 
 # Node.js Configuration
 nodejs_version: "24"  # LTS version
+
+# Credential broker configuration
+remo_broker_user: "remo-broker"
+remo_broker_group: "remo-broker"
+remo_broker_protocol_version: 2
+remo_broker_binary_path: "/usr/local/bin/remo-broker"
+remo_broker_config_dir: "/etc/remo-broker"
+remo_broker_config_path: "/etc/remo-broker/config.toml"
+remo_broker_projects_dir: "/etc/remo-broker/projects"
+remo_broker_socket_dir: "/run/remo-broker"
+remo_broker_admin_socket: "/run/remo-broker/admin.sock"
+remo_broker_log_dir: "/var/log/remo-broker"
+remo_broker_audit_log: "/var/log/remo-broker/audit.log"
+remo_broker_bootstrap_token_path: "/etc/remo-broker/bootstrap-token"

@@ -16,6 +16,7 @@ vault.yml
 
 # Local configuration
 *.local.yml
+.env*
 
 # Remo state directory (legacy location, now uses ~/.config/remo)
 .remo/
@@ -46,3 +47,4 @@ env/
 !.maverick/checkpoints/
 .claude/settings.local.json
 .DS_Store
+Thumbs.db

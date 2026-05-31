@@ -1,0 +1,10 @@
+FROM mcr.microsoft.com/devcontainers/base:ubuntu
+
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        git \
+        jq \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*

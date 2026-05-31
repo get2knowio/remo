@@ -10,6 +10,19 @@
   register: devcontainers_version
   changed_when: false
 
+- name: Verify devcontainer CLI supports custom config injection
+  ansible.builtin.command: devcontainer up --help
+  register: devcontainers_up_help
+  changed_when: false
+
+- name: Assert devcontainer CLI supports --config
+  ansible.builtin.assert:
+    that:
+      - "'--config' in (devcontainers_up_help.stdout | default(''))"
+    fail_msg: >-
+      Installed devcontainer CLI must support --config so remo can inject the
+      read-only manifest and broker socket feature into project startups.
+
 - name: Display devcontainer CLI version
   ansible.builtin.debug:
     msg: "devcontainer CLI: {{ devcontainers_version.stdout }}"

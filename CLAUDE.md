@@ -12,6 +12,8 @@ See `.specify/memory/constitution.md` for project principles and non-negotiable 
 - Python 3.11+ + Click (CLI framework), InquirerPy (interactive picker), boto3 (AWS, optional), hcloud (Hetzner, optional) (003-python-cli-rewrite)
 - Flat file (`~/.config/remo/known_hosts`, colon-delimited) (003-python-cli-rewrite)
 - Cross-provider snapshot model (`models/snapshot.py`) + shared helpers in `core/snapshot.py` (name generator, validator, table formatter, destroy-time cleanup hook). No new runtime deps. (005-provider-snapshots)
+- Python 3.11+, Ansible Core 2.18+, Bash/Jinja2 remote host templates + Click 8.1+, InquirerPy, ansible-core, Docker CE + Compose plugin, `@devcontainers/cli`, systemd credentials on the LXC host, sibling `remo-broker` v2 binary/schema, and remote sidecar CLIs (`gh`, `aws`, `claude`, `fnox`) (006-credential-broker-laptop-push)
+- Version-controlled `~/projects/<project>/.remo/manifest.toml`; sidecar Docker volume at `/var/lib/remo-vault/fnox.enc`; host-side systemd credential material for the sidecar decryption key; broker secrets in memory only; broker audit log on host disk (006-credential-broker-laptop-push)
 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module) (001-bootstrap-incus-host)
 
@@ -132,10 +134,12 @@ Provider SDKs (boto3, hcloud) are lazy-imported with clear error messages if mis
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
+- 006-credential-broker-laptop-push: Added Python 3.11+, Ansible Core 2.18+, Bash/Jinja2 remote host templates + Click 8.1+, InquirerPy, ansible-core, Docker CE + Compose plugin, `@devcontainers/cli`, systemd credentials on the LXC host, sibling `remo-broker` v2 binary/schema, and remote sidecar CLIs (`gh`, `aws`, `claude`, `fnox`)
 - 005-provider-snapshots: Added cross-provider snapshot CLI (`remo <P> snapshot {create,list,restore,delete}`) + destroy-time cleanup hook across Incus / Proxmox / AWS / Hetzner.
 - 003-python-cli-rewrite: Added Python 3.11+ + Click (CLI framework), InquirerPy (interactive picker), boto3 (AWS, optional), hcloud (Hetzner, optional)
-- 002-incus-container-support: Added Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (existing), Incus CLI (local)
 
 
 <!-- MANUAL ADDITIONS START -->
+- Project startup injects the secrets feature through a generated `devcontainer --config` file rather than mutating the repo's checked-in devcontainer config.
+- `_remo-vault` is a reserved managed project: use `remo shell -p _remo-vault` for broker admin flows, but do not wrap its startup with `remo-fetch-secrets`.
 <!-- MANUAL ADDITIONS END -->

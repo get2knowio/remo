@@ -27,7 +27,14 @@ from remo_cli.core.known_hosts import (
 )
 from datetime import datetime, timezone
 
-from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.output import (
+    confirm,
+    print_broker_reconciliation,
+    print_error,
+    print_info,
+    print_success,
+    print_warning,
+)
 from remo_cli.core.snapshot import (
     handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
@@ -70,7 +77,7 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
 
     # Lazy import so boto3 is only required when actually needed
     try:
-        import boto3  # noqa: PLC0415
+        import boto3  # type: ignore[import-untyped]  # noqa: PLC0415
     except ImportError:
         # Mirror the bash behavior: silently return when boto3 is missing
         return host
@@ -163,7 +170,7 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
 def _require_boto3():  # noqa: ANN202
     """Lazy-import and return the ``boto3`` module, or exit with guidance."""
     try:
-        import boto3  # noqa: PLC0415
+        import boto3  # type: ignore[import-untyped]  # noqa: PLC0415
 
         return boto3
     except ImportError:
@@ -440,6 +447,7 @@ def create(
     if current != "unknown":
         extra_vars.extend(["-e", f"remo_version={current}"])
 
+    print_broker_reconciliation("Reconciling")
     rc = run_playbook("aws_site.yml", extra_vars, verbose=verbose)
 
     if rc != 0:
@@ -493,6 +501,7 @@ def create(
     print(f"  Storage:    {volume_size or '20'} GB EBS (gp3)")
     print("")
     print("  Connect:  remo shell")
+    print("  Vault:    remo shell -p _remo-vault")
     print_success("==================================================")
     print("")
 
@@ -554,6 +563,9 @@ def destroy(
             print_info("Aborted.")
             return 0
 
+    print_warning(
+        "Destroy also tears down the managed _remo-vault sidecar and broker state."
+    )
     print_info("Destroying AWS EC2 instance...")
 
     extra_vars: list[str] = []
@@ -648,6 +660,7 @@ def update(
     if current != "unknown":
         extra_vars.extend(["-e", f"remo_version={current}"])
 
+    print_broker_reconciliation("Reconfiguring")
     print_info(f"Updating AWS instance {instance_id} via SSM...")
 
     return run_playbook("aws_configure.yml", extra_vars, verbose=verbose)

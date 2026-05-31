@@ -1,0 +1,15 @@
+schema_version = 1
+
+[manifest]
+required_fields = ["schema_version", "project", "secrets"]
+
+[secrets]
+fetch_as = ["env", "file"]
+default_fetch_as = "env"
+
+[file]
+required_fields = ["file_path", "file_mode", "template"]
+
+[cache]
+default_ttl_seconds = 900
+default_max_entries = 50

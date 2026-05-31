@@ -1,0 +1,125 @@
+---
+- name: Create managed vault workspace directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0755'
+  loop:
+    - "{{ dev_workspace_dir }}/_remo-vault"
+    - "{{ dev_workspace_dir }}/_remo-vault/.devcontainer"
+    - "{{ dev_workspace_dir }}/_remo-vault/.remo"
+    - "{{ dev_workspace_dir }}/_remo-vault/.local"
+    - "{{ dev_workspace_dir }}/_remo-vault/.local/bin"
+
+- name: Install managed vault manifest
+  ansible.builtin.copy:
+    dest: "{{ dev_workspace_dir }}/_remo-vault/.remo/manifest.toml"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+    content: |
+      schema_version = 1
+      project = "_remo-vault"
+
+      [secrets.gh]
+      fetch_as = "env"
+      env_var = "GH_TOKEN"
+
+      [secrets.aws]
+      fetch_as = "file"
+      file_path = "~/.aws/credentials"
+      file_mode = "0600"
+      template = """
+      [default]
+      aws_access_key_id={{aws_access_key_id}}
+      aws_secret_access_key={{aws_secret_access_key}}
+      """
+
+      [cache]
+      default_ttl_seconds = 900
+      default_max_entries = 50
+
+- name: Install managed vault devcontainer Dockerfile
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ dev_workspace_dir }}/_remo-vault/.devcontainer/Dockerfile"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+
+- name: Install managed vault compose definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ dev_workspace_dir }}/_remo-vault/.devcontainer/docker-compose.yml"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+
+- name: Install managed vault devcontainer definition
+  ansible.builtin.template:
+    src: devcontainer.json.j2
+    dest: "{{ dev_workspace_dir }}/_remo-vault/.devcontainer/devcontainer.json"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+
+- name: Install managed vault helper scripts
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/home/{{ remo_user }}/.local/bin/{{ item.dest }}"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0755'
+  loop:
+    - src: remo-list-creds.sh.j2
+      dest: remo-list-creds
+    - src: remo-reload.sh.j2
+      dest: remo-reload
+    - src: remo-test-project.sh.j2
+      dest: remo-test-project
+    - src: remo-vend-status.sh.j2
+      dest: remo-vend-status
+    - src: remo-vault-watcher.sh.j2
+      dest: remo-vault-watcher
+
+- name: Verify managed vault helper scripts are installed
+  ansible.builtin.command:
+    cmd: >-
+      /bin/bash -lc
+      'test -x "/home/{{ remo_user }}/.local/bin/remo-list-creds" &&
+       test -x "/home/{{ remo_user }}/.local/bin/remo-reload" &&
+       test -x "/home/{{ remo_user }}/.local/bin/remo-test-project" &&
+       test -x "/home/{{ remo_user }}/.local/bin/remo-vend-status" &&
+       test -x "/home/{{ remo_user }}/.local/bin/remo-vault-watcher" &&
+       test -f "{{ dev_workspace_dir }}/_remo-vault/.devcontainer/devcontainer.json"'
+  register: vault_devcontainer_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail when managed vault assets are incomplete
+  ansible.builtin.fail:
+    msg: >-
+      Managed _remo-vault provisioning is incomplete. Expected helper scripts
+      and devcontainer assets were not fully installed for {{ remo_user }}.
+  when: vault_devcontainer_check.rc | default(1) != 0
+
+- name: Install managed vault MOTD
+  ansible.builtin.template:
+    src: motd.j2
+    dest: "{{ dev_workspace_dir }}/_remo-vault/.remo/motd"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+
+- name: Create vault state directories on the host
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - /var/lib/remo-vault
+    - /var/lib/remo-vault/watch

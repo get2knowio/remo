@@ -6,14 +6,19 @@
 .claude
 .ansible
 .remo
+.git
 .venv
 venv
 dist
 build
+node_modules
+coverage
 *.egg-info
 *.egg
 __pycache__
 *.pyc
+*.log*
+.env*
 *.pem
 id_rsa
 id_rsa.pub
@@ -29,3 +34,5 @@ vault.yml
 tests
 LICENSE
 CLAUDE.md
+Dockerfile*
+.dockerignore

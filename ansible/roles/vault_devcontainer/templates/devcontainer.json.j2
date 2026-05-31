@@ -1,0 +1,21 @@
+{
+  "name": "remo-vault",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "remo-vault",
+  "remoteUser": "vscode",
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "mounts": [
+    "source={{ dev_workspace_dir }}/_remo-vault/.remo/manifest.toml,target=/workspace/.remo/manifest.toml,type=bind,consistency=cached,readonly",
+    "source=/run/remo-broker/admin.sock,target=/run/remo-broker/admin.sock,type=bind",
+    "source=remo-vault-fnox,target=/var/lib/remo-vault,type=volume"
+  ],
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  },
+  "postAttachCommand": "cat /workspace/.remo/motd 2>/dev/null || true"
+}

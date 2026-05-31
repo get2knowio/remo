@@ -62,13 +62,18 @@ def shell(
     With --exec COMMAND, run COMMAND inside the project's devcontainer instead
     of dropping into an interactive shell. Add --detach to fire-and-forget.
 
+    The reserved project name ``_remo-vault`` opens the remo-managed credential
+    sidecar workspace directly.
+
     Examples:
 
       remo shell -p my-app
+      remo shell -p _remo-vault
       remo shell -p my-app --exec 'claude --remote-control'
       remo shell -p my-app --detach --exec 'claude remote-control --name my-rc'
     """
     from remo_cli.core.output import print_error  # noqa: PLC0415
+    from remo_cli.core.validation import validate_project_name  # noqa: PLC0415
 
     if detach and not exec_cmd:
         print_error(
@@ -86,6 +91,8 @@ def shell(
             "could use it. Drop one or the other."
         )
         raise SystemExit(2)
+    if project:
+        validate_project_name(project, allow_reserved=True)
     from remo_cli.core.ssh import check_remote_version, resolve_remo_host, shell_connect  # noqa: PLC0415
     from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
     from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415

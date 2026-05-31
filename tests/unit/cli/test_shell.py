@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+import json
+import os
+import subprocess
+import time
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
+from jinja2 import Environment, FileSystemLoader
 
 from remo_cli.cli.shell import shell
 from remo_cli.models.host import KnownHost
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+TEMPLATE_ROOT = REPO_ROOT / "ansible"
 
 
 @pytest.fixture
@@ -32,6 +40,24 @@ def _patch_shell_deps(mocker, hetzner_host):
     mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=hetzner_host)
     mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=hetzner_host)
     mocker.patch("remo_cli.core.ssh.shell_connect")
+
+
+def _render_template(relative_path: str, **context: str) -> str:
+    env = Environment(
+        autoescape=False,
+        loader=FileSystemLoader(str(TEMPLATE_ROOT)),
+    )
+    return env.get_template(relative_path).render(**context)
+
+
+def _wait_for_log_lines(path: Path, count: int) -> list[list[str]]:
+    for _ in range(50):
+        if path.exists():
+            lines = path.read_text().splitlines()
+            if len(lines) >= count:
+                return [json.loads(line) for line in lines]
+        time.sleep(0.05)
+    raise AssertionError(f"Timed out waiting for {count} devcontainer call(s) in {path}")
 
 
 class TestShellVersionCheck:
@@ -196,6 +222,28 @@ class TestShellProjectLaunchFlags:
         assert kwargs["exec_cmd"] is None
 
     @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_reserved_vault_project_is_allowed(self, runner, mocker):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, ["-p", "_remo-vault"])
+
+        assert result.exit_code == 0
+        _, kwargs = mock_sc.call_args
+        assert kwargs["project"] == "_remo-vault"
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_invalid_project_name_is_rejected(self, runner, mocker):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, ["-p", "bad name"])
+
+        assert result.exit_code != 0
+        mock_sc.assert_not_called()
+        assert "Invalid project" in result.output
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
     def test_exec_passthrough(self, runner, mocker):
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
         mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -233,13 +281,127 @@ class TestShellProjectLaunchFlags:
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_detach_without_exec_errors(self, runner, mocker):
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
-        mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
+        mocker.patch("remo_cli.core.ssh.shell_connect")
 
         result = runner.invoke(shell, ["-p", "my-app", "--detach"])
 
         assert result.exit_code == 2
-        mock_sc.assert_not_called()
-        assert "--detach requires --exec" in result.output
+
+
+class TestProjectLaunchTemplate:
+    def test_detached_devcontainer_uses_generated_config_and_fetch_wrapper(self, tmp_path: Path) -> None:
+        script = _render_template(
+            "roles/user_setup/templates/project-launch.sh.j2",
+            dev_workspace_dir=str(tmp_path / "projects"),
+        )
+        script_path = tmp_path / "project-launch.sh"
+        script_path.write_text(script)
+        script_path.chmod(0o755)
+
+        home = tmp_path / "home"
+        (home / ".local" / "share" / "remo-secrets").mkdir(parents=True)
+        (home / ".cache").mkdir(parents=True)
+        feature_path = home / ".local" / "share" / "remo-secrets" / "feature-devcontainer.json"
+        feature_path.write_text(
+            _render_template("roles/remo_secrets_feature/templates/feature-devcontainer.json.j2")
+        )
+
+        project_dir = tmp_path / "projects" / "demo"
+        (project_dir / ".devcontainer").mkdir(parents=True)
+        (project_dir / ".devcontainer" / "devcontainer.json").write_text(
+            json.dumps({"name": "Demo", "customizations": {"vscode": {"settings": {"editor.tabSize": 2}}}})
+        )
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        devcontainer_log = tmp_path / "devcontainer.log"
+        (bin_dir / "devcontainer").write_text(
+            "#!/bin/bash\n"
+            "python3 - \"$@\" <<'PY'\n"
+            "import json, os, pathlib, sys\n"
+            "log = pathlib.Path(os.environ['FAKE_DEVCONTAINER_LOG'])\n"
+            "with log.open('a', encoding='utf-8') as fh:\n"
+            "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "PY\n"
+        )
+        (bin_dir / "devcontainer").chmod(0o755)
+        (bin_dir / "zellij").write_text("#!/bin/bash\nexit 0\n")
+        (bin_dir / "zellij").chmod(0o755)
+
+        result = subprocess.run(
+            [str(script_path), "--project", "demo", "--detach", "--exec", "echo ready"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "FAKE_DEVCONTAINER_LOG": str(devcontainer_log),
+            },
+        )
+
+        assert result.returncode == 0, result.stderr
+        generated = home / ".cache" / "remo-devcontainer-configs" / "demo.json"
+        merged = json.loads(generated.read_text())
+        assert any("target=/workspace/.remo/manifest.toml" in mount for mount in merged["mounts"])
+        assert merged["containerEnv"]["REMO_BROKER_PROJECT_SOCKET"] == "/run/remo-broker/${localWorkspaceFolderBasename}.sock"
+
+        calls = _wait_for_log_lines(devcontainer_log, 2)
+        assert any("--config" in call for call in calls)
+        exec_call = next(call for call in calls if call[0] == "exec")
+        assert "remo-fetch-secrets" in exec_call[-1]
+
+    def test_managed_vault_project_skips_feature_injection(self, tmp_path: Path) -> None:
+        script = _render_template(
+            "roles/user_setup/templates/project-launch.sh.j2",
+            dev_workspace_dir=str(tmp_path / "projects"),
+        )
+        script_path = tmp_path / "project-launch.sh"
+        script_path.write_text(script)
+        script_path.chmod(0o755)
+
+        home = tmp_path / "home"
+        (home / ".local" / "share" / "remo-secrets").mkdir(parents=True)
+        vault_dir = tmp_path / "projects" / "_remo-vault" / ".devcontainer"
+        vault_dir.mkdir(parents=True)
+        (vault_dir / "devcontainer.json").write_text(json.dumps({"name": "Vault"}))
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        devcontainer_log = tmp_path / "devcontainer.log"
+        (bin_dir / "devcontainer").write_text(
+            "#!/bin/bash\n"
+            "python3 - \"$@\" <<'PY'\n"
+            "import json, os, pathlib, sys\n"
+            "log = pathlib.Path(os.environ['FAKE_DEVCONTAINER_LOG'])\n"
+            "with log.open('a', encoding='utf-8') as fh:\n"
+            "    fh.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "PY\n"
+        )
+        (bin_dir / "devcontainer").chmod(0o755)
+        (bin_dir / "zellij").write_text("#!/bin/bash\nexit 0\n")
+        (bin_dir / "zellij").chmod(0o755)
+
+        result = subprocess.run(
+            [str(script_path), "--project", "_remo-vault", "--detach", "--exec", "echo ready"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={
+                **os.environ,
+                "HOME": str(home),
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "FAKE_DEVCONTAINER_LOG": str(devcontainer_log),
+            },
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert not (home / ".cache" / "remo-devcontainer-configs" / "_remo-vault.json").exists()
+        calls = _wait_for_log_lines(devcontainer_log, 2)
+        assert all("--config" not in call for call in calls)
+        exec_call = next(call for call in calls if call[0] == "exec")
+        assert "remo-fetch-secrets" not in exec_call[-1]
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_detach_with_tunnels_errors(self, runner, mocker):

@@ -23,7 +23,14 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     save_known_host,
 )
-from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.output import (
+    confirm,
+    print_broker_reconciliation,
+    print_error,
+    print_info,
+    print_success,
+    print_warning,
+)
 from remo_cli.core.snapshot import (
     handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
@@ -127,6 +134,7 @@ def create(
     if current != "unknown":
         extra_vars.extend(["-e", f"remo_version={current}"])
 
+    print_broker_reconciliation("Reconciling")
     rc = run_playbook("hetzner_site.yml", extra_vars, verbose=verbose)
 
     if rc != 0:
@@ -159,6 +167,7 @@ def create(
     print(f"  Storage:   {volume_size or '10'} GB persistent volume")
     print("")
     print("  Connect:  remo shell")
+    print("  Vault:    remo shell -p _remo-vault")
     print_success("==================================================")
     print("")
 
@@ -213,6 +222,9 @@ def destroy(
             print_info("Aborted.")
             return 0
 
+    print_warning(
+        "Destroy also tears down the managed _remo-vault sidecar and broker state."
+    )
     print_info(f"Destroying Hetzner VM '{server_name}'...")
 
     extra_vars: list[str] = []
@@ -284,6 +296,7 @@ def update(
     if current != "unknown":
         extra_vars.extend(["-e", f"remo_version={current}"])
 
+    print_broker_reconciliation("Reconfiguring")
     return run_playbook(
         "hetzner_configure.yml",
         extra_vars,

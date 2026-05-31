@@ -1,7 +1,5 @@
 """Tests for remo.core.known_hosts registry module."""
 
-import os
-
 import pytest
 
 from remo_cli.core.known_hosts import (
@@ -102,7 +100,7 @@ class TestSaveKnownHost:
         raw = _read_registry(tmp_config_dir)
         # There should still be empty lines present in the output.
         lines = raw.split("\n")
-        empty_lines = [l for l in lines if l.strip() == ""]
+        empty_lines = [line for line in lines if line.strip() == ""]
         assert len(empty_lines) >= 2
 
 

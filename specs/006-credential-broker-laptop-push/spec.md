@@ -9,6 +9,16 @@
 
 **Input**: Defend a remo dev instance and the project devcontainers running on it against AI agents and supply-chain attacks by ensuring no plaintext credentials exist at rest anywhere an agent or malicious dependency can read them. Achieve this by introducing a dedicated *credential vault devcontainer* (the "sidecar") on every remo instance, separate from the user's project devcontainers, that owns the OAuth flows, holds the source-of-truth for the user's credentials, and pushes them locally to the broker daemon for in-memory vending to project devcontainers via per-project Unix sockets with manifest-gated allowlists.
 
+## Clarifications
+
+### Session 2026-05-31
+
+- Q: When a project devcontainer starts and a manifest-declared secret is unavailable, what should startup do? → A: Retry briefly, then fail startup.
+- Q: For manifest entries rendered to files, should a secret name map to a structured credential bundle or only a single scalar value? → A: A secret name may map to a structured credential bundle.
+- Q: When the sidecar pushes credentials to the broker, should the broker atomically replace its full in-memory store or merge updates into existing state? → A: Atomically replace the full in-memory store.
+- Q: After a successful `push-creds` update, what should happen to existing per-project broker cache entries? → A: Invalidate them immediately.
+- Q: What should the bounded startup retry window be when required secrets are unavailable? → A: 15 seconds.
+
 ## Why the design pivoted twice
 
 005 implemented an external-backend (Vault / AWS-SM / 1Password / age-git) model with a bootstrap-token-on-instance. End-to-end testing on 2026-05-29 surfaced that the bootstrap token at `/etc/remo-broker/bootstrap-token` is itself an on-disk credential — exactly the kind of artifact the [origin-story principle](https://x.com/nateberkopec/status/2048634637447201264) was scrubbing. 005 was closed in [#32](https://github.com/get2knowio/remo/pull/32).
@@ -140,6 +150,8 @@ aws_secret_access_key={{aws_secret_access_key}}
 
 For CLIs that really only read from a file at a known path. The file is materialized in a **memory-backed tmpfs mount** — never touches persistent disk inside the container, vanishes on container restart.
 
+For file rendering, a manifest secret name may refer to a **structured credential bundle** rather than only a scalar string. In that case, `template` placeholders resolve against bundle field names (for example `{{aws_access_key_id}}` and `{{aws_secret_access_key}}`).
+
 ### Realistic limits
 
 Once a credential is reachable by a tool inside the devcontainer (env var or tmpfs file), **anything else running in that devcontainer as the same UID can read it.** The broker can't change that; the OS can't change that without execution-layer policy (`agentsh`, deferred).
@@ -203,14 +215,15 @@ default_max_entries = 50
 | FR-003 | The sidecar runs an inotify watcher that detects fnox storage changes and calls the broker's `push-creds` admin op with the fresh plaintext secret map. |
 | FR-004 | The sidecar's fnox storage is encrypted at rest using a key sourced from systemd-credentials at LXC level (TPM2-sealed → host-key → mode-0600 plaintext fallback ladder), bind-mounted into the sidecar container as a Docker secret. |
 | FR-005 | The broker daemon holds secrets only in process memory. There is no on-disk secrets blob. On broker restart, the in-memory store is empty until the sidecar re-pushes (which it does automatically as part of its own startup). |
+| FR-005a | Each successful `push-creds` call atomically replaces the broker's entire in-memory credential store with the sidecar's current source-of-truth. Secrets omitted from a newer push are removed from broker memory as part of the same atomic swap. |
 | FR-006 | Push from sidecar to broker is plaintext over the LXC-local admin socket (Unix domain socket, kernel-mediated). No encryption-in-transit; no pubkey trust. |
-| FR-007 | The project devcontainer's entrypoint runs `remo-fetch-secrets` (shipped via the `remo/secrets-feature` devcontainer feature), which reads the project's manifest, fetches each declared secret from the broker's per-project socket, and injects per the manifest's `fetch_as` directive (env var or tmpfs file). |
+| FR-007 | The project devcontainer's entrypoint runs `remo-fetch-secrets` (shipped via the `remo/secrets-feature` devcontainer feature), which reads the project's manifest, fetches each declared secret from the broker's per-project socket, and injects per the manifest's `fetch_as` directive (env var or tmpfs file). If any manifest-declared secret is unavailable, `remo-fetch-secrets` retries for up to 15 seconds and then exits non-zero without starting the user's normal entrypoint. |
 | FR-008 | The manifest at `.remo/manifest.toml` is bind-mounted read-only into the project devcontainer; the parent `.remo/` directory may or may not be writable depending on how the user organizes other project-level config. |
-| FR-009 | The manifest schema supports per-secret `fetch_as = "env"` (default) and `fetch_as = "file"` (with `file_path`, `file_mode`, `template` fields). |
+| FR-009 | The manifest schema supports per-secret `fetch_as = "env"` (default) and `fetch_as = "file"` (with `file_path`, `file_mode`, `template` fields). File-rendered entries may reference structured credential bundles, and template placeholders resolve against bundle field names. |
 | FR-010 | `remo shell` shows the sidecar as `_remo-vault` in the project picker. `remo shell -p _remo-vault` jumps straight into the sidecar's shell. |
 | FR-011 | The sidecar ships helper scripts: `remo-list-creds`, `remo-test-project <name>`, `remo-vend-status`, `remo-reload <project>`. |
 | FR-012 | `remo destroy` tears down the entire LXC including the sidecar; no separate teardown step is needed. |
-| FR-013 | The per-project socket protocol (`get` / `ping` / `info`), per-project manifest enforcement, per-project bounded cache, and audit log format from 005 carry forward unchanged. |
+| FR-013 | The per-project socket protocol (`get` / `ping` / `info`), per-project manifest enforcement, per-project bounded cache, and audit log format from 005 carry forward unchanged, except that a successful `push-creds` invalidates all existing per-project cache entries immediately so subsequent reads observe the new snapshot. |
 | FR-014 | A new audit event `AuditEvent::SecretsPushed { timestamp, secret_count }` is emitted on successful `push-creds`. Values are not logged; only counts. |
 | FR-015 | The wire protocol bumps to v2 in remo-broker (removing `rotate-bootstrap` and `bootstrap_mode` are breaking per the project's own additive-only-within-major rule). |
 
@@ -276,6 +289,9 @@ New terms:
 | **Sidecar / Vault devcontainer** | A remo-managed devcontainer that exists on every remo instance, dedicated to credential management. Appears in the project picker as `_remo-vault`. Owns the source-of-truth for the user's credentials on this instance. |
 | **Project devcontainer** | A user-managed devcontainer for a specific project, where the user's code and AI agents run. Receives credentials from the broker as env vars or tmpfs files at startup. |
 | **Push** | The action by which the sidecar sends its current credential set to the broker's admin socket. Triggered automatically by an inotify watcher on the sidecar's fnox storage. |
+| **Atomic full replace** | The broker applies a `push-creds` update by swapping its whole in-memory credential store to the newly pushed snapshot in one step, so additions, updates, and deletions become visible together. |
+| **Cache invalidation on push** | After the broker accepts a new pushed snapshot, it clears all per-project cached secret values immediately rather than serving them until TTL expiry. |
+| **Structured credential bundle** | A single named secret value composed of multiple keyed fields, intended for template-based file rendering (for example an AWS credentials file assembled from `aws_access_key_id` and `aws_secret_access_key`). |
 
 ## See also
 

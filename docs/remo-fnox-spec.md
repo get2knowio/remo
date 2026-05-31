@@ -17,6 +17,13 @@ The credential broker design closes this gap by ensuring:
 2. The instance fetches credentials on demand from an external backend (1Password, Vault, AWS Secrets Manager, etc.).
 3. Each devcontainer sees only the credentials the project it hosts has explicitly declared a need for, enforced by kernel-level namespace separation, not just policy.
 
+## Current implementation notes
+
+- The canonical manifest path is `~/projects/<project>/.remo/manifest.toml`.
+- Project startup generates a temporary merged devcontainer config and passes it with `devcontainer --config`, so checked-in devcontainer files stay unchanged.
+- `remo-fetch-secrets` runs before the project shell, `--exec`, or `--detach` command begins and hard-fails on broker protocol mismatches.
+- `_remo-vault` remains the reserved sidecar workspace for `remo-vend-status`, `remo-reload`, and `remo-test-project`.
+
 ## Terms and Definitions
 
 These terms are used consistently throughout this spec and should be adopted in all related code, CLI surface, and documentation.

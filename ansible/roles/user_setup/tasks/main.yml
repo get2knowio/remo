@@ -206,6 +206,8 @@
     - .config/opencode
     - .config/gh
     - .coderabbit
+    - .cache/devcontainer-hashes
+    - .cache/remo-devcontainer-configs
     - .local/bin
 
 - name: Create projects directory
@@ -296,6 +298,7 @@
                   "$_project_dir/.devcontainer.json" \
                   "$_project_dir/.devcontainer/Dockerfile" \
                   "$_project_dir/.devcontainer/docker-compose.yml" \
+                  "$HOME/.local/share/remo-secrets/feature-devcontainer.json" \
                   2>/dev/null | sha256sum | cut -d' ' -f1)
               
               # Compare with stored hash
@@ -314,9 +317,14 @@
                   _rebuild_flag="--remove-existing-container"
                   rm -f "$_project_dir/.devcontainer-rebuild"
               fi
-              
+
+              _config_args=()
+              if [[ -n "${REMO_DEVCONTAINER_CONFIG:-}" ]]; then
+                  _config_args=(--config "$REMO_DEVCONTAINER_CONFIG")
+              fi
+               
               echo "Starting devcontainer for $ZELLIJ_SESSION_NAME..."
-              if ! devcontainer up --workspace-folder "$_project_dir" $_rebuild_flag; then
+              if ! devcontainer up --workspace-folder "$_project_dir" "${_config_args[@]}" $_rebuild_flag; then
                   echo ""
                   echo "devcontainer up failed. [Press any key to continue]"
                   read -n 1 -s -r
@@ -330,29 +338,34 @@
               echo "Entering devcontainer (exit to return to host shell)..."
               echo ""
 
-              # If REMO_DEVCONTAINER_CMD is set (project-launch passthrough),
-              # run that command inside the devcontainer instead of dropping
-              # into the user's shell. Wrapped in `bash -lc` so the user's
-              # command gets variable expansion, pipes, &&, and PATH from
-              # the devcontainer's login profile.
-              if [[ -n "$REMO_DEVCONTAINER_CMD" ]]; then
-                  _bash_flags="-lc"
-                  _exec_cmd="$REMO_DEVCONTAINER_CMD"
+              if [[ "${REMO_DEVCONTAINER_SECRETS:-0}" == "1" ]]; then
+                  # Secrets must be vended before the user's shell or command
+                  # starts inside the devcontainer. We keep the original command
+                  # in an env var so quoting survives the host-side handoff.
+                  if [[ "${REMO_DEVCONTAINER_EXEC_MODE:-shell}" == "command" ]]; then
+                      _exec_cmd='set -euo pipefail; eval "$(remo-fetch-secrets "$REMO_PROJECT")"; exec bash -lc "$REMO_DEVCONTAINER_STARTUP_CMD"'
+                  else
+                      _exec_cmd='set -euo pipefail; eval "$(remo-fetch-secrets "$REMO_PROJECT")"; if command -v zsh &> /dev/null; then exec zsh -l; else exec bash -l; fi'
+                  fi
               else
-                  _bash_flags="-c"
-                  _exec_cmd='if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
+                  if [[ -n "${REMO_DEVCONTAINER_STARTUP_CMD:-}" ]]; then
+                      _exec_cmd='exec bash -lc "$REMO_DEVCONTAINER_STARTUP_CMD"'
+                  else
+                      _exec_cmd='if command -v zsh &> /dev/null; then exec zsh -l; else exec bash -l; fi'
+                  fi
               fi
-
-              # Run devcontainer shell (not exec, so we can stop container after)
               if ! devcontainer exec --workspace-folder "$_project_dir" \
+                  "${_config_args[@]}" \
                   env REMO_INSTANCE="${REMO_INSTANCE:-$(hostname)}" \
                       REMO_PROJECT="$ZELLIJ_SESSION_NAME" \
-                  /bin/bash $_bash_flags "$_exec_cmd"; then
+                      REMO_DEVCONTAINER_SECRETS="${REMO_DEVCONTAINER_SECRETS:-0}" \
+                      REMO_DEVCONTAINER_STARTUP_CMD="${REMO_DEVCONTAINER_STARTUP_CMD:-}" \
+                  /bin/bash -lc "$_exec_cmd"; then
                   echo ""
                   echo "devcontainer exec failed. [Press any key to continue]"
                   read -n 1 -s -r
               fi
-              unset _exec_cmd _bash_flags
+              unset _exec_cmd
 
               # After exiting devcontainer, stop the container to free resources
               echo ""
@@ -365,7 +378,7 @@
               # Exit the zellij session to return to project menu
               exit 0
           fi
-          unset _project_dir _hash_dir _hash_file _rebuild_flag _current_hash _stored_hash _container_id
+          unset _project_dir _hash_dir _hash_file _rebuild_flag _current_hash _stored_hash _container_id _config_args
       fi
     create: true
     owner: "{{ remo_user }}"

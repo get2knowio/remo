@@ -1,0 +1,18 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+    echo "Usage: remo-test-project <project>" >&2
+    exit 2
+fi
+
+PROJECT="$1"
+AUDIT_LOG="${REMO_BROKER_AUDIT_LOG:-/var/log/remo-broker/audit.log}"
+
+echo "Testing manifest and broker access for $PROJECT..."
+remo-reload "$PROJECT"
+if ! REMO_PROJECT="$PROJECT" remo-fetch-secrets "$PROJECT"; then
+    echo "remo-test-project: secret vending failed for $PROJECT" >&2
+    echo "Check broker audit log: $AUDIT_LOG" >&2
+    exit 1
+fi

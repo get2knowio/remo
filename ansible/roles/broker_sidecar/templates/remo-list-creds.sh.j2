@@ -1,0 +1,31 @@
+#!/bin/bash
+set -euo pipefail
+
+if ! command -v fnox >/dev/null 2>&1; then
+    echo "remo-list-creds: fnox is not installed on this host" >&2
+    exit 1
+fi
+
+if fnox list --json >/tmp/remo-fnox-list.$$ 2>/dev/null; then
+    python3 - /tmp/remo-fnox-list.$$ <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+raw = json.loads(path.read_text())
+
+items = raw if isinstance(raw, list) else raw.get("items", [])
+for item in items:
+    if isinstance(item, dict):
+        name = item.get("name", "<unknown>")
+        meta = item.get("updated_at") or item.get("created_at") or "metadata unavailable"
+        print(f"{name}\t{meta}")
+PY
+    rm -f /tmp/remo-fnox-list.$$
+    exit 0
+fi
+
+exec fnox list

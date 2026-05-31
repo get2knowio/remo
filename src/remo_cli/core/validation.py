@@ -14,6 +14,9 @@ ALL_TOOLS: tuple[str, ...] = (
     "zellij",
 )
 
+MANAGED_VAULT_PROJECT = "_remo-vault"
+RESERVED_PROJECT_NAMES: tuple[str, ...] = (MANAGED_VAULT_PROJECT,)
+
 _NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._/-]*$")
 _REGION_RE = re.compile(r"^[a-z]{2}-[a-z]+-[0-9]+$")
 
@@ -23,6 +26,27 @@ def validate_name(value: str, label: str = "name") -> None:
         raise click.BadParameter(
             f"Invalid {label}: '{value}'. Must start with alphanumeric and contain only"
             " alphanumeric, dots, hyphens, underscores, or slashes."
+        )
+
+
+def is_reserved_project_name(value: str) -> bool:
+    return value in RESERVED_PROJECT_NAMES
+
+
+def validate_project_name(
+    value: str,
+    *,
+    label: str = "project",
+    allow_reserved: bool = False,
+) -> None:
+    if allow_reserved and is_reserved_project_name(value):
+        return
+
+    validate_name(value, label)
+
+    if is_reserved_project_name(value):
+        raise click.BadParameter(
+            f"Invalid {label}: '{value}' is reserved for remo-managed broker helpers."
         )
 
 

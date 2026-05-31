@@ -1,0 +1,15 @@
+services:
+  remo-vault:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - remo-vault-fnox:/var/lib/remo-vault
+      - /run/remo-broker/admin.sock:/run/remo-broker/admin.sock
+    environment:
+      REMO_BROKER_ADMIN_SOCKET: /run/remo-broker/admin.sock
+      REMO_PROJECT: _remo-vault
+
+volumes:
+  remo-vault-fnox:
+    name: remo-vault-fnox

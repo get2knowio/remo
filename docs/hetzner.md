@@ -22,6 +22,9 @@ remo hetzner create
 
 # Connect
 remo shell
+
+# Open the managed credential sidecar
+remo shell -p _remo-vault
 ```
 
 ## Configuration
@@ -86,6 +89,8 @@ remo hetzner destroy --yes --remove-volume
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
+`remo hetzner create` and `remo hetzner update` always reconcile the managed broker service and `_remo-vault` sidecar. `--only` and `--skip` narrow the optional tool bundle only.
+
 ### Destroy Options
 
 | Option | Description |
@@ -100,6 +105,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **Persistent Volume** | `/home/remo` mounted on a separate volume that survives server teardown |
 | **Strict Firewall** | SSH-only access (port 22) |
 | **Ubuntu 24.04** | Latest LTS with automatic security updates |
+| **Managed `_remo-vault` sidecar** | Broker admin workspace for credential vending and manifest reloads |
 
 ## Server Types
 

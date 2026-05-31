@@ -1,0 +1,98 @@
+---
+- name: Ensure remo-broker group exists
+  ansible.builtin.group:
+    name: "{{ remo_broker_group }}"
+    system: true
+    state: present
+
+- name: Ensure remo-broker user exists
+  ansible.builtin.user:
+    name: "{{ remo_broker_user }}"
+    group: "{{ remo_broker_group }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Create remo-broker directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - path: "{{ remo_broker_config_dir }}"
+      owner: root
+      group: root
+      mode: '0755'
+    - path: "{{ remo_broker_projects_dir }}"
+      owner: root
+      group: root
+      mode: '0755'
+    - path: "{{ remo_broker_log_dir }}"
+      owner: "{{ remo_broker_user }}"
+      group: "{{ remo_broker_group }}"
+      mode: '0750'
+    - path: "{{ remo_broker_socket_dir }}"
+      owner: "{{ remo_broker_user }}"
+      group: "{{ remo_broker_group }}"
+      mode: '0755'
+
+- name: Install remo-broker environment file
+  ansible.builtin.template:
+    src: remo-broker.env.j2
+    dest: /etc/default/remo-broker
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Install remo-broker systemd unit
+  ansible.builtin.template:
+    src: remo-broker.service.j2
+    dest: /etc/systemd/system/remo-broker.service
+    owner: root
+    group: root
+    mode: '0644'
+  register: remo_broker_unit
+
+- name: Install placeholder bootstrap token file
+  ansible.builtin.copy:
+    dest: "{{ remo_broker_bootstrap_token_path }}"
+    owner: root
+    group: root
+    mode: '0600'
+    force: false
+    content: |
+      set-this-to-a-real-bootstrap-token
+
+- name: Ensure remo user can inspect broker project sockets
+  ansible.builtin.user:
+    name: "{{ remo_user }}"
+    groups: "{{ remo_broker_group }}"
+    append: true
+  when: remo_user | default('') | length > 0
+
+- name: Verify remo-broker assets are installed
+  ansible.builtin.command:
+    cmd: >-
+      /bin/bash -lc
+      'test -x "{{ remo_broker_binary_path }}" &&
+       test -f /etc/default/remo-broker &&
+       test -f /etc/systemd/system/remo-broker.service &&
+       test -f "{{ remo_broker_bootstrap_token_path }}"'
+  register: remo_broker_install_check
+  changed_when: false
+  failed_when: false
+
+- name: Fail when remo-broker assets are incomplete
+  ansible.builtin.fail:
+    msg: >-
+      Managed remo-broker provisioning is incomplete. Expected the broker
+      binary, environment file, systemd unit, and bootstrap token to exist.
+  when: remo_broker_install_check.rc | default(1) != 0
+
+- name: Reload systemd when remo-broker unit changed
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: remo_broker_unit.changed | default(false)

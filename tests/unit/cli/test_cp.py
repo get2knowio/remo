@@ -1,8 +1,6 @@
 """Tests for remo.cli.cp – parse_remote_spec() and the cp Click command."""
 
 from __future__ import annotations
-
-import pytest
 from click.testing import CliRunner
 
 from remo_cli.cli.cp import cp, parse_remote_spec

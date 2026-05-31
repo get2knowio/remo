@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-import builtins
-
 import pytest
 
 from remo_cli.core.output import (
     BLUE,
+    BROKER_RECONCILIATION_STEPS,
     GREEN,
     NC,
     RED,
     YELLOW,
     confirm,
+    format_broker_reconciliation_message,
+    print_broker_reconciliation,
     print_error,
     print_info,
     print_success,
@@ -220,3 +221,22 @@ class TestConfirm:
     def test_leading_trailing_whitespace_stripped(self, monkeypatch):
         monkeypatch.setattr("builtins.input", lambda _: "  yes  ")
         assert confirm("Continue?") is True
+
+
+class TestBrokerReconciliationHelpers:
+    """Tests for broker reconciliation output helpers."""
+
+    def test_format_broker_reconciliation_message_mentions_all_steps(self):
+        out = format_broker_reconciliation_message("Reconciling")
+
+        assert out.startswith("Reconciling ")
+        for step in BROKER_RECONCILIATION_STEPS:
+            assert step in out
+
+    def test_print_broker_reconciliation_uses_info_style(self, capsys):
+        print_broker_reconciliation("Reconfiguring")
+        captured = capsys.readouterr()
+
+        assert BLUE in captured.out
+        assert "Reconfiguring" in captured.out
+        assert captured.err == ""

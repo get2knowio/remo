@@ -25,6 +25,9 @@ remo aws create
 
 # Connect
 remo shell
+
+# Open the managed credential sidecar
+remo shell -p _remo-vault
 ```
 
 ## Configuration
@@ -116,6 +119,8 @@ remo aws snapshot delete <instance> <snap-name> [-y]    # Remove snapshot
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
+`remo aws create` and `remo aws update` always reconcile the managed broker service and `_remo-vault` sidecar. `--only` and `--skip` narrow the optional tool bundle only.
+
 ### Destroy Options
 
 | Option | Description |
@@ -166,6 +171,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **Spot Instances** | Optional spot pricing for ~70% cost savings |
 | **Multi-user** | Resources namespaced by `--name` for shared AWS accounts |
 | **Patch Manager** | Automatic OS security patching via AWS SSM Patch Manager — daily scan, weekly install (Sunday 4 AM UTC) with auto-reboot |
+| **Managed `_remo-vault` sidecar** | Broker admin workspace for `remo-vend-status`, `remo-list-creds`, and manifest reloads |
 
 ## Instance Types
 

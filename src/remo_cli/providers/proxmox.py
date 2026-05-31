@@ -26,7 +26,13 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     save_known_host,
 )
-from remo_cli.core.output import confirm, print_error, print_info, print_warning
+from remo_cli.core.output import (
+    confirm,
+    print_broker_reconciliation,
+    print_error,
+    print_info,
+    print_warning,
+)
 from remo_cli.core.snapshot import (
     handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
@@ -245,6 +251,7 @@ def create(
     # Proxmox host for the fresh IP instead of returning a cached value.
     remove_known_host("proxmox", f"{host}/{name}")
 
+    print_broker_reconciliation("Reconciling")
     rc = run_playbook("proxmox_site.yml", extra_vars, verbose=verbose)
 
     if rc == 0:
@@ -280,6 +287,8 @@ def create(
                 verbose=verbose,
             )
 
+    if rc == 0:
+        print_info("Vault sidecar available at: remo shell -p _remo-vault")
     return rc
 
 
@@ -346,6 +355,9 @@ def destroy(
             print_info("Aborted.")
             return 0
 
+    print_warning(
+        "Destroy also tears down the managed _remo-vault sidecar and broker state."
+    )
     print_info(f"Destroying Proxmox LXC container '{name}' on {host}...")
 
     extra_vars: list[str] = [
@@ -456,6 +468,7 @@ def update(
     if current != "unknown":
         extra_vars.extend(["-e", f"remo_version={current}"])
 
+    print_broker_reconciliation("Reconfiguring")
     return run_playbook("proxmox_configure.yml", extra_vars, verbose=verbose)
 
 

@@ -1,0 +1,12 @@
+{
+  "mounts": [
+    "source=/run/remo-broker/${localWorkspaceFolderBasename}.sock,target=/run/remo-broker/${localWorkspaceFolderBasename}.sock,type=bind",
+    "source=${localWorkspaceFolder}/.remo/manifest.toml,target=/workspace/.remo/manifest.toml,type=bind,readonly"
+  ],
+  "containerEnv": {
+    "REMO_PROJECT": "${localWorkspaceFolderBasename}",
+    "REMO_BROKER_PROJECT_SOCKET": "/run/remo-broker/${localWorkspaceFolderBasename}.sock",
+    "REMO_MANIFEST_PATH": "/workspace/.remo/manifest.toml",
+    "REMO_SECRETS_ENV_FILE": "/home/vscode/.cache/remo-secrets/${localWorkspaceFolderBasename}.env"
+  }
+}

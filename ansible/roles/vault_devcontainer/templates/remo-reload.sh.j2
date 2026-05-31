@@ -1,0 +1,36 @@
+#!/bin/bash
+set -euo pipefail
+
+if [ $# -ne 1 ]; then
+    echo "Usage: remo-reload <project>" >&2
+    exit 2
+fi
+
+PROJECT="$1"
+ADMIN_SOCKET="${REMO_BROKER_ADMIN_SOCKET:-/run/remo-broker/admin.sock}"
+
+python3 - "$ADMIN_SOCKET" "$PROJECT" <<'PY'
+from __future__ import annotations
+
+import json
+import socket
+import sys
+
+sock_path = sys.argv[1]
+project = sys.argv[2]
+
+payload = json.dumps({"op": "reload", "name": project}).encode() + b"\n"
+
+with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+    client.connect(sock_path)
+    client.sendall(payload)
+    response = client.recv(65536)
+
+data = json.loads(response.decode().strip())
+if not data.get("ok"):
+    raise SystemExit(f"remo-reload: broker returned error: {data}")
+
+print(f"reloaded {project}")
+print(f"allowlist: {', '.join(data.get('allowlist', [])) or '(empty)'}")
+print("manifest_source: host-side project manifest")
+PY
