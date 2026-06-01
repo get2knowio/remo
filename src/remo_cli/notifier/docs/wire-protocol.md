@@ -102,3 +102,22 @@ not the `remo-cli` package version.
 All approval state is in-memory. A restart loses every pending approval; the
 caller's dropped connection is treated as a fail-secure deny. There is no
 persistence and no replay.
+
+## Standing grants — "Always" auto-approval (Addendum 001)
+
+Before anything else, `POST /v1/approve` checks the in-memory standing-grant
+store. If the request matches an **active, unexpired, unrevoked, human-created**
+grant (created earlier via the Telegram "Always" flow), the notifier returns
+`200` immediately:
+
+- `decision: "allow"`, `responder: "rule:{grant_id}"`,
+  `reason: "auto-approved via standing grant"`, and the `grant_id` field set.
+- No notification is sent and no pending slot is reserved.
+
+On no match (or when grants are disabled/paused), the normal pipeline runs
+unchanged. The match is deterministic and **fail-closed**: an expired/revoked
+grant, a scope/predicate mismatch, a missing field, or any evaluation error all
+mean "no match" → the human is prompted. Grants are in-memory only (a restart
+clears them → re-prompts) and TTL-bounded (default 8h; no indefinite grants).
+The `grant_id` field also appears on the response that *creates* a grant (the
+"Always" tap). Full grant schema + Telegram surface: `contracts/grant-schema.md`.

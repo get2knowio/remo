@@ -85,6 +85,9 @@ class ApprovalDecision(BaseModel):
     responder: str
     reason: str = ""
     decided_at: datetime = Field(default_factory=_utcnow)
+    # Set when a human chose "Always" — the newly created grant's id, echoed
+    # back on the response (Addendum 001).
+    grant_id: str | None = None
 
 
 class ApprovalResponse(BaseModel):
@@ -96,6 +99,9 @@ class ApprovalResponse(BaseModel):
     reason: str = ""
     decided_at: datetime
     latency_ms: int = Field(ge=0)
+    # Present on a standing-grant auto-approval (responder "rule:{id}") or on the
+    # response that created a grant via the "Always" tap (Addendum 001).
+    grant_id: str | None = None
 
 
 class HealthResponse(BaseModel):

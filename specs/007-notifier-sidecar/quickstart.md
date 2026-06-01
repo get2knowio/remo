@@ -128,3 +128,43 @@ grep -r '\.rc ==' ansible/roles/remo_notifier/ ; grep -r '\.stdout' ansible/role
 | Image < 250 MB; health 200 < 5 s in container | AC-2 |
 | `pytest tests/notifier/` > 85% coverage | AC-8 |
 | `ruff` + `mypy` clean on notifier package | AC-9 |
+
+## Standing grants — "Always" (Addendum 001)
+
+### Try it locally
+
+With `remo-notifier serve` running and a real bot:
+
+```bash
+# Send a request; in Telegram tap [⏩ Always…], then pick a generalization+scope.
+curl -i -X POST http://127.0.0.1:18181/v1/approve -H 'content-type: application/json' \
+  -d '{"operation":{"kind":"command","command":"git","args":["push","origin","main"]},
+       "policy_rule_name":"vcs-push","policy_message":"allow git push?","project":"demo"}'
+
+# Repeat the same request — it should now return 200 allow instantly, no Telegram,
+# with responder "rule:<grant_id>" and a grant_id field.
+```
+
+Manage grants from Telegram: `/rules` (list + revoke buttons), `/revoke <id>`,
+`/pause` and `/resume`.
+
+### Config (notifier.toml)
+
+```toml
+[grants]
+enabled = true
+default_ttl_seconds = 28800   # 8h; every grant expires (no indefinite grants)
+max_grants = 100
+allow_global_scope = true
+digest_interval_seconds = 3600  # 0 disables the auto-approval digest
+```
+
+### Acceptance smoke (Addendum)
+
+| Check | Spec |
+|-------|------|
+| After "Always", a matching request returns `allow` < 500 ms, no Telegram | SC-G1 |
+| Only an active/unexpired/unrevoked human grant ever auto-approves; else prompt/fail-closed | SC-G2 |
+| `/rules` lists, `/revoke` and `/pause` take effect immediately | SC-G3 |
+| Every auto-approval is auditable by `grant_id`, no secrets in the record | SC-G4 |
+| Restart clears all grants → re-prompts (fail-closed) | SC-G5 |

@@ -93,3 +93,39 @@ def test_missing_token_file_fails(tmp_path: Path) -> None:
     assert cfg.transport.telegram is not None
     with pytest.raises(ValueError):
         cfg.transport.telegram.read_token()
+
+
+# --- GrantsConfig (Addendum 001, TA003a) ------------------------------------
+def test_grants_defaults(tmp_path: Path, token_file: Path) -> None:
+    cfg = load_config(_write(tmp_path, _base(token_file)))
+    assert cfg.grants.enabled is True
+    assert cfg.grants.default_ttl_seconds == 28800
+    assert cfg.grants.max_grants == 100
+    assert cfg.grants.allow_global_scope is True
+    assert cfg.grants.digest_interval_seconds == 3600
+
+
+def test_grants_block_parses(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file) + (
+        '\n[grants]\nenabled = false\ndefault_ttl_seconds = 600\n'
+        'max_grants = 5\nallow_global_scope = false\ndigest_interval_seconds = 0\n'
+    )
+    cfg = load_config(_write(tmp_path, body))
+    assert cfg.grants.enabled is False
+    assert cfg.grants.default_ttl_seconds == 600
+    assert cfg.grants.max_grants == 5
+    assert cfg.grants.allow_global_scope is False
+    assert cfg.grants.digest_interval_seconds == 0  # disables digest
+
+
+def test_grants_unknown_key_rejected(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file) + '\n[grants]\nsurprise = 1\n'
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, body))
+
+
+def test_grants_bad_bounds_rejected(tmp_path: Path, token_file: Path) -> None:
+    for line in ("default_ttl_seconds = 0", "max_grants = 0"):
+        body = _base(token_file) + f"\n[grants]\n{line}\n"
+        with pytest.raises(ValueError):
+            load_config(_write(tmp_path, body))

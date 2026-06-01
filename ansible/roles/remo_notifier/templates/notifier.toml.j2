@@ -11,6 +11,13 @@ default_timeout_seconds = {{ remo_notifier_default_timeout_seconds | int }}
 max_timeout_seconds = {{ remo_notifier_max_timeout_seconds | int }}
 max_pending_approvals = {{ remo_notifier_max_pending_approvals | int }}
 
+[grants]
+enabled = {{ remo_notifier_grants_enabled | bool | lower }}
+default_ttl_seconds = {{ remo_notifier_grants_default_ttl_seconds | int }}
+max_grants = {{ remo_notifier_grants_max | int }}
+allow_global_scope = {{ remo_notifier_grants_allow_global_scope | bool | lower }}
+digest_interval_seconds = {{ remo_notifier_grants_digest_interval_seconds | int }}
+
 [transport]
 type = "telegram"
 

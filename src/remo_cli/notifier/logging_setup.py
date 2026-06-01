@@ -85,7 +85,9 @@ def configure_logging(level: str = "info", *, json_logs: bool | None = None) -> 
         ],
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
         logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
+        # Disabled so a later configure_logging() (e.g. log-level change, or a
+        # test reconfiguring) always takes effect; negligible at notifier volume.
+        cache_logger_on_first_use=False,
     )
 
 

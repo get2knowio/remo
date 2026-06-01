@@ -14,6 +14,13 @@ remo_notifier_max_pending_approvals: 50
 remo_notifier_log_level: "info"
 remo_notifier_message_parse_mode: "MarkdownV2"
 
+# Standing grants ("Always" auto-approval) — Addendum 001
+remo_notifier_grants_enabled: true
+remo_notifier_grants_default_ttl_seconds: 28800  # 8h; every grant expires
+remo_notifier_grants_max: 100
+remo_notifier_grants_allow_global_scope: true
+remo_notifier_grants_digest_interval_seconds: 3600  # 0 disables the digest
+
 remo_notifier_telegram_bot_token: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_BOT_TOKEN') }}"
 remo_notifier_telegram_chat_id: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_CHAT_ID') }}"
 

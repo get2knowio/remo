@@ -245,6 +245,17 @@ remo notifier test    <host>               # push a test approval, print the dec
 remo notifier restart <host>               # systemctl restart remo-notifier.service
 ```
 
+### "Always" — standing grants
+
+Approval messages offer **✅ Approve · ⏩ Always… · ❌ Deny**. Tapping **Always…**
+lets you auto-approve a *class* of operation (e.g. `git push *` in this project)
+so matching requests are approved instantly without pinging you again. Grants are
+held in memory only (cleared on restart → you're asked again — fail-closed),
+expire after a default 8h, and default to the narrowest scope. Manage them from
+Telegram: `/rules` (list + revoke), `/revoke <id>`, `/pause` and `/resume`.
+Auto-approvals are logged and summarized in a periodic digest. Tune via the
+`[grants]` config block (see `src/remo_cli/notifier/docs/config-schema.md`).
+
 ## CLI Reference
 
 ```bash

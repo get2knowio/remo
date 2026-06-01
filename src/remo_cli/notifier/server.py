@@ -29,10 +29,23 @@ from remo_cli.notifier.models import (
     ErrorResponse,
     HealthResponse,
 )
+from remo_cli.notifier.grants import GrantStore
 from remo_cli.notifier.state import PendingApprovals, RegisterError, RegistrationFailed
 from remo_cli.notifier.transports.base import NotificationTransport
 
 _log = get_logger("remo_notifier.server")
+
+
+def _op_summary(request: ApprovalRequest) -> str:
+    """Redacted one-line op descriptor for audit (no args/bodies/secrets/paths)."""
+    op = request.operation
+    if op.kind.value == "command":
+        return f"command:{op.command or '?'}"
+    if op.kind.value == "network":
+        return f"network:{op.remote_host or '?'}:{op.remote_port or '?'}"
+    if op.kind.value == "file":
+        return "file"  # path withheld (FR-017)
+    return op.kind.value
 
 
 def _clamp_timeout(requested: int | None, *, default: int, maximum: int) -> int:
@@ -48,7 +61,41 @@ def _err(status_code: int, error: str, detail: str = "", approval_id: str | None
 def create_app(config: NotifierConfig, transport: NotificationTransport) -> FastAPI:
     """Build the FastAPI app wired to ``transport`` and a fresh registry."""
     registry = PendingApprovals(max_pending=config.approval.max_pending_approvals)
-    state: dict[str, object] = {"shutting_down": False, "start_time": time.monotonic()}
+    grant_store = GrantStore(
+        max_grants=config.grants.max_grants,
+        instance_id=config.instance.id,
+        allow_global_scope=config.grants.allow_global_scope,
+    )
+    # The server owns the auto-approval counter for the digest (research RG6/U1).
+    state: dict[str, object] = {
+        "shutting_down": False,
+        "start_time": time.monotonic(),
+        "auto_approvals_since_digest": 0,
+    }
+
+    # Let a grant-aware transport (Telegram) reach the store for proposals,
+    # creation, and /rules /revoke /pause. Other transports skip this.
+    if config.grants.enabled and hasattr(transport, "bind_grants"):
+        transport.bind_grants(grant_store, default_ttl_seconds=config.grants.default_ttl_seconds)
+
+    async def _sweeper() -> None:
+        while True:
+            await asyncio.sleep(60)
+            grant_store.sweep()
+
+    async def _digester(interval: int) -> None:
+        while True:
+            await asyncio.sleep(interval)
+            n = int(state["auto_approvals_since_digest"])  # type: ignore[call-overload]
+            if n > 0 and hasattr(transport, "send_digest"):
+                state["auto_approvals_since_digest"] = 0
+                try:
+                    await transport.send_digest(
+                        f"Auto-approved {n} operation(s) via standing grants "
+                        f"({grant_store.count()} active)."
+                    )
+                except Exception:  # noqa: BLE001 - digest is best-effort
+                    _log.debug("digest_send_failed")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -60,10 +107,15 @@ def create_app(config: NotifierConfig, transport: NotificationTransport) -> Fast
             # down liveness: /v1/health stays up; /v1/approve returns 503 while
             # the transport reports unhealthy (FR-007).
             _log.error("transport_start_failed", error=str(exc), transport=transport.name)
+        tasks = [asyncio.create_task(_sweeper())] if config.grants.enabled else []
+        if config.grants.enabled and config.grants.digest_interval_seconds > 0:
+            tasks.append(asyncio.create_task(_digester(config.grants.digest_interval_seconds)))
         try:
             yield
         finally:
             state["shutting_down"] = True
+            for t in tasks:
+                t.cancel()
             registry.drain(
                 ApprovalDecision(
                     decision=Decision.deny, responder="system:shutdown", reason="shutdown"
@@ -80,6 +132,32 @@ def create_app(config: NotifierConfig, transport: NotificationTransport) -> Fast
 
     @app.post("/v1/approve")
     async def approve(request: ApprovalRequest) -> JSONResponse:
+        # Standing-grant short-circuit (Addendum 001, FR-G1): before anything
+        # else, auto-approve a matching class with no notification and no slot.
+        if config.grants.enabled and not grant_store.paused:
+            sc_started = time.monotonic()
+            matched = grant_store.match(request)
+            if matched is not None:
+                state["auto_approvals_since_digest"] = int(state["auto_approvals_since_digest"]) + 1  # type: ignore[call-overload]
+                _log.info(
+                    "auto_approved",
+                    approval_id=request.approval_id or "(generated)",
+                    grant_id=matched.grant_id,
+                    kind=request.operation.kind.value,
+                    summary=_op_summary(request),
+                    latency_ms=int((time.monotonic() - sc_started) * 1000),
+                )
+                resp = ApprovalResponse(
+                    approval_id=request.approval_id or str(uuid.uuid4()),
+                    decision=Decision.allow,
+                    responder=f"rule:{matched.grant_id}",
+                    reason="auto-approved via standing grant",
+                    decided_at=datetime.now(timezone.utc),
+                    latency_ms=int((time.monotonic() - sc_started) * 1000),
+                    grant_id=matched.grant_id,
+                )
+                return JSONResponse(status_code=200, content=resp.model_dump(mode="json"))
+
         if state["shutting_down"] or not await transport.healthy():
             return _err(503, "unavailable", detail="notifier not ready")
 
@@ -139,6 +217,7 @@ def create_app(config: NotifierConfig, transport: NotificationTransport) -> Fast
             reason=decision.reason,
             decided_at=decision.decided_at,
             latency_ms=latency_ms,
+            grant_id=decision.grant_id,  # set when the human chose "Always"
         )
         return JSONResponse(status_code=200, content=resp.model_dump(mode="json"))
 
@@ -153,4 +232,5 @@ def create_app(config: NotifierConfig, transport: NotificationTransport) -> Fast
         )
 
     app.state.registry = registry  # exposed for tests
+    app.state.grant_store = grant_store  # exposed for tests
     return app

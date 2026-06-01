@@ -44,6 +44,28 @@ id = "hetzner-prod-1"          # shown to the human in the approval message
 | `transport.telegram.message_parse_mode` | string | `MarkdownV2` | |
 | `instance.id` | string | — | Required. |
 
+## Standing grants — `[grants]` (Addendum 001)
+
+```toml
+[grants]
+enabled = true                  # master switch for "Always" auto-approval
+default_ttl_seconds = 28800     # 8h; applied to every grant (no indefinite grants)
+max_grants = 100                # cap on concurrent active grants
+allow_global_scope = true       # if false, "everywhere"-scoped grants are refused
+digest_interval_seconds = 3600  # periodic auto-approval digest; 0 disables it
+```
+
+| Key | Type | Default | Notes |
+|-----|------|---------|-------|
+| `enabled` | bool | `true` | When false, every request is prompted as before. |
+| `default_ttl_seconds` | int ≥ 1 | `28800` | Every grant expires; revocation is always available. |
+| `max_grants` | int ≥ 1 | `100` | Over the cap, "Always" approves once but doesn't remember. |
+| `allow_global_scope` | bool | `true` | Grants default to the narrowest scope regardless. |
+| `digest_interval_seconds` | int ≥ 0 | `3600` | `0` disables the Telegram digest. |
+
+Grants are in-memory (cleared on restart → fail-closed re-prompt) and managed
+from Telegram (`/rules`, `/revoke <id>`, `/pause`, `/resume`).
+
 ## Secret handling & rotation
 
 - The bot token lives only in `bot_token_file` (mode `0400`), never in this TOML

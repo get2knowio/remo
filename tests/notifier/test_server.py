@@ -7,10 +7,25 @@ import uuid
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from remo_cli.notifier.models import Decision
+from remo_cli.notifier.grants import (
+    ArgMatchType,
+    Grant,
+    GrantPredicate,
+    GrantScope,
+    GrantScopeType,
+)
+from remo_cli.notifier.models import Decision, OperationKind
 from remo_cli.notifier.server import create_app
 
 from .conftest import make_request
+
+
+def _global_git_grant() -> Grant:
+    return Grant.create(
+        predicate=GrantPredicate(kind=OperationKind.command, command="git", args=[], args_match=ArgMatchType.prefix),
+        scope=GrantScope(type=GrantScopeType.glob),
+        ttl_seconds=3600, created_by="telegram:t", source_approval_id="x",
+    )
 
 
 
@@ -126,6 +141,85 @@ def test_lifespan_starts_and_stops_transport(config, fake_transport) -> None:
         assert fake_transport.started is True
         assert client.get("/v1/health").status_code == 200
     assert fake_transport.stopped is True
+
+
+async def test_grant_short_circuit_allows(config, fake_transport) -> None:
+    app = create_app(config, fake_transport)
+    g = _global_git_grant()
+    await app.state.grant_store.create(g)
+    async with _client(app) as client:
+        resp = await client.post(
+            "/v1/approve", json=_body(operation={"kind": "command", "command": "git", "args": ["push"]})
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["decision"] == "allow"
+    assert data["responder"] == f"rule:{g.grant_id}"
+    assert data["grant_id"] == g.grant_id
+    assert fake_transport.sent == []  # FR-G1: no notification
+    assert app.state.registry.count() == 0  # no pending slot
+    assert g.uses_count == 1
+
+
+async def test_non_matching_request_falls_through(config, fake_transport) -> None:
+    fake_transport.auto_resolve = Decision.allow
+    app = create_app(config, fake_transport)
+    await app.state.grant_store.create(_global_git_grant())
+    async with _client(app) as client:
+        resp = await client.post(
+            "/v1/approve", json=_body(operation={"kind": "command", "command": "npm", "args": ["install"]})
+        )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["responder"] == "telegram:tester"  # went through the transport
+    assert data["grant_id"] is None
+    assert len(fake_transport.sent) == 1
+
+
+async def test_grants_disabled_skips_short_circuit(config, fake_transport) -> None:
+    config.grants.enabled = False
+    fake_transport.auto_resolve = Decision.allow
+    app = create_app(config, fake_transport)
+    await app.state.grant_store.create(_global_git_grant())
+    async with _client(app) as client:
+        resp = await client.post(
+            "/v1/approve", json=_body(operation={"kind": "command", "command": "git", "args": ["push"]})
+        )
+    assert resp.json()["responder"] == "telegram:tester"  # not auto-approved
+
+
+async def test_paused_skips_short_circuit(config, fake_transport) -> None:
+    fake_transport.auto_resolve = Decision.allow
+    app = create_app(config, fake_transport)
+    await app.state.grant_store.create(_global_git_grant())
+    app.state.grant_store.set_paused(True)
+    async with _client(app) as client:
+        resp = await client.post(
+            "/v1/approve", json=_body(operation={"kind": "command", "command": "git", "args": ["push"]})
+        )
+    assert resp.json()["responder"] == "telegram:tester"
+
+
+async def test_auto_approval_audit_log_has_no_secrets(config, fake_transport, capsys) -> None:
+    # SC-G4 / FR-G11 / FR-017: structural log with grant_id, no workspace/body.
+    from remo_cli.notifier.logging_setup import configure_logging
+
+    configure_logging(level="info", json_logs=True)
+    app = create_app(config, fake_transport)
+    g = _global_git_grant()
+    await app.state.grant_store.create(g)
+    async with _client(app) as client:
+        await client.post(
+            "/v1/approve",
+            json=_body(
+                workspace="/secret/workspace/path",
+                operation={"kind": "command", "command": "git", "args": ["push"]},
+            ),
+        )
+    out = capsys.readouterr().out
+    assert "auto_approved" in out
+    assert g.grant_id in out
+    assert "/secret/workspace/path" not in out  # workspace withheld
 
 
 async def test_timeout_clamped_to_max(config, fake_transport) -> None:

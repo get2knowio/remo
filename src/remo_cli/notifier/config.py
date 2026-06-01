@@ -50,6 +50,18 @@ class ApprovalConfig(BaseModel):
         return self
 
 
+class GrantsConfig(BaseModel):
+    """Standing-grant ("Always" auto-approval) settings (Addendum 001)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    default_ttl_seconds: int = Field(default=28800, ge=1)  # 8h; every grant expires
+    max_grants: int = Field(default=100, ge=1)
+    allow_global_scope: bool = True
+    digest_interval_seconds: int = Field(default=3600, ge=0)  # 0 disables the digest
+
+
 class TelegramConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -98,6 +110,7 @@ class NotifierConfig(BaseModel):
 
     server: ServerConfig = Field(default_factory=ServerConfig)
     approval: ApprovalConfig = Field(default_factory=ApprovalConfig)
+    grants: GrantsConfig = Field(default_factory=GrantsConfig)
     transport: TransportConfig
     instance: InstanceConfig
 

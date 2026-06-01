@@ -27,7 +27,11 @@ paths:
             schema: { $ref: "#/components/schemas/ApprovalRequest" }
       responses:
         "200":
-          description: A decision was made (allow or deny) by an authorized human.
+          description: >
+            A decision was made (allow or deny) by an authorized human, OR the
+            request matched an active human-created standing grant and was
+            auto-approved (Addendum 001). Auto-approvals set responder to
+            "rule:{grant_id}" and include grant_id. See contracts/grant-schema.md.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ApprovalResponse" }
@@ -113,10 +117,18 @@ components:
         decision: { type: string, enum: [allow, deny] }
         responder:
           type: string
-          description: e.g. "telegram:paulofallon" or "system:timeout".
-        reason: { type: string, description: May be empty; "timeout" on 408. }
+          description: >
+            e.g. "telegram:paulofallon", "system:timeout", or "rule:{grant_id}"
+            for a standing-grant auto-approval (Addendum 001).
+        reason: { type: string, description: May be empty; "timeout" on 408; "auto-approved via standing grant" on a grant match. }
         decided_at: { type: string, format: date-time }
         latency_ms: { type: integer, minimum: 0 }
+        grant_id:
+          type: string
+          description: >
+            Present when this response was auto-approved by a standing grant, or
+            when the response created a grant (the "Always" tap). Optional;
+            backward-compatible (Addendum 001).
     HealthResponse:
       type: object
       required: [status, version, transport, uptime_seconds, pending_approvals]
