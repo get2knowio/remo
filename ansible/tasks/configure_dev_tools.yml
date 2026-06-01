@@ -76,10 +76,13 @@
     name: zellij
   when: configure_zellij | default(true) | bool
 
+# Opt-in: the notifier requires Telegram credentials and is normally stood up
+# via `remo notifier deploy <host>`. It is NOT part of the default dev-tools
+# configure flow (deploying it without creds would fail the preflight assert).
 - name: Deploy Remo Notifier
   ansible.builtin.include_role:
     name: remo_notifier
-  when: configure_remo_notifier | default(true) | bool
+  when: configure_remo_notifier | default(false) | bool
 
 - name: Write remo version marker
   ansible.builtin.copy:

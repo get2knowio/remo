@@ -167,7 +167,7 @@ An operator wants to check whether a host's notifier is healthy, read its logs t
 #### Non-regression and packaging
 
 - **FR-032**: Adding the notifier MUST NOT change the behavior of any existing remo command, and the laptop-side CLI install MUST NOT be forced to pull in the notifier's runtime dependencies (they live behind an optional install).
-- **FR-033**: Deployment MUST be integrable into the existing per-host configuration flow via a toggle that can be turned off, consistent with how other optional host components are enabled/disabled.
+- **FR-033**: Deployment MUST be integrable into the existing per-host configuration flow via a toggle (`configure_remo_notifier`), consistent with how other optional host components are enabled/disabled. The toggle MUST default to **off** — the notifier requires Telegram credentials and its preflight fails loudly without them (FR-023), so a normal provision must not attempt to deploy it; the primary path is the explicit `remo notifier deploy <host>` command. (Corrected from an initial default-on, which broke credential-less provisioning.)
 
 ### Key Entities *(include if feature involves data)*
 
