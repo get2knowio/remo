@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+  listen: "Restart remo-notifier"
+
+- name: Restart remo-notifier
+  ansible.builtin.systemd:
+    name: remo-notifier.service
+    state: restarted
+  listen: "Restart remo-notifier"

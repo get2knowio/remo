@@ -1,0 +1,109 @@
+---
+# Deploy the remo notifier as a hardened Docker container managed by systemd.
+# Registered-variable access uses | default() throughout (Constitution I).
+
+- name: Pre-flight — Telegram credentials are present
+  ansible.builtin.assert:
+    that:
+      - remo_notifier_telegram_bot_token | default('') | length > 0
+      - remo_notifier_telegram_chat_id | default('') | string | length > 0
+    fail_msg: >-
+      Missing Telegram credentials. Set REMO_NOTIFIER_TELEGRAM_BOT_TOKEN and
+      REMO_NOTIFIER_TELEGRAM_CHAT_ID in your environment before deploying the
+      notifier (see the README "Notifier setup" section).
+    success_msg: "Telegram credentials present."
+
+- name: Create notifier config and secrets directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - "{{ remo_notifier_config_dir }}"
+    - "{{ remo_notifier_secrets_dir }}"
+
+- name: Render notifier config
+  ansible.builtin.template:
+    src: notifier.toml.j2
+    dest: "{{ remo_notifier_config_dir }}/notifier.toml"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: "Restart remo-notifier"
+
+- name: Write Telegram bot token secret
+  ansible.builtin.copy:
+    content: "{{ remo_notifier_telegram_bot_token }}"
+    dest: "{{ remo_notifier_secrets_dir }}/telegram_bot_token"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: "Restart remo-notifier"
+
+- name: Stage the image build context on the host
+  ansible.builtin.copy:
+    src: "{{ remo_notifier_build_context_local }}/"
+    dest: "{{ remo_notifier_source_dir }}/"
+    mode: "0644"
+    directory_mode: "0755"
+  when:
+    - remo_notifier_build_from_source | default(true) | bool
+    - remo_notifier_build_context_local | default('') | length > 0
+
+- name: Build the notifier image on the host
+  community.docker.docker_image:
+    name: "{{ remo_notifier_image }}"
+    source: build
+    force_source: "{{ remo_notifier_force_rebuild | default(false) | bool }}"
+    build:
+      path: "{{ remo_notifier_source_dir }}"
+      dockerfile: notifier/Dockerfile
+  when: remo_notifier_build_from_source | default(true) | bool
+  notify: "Restart remo-notifier"
+
+- name: Pull the notifier image
+  community.docker.docker_image:
+    name: "{{ remo_notifier_image }}"
+    source: pull
+  when: not (remo_notifier_build_from_source | default(true) | bool)
+  notify: "Restart remo-notifier"
+
+- name: Install systemd unit
+  ansible.builtin.template:
+    src: remo-notifier.service.j2
+    dest: /etc/systemd/system/remo-notifier.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: "Restart remo-notifier"
+
+- name: Enable and start the notifier service
+  ansible.builtin.systemd:
+    name: remo-notifier.service
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: Apply any pending restarts before health-checking
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for the notifier health endpoint
+  ansible.builtin.uri:
+    url: "http://{{ remo_notifier_bind_address }}:{{ remo_notifier_listen_port }}/v1/health"
+    status_code: 200
+  register: notifier_health
+  retries: 10
+  delay: 2
+  until: notifier_health.status | default(0) == 200
+  changed_when: false
+
+- name: Report notifier status
+  ansible.builtin.debug:
+    msg: >-
+      remo-notifier is healthy on
+      {{ remo_notifier_bind_address }}:{{ remo_notifier_listen_port }}
+      (pending approvals:
+      {{ notifier_health.json.pending_approvals | default('unknown') }}).

@@ -1,0 +1,38 @@
+---
+# Defaults for the remo_notifier role. Override in group_vars/all.yml.
+
+remo_notifier_version: "0.1.0"
+remo_notifier_image: "remo-notifier:{{ remo_notifier_version }}"
+remo_notifier_listen_port: 18181
+remo_notifier_bind_address: "172.17.0.1"  # Docker bridge address
+remo_notifier_config_dir: "/etc/notifier"
+remo_notifier_secrets_dir: "/etc/notifier/secrets"
+remo_notifier_instance_id: "{{ inventory_hostname }}"
+remo_notifier_default_timeout_seconds: 300
+remo_notifier_max_timeout_seconds: 1800
+remo_notifier_max_pending_approvals: 50
+remo_notifier_log_level: "info"
+remo_notifier_message_parse_mode: "MarkdownV2"
+
+# Standing grants ("Always" auto-approval) — Addendum 001
+remo_notifier_grants_enabled: true
+remo_notifier_grants_default_ttl_seconds: 28800  # 8h; every grant expires
+remo_notifier_grants_max: 100
+remo_notifier_grants_allow_global_scope: true
+remo_notifier_grants_digest_interval_seconds: 3600  # 0 disables the digest
+
+remo_notifier_telegram_bot_token: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_BOT_TOKEN') }}"
+remo_notifier_telegram_chat_id: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_CHAT_ID') }}"
+
+# v1 builds the image on the host from a bundled context; future: pull from a
+# registry by setting this to false.
+remo_notifier_build_from_source: true
+remo_notifier_source_dir: "/opt/remo-notifier-build"
+
+# Absolute path to the build context bundled in the wheel
+# (remo_cli/notifier_build/). The CLI resolves and passes this; when running the
+# role directly, point it at a repo checkout root.
+remo_notifier_build_context_local: ""
+
+# Force a rebuild even if the image already exists.
+remo_notifier_force_rebuild: false
