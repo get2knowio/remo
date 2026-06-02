@@ -136,7 +136,7 @@ Provider SDKs (boto3, hcloud) are lazy-imported with clear error messages if mis
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
-- 008-notifier-channels: Added Python 3.11+ (`requires-python = ">=3.11"`); service container runs Python 3.13-slim (unchanged from 007). + Reorganized extras — `notifier-core` (FastAPI ≥0.115, uvicorn[standard] ≥0.32, pydantic ≥2.9, structlog ≥24.4, tomli on py<3.11); `notifier-telegram` = core + python-telegram-bot ≥21.6; `notifier` retained as an alias of `notifier-telegram` for back-compat. CLI/laptop side: Click ≥8.1, InquirerPy (existing) — **no new laptop runtime deps** (catalog is pure-Python metadata). Build: hatchling + uv (in-container). Ansible: `community.docker` (already added in 007).
+- 008-notifier-channels: Split the notifier into a channel-agnostic core + per-channel packages with a catalog (`remo notifier deploy --channel`, `remo notifier channels`); re-pointed approvals to agentsh's real REST API (poll/resolve approver client); reorganized extras into `notifier-core` / `notifier-telegram` (+ `notifier` alias).
 - 007-notifier-sidecar: Added Python 3.11+ (package `requires-python = ">=3.11"`); service container runs Python 3.13-slim + Service (new `[notifier]` extra): FastAPI ≥0.115, uvicorn[standard] ≥0.32, pydantic ≥2.9, python-telegram-bot ≥21.6, structlog ≥24.4, tomli (py<3.11 only). CLI side: Click ≥8.1 (existing), no new laptop runtime deps. Build: hatchling (existing), uv (in-container). Ansible: new `community.docker` collection.
 - 005-provider-snapshots: Added cross-provider snapshot CLI (`remo <P> snapshot {create,list,restore,delete}`) + destroy-time cleanup hook across Incus / Proxmox / AWS / Hetzner.
 

@@ -18,13 +18,12 @@ max_grants = {{ remo_notifier_grants_max | int }}
 allow_global_scope = {{ remo_notifier_grants_allow_global_scope | bool | lower }}
 digest_interval_seconds = {{ remo_notifier_grants_digest_interval_seconds | int }}
 
-[transport]
-type = "telegram"
-
-[transport.telegram]
-bot_token_file = "/run/secrets/telegram_bot_token"
-authorized_chat_id = {{ remo_notifier_telegram_chat_id | int }}
-message_parse_mode = "{{ remo_notifier_message_parse_mode }}"
+{{ remo_notifier_transport_toml }}
+[agentsh]
+api_url = "{{ remo_notifier_agentsh_api_url }}"
+api_key_file = "{{ remo_notifier_agentsh_api_key_file }}"
+poll_interval_seconds = {{ remo_notifier_agentsh_poll_interval_seconds | int }}
+webhook_enabled = {{ remo_notifier_agentsh_webhook_enabled | bool | lower }}
 
 [instance]
 id = "{{ remo_notifier_instance_id }}"

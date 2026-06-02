@@ -1,18 +1,20 @@
 {{ ansible_managed | comment }}
 [Unit]
-Description=Remo Notifier (agentsh approval bridge)
+Description=Remo Notifier (agentsh approval bridge — channel: {{ remo_notifier_channel }})
 After=docker.service
 Requires=docker.service
 
 [Service]
-# Clean up any stale container before starting (idempotent restarts).
+# Clean up any stale container before starting (idempotent restarts; this is
+# also what makes a channel switch a clean image swap — FR-013/FR-015).
 ExecStartPre=-/usr/bin/docker rm -f remo-notifier
 ExecStart=/usr/bin/docker run --rm \
     --name remo-notifier \
     --network bridge \
     -p {{ remo_notifier_bind_address }}:{{ remo_notifier_listen_port }}:18181 \
     -v {{ remo_notifier_config_dir }}/notifier.toml:/etc/notifier/notifier.toml:ro \
-    -v {{ remo_notifier_secrets_dir }}/telegram_bot_token:/run/secrets/telegram_bot_token:ro \
+    -v {{ remo_notifier_secrets_dir }}/{{ remo_notifier_secret_filename }}:{{ remo_notifier_secret_mount }}:ro \
+    -v {{ remo_notifier_secrets_dir }}/{{ remo_notifier_agentsh_secret_filename }}:{{ remo_notifier_agentsh_api_key_file }}:ro \
     --read-only \
     --tmpfs /tmp:rw,size=64m \
     --cap-drop ALL \

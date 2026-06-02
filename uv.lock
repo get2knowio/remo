@@ -1191,6 +1191,22 @@ dev = [
 ]
 notifier = [
     { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "python-telegram-bot" },
+    { name = "structlog" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+notifier-core = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "structlog" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+notifier-telegram = [
+    { name = "fastapi" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "python-telegram-bot" },
     { name = "structlog" },
@@ -1202,23 +1218,26 @@ requires-dist = [
     { name = "ansible-core", specifier = ">=2.18.0,<2.20.0" },
     { name = "boto3" },
     { name = "click", specifier = ">=8.1" },
-    { name = "fastapi", marker = "extra == 'notifier'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'notifier-core'", specifier = ">=0.115" },
     { name = "hcloud" },
     { name = "httpx", marker = "extra == 'dev'" },
+    { name = "httpx", marker = "extra == 'notifier-core'", specifier = ">=0.27" },
     { name = "inquirerpy", specifier = ">=0.3.4" },
     { name = "mypy", marker = "extra == 'dev'" },
-    { name = "pydantic", marker = "extra == 'notifier'", specifier = ">=2.9" },
+    { name = "pydantic", marker = "extra == 'notifier-core'", specifier = ">=2.9" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "pytest-mock", marker = "extra == 'dev'" },
-    { name = "python-telegram-bot", marker = "extra == 'notifier'", specifier = ">=21.6" },
+    { name = "python-telegram-bot", marker = "extra == 'notifier-telegram'", specifier = ">=21.6" },
+    { name = "remo-cli", extras = ["notifier-core"], marker = "extra == 'notifier-telegram'" },
+    { name = "remo-cli", extras = ["notifier-telegram"], marker = "extra == 'notifier'" },
     { name = "ruff", marker = "extra == 'dev'" },
-    { name = "structlog", marker = "extra == 'notifier'", specifier = ">=24.4" },
-    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'notifier'", specifier = ">=2.0" },
-    { name = "uvicorn", extras = ["standard"], marker = "extra == 'notifier'", specifier = ">=0.32" },
+    { name = "structlog", marker = "extra == 'notifier-core'", specifier = ">=24.4" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'notifier-core'", specifier = ">=2.0" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'notifier-core'", specifier = ">=0.32" },
 ]
-provides-extras = ["dev", "notifier"]
+provides-extras = ["dev", "notifier-core", "notifier-telegram", "notifier"]
 
 [[package]]
 name = "requests"

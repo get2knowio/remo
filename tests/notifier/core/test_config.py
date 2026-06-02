@@ -1,4 +1,4 @@
-"""Tests for the notifier config loader (T009)."""
+"""Tests for the notifier config loader (spec 008 generic transport + agentsh)."""
 
 from __future__ import annotations
 
@@ -16,10 +16,15 @@ def _write(tmp_path: Path, body: str) -> Path:
     return p
 
 
-def _base(token_file: Path, **overrides: str) -> str:
+def _base(token_file: Path, *, transport_type: str = "telegram", agentsh: bool = True, **overrides: str) -> str:
     approval = overrides.get(
         "approval",
         "default_timeout_seconds = 300\nmax_timeout_seconds = 1800\nmax_pending_approvals = 50",
+    )
+    agentsh_block = (
+        '\n[agentsh]\napi_url = "http://172.17.0.1:8080"\napi_key_file = "/run/secrets/agentsh_api_key"\n'
+        if agentsh
+        else ""
     )
     return f"""
         [server]
@@ -31,12 +36,12 @@ def _base(token_file: Path, **overrides: str) -> str:
         {approval}
 
         [transport]
-        type = "telegram"
+        type = "{transport_type}"
 
-        [transport.telegram]
+        [transport.{transport_type}]
         bot_token_file = "{token_file}"
         authorized_chat_id = 987654321
-
+        {agentsh_block}
         [instance]
         id = "h1"
     """
@@ -46,8 +51,8 @@ def test_valid_config_loads(tmp_path: Path, token_file: Path) -> None:
     cfg = load_config(_write(tmp_path, _base(token_file)))
     assert cfg.server.listen_port == 18181
     assert cfg.approval.max_pending_approvals == 50
-    assert cfg.transport.telegram is not None
-    assert cfg.transport.telegram.authorized_chat_id == 987654321
+    assert cfg.transport.type == "telegram"
+    assert cfg.transport.settings()["authorized_chat_id"] == 987654321
 
 
 def test_unknown_top_level_key_rejected(tmp_path: Path, token_file: Path) -> None:
@@ -67,35 +72,53 @@ def test_missing_file_raises(tmp_path: Path) -> None:
         load_config(tmp_path / "nope.toml")
 
 
-def test_non_telegram_transport_rejected(tmp_path: Path, token_file: Path) -> None:
+def test_transport_subtable_required(tmp_path: Path, token_file: Path) -> None:
+    # type names a channel with no matching [transport.<type>] sub-table.
     body = _base(token_file).replace('type = "telegram"', 'type = "slack"')
     with pytest.raises(ValueError):
         load_config(_write(tmp_path, body))
 
 
-def test_token_read_from_file(tmp_path: Path, token_file: Path) -> None:
+def test_agentsh_section_required(tmp_path: Path, token_file: Path) -> None:
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, _base(token_file, agentsh=False)))
+
+
+def test_agentsh_defaults(tmp_path: Path, token_file: Path) -> None:
     cfg = load_config(_write(tmp_path, _base(token_file)))
-    assert cfg.transport.telegram is not None
-    assert cfg.transport.telegram.read_token() == "12345:FAKE-TOKEN"
+    assert cfg.agentsh.api_url == "http://172.17.0.1:8080"
+    assert cfg.agentsh.poll_interval_seconds == 5
+    assert cfg.agentsh.webhook_enabled is False
 
 
-def test_empty_token_file_fails(tmp_path: Path) -> None:
-    empty = tmp_path / "empty_token"
-    empty.write_text("   ")
-    cfg = load_config(_write(tmp_path, _base(empty)))
-    assert cfg.transport.telegram is not None
+def test_agentsh_poll_interval_lower_bound(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file).replace(
+        'api_key_file = "/run/secrets/agentsh_api_key"',
+        'api_key_file = "/run/secrets/agentsh_api_key"\npoll_interval_seconds = 0',
+    )
     with pytest.raises(ValueError):
-        cfg.transport.telegram.read_token()
+        load_config(_write(tmp_path, body))
 
 
-def test_missing_token_file_fails(tmp_path: Path) -> None:
-    cfg = load_config(_write(tmp_path, _base(tmp_path / "absent")))
-    assert cfg.transport.telegram is not None
+def test_agentsh_unknown_key_rejected(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file).replace(
+        'api_key_file = "/run/secrets/agentsh_api_key"',
+        'api_key_file = "/run/secrets/agentsh_api_key"\nsurprise = 1',
+    )
     with pytest.raises(ValueError):
-        cfg.transport.telegram.read_token()
+        load_config(_write(tmp_path, body))
 
 
-# --- GrantsConfig (Addendum 001, TA003a) ------------------------------------
+def test_agentsh_read_api_key(tmp_path: Path, token_file: Path, agentsh_key_file: Path) -> None:
+    body = _base(token_file).replace(
+        'api_key_file = "/run/secrets/agentsh_api_key"',
+        f'api_key_file = "{agentsh_key_file}"',
+    )
+    cfg = load_config(_write(tmp_path, body))
+    assert cfg.agentsh.read_api_key() == "approver-key-abc"
+
+
+# --- GrantsConfig (Addendum 001) --------------------------------------------
 def test_grants_defaults(tmp_path: Path, token_file: Path) -> None:
     cfg = load_config(_write(tmp_path, _base(token_file)))
     assert cfg.grants.enabled is True
@@ -115,7 +138,7 @@ def test_grants_block_parses(tmp_path: Path, token_file: Path) -> None:
     assert cfg.grants.default_ttl_seconds == 600
     assert cfg.grants.max_grants == 5
     assert cfg.grants.allow_global_scope is False
-    assert cfg.grants.digest_interval_seconds == 0  # disables digest
+    assert cfg.grants.digest_interval_seconds == 0
 
 
 def test_grants_unknown_key_rejected(tmp_path: Path, token_file: Path) -> None:

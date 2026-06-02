@@ -1,6 +1,8 @@
 """`remo-notifier` entry point — runs the notifier service.
 
-Usage: ``remo-notifier serve --config /etc/notifier/notifier.toml``.
+Usage: ``remo-notifier serve --config /etc/notifier/notifier.toml``. This runs
+inside the channel image, so it may lazily import channel packages (resolved via
+the catalog by ``config.transport.type``).
 """
 
 from __future__ import annotations
@@ -11,31 +13,36 @@ import sys
 import click
 
 from remo_cli.notifier import __version__
+from remo_cli.notifier.agentsh_client import AgentshClient
 from remo_cli.notifier.config import NotifierConfig, load_config
 from remo_cli.notifier.logging_setup import configure_logging, get_logger
 from remo_cli.notifier.transports.base import NotificationTransport
 
 
 def build_transport(config: NotifierConfig) -> NotificationTransport:
-    """Construct the configured transport (Telegram only in v1)."""
-    if config.transport.type != "telegram" or config.transport.telegram is None:
-        raise click.ClickException("only the 'telegram' transport is supported")
-    # Imported lazily so the rest of the CLI doesn't require python-telegram-bot.
-    from remo_cli.notifier.transports.telegram import TelegramTransport
+    """Resolve the configured channel via the catalog and build its transport.
 
-    tg = config.transport.telegram
-    return TelegramTransport(
-        token=tg.read_token(),
-        authorized_chat_id=tg.authorized_chat_id,
-        instance_id=config.instance.id,
-        parse_mode=tg.message_parse_mode,
-    )
+    The channel's transport factory is imported lazily (only here, in-container),
+    keeping the catalog/laptop CLI free of channel delivery deps (FR-019).
+    """
+    from remo_cli.notifier.channels.catalog import get
+
+    descriptor = get(config.transport.type)
+    if descriptor is None:
+        from remo_cli.notifier.channels.catalog import list_channels
+
+        available = ", ".join(d.id for d in list_channels())
+        raise click.ClickException(
+            f"unknown channel '{config.transport.type}'; available: {available}"
+        )
+    factory = descriptor.load_transport_factory()
+    return factory(config)
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(__version__, prog_name="remo-notifier")
 def main() -> None:
-    """Remo notifier — Telegram approval bridge for agentsh."""
+    """Remo notifier — channel-based approval bridge for agentsh."""
 
 
 @main.command()
@@ -54,7 +61,7 @@ def serve(config_path: str) -> None:
     try:
         config = load_config(config_path)
     except (FileNotFoundError, ValueError) as exc:
-        # Fail fast with a clear message (Constitution IV / FR-018/023).
+        # Fail fast with a clear message (Constitution IV / FR-018).
         click.echo(f"Error: invalid notifier config: {exc}", err=True)
         sys.exit(1)
 
@@ -63,33 +70,36 @@ def serve(config_path: str) -> None:
 
     try:
         transport = build_transport(config)
+        api_key = config.agentsh.read_api_key()
     except (ValueError, click.ClickException) as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
-    # SIGHUP re-reads the token file so secrets can be rotated without a full
-    # redeploy (research R6). Best-effort: the refreshed token applies on the
-    # transport's next (re)start.
+    agentsh = AgentshClient(api_url=config.agentsh.api_url, api_key=api_key)
+
+    # SIGHUP re-reads the channel secret so credentials can be rotated without a
+    # full redeploy (research R6). Generic: any transport may expose
+    # ``reread_secret()``; channels that don't, skip.
     def _on_sighup(signum: int, frame: object) -> None:  # noqa: ARG001
         try:
-            new_token = config.transport.telegram.read_token()  # type: ignore[union-attr]
-            if hasattr(transport, "set_token"):
-                transport.set_token(new_token)  # type: ignore[attr-defined]
-            log.info("sighup_token_reread")
+            if hasattr(transport, "reread_secret"):
+                transport.reread_secret()  # type: ignore[attr-defined]
+            log.info("sighup_secret_reread")
         except Exception as exc:  # noqa: BLE001
-            log.error("sighup_token_reread_failed", error=str(exc))
+            log.error("sighup_secret_reread_failed", error=str(exc))
 
     try:
         signal.signal(signal.SIGHUP, _on_sighup)
     except (ValueError, AttributeError):  # pragma: no cover - non-main thread / no SIGHUP
         pass
 
-    app = create_app(config, transport)
+    app = create_app(config, transport, agentsh)
     log.info(
         "starting",
         version=__version__,
         host=config.server.listen_host,
         port=config.server.listen_port,
+        channel=config.transport.type,
     )
     uvicorn.run(
         app,

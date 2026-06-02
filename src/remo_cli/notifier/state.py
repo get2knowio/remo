@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 
-from remo_cli.notifier.models import ApprovalDecision, ApprovalRequest
+from remo_cli.notifier.models import AgentshRequest, ApprovalDecision
 
 
 def _utcnow() -> datetime:
@@ -36,7 +36,7 @@ class RegistrationFailed(Exception):
 @dataclass
 class PendingApproval:
     approval_id: str
-    request: ApprovalRequest
+    request: AgentshRequest
     future: asyncio.Future[ApprovalDecision]
     created_at: datetime = field(default_factory=_utcnow)
 
@@ -52,7 +52,7 @@ class PendingApprovals:
     def count(self) -> int:
         return len(self._entries)
 
-    async def reserve(self, approval_id: str, request: ApprovalRequest) -> PendingApproval:
+    async def reserve(self, approval_id: str, request: AgentshRequest) -> PendingApproval:
         """Atomically reserve a slot + id and return a live PendingApproval.
 
         Raises RegistrationFailed(duplicate) if the id is already pending, or

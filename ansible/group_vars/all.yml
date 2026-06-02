@@ -29,10 +29,18 @@ zellij_session_name: "main"  # Session name for SSH auto-attach
 nodejs_version: "24"  # LTS version
 
 # ============================================================================
-# Remo Notifier (spec 007)
+# Remo Notifier (spec 008 — channels)
 # ============================================================================
-# Notifier sidecar that delivers agentsh approval requests to Telegram and
-# returns the human's decision. Deployed by the remo_notifier role.
+# Channel-based notifier sidecar that delivers agentsh approval requests to a
+# human and resolves the decision back to agentsh. Stood up ONLY via
+# `remo notifier deploy <host> --channel <id>` (FR-009a) — not during
+# provisioning. Credentials follow the REMO_NOTIFIER_<CHANNEL>_* convention plus
+# the channel-independent agentsh approver connection below.
 
-remo_notifier_telegram_bot_token: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_BOT_TOKEN') }}"
+# agentsh approver connection (required for every channel).
+remo_notifier_agentsh_api_url: "{{ lookup('env', 'REMO_NOTIFIER_AGENTSH_API_URL') }}"
+remo_notifier_agentsh_api_key: "{{ lookup('env', 'REMO_NOTIFIER_AGENTSH_API_KEY') }}"
+
+# Telegram channel credentials (used when channel = telegram).
+remo_notifier_channel_secret: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_BOT_TOKEN') }}"
 remo_notifier_telegram_chat_id: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_CHAT_ID') }}"

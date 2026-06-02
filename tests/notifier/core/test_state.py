@@ -13,7 +13,7 @@ from remo_cli.notifier.state import (
     RegistrationFailed,
 )
 
-from .conftest import make_request
+from ..conftest import make_request
 
 
 

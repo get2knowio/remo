@@ -1,17 +1,28 @@
 ---
 # Deploy the remo notifier as a hardened Docker container managed by systemd.
-# Registered-variable access uses | default() throughout (Constitution I).
+# Channel-agnostic: the channel id, transport TOML fragment, and secret come
+# from the CLI/descriptor. Registered-variable access uses | default() (Constitution I).
 
-- name: Pre-flight — Telegram credentials are present
+- name: Pre-flight — agentsh approver connection is present
   ansible.builtin.assert:
     that:
-      - remo_notifier_telegram_bot_token | default('') | length > 0
-      - remo_notifier_telegram_chat_id | default('') | string | length > 0
+      - remo_notifier_agentsh_api_url | default('') | length > 0
+      - remo_notifier_agentsh_api_key | default('') | length > 0
     fail_msg: >-
-      Missing Telegram credentials. Set REMO_NOTIFIER_TELEGRAM_BOT_TOKEN and
-      REMO_NOTIFIER_TELEGRAM_CHAT_ID in your environment before deploying the
-      notifier (see the README "Notifier setup" section).
-    success_msg: "Telegram credentials present."
+      Missing agentsh approver connection. Set REMO_NOTIFIER_AGENTSH_API_URL and
+      REMO_NOTIFIER_AGENTSH_API_KEY before deploying the notifier (see the README
+      "Notifier" section).
+    success_msg: "agentsh approver connection present."
+
+- name: Pre-flight — channel secret is present
+  ansible.builtin.assert:
+    that:
+      - remo_notifier_channel_secret | default('') | length > 0
+    fail_msg: >-
+      Missing the {{ remo_notifier_channel }} channel secret. Set the channel's
+      REMO_NOTIFIER_<CHANNEL>_* token before deploying.
+    success_msg: "{{ remo_notifier_channel }} channel secret present."
+  when: remo_notifier_secret_filename | default('') | length > 0
 
 - name: Create notifier config and secrets directories
   ansible.builtin.file:
@@ -33,10 +44,21 @@
     mode: "0640"
   notify: "Restart remo-notifier"
 
-- name: Write Telegram bot token secret
+- name: Write the channel secret
   ansible.builtin.copy:
-    content: "{{ remo_notifier_telegram_bot_token }}"
-    dest: "{{ remo_notifier_secrets_dir }}/telegram_bot_token"
+    content: "{{ remo_notifier_channel_secret }}"
+    dest: "{{ remo_notifier_secrets_dir }}/{{ remo_notifier_secret_filename }}"
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  when: remo_notifier_secret_filename | default('') | length > 0
+  notify: "Restart remo-notifier"
+
+- name: Write the agentsh approver key
+  ansible.builtin.copy:
+    content: "{{ remo_notifier_agentsh_api_key }}"
+    dest: "{{ remo_notifier_secrets_dir }}/{{ remo_notifier_agentsh_secret_filename }}"
     owner: root
     group: root
     mode: "0400"
@@ -53,7 +75,7 @@
     - remo_notifier_build_from_source | default(true) | bool
     - remo_notifier_build_context_local | default('') | length > 0
 
-- name: Build the notifier image on the host
+- name: Build the notifier image on the host (per channel)
   community.docker.docker_image:
     name: "{{ remo_notifier_image }}"
     source: build
@@ -61,6 +83,8 @@
     build:
       path: "{{ remo_notifier_source_dir }}"
       dockerfile: notifier/Dockerfile
+      args:
+        CHANNEL: "{{ remo_notifier_channel }}"
   when: remo_notifier_build_from_source | default(true) | bool
   notify: "Restart remo-notifier"
 
@@ -103,7 +127,7 @@
 - name: Report notifier status
   ansible.builtin.debug:
     msg: >-
-      remo-notifier is healthy on
+      remo-notifier ({{ remo_notifier_channel }}) is healthy on
       {{ remo_notifier_bind_address }}:{{ remo_notifier_listen_port }}
       (pending approvals:
       {{ notifier_health.json.pending_approvals | default('unknown') }}).
