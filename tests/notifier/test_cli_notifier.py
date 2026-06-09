@@ -166,6 +166,40 @@ def test_status_unreachable(monkeypatch):
     assert "unreachable" in result.output
 
 
+def test_sources_lists_connected(monkeypatch):
+    payload = {
+        "count": 1,
+        "sources": [
+            {
+                "source_id": "proj-a",
+                "labels": {"project": "proj-a"},
+                "poll_state": "polling",
+                "last_success_at": "2026-06-08T12:00:10Z",
+                "consecutive_failures": 0,
+                "permanent": False,
+            }
+        ],
+    }
+    seen = {}
+
+    def fake_ssh(host, cmd, capture=False):
+        seen["cmd"] = cmd
+        return _completed(0, json.dumps(payload))
+
+    monkeypatch.setattr(nmod, "_ssh_run", fake_ssh)
+    result = CliRunner().invoke(notifier, ["sources", "box"])
+    assert result.exit_code == 0
+    assert '"source_id": "proj-a"' in result.output
+    assert "/v1/sources" in seen["cmd"]
+
+
+def test_sources_unreachable(monkeypatch):
+    monkeypatch.setattr(nmod, "_ssh_run", lambda h, cmd, capture=False: _completed(7, ""))
+    result = CliRunner().invoke(notifier, ["sources", "box"])
+    assert result.exit_code == 1
+    assert "unreachable" in result.output
+
+
 def test_logs_builds_journalctl(monkeypatch):
     seen = {}
     monkeypatch.setattr(nmod, "_ssh_run", lambda h, cmd, capture=False: seen.update(cmd=cmd) or _completed(0))

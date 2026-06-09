@@ -208,12 +208,22 @@ they continue to incur storage costs on AWS/Hetzner).
 ## Notifier
 
 The **notifier** is a small approval bridge that runs as a hardened container on
-a remo host. It connects to the host's **agentsh** as an *approver client*:
-it polls agentsh's approval API for pending requests, delivers each through a
-**channel** (Telegram is the first) with **Approve** / **Deny** buttons, and
-resolves your decision back to agentsh. The decision always flows
+a remo host. It connects to one or more **sources** — each a devcontainer's
+**agentsh** approval endpoint — as an *approver client*: it polls each source's
+approval API for pending requests, delivers each through a **channel** (Telegram
+is the first) with **Approve** / **Deny** buttons, and resolves your decision
+back to the originating source. The decision always flows
 human → channel → notifier → agentsh; you never call agentsh directly. It fails
-secure: a timeout, a shutdown, or a lost connection all mean *deny*.
+secure: a timeout, a shutdown, a lost connection, or a dropped source all mean
+*deny*.
+
+One notifier per host serves many sources at once (default cap 64, see
+`[sources]` in the rendered `notifier.toml`). A source is registered for exactly
+as long as it holds a **presence connection** open to the notifier; the
+connection dropping (graceful close or ungraceful death within the keepalive/idle
+timeout) removes it. Each source resolves only against its own agentsh via its
+own key, so decisions never cross-route. The static `[agentsh]` endpoint, if
+configured, is kept as an optional permanent **seed** source.
 
 The delivery medium is a **channel**, and any one of several interchangeable
 channels can fulfil the notifier role. Each channel is built into its own image
@@ -251,7 +261,8 @@ during host provisioning — it is stood up only via `remo notifier deploy`.
 ```bash
 remo notifier channels                              # list channels + required env
 remo notifier deploy  <host> [--channel ID] [--rebuild]  # build/run the channel image
-remo notifier status  <host>               # GET /v1/health (transport = active channel)
+remo notifier status  <host>               # GET /v1/health (transport, source count)
+remo notifier sources <host>               # GET /v1/sources (connected sources + poll health)
 remo notifier logs    <host> [-f] [-n N]   # journalctl -u remo-notifier.service
 remo notifier test    <host>               # round-trip a test approval, print the decision
 remo notifier restart <host>               # systemctl restart remo-notifier.service
@@ -262,6 +273,43 @@ Switching a host to another channel is just `remo notifier deploy <host>
 restart — in-flight approvals and standing grants are lost across the switch).
 Adding a brand-new channel touches no core code — see
 [`specs/008-notifier-channels/contracts/channel-extension.md`](specs/008-notifier-channels/contracts/channel-extension.md).
+
+### Multi-source registration (opt-in devcontainer Feature)
+
+A project opts a devcontainer in by adding the **`remo-notifier-source`**
+devcontainer Feature (in-repo at `features/remo-notifier-source/`). On container
+start it opens a presence connection to the host's notifier and keeps it up,
+reconnecting with backoff across notifier restarts; when the container stops the
+source is removed. A project that omits the Feature is never connected.
+
+```jsonc
+{
+  "features": {
+    "./features/remo-notifier-source": {
+      "notifierAddress": "172.17.0.1:18181",
+      "agentshApiUrl": "http://proj-a:8080",
+      "apiKeyFile": "/run/secrets/agentsh_approver_key",
+      "labels": "project=proj-a"
+    }
+  }
+}
+```
+
+**Shared-network prerequisite**: the notifier must be able to reach each source's
+`agentshApiUrl`, and each container must reach `notifierAddress` on the bridge.
+That requires a shared network path (a user-defined Docker network or published
+ports); the Feature documents it but does not create it. See the Feature's
+[README](features/remo-notifier-source/README.md).
+
+Observe the live set with `remo notifier sources <host>` — id, labels, poll state
+(`polling`/`backing_off`), and last-success per source; a source whose agentsh is
+unreachable shows `backing_off` while still listed, and a dropped source
+disappears.
+
+**Accepted residual risk**: the control plane is open and bridge-only with no
+caller authentication (the spec 007 trust model). A hostile co-located container
+could open spurious connections or consume capacity — but this can only cause
+**fail-secure denial**, never a wrongful allow.
 
 ### "Always" — standing grants
 

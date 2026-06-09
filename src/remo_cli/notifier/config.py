@@ -97,8 +97,44 @@ class TransportConfig(BaseModel):
         return dict(sub)
 
 
+class SourcesConfig(BaseModel):
+    """Dynamic source-registry settings (``[sources]``, spec 009 R5).
+
+    Bounds the in-memory registry and the per-source presence/poll behaviour.
+    All values are operator-tunable and validated fail-fast (Constitution IV).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_sources: int = Field(default=64, ge=1)
+    keepalive_interval_seconds: int = Field(default=15, ge=1)
+    idle_timeout_seconds: int = Field(default=45, ge=1)
+    poll_base_interval_seconds: int = Field(default=5, ge=1)
+    poll_backoff_factor: float = Field(default=2.0, ge=1.0)
+    poll_backoff_cap_seconds: int = Field(default=300, ge=1)
+    poll_backoff_jitter: float = Field(default=0.2, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _check_bounds(self) -> SourcesConfig:
+        if self.idle_timeout_seconds <= self.keepalive_interval_seconds:
+            raise ValueError(
+                "idle_timeout_seconds must be > keepalive_interval_seconds "
+                f"({self.idle_timeout_seconds} <= {self.keepalive_interval_seconds})"
+            )
+        if self.poll_backoff_cap_seconds < self.poll_base_interval_seconds:
+            raise ValueError(
+                "poll_backoff_cap_seconds must be >= poll_base_interval_seconds "
+                f"({self.poll_backoff_cap_seconds} < {self.poll_base_interval_seconds})"
+            )
+        return self
+
+
 class AgentshConfig(BaseModel):
-    """Connection to agentsh's approval REST API (spec 008, FR-020)."""
+    """Connection to agentsh's approval REST API (spec 008, FR-020).
+
+    Optional in 009: when present it seeds one permanent ``seed`` source; when
+    absent the registry starts empty and serves only dynamic sources (R7).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -106,6 +142,7 @@ class AgentshConfig(BaseModel):
     api_key_file: str = "/run/secrets/agentsh_api_key"
     poll_interval_seconds: int = Field(default=5, ge=1)
     webhook_enabled: bool = False
+    source_id: str = "seed"
 
     def read_api_key(self) -> str:
         """Read the approver ``X-API-Key`` from ``api_key_file`` (fail-fast)."""
@@ -130,8 +167,9 @@ class NotifierConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     approval: ApprovalConfig = Field(default_factory=ApprovalConfig)
     grants: GrantsConfig = Field(default_factory=GrantsConfig)
+    sources: SourcesConfig = Field(default_factory=SourcesConfig)
     transport: TransportConfig
-    agentsh: AgentshConfig
+    agentsh: AgentshConfig | None = None
     instance: InstanceConfig
 
 

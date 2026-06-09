@@ -18,7 +18,18 @@ max_grants = {{ remo_notifier_grants_max | int }}
 allow_global_scope = {{ remo_notifier_grants_allow_global_scope | bool | lower }}
 digest_interval_seconds = {{ remo_notifier_grants_digest_interval_seconds | int }}
 
+[sources]
+max_sources = {{ remo_notifier_max_sources | int }}
+keepalive_interval_seconds = {{ remo_notifier_keepalive_interval_seconds | int }}
+idle_timeout_seconds = {{ remo_notifier_idle_timeout_seconds | int }}
+poll_base_interval_seconds = {{ remo_notifier_poll_base_interval_seconds | int }}
+poll_backoff_factor = {{ remo_notifier_poll_backoff_factor | float }}
+poll_backoff_cap_seconds = {{ remo_notifier_poll_backoff_cap_seconds | int }}
+poll_backoff_jitter = {{ remo_notifier_poll_backoff_jitter | float }}
+
 {{ remo_notifier_transport_toml }}
+# [agentsh] is the optional permanent "seed" source (spec 009 R7). Omit the whole
+# block to serve only dynamic sources registered via POST /v1/sources.
 [agentsh]
 api_url = "{{ remo_notifier_agentsh_api_url }}"
 api_key_file = "{{ remo_notifier_agentsh_api_key_file }}"

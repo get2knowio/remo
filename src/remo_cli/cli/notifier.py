@@ -225,6 +225,24 @@ def status(host: str, bind: str, port: int) -> None:
 
 @notifier.command()
 @click.argument("host", default="")
+@click.option("--bind", default="172.17.0.1", help="Host bind address of the notifier.")
+@click.option("--port", default=18181, help="Notifier port.")
+def sources(host: str, bind: str, port: int) -> None:
+    """List the sources HOST's notifier is currently serving (FR-020)."""
+    target = _resolve(host)
+    url = _bind_url(target, "/v1/sources", bind=bind, port=port)
+    result = _ssh_run(target, f"curl -sf {shlex.quote(url)}", capture=True)
+    if result.returncode != 0:
+        print_error(f"notifier unreachable on {target.display_name} ({url}).")
+        sys.exit(1)
+    try:
+        click.echo(json.dumps(json.loads(result.stdout), indent=2))
+    except json.JSONDecodeError:
+        click.echo(result.stdout)
+
+
+@notifier.command()
+@click.argument("host", default="")
 @click.option("--follow", "-f", is_flag=True, help="Follow the log stream.")
 @click.option("--lines", "-n", default=100, help="Number of lines to show (default 100).")
 def logs(host: str, follow: bool, lines: int) -> None:

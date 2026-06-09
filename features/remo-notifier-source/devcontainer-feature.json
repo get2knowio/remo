@@ -1,0 +1,42 @@
+{
+  "id": "remo-notifier-source",
+  "version": "1.0.0",
+  "name": "Remo Notifier Source",
+  "description": "Register this devcontainer's agentsh with the host's remo notifier (opt-in approval delivery).",
+  "options": {
+    "notifierAddress": {
+      "type": "string",
+      "default": "172.17.0.1:18181",
+      "description": "host:port of the notifier control plane on the container bridge."
+    },
+    "agentshApiUrl": {
+      "type": "string",
+      "default": "",
+      "description": "Notifier-reachable agentsh approvals base URL (e.g. http://<this-container>:8080)."
+    },
+    "apiKey": {
+      "type": "string",
+      "default": "",
+      "description": "Approver X-API-Key (inline). Prefer apiKeyFile to keep secrets out of devcontainer.json."
+    },
+    "apiKeyFile": {
+      "type": "string",
+      "default": "",
+      "description": "Path inside the container to read the approver key from at connect time."
+    },
+    "sourceId": {
+      "type": "string",
+      "default": "",
+      "description": "Stable source id (defaults to the container hostname)."
+    },
+    "labels": {
+      "type": "string",
+      "default": "",
+      "description": "Optional comma-separated key=value labels for the status surface."
+    }
+  },
+  "entrypoint": "/usr/local/share/remo-notifier-source/remo-source-connect.sh",
+  "installsAfter": [
+    "ghcr.io/devcontainers/features/common-utils"
+  ]
+}

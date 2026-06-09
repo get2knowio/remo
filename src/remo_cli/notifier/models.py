@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _utcnow() -> datetime:
@@ -79,6 +79,49 @@ class ApprovalResponse(BaseModel):
     grant_id: str | None = None
 
 
+class SourceRegistration(BaseModel):
+    """``POST /v1/sources`` request body — a source's presence registration.
+
+    Trust-boundary input from a co-located (unauthenticated) source; validated
+    strictly (``extra="forbid"``). ``api_key`` is held in-memory only — never
+    logged, never persisted, never echoed in any response (spec 009 data-model).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    api_url: str
+    api_key: str = Field(min_length=1)
+    labels: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("api_url")
+    @classmethod
+    def _check_url(cls, v: str) -> str:
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("api_url must be an http(s) URL")
+        return v
+
+    @field_validator("labels")
+    @classmethod
+    def _bound_labels(cls, v: dict[str, str]) -> dict[str, str]:
+        if len(v) > 16:
+            raise ValueError("labels may have at most 16 entries")
+        return v
+
+
+class SourceStatus(BaseModel):
+    """One row of ``GET /v1/sources`` — never includes ``api_key`` or ``api_url``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str
+    labels: dict[str, str] = Field(default_factory=dict)
+    poll_state: str
+    last_success_at: datetime | None = None
+    consecutive_failures: int = Field(default=0, ge=0)
+    permanent: bool = False
+
+
 class HealthResponse(BaseModel):
     """GET /v1/health body."""
 
@@ -88,6 +131,7 @@ class HealthResponse(BaseModel):
     agentsh_connected: bool = False
     uptime_seconds: int = Field(ge=0)
     pending_approvals: int = Field(ge=0)
+    sources: int = Field(default=0, ge=0)
 
 
 class ErrorResponse(BaseModel):

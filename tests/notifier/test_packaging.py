@@ -56,6 +56,19 @@ def _resolve_extra(extras: dict, name: str, _seen: set | None = None) -> set[str
     return out
 
 
+def test_sources_subpackage_ships_in_wheel() -> None:
+    # hatch packages src/remo_cli, so the new sources/ subpackage ships as long as
+    # it is a real package (has __init__.py) under it (spec 009 T034, no new deps).
+    root = _project_root()
+    pkg = root / "src" / "remo_cli" / "notifier" / "sources"
+    assert (pkg / "__init__.py").is_file()
+    assert (pkg / "registry.py").is_file()
+    assert (pkg / "poller.py").is_file()
+    assert (pkg / "source.py").is_file()
+    data = toml.loads((root / "pyproject.toml").read_text())
+    assert "src/remo_cli" in data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+
+
 def test_notifier_telegram_extra_resolves_to_runtime_deps() -> None:
     data = toml.loads((_project_root() / "pyproject.toml").read_text())
     extras = data["project"]["optional-dependencies"]

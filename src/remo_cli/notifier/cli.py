@@ -13,7 +13,6 @@ import sys
 import click
 
 from remo_cli.notifier import __version__
-from remo_cli.notifier.agentsh_client import AgentshClient
 from remo_cli.notifier.config import NotifierConfig, load_config
 from remo_cli.notifier.logging_setup import configure_logging, get_logger
 from remo_cli.notifier.transports.base import NotificationTransport
@@ -70,12 +69,13 @@ def serve(config_path: str) -> None:
 
     try:
         transport = build_transport(config)
-        api_key = config.agentsh.read_api_key()
     except (ValueError, click.ClickException) as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)
 
-    agentsh = AgentshClient(api_url=config.agentsh.api_url, api_key=api_key)
+    # The SourceRegistry (built in create_app) owns per-source agentsh clients
+    # and registers the optional [agentsh] seed at startup (spec 009 T016) — the
+    # CLI no longer builds a single static client here.
 
     # SIGHUP re-reads the channel secret so credentials can be rotated without a
     # full redeploy (research R6). Generic: any transport may expose
@@ -93,7 +93,7 @@ def serve(config_path: str) -> None:
     except (ValueError, AttributeError):  # pragma: no cover - non-main thread / no SIGHUP
         pass
 
-    app = create_app(config, transport, agentsh)
+    app = create_app(config, transport)
     log.info(
         "starting",
         version=__version__,

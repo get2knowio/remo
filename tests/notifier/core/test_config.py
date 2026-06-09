@@ -79,9 +79,16 @@ def test_transport_subtable_required(tmp_path: Path, token_file: Path) -> None:
         load_config(_write(tmp_path, body))
 
 
-def test_agentsh_section_required(tmp_path: Path, token_file: Path) -> None:
-    with pytest.raises(ValueError):
-        load_config(_write(tmp_path, _base(token_file, agentsh=False)))
+def test_agentsh_section_optional(tmp_path: Path, token_file: Path) -> None:
+    # 009: [agentsh] is optional — when omitted the registry starts empty.
+    cfg = load_config(_write(tmp_path, _base(token_file, agentsh=False)))
+    assert cfg.agentsh is None
+
+
+def test_agentsh_seed_source_id_default(tmp_path: Path, token_file: Path) -> None:
+    cfg = load_config(_write(tmp_path, _base(token_file)))
+    assert cfg.agentsh is not None
+    assert cfg.agentsh.source_id == "seed"
 
 
 def test_agentsh_defaults(tmp_path: Path, token_file: Path) -> None:
@@ -152,3 +159,63 @@ def test_grants_bad_bounds_rejected(tmp_path: Path, token_file: Path) -> None:
         body = _base(token_file) + f"\n[grants]\n{line}\n"
         with pytest.raises(ValueError):
             load_config(_write(tmp_path, body))
+
+
+# --- SourcesConfig ([sources], spec 009 T009) -------------------------------
+def test_sources_defaults(tmp_path: Path, token_file: Path) -> None:
+    cfg = load_config(_write(tmp_path, _base(token_file)))
+    s = cfg.sources
+    assert s.max_sources == 64
+    assert s.keepalive_interval_seconds == 15
+    assert s.idle_timeout_seconds == 45
+    assert s.poll_base_interval_seconds == 5
+    assert s.poll_backoff_factor == 2.0
+    assert s.poll_backoff_cap_seconds == 300
+    assert s.poll_backoff_jitter == 0.2
+
+
+def test_sources_block_parses(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file) + (
+        "\n[sources]\nmax_sources = 8\nkeepalive_interval_seconds = 5\n"
+        "idle_timeout_seconds = 20\npoll_base_interval_seconds = 2\n"
+        "poll_backoff_factor = 3.0\npoll_backoff_cap_seconds = 60\npoll_backoff_jitter = 0.5\n"
+    )
+    cfg = load_config(_write(tmp_path, body))
+    assert cfg.sources.max_sources == 8
+    assert cfg.sources.idle_timeout_seconds == 20
+    assert cfg.sources.poll_backoff_factor == 3.0
+
+
+def test_sources_unknown_key_rejected(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file) + "\n[sources]\nsurprise = 1\n"
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, body))
+
+
+def test_sources_idle_must_exceed_keepalive(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file) + (
+        "\n[sources]\nkeepalive_interval_seconds = 30\nidle_timeout_seconds = 30\n"
+    )
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, body))
+
+
+def test_sources_cap_must_be_ge_base(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file) + (
+        "\n[sources]\npoll_base_interval_seconds = 100\npoll_backoff_cap_seconds = 50\n"
+    )
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, body))
+
+
+def test_sources_jitter_bounds(tmp_path: Path, token_file: Path) -> None:
+    for bad in ("poll_backoff_jitter = -0.1", "poll_backoff_jitter = 1.5"):
+        body = _base(token_file) + f"\n[sources]\n{bad}\n"
+        with pytest.raises(ValueError):
+            load_config(_write(tmp_path, body))
+
+
+def test_sources_factor_lower_bound(tmp_path: Path, token_file: Path) -> None:
+    body = _base(token_file) + "\n[sources]\npoll_backoff_factor = 0.5\n"
+    with pytest.raises(ValueError):
+        load_config(_write(tmp_path, body))
