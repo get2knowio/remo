@@ -10,6 +10,7 @@ semantic matching. Reworked for spec 008 to match agentsh's approval shape
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import uuid
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -32,6 +33,8 @@ class TargetMatchType(str, Enum):
     any = "any"  # match any target of this kind
     exact = "exact"  # target == value
     prefix = "prefix"  # target startswith value
+    suffix = "suffix"  # target endswith value (e.g. ".github.com")
+    glob = "glob"  # fnmatch (case-sensitive) — e.g. "*.github.com", "api.*.example.com"
 
 
 class GrantLimitReached(Exception):
@@ -71,6 +74,11 @@ class GrantPredicate(BaseModel):
             return request.target == self.target
         if self.target_match is TargetMatchType.prefix:
             return bool(self.target) and request.target.startswith(self.target)
+        if self.target_match is TargetMatchType.suffix:
+            return bool(self.target) and request.target.endswith(self.target)
+        if self.target_match is TargetMatchType.glob:
+            # Case-sensitive fnmatch so matching is deterministic across platforms.
+            return bool(self.target) and fnmatch.fnmatchcase(request.target, self.target)
         return False
 
 
@@ -222,6 +230,15 @@ class GrantStore:
                         GrantPredicate(kind=kind, target=prefix, target_match=TargetMatchType.prefix),
                         glob,
                     )
+                # Host-like target (egress): collapse subdomains to a domain wildcard
+                # so "Always…" yields e.g. "*.github.com" for credential-exfil defense.
+                host_glob = self._host_glob(target)
+                if host_glob and host_glob != target:
+                    add(
+                        f"{kind}: {host_glob}",
+                        GrantPredicate(kind=kind, target=host_glob, target_match=TargetMatchType.glob),
+                        glob,
+                    )
             add(f"any {kind}", GrantPredicate(kind=kind, target_match=TargetMatchType.any), glob)
 
         # Session-scoped fallback (always offered when the request carries one).
@@ -237,3 +254,20 @@ class GrantStore:
         if "/" in target:
             return target.rsplit("/", 1)[0] + "/"
         return ""
+
+    @staticmethod
+    def _host_glob(target: str) -> str:
+        """Subdomain-collapsing glob for a host-like target ("api.github.com" -> "*.github.com").
+
+        Heuristic for network egress: only fires for slash-free, dotted targets;
+        strips any ``:port`` and collapses to the last two labels. Refine once the
+        real agentsh network target shape is captured (issue #44) — e.g. multi-label
+        public suffixes (``foo.co.uk``) would over-collapse under this simple rule.
+        """
+        if "/" in target:
+            return ""
+        host = target.split(":", 1)[0]
+        labels = [label for label in host.split(".") if label]
+        if len(labels) < 2:
+            return ""
+        return "*." + ".".join(labels[-2:])

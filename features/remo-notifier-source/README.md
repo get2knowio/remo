@@ -31,15 +31,27 @@ stops the connection drops and the notifier removes the source. See
 | Option | Default | Description |
 |--------|---------|-------------|
 | `notifierAddress` | `172.17.0.1:18181` | `host:port` of the notifier control plane on the bridge. |
-| `agentshApiUrl` | (required) | **Notifier-reachable** agentsh approvals base URL. |
+| `agentshApiUrl` | *(derived)* | **Notifier-reachable** agentsh approvals base URL. When empty, derived by convention as `http://<sourceId>:<agentshPort>`. |
+| `agentshPort` | `8080` | agentsh approvals port, used only when `agentshApiUrl` is derived. |
 | `apiKey` | `""` | Approver `X-API-Key`, inline. Prefer `apiKeyFile`. |
-| `apiKeyFile` | `""` | Path read at connect time so the secret stays out of `devcontainer.json`. |
+| `apiKeyFile` | *(conventional)* | Path read at connect time. When `apiKey`/`apiKeyFile` are both unset, falls back to `/run/secrets/agentsh_approver_key` if readable. |
 | `sourceId` | container hostname | Stable id, 1:1 with this devcontainer. |
 | `labels` | `""` | Comma-separated `key=value` labels for the status surface. |
 
 The approver key is sent **inline** in the registration payload over the trusted
 bridge (the clarified key-conveyance decision); it is held in the notifier's
 memory only — never logged, never persisted.
+
+### Convention-based zero-config (uniform host overlay)
+
+Every value except the container's own identity follows a convention, so a single
+uniform overlay injected by the host (see issue #42) can register every container
+with no per-project config: `sourceId` defaults to the container `hostname`,
+`agentshApiUrl` derives to `http://<sourceId>:<agentshPort>`, and the approver key
+is read from the conventional `/run/secrets/agentsh_approver_key`. **This is only
+correct when the container's `hostname` equals the network name/alias the notifier
+resolves** — the host/launch layer must pin them (issue #42 §2.2). Set `sourceId`
+explicitly (and/or `agentshApiUrl`) to override the convention.
 
 ## Deployment prerequisite — shared network path
 

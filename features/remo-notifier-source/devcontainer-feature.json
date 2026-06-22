@@ -12,7 +12,12 @@
     "agentshApiUrl": {
       "type": "string",
       "default": "",
-      "description": "Notifier-reachable agentsh approvals base URL (e.g. http://<this-container>:8080)."
+      "description": "Notifier-reachable agentsh approvals base URL. Optional: when empty it is derived by convention as http://<sourceId>:<agentshPort>."
+    },
+    "agentshPort": {
+      "type": "string",
+      "default": "8080",
+      "description": "agentsh approvals port, used only when agentshApiUrl is derived by convention."
     },
     "apiKey": {
       "type": "string",

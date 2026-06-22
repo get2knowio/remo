@@ -59,6 +59,34 @@ def test_predicate_prefix_target() -> None:
     assert p.matches(make_request(kind="file_delete", target="/z/b")) is False
 
 
+def test_predicate_suffix_target() -> None:
+    p = GrantPredicate(kind="net_connect", target=".github.com", target_match=TargetMatchType.suffix)
+    assert p.matches(make_request(kind="net_connect", target="api.github.com")) is True
+    assert p.matches(make_request(kind="net_connect", target="github.com")) is False
+    assert p.matches(make_request(kind="net_connect", target="api.gitlab.com")) is False
+
+
+def test_predicate_glob_target_matches_subdomains() -> None:
+    p = GrantPredicate(kind="net_connect", target="*.github.com", target_match=TargetMatchType.glob)
+    assert p.matches(make_request(kind="net_connect", target="api.github.com")) is True
+    assert p.matches(make_request(kind="net_connect", target="raw.github.com")) is True
+    # A bare apex domain has no subdomain, so "*." does not match it.
+    assert p.matches(make_request(kind="net_connect", target="github.com")) is False
+    # Exfil destination must not match a known-good wildcard.
+    assert p.matches(make_request(kind="net_connect", target="evil.attacker.com")) is False
+
+
+def test_predicate_glob_is_case_sensitive() -> None:
+    p = GrantPredicate(kind="net_connect", target="*.GitHub.com", target_match=TargetMatchType.glob)
+    assert p.matches(make_request(kind="net_connect", target="api.github.com")) is False
+
+
+def test_predicate_empty_value_never_matches() -> None:
+    for mt in (TargetMatchType.suffix, TargetMatchType.glob, TargetMatchType.prefix):
+        p = GrantPredicate(kind="net_connect", target="", target_match=mt)
+        assert p.matches(make_request(kind="net_connect", target="api.github.com")) is False
+
+
 # --- scope -------------------------------------------------------------------
 def test_glob_scope_matches_any_session() -> None:
     s = GrantScope(type=GrantScopeType.glob)
@@ -148,3 +176,23 @@ def test_propose_caps_at_four() -> None:
     store = _store()
     cands = store.propose(make_request(kind="file_delete", target="/a/b/c", session_id="s1"))
     assert len(cands) <= 4
+
+
+def test_propose_offers_domain_glob_for_host_target() -> None:
+    store = _store()
+    cands = store.propose(make_request(kind="net_connect", target="api.github.com"))
+    globs = [c.predicate for c in cands if c.predicate.target_match is TargetMatchType.glob]
+    assert any(p.target == "*.github.com" for p in globs)
+    # And the proposed wildcard actually matches the originating request.
+    proposed = next(p for p in globs if p.target == "*.github.com")
+    assert proposed.matches(make_request(kind="net_connect", target="api.github.com")) is True
+
+
+def test_propose_no_host_glob_for_paths_or_single_label() -> None:
+    store = _store()
+    # Path-style targets get a prefix candidate, never a host glob.
+    paths = store.propose(make_request(kind="file_delete", target="/ws/a.txt"))
+    assert all(c.predicate.target_match is not TargetMatchType.glob for c in paths)
+    # Single-label hosts (no dot) cannot be generalized to a domain wildcard.
+    single = store.propose(make_request(kind="net_connect", target="localhost"))
+    assert all(c.predicate.target_match is not TargetMatchType.glob for c in single)
