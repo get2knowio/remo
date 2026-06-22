@@ -24,7 +24,7 @@ See `.specify/memory/constitution.md` for project principles and non-negotiable 
 ## Project Structure
 
 ```text
-src/remo/                  # Python CLI package (src layout, hatchling build)
+src/remo_cli/              # Python CLI package (src layout, hatchling build)
 ├── __init__.py            # Version from importlib.metadata
 ├── __main__.py            # python -m remo entry point
 ├── cli/                   # Click command layer (parsing only, no business logic)
@@ -51,8 +51,13 @@ src/remo/                  # Python CLI package (src layout, hatchling build)
 │   ├── rsync.py           # File transfer
 │   ├── version.py         # Version check, passive update notification
 │   └── init.py            # remo init logic
-└── models/
-    └── host.py            # KnownHost dataclass
+├── models/
+│   └── host.py            # KnownHost dataclass
+└── notifier/              # Notifier service (approval bridge: agentsh ↔ channels)
+    ├── server.py          # FastAPI app, endpoints (specs 007/008/009)
+    ├── agentsh_client.py  # agentsh approver REST client (poll/resolve)
+    ├── channels/          # Channel catalog + per-channel transports (telegram)
+    └── sources/           # Dynamic multi-source registry + per-source pollers
 
 ansible/                   # Ansible playbooks (invoked by Python via subprocess)
 ├── roles/
@@ -120,8 +125,8 @@ uv run remo --help
 uv run pytest
 
 # Type checking and linting
-uv run mypy src/remo
-uv run ruff check src/remo
+uv run mypy src/remo_cli
+uv run ruff check src/remo_cli
 ```
 
 ## Architecture (Three-Layer)
