@@ -14,6 +14,10 @@ See `.specify/memory/constitution.md` for project principles and non-negotiable 
 - Cross-provider snapshot model (`models/snapshot.py`) + shared helpers in `core/snapshot.py` (name generator, validator, table formatter, destroy-time cleanup hook). No new runtime deps. (005-provider-snapshots)
 - Python 3.11+ (package `requires-python = ">=3.11"`); service container runs Python 3.13-slim + Service (new `[notifier]` extra): FastAPI ≥0.115, uvicorn[standard] ≥0.32, pydantic ≥2.9, python-telegram-bot ≥21.6, structlog ≥24.4, tomli (py<3.11 only). CLI side: Click ≥8.1 (existing), no new laptop runtime deps. Build: hatchling (existing), uv (in-container). Ansible: new `community.docker` collection. (007-notifier-sidecar)
 - None. All approval state is in-memory in a `PendingApprovals` registry; never persisted (FR-009). (007-notifier-sidecar)
+- Python 3.11+ (`requires-python = ">=3.11"`); service container runs Python 3.13-slim (unchanged from 007). + Reorganized extras — `notifier-core` (FastAPI ≥0.115, uvicorn[standard] ≥0.32, pydantic ≥2.9, structlog ≥24.4, tomli on py<3.11); `notifier-telegram` = core + python-telegram-bot ≥21.6; `notifier` retained as an alias of `notifier-telegram` for back-compat. CLI/laptop side: Click ≥8.1, InquirerPy (existing) — **no new laptop runtime deps** (catalog is pure-Python metadata). Build: hatchling + uv (in-container). Ansible: `community.docker` (already added in 007). (008-notifier-channels)
+- None. All approval and grant state remains in-memory (FR-009 / 007 carried forward). (008-notifier-channels)
+- Python 3.11+ (`requires-python = ">=3.11"`); service container runs Python 3.13-slim (unchanged from 007/008). Devcontainer Feature: POSIX `sh` + `curl` (no new runtime language). + **No new dependencies.** Service core unchanged from 008 — FastAPI ≥0.115 (`StreamingResponse`, `Request.is_disconnected`), uvicorn[standard] ≥0.32, httpx ≥0.27 (per-source agentsh client), pydantic ≥2.9, structlog ≥24.4, tomli on py<3.11. CLI/laptop side: Click ≥8.1, InquirerPy (existing) — **no new laptop runtime deps**. Build: hatchling + uv (in-container). Ansible: `community.docker` (already present). (009-notifier-source-registration)
+- None. The source registry, per-source poll-health, pending approvals, and grants are all in-memory and lost on restart by design (FR-001/FR-013; 007 FR-009). Recovery is by source reconnection. (009-notifier-source-registration)
 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module) (001-bootstrap-incus-host)
 
@@ -134,10 +138,15 @@ Provider SDKs (boto3, hcloud) are lazy-imported with clear error messages if mis
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
+- 009-notifier-source-registration: Added Python 3.11+ (`requires-python = ">=3.11"`); service container runs Python 3.13-slim (unchanged from 007/008). Devcontainer Feature: POSIX `sh` + `curl` (no new runtime language). + **No new dependencies.** Service core unchanged from 008 — FastAPI ≥0.115 (`StreamingResponse`, `Request.is_disconnected`), uvicorn[standard] ≥0.32, httpx ≥0.27 (per-source agentsh client), pydantic ≥2.9, structlog ≥24.4, tomli on py<3.11. CLI/laptop side: Click ≥8.1, InquirerPy (existing) — **no new laptop runtime deps**. Build: hatchling + uv (in-container). Ansible: `community.docker` (already present).
+- 008-notifier-channels: Split the notifier into a channel-agnostic core + per-channel packages with a catalog (`remo notifier deploy --channel`, `remo notifier channels`); re-pointed approvals to agentsh's real REST API (poll/resolve approver client); reorganized extras into `notifier-core` / `notifier-telegram` (+ `notifier` alias).
 - 007-notifier-sidecar: Added Python 3.11+ (package `requires-python = ">=3.11"`); service container runs Python 3.13-slim + Service (new `[notifier]` extra): FastAPI ≥0.115, uvicorn[standard] ≥0.32, pydantic ≥2.9, python-telegram-bot ≥21.6, structlog ≥24.4, tomli (py<3.11 only). CLI side: Click ≥8.1 (existing), no new laptop runtime deps. Build: hatchling (existing), uv (in-container). Ansible: new `community.docker` collection.
-- 005-provider-snapshots: Added cross-provider snapshot CLI (`remo <P> snapshot {create,list,restore,delete}`) + destroy-time cleanup hook across Incus / Proxmox / AWS / Hetzner.
-- 003-python-cli-rewrite: Added Python 3.11+ + Click (CLI framework), InquirerPy (interactive picker), boto3 (AWS, optional), hcloud (Hetzner, optional)
 
 
 <!-- MANUAL ADDITIONS START -->
 <!-- MANUAL ADDITIONS END -->
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->

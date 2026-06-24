@@ -1,8 +1,12 @@
 ---
-# Defaults for the remo_notifier role. Override in group_vars/all.yml.
+# Defaults for the remo_notifier role. Override in group_vars/all.yml or via the
+# `remo notifier deploy` CLI (which always passes the channel + transport fragment).
 
 remo_notifier_version: "0.1.0"
-remo_notifier_image: "remo-notifier:{{ remo_notifier_version }}"
+# Channel selector (spec 008). The image and the in-container install are
+# parameterized by this id; the CLI always passes it explicitly.
+remo_notifier_channel: "telegram"
+remo_notifier_image: "remo-notifier-{{ remo_notifier_channel }}:{{ remo_notifier_version }}"
 remo_notifier_listen_port: 18181
 remo_notifier_bind_address: "172.17.0.1"  # Docker bridge address
 remo_notifier_config_dir: "/etc/notifier"
@@ -14,6 +18,17 @@ remo_notifier_max_pending_approvals: 50
 remo_notifier_log_level: "info"
 remo_notifier_message_parse_mode: "MarkdownV2"
 
+# Dynamic source registry ([sources], spec 009). Bounds the in-memory registry
+# and the per-source presence/poll behaviour. idle must exceed keepalive; cap must
+# be >= base; 0 <= jitter <= 1; factor >= 1 (validated fail-fast in the service).
+remo_notifier_max_sources: 64
+remo_notifier_keepalive_interval_seconds: 15
+remo_notifier_idle_timeout_seconds: 45
+remo_notifier_poll_base_interval_seconds: 5
+remo_notifier_poll_backoff_factor: 2.0
+remo_notifier_poll_backoff_cap_seconds: 300
+remo_notifier_poll_backoff_jitter: 0.2
+
 # Standing grants ("Always" auto-approval) — Addendum 001
 remo_notifier_grants_enabled: true
 remo_notifier_grants_default_ttl_seconds: 28800  # 8h; every grant expires
@@ -21,8 +36,31 @@ remo_notifier_grants_max: 100
 remo_notifier_grants_allow_global_scope: true
 remo_notifier_grants_digest_interval_seconds: 3600  # 0 disables the digest
 
-remo_notifier_telegram_bot_token: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_BOT_TOKEN') }}"
+# Channel secret (the token). The CLI supplies these from the selected
+# descriptor; the defaults below cover a direct telegram role run.
+remo_notifier_channel_secret: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_BOT_TOKEN') }}"
+remo_notifier_secret_filename: "telegram_bot_token"
+remo_notifier_secret_mount: "/run/secrets/telegram_bot_token"
 remo_notifier_telegram_chat_id: "{{ lookup('env', 'REMO_NOTIFIER_TELEGRAM_CHAT_ID') }}"
+
+# Channel transport TOML fragment ([transport] + [transport.<id>]). The CLI
+# renders this from the descriptor; the default below covers a direct telegram run.
+remo_notifier_transport_toml: |
+  [transport]
+  type = "{{ remo_notifier_channel }}"
+
+  [transport.{{ remo_notifier_channel }}]
+  bot_token_file = "{{ remo_notifier_secret_mount }}"
+  authorized_chat_id = {{ remo_notifier_telegram_chat_id | default(0) | int }}
+  message_parse_mode = "{{ remo_notifier_message_parse_mode }}"
+
+# agentsh approver connection (channel-independent, required for every channel).
+remo_notifier_agentsh_api_url: "{{ lookup('env', 'REMO_NOTIFIER_AGENTSH_API_URL') }}"
+remo_notifier_agentsh_api_key: "{{ lookup('env', 'REMO_NOTIFIER_AGENTSH_API_KEY') }}"
+remo_notifier_agentsh_api_key_file: "/run/secrets/agentsh_api_key"
+remo_notifier_agentsh_secret_filename: "agentsh_api_key"
+remo_notifier_agentsh_poll_interval_seconds: 5
+remo_notifier_agentsh_webhook_enabled: false
 
 # v1 builds the image on the host from a bundled context; future: pull from a
 # registry by setting this to false.

@@ -1,13 +1,15 @@
 """Notifier configuration: Pydantic models + strict TOML loader.
 
-The config file never contains the bot token; the token is read from a separate
-secret file at startup and kept in memory (FR-019). Unknown keys are rejected
-(FR-018). See data-model.md and contracts (config-schema.md).
+Secrets (the channel token, the agentsh approver key) never appear in the config
+file; they are read from separate secret files at startup. Unknown keys are
+rejected (FR-018) except inside the dynamic ``[transport.<channel>]`` sub-table,
+which the active channel validates strictly via its own model (spec 008 R3).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -62,41 +64,95 @@ class GrantsConfig(BaseModel):
     digest_interval_seconds: int = Field(default=3600, ge=0)  # 0 disables the digest
 
 
-class TelegramConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    bot_token_file: str = "/run/secrets/telegram_bot_token"
-    authorized_chat_id: int
-    message_parse_mode: str = "MarkdownV2"
-
-    def read_token(self) -> str:
-        """Read and return the bot token from ``bot_token_file``.
-
-        Raises a clear error if the file is missing or empty (fail-fast,
-        Constitution IV / FR-023).
-        """
-        path = Path(self.bot_token_file)
-        if not path.is_file():
-            raise ValueError(f"bot token file not found: {self.bot_token_file}")
-        token = path.read_text(encoding="utf-8").strip()
-        if not token:
-            raise ValueError(f"bot token file is empty: {self.bot_token_file}")
-        return token
-
-
 class TransportConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    """Channel-agnostic transport selector.
 
-    type: str = "telegram"
-    telegram: TelegramConfig | None = None
+    ``type`` names the active channel; the matching ``[transport.<type>]``
+    sub-table is captured as an extra field and validated by that channel's own
+    Pydantic model (the core never imports a channel model). Each channel's
+    sub-table shape is owned by that channel and preserved verbatim
+    (FR-017/FR-018).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
 
     @model_validator(mode="after")
-    def _check_transport(self) -> TransportConfig:
-        if self.type != "telegram":
-            raise ValueError(f"only transport type 'telegram' is supported in v1, got {self.type!r}")
-        if self.telegram is None:
-            raise ValueError("[transport.telegram] section is required when type = 'telegram'")
+    def _check_subtable(self) -> TransportConfig:
+        extra = self.__pydantic_extra__ or {}
+        sub = extra.get(self.type)
+        if not isinstance(sub, dict):
+            raise ValueError(
+                f"[transport.{self.type}] section is required when type = {self.type!r}"
+            )
         return self
+
+    def settings(self) -> dict[str, Any]:
+        """Return the active channel's raw settings sub-mapping."""
+        extra = self.__pydantic_extra__ or {}
+        sub = extra.get(self.type)
+        if not isinstance(sub, dict):
+            raise ValueError(f"[transport.{self.type}] section is missing")
+        return dict(sub)
+
+
+class SourcesConfig(BaseModel):
+    """Dynamic source-registry settings (``[sources]``, spec 009 R5).
+
+    Bounds the in-memory registry and the per-source presence/poll behaviour.
+    All values are operator-tunable and validated fail-fast (Constitution IV).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_sources: int = Field(default=64, ge=1)
+    keepalive_interval_seconds: int = Field(default=15, ge=1)
+    idle_timeout_seconds: int = Field(default=45, ge=1)
+    poll_base_interval_seconds: int = Field(default=5, ge=1)
+    poll_backoff_factor: float = Field(default=2.0, ge=1.0)
+    poll_backoff_cap_seconds: int = Field(default=300, ge=1)
+    poll_backoff_jitter: float = Field(default=0.2, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _check_bounds(self) -> SourcesConfig:
+        if self.idle_timeout_seconds <= self.keepalive_interval_seconds:
+            raise ValueError(
+                "idle_timeout_seconds must be > keepalive_interval_seconds "
+                f"({self.idle_timeout_seconds} <= {self.keepalive_interval_seconds})"
+            )
+        if self.poll_backoff_cap_seconds < self.poll_base_interval_seconds:
+            raise ValueError(
+                "poll_backoff_cap_seconds must be >= poll_base_interval_seconds "
+                f"({self.poll_backoff_cap_seconds} < {self.poll_base_interval_seconds})"
+            )
+        return self
+
+
+class AgentshConfig(BaseModel):
+    """Connection to agentsh's approval REST API (spec 008, FR-020).
+
+    Optional in 009: when present it seeds one permanent ``seed`` source; when
+    absent the registry starts empty and serves only dynamic sources (R7).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_url: str
+    api_key_file: str = "/run/secrets/agentsh_api_key"
+    poll_interval_seconds: int = Field(default=5, ge=1)
+    webhook_enabled: bool = False
+    source_id: str = "seed"
+
+    def read_api_key(self) -> str:
+        """Read the approver ``X-API-Key`` from ``api_key_file`` (fail-fast)."""
+        path = Path(self.api_key_file)
+        if not path.is_file():
+            raise ValueError(f"agentsh api key file not found: {self.api_key_file}")
+        key = path.read_text(encoding="utf-8").strip()
+        if not key:
+            raise ValueError(f"agentsh api key file is empty: {self.api_key_file}")
+        return key
 
 
 class InstanceConfig(BaseModel):
@@ -111,7 +167,9 @@ class NotifierConfig(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     approval: ApprovalConfig = Field(default_factory=ApprovalConfig)
     grants: GrantsConfig = Field(default_factory=GrantsConfig)
+    sources: SourcesConfig = Field(default_factory=SourcesConfig)
     transport: TransportConfig
+    agentsh: AgentshConfig | None = None
     instance: InstanceConfig
 
 

@@ -208,42 +208,108 @@ they continue to incur storage costs on AWS/Hetzner).
 ## Notifier
 
 The **notifier** is a small approval bridge that runs as a hardened container on
-a remo host. When an agentsh-secured devcontainer needs human sign-off for an
-operation, it POSTs an approval request to the notifier, which messages you on
-Telegram with **Approve** / **Deny** buttons and returns your decision. It fails
-secure: a timeout, a shutdown, or a lost connection all mean *deny*. The wire
-protocol is documented in
-[`src/remo_cli/notifier/docs/wire-protocol.md`](src/remo_cli/notifier/docs/wire-protocol.md).
+a remo host. It connects to one or more **sources** — each a devcontainer's
+**agentsh** approval endpoint — as an *approver client*: it polls each source's
+approval API for pending requests, delivers each through a **channel** (Telegram
+is the first) with **Approve** / **Deny** buttons, and resolves your decision
+back to the originating source. The decision always flows
+human → channel → notifier → agentsh; you never call agentsh directly. It fails
+secure: a timeout, a shutdown, a lost connection, or a dropped source all mean
+*deny*.
 
-The notifier's runtime dependencies (FastAPI, python-telegram-bot, …) live in an
-optional `notifier` extra and are installed only inside the container — a normal
-`remo` install does not pull them in.
+One notifier per host serves many sources at once (default cap 64, see
+`[sources]` in the rendered `notifier.toml`). A source is registered for exactly
+as long as it holds a **presence connection** open to the notifier; the
+connection dropping (graceful close or ungraceful death within the keepalive/idle
+timeout) removes it. Each source resolves only against its own agentsh via its
+own key, so decisions never cross-route. The static `[agentsh]` endpoint, if
+configured, is kept as an optional permanent **seed** source.
+
+The delivery medium is a **channel**, and any one of several interchangeable
+channels can fulfil the notifier role. Each channel is built into its own image
+and installs only its own delivery deps — `notifier-core` (FastAPI, httpx, …) is
+shared, and `notifier-telegram` adds python-telegram-bot. A normal `remo`
+install pulls none of them; the channel catalog the CLI reads is pure metadata.
+
+agentsh must run with `approvals.mode=api` and auth enabled (`auth.type=api_key`);
+you need an **approver**-role API key for it. The notifier is never installed
+during host provisioning — it is stood up only via `remo notifier deploy`.
 
 ### Notifier setup
 
-1. **Create a Telegram bot**: message [`@BotFather`](https://t.me/BotFather), run
-   `/newbot`, follow the prompts, and save the bot token.
-2. **Find your chat id**: message `@userinfobot` from your own account; it
-   replies with your numeric user id — that's your `authorized_chat_id`.
-3. **Message your new bot once** (any message) so it can DM you.
-4. **Export credentials** on the machine where `remo` runs:
+1. **List channels** and what each needs: `remo notifier channels`.
+2. **Create a Telegram bot**: message [`@BotFather`](https://t.me/BotFather), run
+   `/newbot`, follow the prompts, and save the bot token. Find your chat id via
+   `@userinfobot`, then message your new bot once so it can DM you.
+3. **Export the agentsh connection** (channel-independent) and the channel's
+   credentials, following the `REMO_NOTIFIER_<CHANNEL>_*` convention:
    ```bash
+   export REMO_NOTIFIER_AGENTSH_API_URL="http://172.17.0.1:8080"
+   export REMO_NOTIFIER_AGENTSH_API_KEY="<approver-role-api-key>"
    export REMO_NOTIFIER_TELEGRAM_BOT_TOKEN="12345:ABC...your-token"
    export REMO_NOTIFIER_TELEGRAM_CHAT_ID="987654321"
    ```
-5. **Deploy**: `remo notifier deploy <host>` (omit `<host>` to fuzzy-pick).
-6. **Verify**: `remo notifier test <host>` — you should get a Telegram message
-   within ~2 s; tapping Approve or Deny returns the decision to the CLI.
+4. **Deploy**: `remo notifier deploy <host> --channel telegram` (omit `--channel`
+   to fuzzy-pick from the catalog; omit `<host>` to fuzzy-pick the host).
+   Missing credentials fail the preflight loudly, naming exactly the variables
+   that channel needs — nothing is deployed.
+5. **Verify**: `remo notifier test <host>` — round-trips a test approval through
+   the installed channel (locally injected; it never contacts agentsh).
 
 ### Notifier commands
 
 ```bash
-remo notifier deploy  <host> [--rebuild]   # apply the role; --rebuild forces a fresh image
-remo notifier status  <host>               # GET /v1/health
+remo notifier channels                              # list channels + required env
+remo notifier deploy  <host> [--channel ID] [--rebuild]  # build/run the channel image
+remo notifier status  <host>               # GET /v1/health (transport, source count)
+remo notifier sources <host>               # GET /v1/sources (connected sources + poll health)
 remo notifier logs    <host> [-f] [-n N]   # journalctl -u remo-notifier.service
-remo notifier test    <host>               # push a test approval, print the decision
+remo notifier test    <host>               # round-trip a test approval, print the decision
 remo notifier restart <host>               # systemctl restart remo-notifier.service
 ```
+
+Switching a host to another channel is just `remo notifier deploy <host>
+--channel <other>`: it replaces the running channel on the same bind/port (a
+restart — in-flight approvals and standing grants are lost across the switch).
+Adding a brand-new channel touches no core code — see
+[`specs/008-notifier-channels/contracts/channel-extension.md`](specs/008-notifier-channels/contracts/channel-extension.md).
+
+### Multi-source registration (opt-in devcontainer Feature)
+
+A project opts a devcontainer in by adding the **`remo-notifier-source`**
+devcontainer Feature (in-repo at `features/remo-notifier-source/`). On container
+start it opens a presence connection to the host's notifier and keeps it up,
+reconnecting with backoff across notifier restarts; when the container stops the
+source is removed. A project that omits the Feature is never connected.
+
+```jsonc
+{
+  "features": {
+    "./features/remo-notifier-source": {
+      "notifierAddress": "172.17.0.1:18181",
+      "agentshApiUrl": "http://proj-a:8080",
+      "apiKeyFile": "/run/secrets/agentsh_approver_key",
+      "labels": "project=proj-a"
+    }
+  }
+}
+```
+
+**Shared-network prerequisite**: the notifier must be able to reach each source's
+`agentshApiUrl`, and each container must reach `notifierAddress` on the bridge.
+That requires a shared network path (a user-defined Docker network or published
+ports); the Feature documents it but does not create it. See the Feature's
+[README](features/remo-notifier-source/README.md).
+
+Observe the live set with `remo notifier sources <host>` — id, labels, poll state
+(`polling`/`backing_off`), and last-success per source; a source whose agentsh is
+unreachable shows `backing_off` while still listed, and a dropped source
+disappears.
+
+**Accepted residual risk**: the control plane is open and bridge-only with no
+caller authentication (the spec 007 trust model). A hostile co-located container
+could open spurious connections or consume capacity — but this can only cause
+**fail-secure denial**, never a wrongful allow.
 
 ### "Always" — standing grants
 

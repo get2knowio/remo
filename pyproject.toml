@@ -27,13 +27,24 @@ dev = [
     "ruff",
     "mypy",
 ]
-notifier = [
+# Channel-agnostic notifier service core (no channel delivery SDKs). httpx
+# drives the agentsh approver client. See specs/008-notifier-channels (R4/R9).
+notifier-core = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
     "pydantic>=2.9",
-    "python-telegram-bot>=21.6",
     "structlog>=24.4",
+    "httpx>=0.27",
     "tomli>=2.0; python_version<'3.11'",
+]
+# Telegram channel = core + the Telegram delivery SDK only.
+notifier-telegram = [
+    "remo-cli[notifier-core]",
+    "python-telegram-bot>=21.6",
+]
+# Back-compat alias: `.[notifier]` still installs the Telegram channel image.
+notifier = [
+    "remo-cli[notifier-telegram]",
 ]
 
 [project.scripts]

@@ -1,15 +1,16 @@
-"""Pydantic v2 models for the notifier wire protocol.
+"""Pydantic v2 models for the notifier.
 
-These define the durable contract between agentsh (or any future emitter) and
-the notifier. See specs/007-notifier-sidecar/contracts/openapi.yaml and
-data-model.md.
+The approval object is **agentsh's** ``Request`` (consumed, not defined here):
+the notifier polls ``GET /api/v1/approvals`` and resolves via
+``POST /api/v1/approvals/{id}``. See specs/008-notifier-channels and
+contracts/agentsh-integration.md (verified against agentsh source 2026-06-01).
 """
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,66 +19,40 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class OperationKind(str, Enum):
-    command = "command"
-    file = "file"
-    network = "network"
-    signal = "signal"
-
-
-class OperationContext(str, Enum):
-    direct = "direct"
-    nested = "nested"
-
-
 class Decision(str, Enum):
     allow = "allow"
     deny = "deny"
 
 
-class Operation(BaseModel):
-    """The operation agentsh is asking a human to approve."""
+class AgentshRequest(BaseModel):
+    """A pending approval fetched from agentsh's ``GET /api/v1/approvals``.
 
-    model_config = ConfigDict(extra="forbid")
+    Mirrors ``internal/approvals/manager.go`` ``Request`` (verified 2026-06-01).
+    agentsh owns this schema; we tolerate unknown fields (``extra="ignore"``) so
+    a future agentsh field never blocks delivery — the channel renders the
+    fields it knows.
+    """
 
-    kind: OperationKind
-    command: str | None = None
-    args: list[str] = Field(default_factory=list)
-    path: str | None = None
-    remote_host: str | None = None
-    remote_port: int | None = Field(default=None, ge=1, le=65535)
-    context: OperationContext = OperationContext.direct
-    depth: int = Field(default=0, ge=0)
+    model_config = ConfigDict(extra="ignore")
 
-
-class ApprovalRequest(BaseModel):
-    """Inbound approval request (POST /v1/approve body)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    approval_id: str | None = None
-    session_id: str | None = None
-    operation: Operation
-    policy_rule_name: str
-    policy_message: str
-    workspace: str | None = None
-    instance_id: str | None = None
-    project: str | None = None
-    timeout_seconds: int | None = Field(default=None, ge=1)
-    submitted_at: str | None = None
-
-    @field_validator("approval_id")
-    @classmethod
-    def _validate_uuid(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        # Raises ValueError -> 422/400 if not a valid UUID string.
-        uuid.UUID(v)
-        return v
+    id: str
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
+    session_id: str = ""
+    command_id: str = ""
+    kind: str = ""
+    target: str = ""
+    rule: str = ""
+    message: str = ""
+    fields: dict[str, Any] = Field(default_factory=dict)
 
 
 class ApprovalDecision(BaseModel):
-    """Internal resolution value carried by a pending approval's Future."""
+    """Internal resolution value carried by a pending approval's Future.
+
+    Mapped to agentsh's wire vocabulary at resolve time: ``allow`` -> ``approve``;
+    every other terminal state -> ``deny`` (FR-007/FR-008).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -85,13 +60,15 @@ class ApprovalDecision(BaseModel):
     responder: str
     reason: str = ""
     decided_at: datetime = Field(default_factory=_utcnow)
-    # Set when a human chose "Always" — the newly created grant's id, echoed
-    # back on the response (Addendum 001).
+    # Set when a human chose "Always" — the newly created grant's id (Addendum 001).
     grant_id: str | None = None
 
 
 class ApprovalResponse(BaseModel):
-    """Outbound decision (POST /v1/approve response body)."""
+    """Internal/observability record of a resolved approval.
+
+    Returned by the local ``test`` injection path and used in structured logs.
+    """
 
     approval_id: str
     decision: Decision
@@ -99,9 +76,50 @@ class ApprovalResponse(BaseModel):
     reason: str = ""
     decided_at: datetime
     latency_ms: int = Field(ge=0)
-    # Present on a standing-grant auto-approval (responder "rule:{id}") or on the
-    # response that created a grant via the "Always" tap (Addendum 001).
     grant_id: str | None = None
+
+
+class SourceRegistration(BaseModel):
+    """``POST /v1/sources`` request body — a source's presence registration.
+
+    Trust-boundary input from a co-located (unauthenticated) source; validated
+    strictly (``extra="forbid"``). ``api_key`` is held in-memory only — never
+    logged, never persisted, never echoed in any response (spec 009 data-model).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str = Field(pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    api_url: str
+    api_key: str = Field(min_length=1)
+    labels: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("api_url")
+    @classmethod
+    def _check_url(cls, v: str) -> str:
+        if not (v.startswith("http://") or v.startswith("https://")):
+            raise ValueError("api_url must be an http(s) URL")
+        return v
+
+    @field_validator("labels")
+    @classmethod
+    def _bound_labels(cls, v: dict[str, str]) -> dict[str, str]:
+        if len(v) > 16:
+            raise ValueError("labels may have at most 16 entries")
+        return v
+
+
+class SourceStatus(BaseModel):
+    """One row of ``GET /v1/sources`` — never includes ``api_key`` or ``api_url``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_id: str
+    labels: dict[str, str] = Field(default_factory=dict)
+    poll_state: str
+    last_success_at: datetime | None = None
+    consecutive_failures: int = Field(default=0, ge=0)
+    permanent: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -110,12 +128,14 @@ class HealthResponse(BaseModel):
     status: str = "ok"
     version: str
     transport: str
+    agentsh_connected: bool = False
     uptime_seconds: int = Field(ge=0)
     pending_approvals: int = Field(ge=0)
+    sources: int = Field(default=0, ge=0)
 
 
 class ErrorResponse(BaseModel):
-    """4xx / 503 error body (where not the 408 fail-secure deny shape)."""
+    """4xx / 503 error body."""
 
     error: str
     detail: str = ""

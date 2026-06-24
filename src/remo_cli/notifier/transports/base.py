@@ -1,7 +1,8 @@
 """The NotificationTransport abstract base class.
 
-The notifier core depends only on this interface; Telegram is the sole v1
-implementation. See specs/007-notifier-sidecar/contracts/transport.md.
+The notifier core depends only on this interface; a channel package supplies a
+concrete implementation. The delivered unit is agentsh's ``Request`` (spec 008).
+See contracts/channel-extension.md and contracts/agentsh-integration.md.
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 
-from remo_cli.notifier.models import ApprovalDecision, ApprovalRequest
+from remo_cli.notifier.models import AgentshRequest, ApprovalDecision
 
 ResponseCallback = Callable[[ApprovalDecision], None]
 
@@ -18,11 +19,11 @@ class NotificationTransport(ABC):
     """Delivers approval requests to a human and reports their decision.
 
     Lifecycle: ``start()`` once at app startup; ``stop()`` once at shutdown.
-    Between them the server calls ``send_approval_request()`` per accepted
-    request and may call ``cancel()`` to retract one resolved by other means.
+    Between them the core calls ``send_approval_request()`` per delivered agentsh
+    ``Request`` and may call ``cancel()`` to retract one resolved by other means.
     """
 
-    #: Human-facing transport name, surfaced in GET /v1/health.
+    #: Human-facing transport / channel name, surfaced in GET /v1/health.
     name: str = "base"
 
     @abstractmethod
@@ -39,13 +40,13 @@ class NotificationTransport(ABC):
     @abstractmethod
     async def send_approval_request(
         self,
-        request: ApprovalRequest,
+        request: AgentshRequest,
         on_response: ResponseCallback,
     ) -> None:
-        """Deliver one request to the human.
+        """Deliver one agentsh ``Request`` to the human.
 
-        MUST raise on delivery failure (the server maps this to 503 and holds no
-        pending slot — FR-010a). On success, returns once the notification has
+        MUST raise on delivery failure (the core then resolves nothing and frees
+        the slot — FR-008/FR-010a). On success, returns once the notification has
         been delivered; the human's eventual authorized tap invokes
         ``on_response(decision)`` exactly once. ``on_response`` is synchronous
         and loop-safe; it resolves the pending approval's Future.
@@ -60,5 +61,5 @@ class NotificationTransport(ABC):
         """
 
     async def healthy(self) -> bool:
-        """Readiness signal. When False, the server answers /v1/approve 503."""
+        """Readiness signal. When False, the core delivers nothing."""
         return True

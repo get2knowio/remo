@@ -1,5 +1,14 @@
 # Notifier Wire Protocol (v1)
 
+> **Superseded by spec 008.** The notifier no longer hosts an inbound
+> `POST /v1/approve` endpoint. Approvals now originate in **agentsh**: the
+> notifier is an *approver client* that polls `GET /api/v1/approvals` and
+> resolves `POST /api/v1/approvals/{id}`. The authoritative contract is
+> [`specs/008-notifier-channels/contracts/agentsh-integration.md`](../../../../specs/008-notifier-channels/contracts/agentsh-integration.md).
+> `GET /v1/health` is retained (its `transport` field reports the active
+> channel); a local `POST /v1/test` injection drives `remo notifier test`. The
+> sections below describe the retired 007 protocol and are kept for history.
+
 The durable contract between agentsh (or any future approval emitter) and the
 notifier. The machine-readable schema is
 [`contracts/openapi.yaml`](../../../../specs/007-notifier-sidecar/contracts/openapi.yaml);

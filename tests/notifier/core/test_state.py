@@ -13,7 +13,7 @@ from remo_cli.notifier.state import (
     RegistrationFailed,
 )
 
-from .conftest import make_request
+from ..conftest import make_request
 
 
 
@@ -98,6 +98,26 @@ async def test_drain_resolves_all() -> None:
     assert reg.count() == 0
     assert e_a.future.result().decision is Decision.deny
     assert e_b.future.result().decision is Decision.deny
+
+
+async def test_drain_source_denies_only_that_source() -> None:
+    reg = PendingApprovals(max_pending=10)
+    a = await reg.reserve("d-a", make_request(), source_id="a", epoch=1, agentsh_approval_id="ag-a")
+    b = await reg.reserve("d-b", make_request(), source_id="b", epoch=1, agentsh_approval_id="ag-b")
+    drained = reg.drain_source("a")
+    # Returns the real agentsh id(s) for a best-effort wire deny.
+    assert drained == ["ag-a"]
+    # Source a's entry is fail-secure denied; source b is untouched.
+    assert a.future.result().decision is Decision.deny
+    assert not b.future.done()
+    assert reg.count() == 1
+
+
+async def test_drain_source_no_match_is_noop() -> None:
+    reg = PendingApprovals(max_pending=10)
+    await reg.reserve("d-a", make_request(), source_id="a", epoch=1, agentsh_approval_id="ag-a")
+    assert reg.drain_source("zzz") == []
+    assert reg.count() == 1
 
 
 async def test_concurrent_registration_respects_cap() -> None:

@@ -1,4 +1,4 @@
-"""Tests for the Telegram transport (T012).
+"""Tests for the Telegram transport (relocated, spec 008 — renders agentsh Request).
 
 The PTB Application is replaced with a mock exposing an async ``bot`` and
 ``add_handler``; no network or real token is involved.
@@ -9,13 +9,18 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
+from remo_cli.notifier.channels.telegram.transport import TelegramTransport, escape_md_v2
+from remo_cli.notifier.grants import (
+    Grant,
+    GrantPredicate,
+    GrantScope,
+    GrantScopeType,
+    GrantStore,
+    TargetMatchType,
+)
 from remo_cli.notifier.models import Decision
-from remo_cli.notifier.transports.telegram import TelegramTransport, escape_md_v2
 
-from .conftest import make_request
-
+from ...conftest import make_request
 
 CHAT_ID = 987654321
 ABC = "11111111-1111-1111-1111-111111111111"
@@ -51,16 +56,17 @@ def test_escape_md_v2() -> None:
 
 async def test_send_builds_message_and_keyboard() -> None:
     transport, app = _make_transport()
-    req = make_request(approval_id=ABC, project="proj", timeout_seconds=300)
-    captured = {}
+    req = make_request(id=ABC, kind="file_delete", target="/ws/scratch.txt")
     transport._sent.clear()
 
-    await transport.send_approval_request(req, on_response=lambda d: captured.setdefault("d", d))
+    await transport.send_approval_request(req, on_response=lambda d: None)
 
     app.bot.send_message.assert_awaited_once()
     kwargs = app.bot.send_message.call_args.kwargs
     assert kwargs["chat_id"] == CHAT_ID
     assert "Approval requested" in kwargs["text"]
+    assert "file\\_delete" in kwargs["text"]  # agentsh kind, MarkdownV2-escaped
+    assert "scratch" in kwargs["text"]  # agentsh target rendered
     keyboard = kwargs["reply_markup"].inline_keyboard
     assert keyboard[0][0].callback_data == f"approve:{ABC}"
     assert keyboard[0][1].callback_data == f"deny:{ABC}"
@@ -69,7 +75,7 @@ async def test_send_builds_message_and_keyboard() -> None:
 
 async def test_callback_approve_resolves_and_edits() -> None:
     transport, app = _make_transport()
-    req = make_request(approval_id=ABC)
+    req = make_request(id=ABC)
     got = {}
     await transport.send_approval_request(req, on_response=lambda d: got.setdefault("d", d))
 
@@ -77,13 +83,13 @@ async def test_callback_approve_resolves_and_edits() -> None:
 
     assert got["d"].decision is Decision.allow
     assert got["d"].responder == "telegram:paul"
-    app.bot.edit_message_text.assert_awaited()  # message edited
-    assert ABC not in transport._sent  # consumed
+    app.bot.edit_message_text.assert_awaited()
+    assert ABC not in transport._sent
 
 
 async def test_callback_deny_resolves() -> None:
     transport, _ = _make_transport()
-    req = make_request(approval_id=ABC)
+    req = make_request(id=ABC)
     got = {}
     await transport.send_approval_request(req, on_response=lambda d: got.setdefault("d", d))
     await transport._on_callback(_callback_update(f"deny:{ABC}"), MagicMock())
@@ -92,25 +98,24 @@ async def test_callback_deny_resolves() -> None:
 
 async def test_callback_from_foreign_chat_ignored() -> None:
     transport, _ = _make_transport()
-    req = make_request(approval_id=ABC)
+    req = make_request(id=ABC)
     got = {}
     await transport.send_approval_request(req, on_response=lambda d: got.setdefault("d", d))
     await transport._on_callback(_callback_update(f"approve:{ABC}", chat_id=111), MagicMock())
     assert "d" not in got  # unauthorized -> no resolution
-    assert ABC in transport._sent  # still pending
+    assert ABC in transport._sent
 
 
 async def test_callback_unknown_id_is_noop() -> None:
     transport, _ = _make_transport()
     update = _callback_update("approve:ghost")
-    # No send was made for "ghost"; should answer and not raise.
     await transport._on_callback(update, MagicMock())
     update.callback_query.answer.assert_awaited()
 
 
 async def test_cancel_timeout_edits_message() -> None:
     transport, app = _make_transport()
-    req = make_request(approval_id=ABC)
+    req = make_request(id=ABC)
     await transport.send_approval_request(req, on_response=lambda d: None)
     await transport.cancel(ABC, outcome="timeout")
     app.bot.edit_message_text.assert_awaited()
@@ -148,18 +153,16 @@ async def test_set_token_stages_pending() -> None:
     assert transport._pending_token == "new:token"
 
 
-# --- Standing grants (Addendum 001) -----------------------------------------
-from remo_cli.notifier.grants import (  # noqa: E402
-    ArgMatchType,
-    Grant,
-    GrantPredicate,
-    GrantScope,
-    GrantScopeType,
-    GrantStore,
-)
-from remo_cli.notifier.models import OperationKind  # noqa: E402
+def test_reread_secret_from_file(tmp_path) -> None:
+    p = tmp_path / "tok"
+    p.write_text("99:NEW")
+    transport, _ = _make_transport()
+    transport._token_file = str(p)
+    transport.reread_secret()
+    assert transport._pending_token == "99:NEW"
 
 
+# --- Standing grants (Addendum 001, reworked) -------------------------------
 def _make_transport_with_grants(max_grants: int = 100):
     transport, app = _make_transport()
     app.bot.edit_message_reply_markup = AsyncMock()
@@ -175,9 +178,9 @@ def _cmd_update(*, chat_id: int = CHAT_ID):
     )
 
 
-def _global_git_grant() -> Grant:
+def _any_command_grant() -> Grant:
     return Grant.create(
-        predicate=GrantPredicate(kind=OperationKind.command, command="git", args=[], args_match=ArgMatchType.prefix),
+        predicate=GrantPredicate(kind="command", target_match=TargetMatchType.any),
         scope=GrantScope(type=GrantScopeType.glob), ttl_seconds=3600,
         created_by="t", source_approval_id="x",
     )
@@ -185,8 +188,7 @@ def _global_git_grant() -> Grant:
 
 async def test_always_button_present_when_grants_bound() -> None:
     transport, app, _ = _make_transport_with_grants()
-    req = make_request(approval_id=ABC, project="p",
-                       operation={"kind": "command", "command": "git", "args": ["push"]})
+    req = make_request(id=ABC, kind="command", target="git push")
     await transport.send_approval_request(req, on_response=lambda d: None)
     row = app.bot.send_message.call_args.kwargs["reply_markup"].inline_keyboard[0]
     assert [b.callback_data for b in row] == [f"approve:{ABC}", f"always:{ABC}", f"deny:{ABC}"]
@@ -194,8 +196,7 @@ async def test_always_button_present_when_grants_bound() -> None:
 
 async def test_always_then_pick_creates_grant_and_allows() -> None:
     transport, app, store = _make_transport_with_grants()
-    req = make_request(approval_id=ABC, project="p",
-                       operation={"kind": "command", "command": "git", "args": ["push", "origin"]})
+    req = make_request(id=ABC, kind="command", target="git push origin", session_id="s1")
     got = {}
     await transport.send_approval_request(req, on_response=lambda d: got.setdefault("d", d))
 
@@ -212,7 +213,7 @@ async def test_always_then_pick_creates_grant_and_allows() -> None:
 
 async def test_pick_cancel_restores_keyboard() -> None:
     transport, app, store = _make_transport_with_grants()
-    req = make_request(approval_id=ABC, operation={"kind": "command", "command": "git", "args": ["push"]})
+    req = make_request(id=ABC, kind="command", target="git push", session_id="s1")
     await transport.send_approval_request(req, on_response=lambda d: None)
     await transport._on_callback(_callback_update(f"always:{ABC}"), MagicMock())
     await transport._on_callback(_callback_update(f"pick:{ABC}:cancel"), MagicMock())
@@ -222,11 +223,8 @@ async def test_pick_cancel_restores_keyboard() -> None:
 
 async def test_pick_at_capacity_allows_once_without_grant() -> None:
     transport, app, store = _make_transport_with_grants(max_grants=1)
-    await store.create(Grant.create(
-        predicate=GrantPredicate(kind=OperationKind.command, command="x"),
-        scope=GrantScope(type=GrantScopeType.glob), ttl_seconds=3600,
-        created_by="t", source_approval_id="x"))
-    req = make_request(approval_id=ABC, operation={"kind": "command", "command": "git", "args": ["push"]})
+    await store.create(_any_command_grant())  # different kind below stays pending
+    req = make_request(id=ABC, kind="network", target="example.com", session_id="s1")
     got = {}
     await transport.send_approval_request(req, on_response=lambda d: got.setdefault("d", d))
     await transport._on_callback(_callback_update(f"always:{ABC}"), MagicMock())
@@ -238,7 +236,7 @@ async def test_pick_at_capacity_allows_once_without_grant() -> None:
 
 async def test_cmd_rules_revoke_pause() -> None:
     transport, app, store = _make_transport_with_grants()
-    g = _global_git_grant()
+    g = _any_command_grant()
     await store.create(g)
 
     upd = _cmd_update()
@@ -265,5 +263,4 @@ async def test_send_digest_messages_chat() -> None:
     transport, app, _ = _make_transport_with_grants()
     await transport.send_digest("Auto-approved 3 operation(s).")
     app.bot.send_message.assert_awaited()
-    # Text is MarkdownV2-escaped; assert on a special-char-free substring.
     assert "3 operation" in app.bot.send_message.call_args.kwargs["text"]

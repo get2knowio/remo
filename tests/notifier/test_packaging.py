@@ -38,9 +38,44 @@ def test_base_dependencies_exclude_notifier_runtime() -> None:
     )
 
 
-def test_notifier_extra_declares_runtime_deps() -> None:
+def _resolve_extra(extras: dict, name: str, _seen: set | None = None) -> set[str]:
+    """Flatten an extra, following self-references like ``remo-cli[notifier-core]``."""
+    _seen = _seen or set()
+    if name in _seen:
+        return set()
+    _seen.add(name)
+    out: set[str] = set()
+    for spec in extras.get(name, []):
+        base = spec.split(";")[0].strip()
+        if base.startswith("remo-cli["):
+            inner = base[base.index("[") + 1 : base.index("]")]
+            for ref in inner.split(","):
+                out |= _resolve_extra(extras, ref.strip(), _seen)
+        else:
+            out |= _names([spec])
+    return out
+
+
+def test_sources_subpackage_ships_in_wheel() -> None:
+    # hatch packages src/remo_cli, so the new sources/ subpackage ships as long as
+    # it is a real package (has __init__.py) under it (spec 009 T034, no new deps).
+    root = _project_root()
+    pkg = root / "src" / "remo_cli" / "notifier" / "sources"
+    assert (pkg / "__init__.py").is_file()
+    assert (pkg / "registry.py").is_file()
+    assert (pkg / "poller.py").is_file()
+    assert (pkg / "source.py").is_file()
+    data = toml.loads((root / "pyproject.toml").read_text())
+    assert "src/remo_cli" in data["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
+
+
+def test_notifier_telegram_extra_resolves_to_runtime_deps() -> None:
     data = toml.loads((_project_root() / "pyproject.toml").read_text())
-    extra = _names(data["project"]["optional-dependencies"]["notifier"])
-    assert _NOTIFIER_DEP_NAMES <= extra, (
-        f"notifier extra missing expected deps: {_NOTIFIER_DEP_NAMES - extra}"
-    )
+    extras = data["project"]["optional-dependencies"]
+    # `notifier` is a back-compat alias of `notifier-telegram`; both must pull
+    # the full runtime set transitively (notifier-core + the telegram SDK).
+    for name in ("notifier", "notifier-telegram"):
+        resolved = _resolve_extra(extras, name)
+        assert _NOTIFIER_DEP_NAMES <= resolved, (
+            f"{name} missing expected deps: {_NOTIFIER_DEP_NAMES - resolved}"
+        )

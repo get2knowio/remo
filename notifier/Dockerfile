@@ -7,6 +7,10 @@
 
 # ---- Stage 1: builder ------------------------------------------------------
 FROM python:3.13-slim AS builder
+# Channel selector: builds a per-channel image installing only that channel's
+# extra (spec 008, research R4). `remo notifier deploy` passes --build-arg
+# CHANNEL=<id>; the produced image is tagged remo-notifier-<channel>:<version>.
+ARG CHANNEL=telegram
 WORKDIR /build
 RUN pip install --no-cache-dir uv
 # pyproject.toml + README.md + source are required to install the project.
@@ -21,7 +25,7 @@ COPY ansible/ ./ansible/
 COPY notifier/ ./notifier/
 RUN uv venv /opt/venv && \
     . /opt/venv/bin/activate && \
-    uv pip install --no-cache-dir ".[notifier]"
+    uv pip install --no-cache-dir ".[notifier-${CHANNEL}]"
 
 # ---- Stage 2: runtime ------------------------------------------------------
 FROM python:3.13-slim

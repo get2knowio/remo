@@ -1,9 +1,10 @@
 """Telegram notification transport (long-polling).
 
-Built on python-telegram-bot's Application, driven via the low-level
-initialize/start/updater.start_polling API so it shares the FastAPI/uvicorn
-event loop (research R1) — never run_polling(), never webhook mode (FR-014).
-See contracts/telegram-message.md.
+Moved from ``transports/telegram.py`` (spec 008 R1/R7) and reworked to render
+agentsh's ``Request`` (R9/Option B). Built on python-telegram-bot's Application,
+driven via the low-level initialize/start/updater.start_polling API so it shares
+the FastAPI/uvicorn event loop (research R1) — never run_polling(), never webhook
+mode.
 """
 
 from __future__ import annotations
@@ -11,15 +12,18 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from remo_cli.notifier.grants import CandidateGrant, Grant, GrantLimitReached, GrantStore
 from remo_cli.notifier.logging_setup import get_logger
-from remo_cli.notifier.models import ApprovalDecision, ApprovalRequest, Decision
+from remo_cli.notifier.models import AgentshRequest, ApprovalDecision, Decision
 from remo_cli.notifier.transports.base import NotificationTransport, ResponseCallback
+
+if TYPE_CHECKING:
+    from remo_cli.notifier.config import NotifierConfig
 
 _MD_V2_SPECIAL = r"_*[]()~`>#+-=|{}.!"
 
@@ -29,12 +33,30 @@ def escape_md_v2(text: str) -> str:
     return re.sub(r"([" + re.escape(_MD_V2_SPECIAL) + r"\\])", r"\\\1", text)
 
 
+def build(config: NotifierConfig) -> NotificationTransport:
+    """Channel factory (lazy, in-container): build a TelegramTransport.
+
+    Validates the ``[transport.telegram]`` settings strictly via the channel's
+    own model and reads the bot token from its secret file (FR-005/FR-017).
+    """
+    from remo_cli.notifier.channels.telegram.config import TelegramConfig
+
+    tg = TelegramConfig.model_validate(config.transport.settings())
+    return TelegramTransport(
+        token=tg.read_token(),
+        authorized_chat_id=tg.authorized_chat_id,
+        instance_id=config.instance.id,
+        parse_mode=tg.message_parse_mode,
+        token_file=tg.bot_token_file,
+    )
+
+
 @dataclass
 class _Sent:
     chat_id: int
     message_id: int
     on_response: ResponseCallback
-    request: ApprovalRequest | None = None
+    request: AgentshRequest | None = None
     candidates: list[CandidateGrant] = field(default_factory=list)
 
 
@@ -48,14 +70,17 @@ class TelegramTransport(NotificationTransport):
         authorized_chat_id: int,
         instance_id: str,
         parse_mode: str = "MarkdownV2",
+        token_file: str | None = None,
         application: Application | None = None,
     ) -> None:
         self._authorized_chat_id = authorized_chat_id
         self._instance_id = instance_id
         self._parse_mode = parse_mode
+        self._token_file = token_file
         self._log = get_logger("remo_notifier.telegram")
         self._sent: dict[str, _Sent] = {}
         self._started = False
+        self._pending_token: str | None = None
         # Standing grants (Addendum 001) — bound by the server via bind_grants().
         self._grant_store: GrantStore | None = None
         self._grant_ttl = 28800
@@ -79,6 +104,17 @@ class TelegramTransport(NotificationTransport):
         already-polling Application is out of scope for v1.
         """
         self._pending_token = token
+
+    def reread_secret(self) -> None:
+        """Re-read the bot token file and stage it (generic SIGHUP hook)."""
+        if not self._token_file:
+            return
+        from remo_cli.notifier.channels.telegram.config import TelegramConfig
+
+        token = TelegramConfig(
+            bot_token_file=self._token_file, authorized_chat_id=self._authorized_chat_id
+        ).read_token()
+        self.set_token(token)
 
     # -- lifecycle ----------------------------------------------------------
     async def start(self) -> None:
@@ -107,35 +143,30 @@ class TelegramTransport(NotificationTransport):
         return self._started
 
     # -- delivery -----------------------------------------------------------
-    def _render(self, request: ApprovalRequest, timeout_seconds: int) -> str:
-        op = request.operation
-        command = op.command or "—"
-        args = " ".join(op.args)
-        operation = f"{op.kind.value}: {command} {args}".strip()
-        instance = request.instance_id or self._instance_id
+    def _render(self, request: AgentshRequest, timeout_seconds: int) -> str:
+        e = escape_md_v2
+        kind = request.kind or "operation"
         if timeout_seconds >= 60:
             window = f"{timeout_seconds // 60} minutes"
         else:
             window = f"{timeout_seconds} seconds"
-        e = escape_md_v2
-        return (
-            "🔐 Approval requested\n\n"
-            f"*Project:* {e(request.project or '—')}\n"
-            f"*Operation:* {e(operation)}\n"
-            f"*Rule:* {e(request.policy_rule_name)}\n"
-            f"*Message:* {e(request.policy_message)}\n"
-            f"*Instance:* {e(instance)}\n\n"
-            f"Decide within {e(window)}\\."
-        )
+        lines = [
+            "🔐 Approval requested\n",
+            f"*Kind:* {e(kind)}",
+            f"*Target:* {e(request.target or '—')}",
+            f"*Rule:* {e(request.rule or '—')}",
+            f"*Message:* {e(request.message or '—')}",
+            f"*Session:* {e(request.session_id or '—')}",
+        ]
+        return "\n".join(lines) + f"\n\nDecide within {e(window)}\\."
 
     async def send_approval_request(
         self,
-        request: ApprovalRequest,
+        request: AgentshRequest,
         on_response: ResponseCallback,
     ) -> None:
-        approval_id = request.approval_id
-        assert approval_id is not None  # server assigns before send
-        timeout_seconds = request.timeout_seconds or 0
+        approval_id = request.id
+        timeout_seconds = self._window_seconds(request)
         row = [
             InlineKeyboardButton("✅ Approve", callback_data=f"approve:{approval_id}"),
             InlineKeyboardButton("❌ Deny", callback_data=f"deny:{approval_id}"),
@@ -143,7 +174,7 @@ class TelegramTransport(NotificationTransport):
         if self._grant_store is not None:
             row.insert(1, InlineKeyboardButton("⏩ Always…", callback_data=f"always:{approval_id}"))
         keyboard = InlineKeyboardMarkup([row])
-        # Raises on delivery failure -> server maps to 503, holds no slot.
+        # Raises on delivery failure -> core resolves nothing, holds no slot.
         message = await self._app.bot.send_message(
             chat_id=self._authorized_chat_id,
             text=self._render(request, timeout_seconds),
@@ -157,6 +188,14 @@ class TelegramTransport(NotificationTransport):
             request=request,
         )
         self._log.info("approval_sent", approval_id=approval_id, transport=self.name)
+
+    @staticmethod
+    def _window_seconds(request: AgentshRequest) -> int:
+        if request.expires_at is None:
+            return 0
+        now = datetime.now(timezone.utc)
+        delta = int((request.expires_at - now).total_seconds())
+        return max(0, delta)
 
     async def cancel(self, approval_id: str, *, outcome: str = "cancelled") -> None:
         sent = self._sent.pop(approval_id, None)
@@ -189,7 +228,7 @@ class TelegramTransport(NotificationTransport):
         query = update.callback_query
         if query is None or query.data is None:
             return
-        if not self._authorized(query):  # FR-011
+        if not self._authorized(query):
             await query.answer("Not authorized.")
             return
         data = query.data
@@ -208,7 +247,7 @@ class TelegramTransport(NotificationTransport):
         verb, approval_id = data.split(":", maxsplit=1)
         sent = self._sent.pop(approval_id, None)
         if sent is None:
-            await query.answer("Already decided or expired.")  # FR-012
+            await query.answer("Already decided or expired.")
             return
         decision = Decision.allow if verb == "approve" else Decision.deny
         now = datetime.now(timezone.utc)
@@ -305,7 +344,7 @@ class TelegramTransport(NotificationTransport):
         lines = []
         for g in grants:
             lines.append(
-                f"{g.grant_id[:8]} · {g.predicate.kind.value} · scope={g.scope.type.value} "
+                f"{g.grant_id[:8]} · {g.predicate.kind} · scope={g.scope.type.value} "
                 f"· uses={g.uses_count} · /revoke {g.grant_id}"
             )
         await self._reply(update, "Active grants:\n" + "\n".join(lines))

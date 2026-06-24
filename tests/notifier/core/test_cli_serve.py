@@ -1,15 +1,16 @@
-"""Tests for the `remo-notifier serve` CLI (T018/T019 coverage)."""
+"""Tests for the `remo-notifier serve` CLI (spec 008 — catalog dispatch)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from click.testing import CliRunner
 
 from remo_cli.notifier import cli as notifier_cli
 from remo_cli.notifier.cli import build_transport, main
 
-from .conftest import FakeTransport
+from ..conftest import FakeTransport
 
 
 def test_help() -> None:
@@ -44,7 +45,7 @@ def test_serve_runs_with_mocked_uvicorn(config_toml, monkeypatch) -> None:
     assert captured["port"] == 18181
 
 
-def test_build_transport_telegram(config, monkeypatch) -> None:
+def test_build_transport_resolves_telegram_via_catalog(config, monkeypatch) -> None:
     # Patch the concrete transport so no real PTB Application is constructed.
     created = {}
 
@@ -53,9 +54,16 @@ def test_build_transport_telegram(config, monkeypatch) -> None:
             created.update(kwargs)
 
     monkeypatch.setattr(
-        "remo_cli.notifier.transports.telegram.TelegramTransport", _FakeTg
+        "remo_cli.notifier.channels.telegram.transport.TelegramTransport", _FakeTg
     )
     build_transport(config)
     assert created["authorized_chat_id"] == 987654321
     assert created["instance_id"] == "test-instance"
     assert created["token"] == "12345:FAKE-TOKEN"
+
+
+def test_build_transport_unknown_channel(config) -> None:
+    config.transport.type = "nope"
+    with pytest.raises(Exception) as exc:  # click.ClickException
+        build_transport(config)
+    assert "unknown channel" in str(exc.value)
