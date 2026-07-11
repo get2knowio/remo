@@ -41,6 +41,9 @@ env/
 .vscode/
 *.sublime-*
 
+# macOS
+.DS_Store
+
 # Maverick workflow state (ignore everything except checkpoints)
 .maverick/*
 !.maverick/checkpoints/
