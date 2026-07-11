@@ -21,12 +21,19 @@ if [ -f "$ENV_FILE" ]; then
 	. "$ENV_FILE"
 fi
 
-NOTIFIER_ADDRESS="${REMO_SOURCE_NOTIFIER_ADDRESS:-}"
+NOTIFIER_ADDRESS="${REMO_SOURCE_NOTIFIER_ADDRESS:-172.17.0.1:18181}"
 AGENTSH_API_URL="${REMO_SOURCE_AGENTSH_API_URL:-}"
+AGENTSH_SCHEME="${REMO_SOURCE_AGENTSH_SCHEME:-http}"
+AGENTSH_PORT="${REMO_SOURCE_AGENTSH_PORT:-8080}"
 API_KEY="${REMO_SOURCE_API_KEY:-}"
 API_KEY_FILE="${REMO_SOURCE_API_KEY_FILE:-}"
 SOURCE_ID="${REMO_SOURCE_ID:-}"
 LABELS="${REMO_SOURCE_LABELS:-}"
+
+# Conventional approver-key path agentsh is expected to write to. Used only when
+# neither apiKey nor apiKeyFile is set, so a uniform host overlay needs no
+# per-container secret config (issue #42).
+DEFAULT_API_KEY_FILE="${REMO_SOURCE_DEFAULT_API_KEY_FILE:-/run/secrets/agentsh_approver_key}"
 
 log() { echo "remo-notifier-source: $*" >&2; }
 
@@ -65,6 +72,23 @@ read_key() {
 	fi
 }
 
+# Derive per-container values from convention so a single uniform host overlay
+# works with no per-project config (issue #42). The only genuine variable is the
+# container's own network name; everything else follows by convention. NOTE: this
+# is correct only when hostname == the notifier-resolvable network name (alias),
+# which the host/launch layer must pin (issue #42 §2.2).
+resolve_defaults() {
+	[ -n "$SOURCE_ID" ] || SOURCE_ID="$(hostname)"
+	if [ -z "$AGENTSH_API_URL" ]; then
+		AGENTSH_API_URL="${AGENTSH_SCHEME}://${SOURCE_ID}:${AGENTSH_PORT}"
+		log "derived agentshApiUrl=$AGENTSH_API_URL"
+	fi
+	if [ -z "$API_KEY" ] && [ -z "$API_KEY_FILE" ] && [ -r "$DEFAULT_API_KEY_FILE" ]; then
+		API_KEY_FILE="$DEFAULT_API_KEY_FILE"
+		log "using conventional apiKeyFile=$API_KEY_FILE"
+	fi
+}
+
 preflight() {
 	missing=""
 	[ -n "$NOTIFIER_ADDRESS" ] || missing="$missing notifierAddress"
@@ -88,8 +112,8 @@ build_json() {
 }
 
 main() {
+	resolve_defaults
 	preflight
-	[ -n "$SOURCE_ID" ] || SOURCE_ID="$(hostname)"
 	url="http://$NOTIFIER_ADDRESS/v1/sources"
 
 	if [ -n "${REMO_SOURCE_DRY_RUN:-}" ]; then

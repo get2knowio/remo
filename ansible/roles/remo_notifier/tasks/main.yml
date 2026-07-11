@@ -95,6 +95,14 @@
   when: not (remo_notifier_build_from_source | default(true) | bool)
   notify: "Restart remo-notifier"
 
+- name: Install the network-wiring helper (Option A; issue #42)
+  ansible.builtin.copy:
+    src: remo-notifier-netwire.sh
+    dest: /usr/local/bin/remo-notifier-netwire
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Install systemd unit
   ansible.builtin.template:
     src: remo-notifier.service.j2
