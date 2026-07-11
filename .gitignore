@@ -25,6 +25,12 @@ vault.yml
 id_rsa
 id_rsa.pub
 
+# Test and coverage artifacts
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
 # Python packaging
 dist/
 build/
