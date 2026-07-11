@@ -56,10 +56,23 @@
     name: nodejs
   when: configure_nodejs | default(true) | bool
 
-- name: Install Dev Containers CLI
+# Devcontainer runtime is selectable via `devcontainer_runtime`
+# (default: devcontainer). "deacon" is an experimental single-binary Rust
+# reimplementation. Both remain governed by the `configure_devcontainers`
+# tool toggle so --only/--skip keep working.
+- name: Install Dev Containers CLI (devcontainer runtime)
   ansible.builtin.include_role:
     name: devcontainers
-  when: configure_devcontainers | default(true) | bool
+  when:
+    - configure_devcontainers | default(true) | bool
+    - (devcontainer_runtime | default('devcontainer')) != 'deacon'
+
+- name: Install Deacon (experimental devcontainer runtime)
+  ansible.builtin.include_role:
+    name: deacon
+  when:
+    - configure_devcontainers | default(true) | bool
+    - (devcontainer_runtime | default('devcontainer')) == 'deacon'
 
 - name: Install GitHub CLI
   ansible.builtin.include_role:

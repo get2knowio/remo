@@ -12,3 +12,15 @@ zellij_session_name: "main"
 
 # Volume device for persistent home directory (set by hetzner_server role)
 remo_volume_device: ""
+
+# Devcontainer runtime baked into the project-launch scripts.
+#   "devcontainer" -> Node-based @devcontainers/cli (default)
+#   "deacon"       -> experimental single-binary Rust reimplementation
+# Set at provision time via the -e devcontainer_runtime=... extra var.
+# The derived vars are late-bound, so overriding devcontainer_runtime is enough.
+devcontainer_runtime: "devcontainer"
+devcontainer_cli_bin: "{{ 'deacon' if devcontainer_runtime == 'deacon' else 'devcontainer' }}"
+# deacon gates host-side lifecycle hooks (initializeCommand, dotfiles) behind a
+# workspace-trust check. remo's auto-start is non-interactive, so trust+persist
+# the workspace on `up`; later exec calls then pass automatically.
+devcontainer_up_extra_args: "{{ '--trust-workspace-persist' if devcontainer_runtime == 'deacon' else '' }}"

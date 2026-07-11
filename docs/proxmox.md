@@ -92,6 +92,7 @@ remo proxmox info --name dev1
 | `--volume-size <GiB>` | `20` | Rootfs size. When the container exists, grows the rootfs via `pct resize`. |
 | `--unprivileged/--privileged` | `--unprivileged` | Container privilege mode |
 | `--domain <domain>` | (none) | FQDN suffix for the container |
+| `--devcontainer-runtime <name>` | `devcontainer` | Devcontainer runtime to install/use: `devcontainer` or `deacon` (experimental). See [Experimental: Deacon runtime](#experimental-deacon-runtime). |
 
 ### Update Options
 
@@ -104,6 +105,7 @@ remo proxmox info --name dev1
 | `--memory <MiB>` | Set memory limit via `pct set` (live) |
 | `--host <host>` | Proxmox host (auto-detected from registry if omitted) |
 | `--user <user>` | SSH user for the Proxmox host |
+| `--devcontainer-runtime <name>` | `devcontainer` or `deacon` (experimental). Re-provisions the launcher scripts to use the chosen runtime. |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
@@ -125,6 +127,72 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | **Unprivileged + Nesting** | Default security posture; Docker-in-Docker works out of the box |
 | **Auto-start on boot** | `--onboot 1` — survives node reboots |
 | **Same dev tools as Incus/Hetzner** | Docker, Node.js, fzf, github_cli, devcontainers, zellij, user_setup |
+
+## Experimental: Deacon runtime
+
+By default remo installs the Node-based [`@devcontainers/cli`](https://github.com/devcontainers/cli)
+and invokes `devcontainer up` / `devcontainer exec` from the project launcher
+scripts. You can opt a deployment into
+[**Deacon**](https://github.com/get2knowio/deacon) instead — a single-binary
+Rust reimplementation of the devcontainer CLI that needs no Node.js runtime:
+
+```bash
+# Per deployment (overrides the global default)
+remo proxmox create --name dev1 --host prox01 --user root --devcontainer-runtime deacon
+
+# Switch an existing container's runtime
+remo proxmox update --name dev1 --devcontainer-runtime deacon
+
+# As a global default for every new deployment
+export REMO_DEVCONTAINER_RUNTIME=deacon
+```
+
+Resolution order: `--devcontainer-runtime` flag → `REMO_DEVCONTAINER_RUNTIME`
+env → built-in default (`devcontainer`).
+
+When `deacon` is selected, the `deacon` binary is installed (in place of the
+npm CLI) and the launcher scripts call `deacon up` / `deacon exec`. remo's
+container lifecycle (config-hash rebuild, container-stop on exit) works
+unchanged because Deacon sets the spec-canonical `devcontainer.local_folder`
+label. Because Deacon's non-interactive workspace-trust gate would otherwise
+block host-side lifecycle hooks (`initializeCommand`, dotfiles), remo passes
+`--trust-workspace-persist` on `up`.
+
+> **Experimental.** Deacon is opt-in and not yet the default. Known gaps versus
+> the reference CLI: feature installation is supported for Dockerfile-based
+> configs only (Docker-Compose / image-reference configs with `features` error
+> out), and GPU passthrough on Podman is unwired. Validate your projects before
+> relying on it.
+
+### Switching an existing deployment
+
+You do **not** need to recreate a container to try Deacon — `update`
+re-provisions the runtime in place. Data, projects, and container config are
+untouched.
+
+```bash
+# Flip to Deacon (installs the binary + re-points the launcher scripts)
+remo proxmox update --name dev1 --devcontainer-runtime deacon
+
+# Revert to the Node CLI (symmetric; the switch is just a re-provision)
+remo proxmox update --name dev1 --devcontainer-runtime devcontainer
+```
+
+After switching, force one clean rebuild per project the first time you open it,
+so Deacon builds a container it fully owns rather than adopting one the previous
+runtime started:
+
+```bash
+touch ~/projects/<project>/.devcontainer-rebuild   # honored on next launch
+remo shell -p <project>                             # Deacon rebuilds fresh
+```
+
+Notes:
+
+- The previously-installed runtime is left in place (not uninstalled), so
+  reverting only re-points the launcher scripts — low risk, fully reversible.
+- `update` re-runs the dev-tools roles idempotently; expect it to take about as
+  long as the original configure step.
 
 ## Bootstrap
 

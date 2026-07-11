@@ -84,16 +84,16 @@ fi
 
 # Start the devcontainer if not already running
 echo "Starting devcontainer for $REPO_NAME..."
-devcontainer up --workspace-folder "$WORKSPACE_DIR"
+{{ devcontainer_cli_bin }} up --workspace-folder "$WORKSPACE_DIR" {{ devcontainer_up_extra_args }}
 
 # Loop to allow re-entry if there are local changes
 while true; do
     # Execute a shell inside the devcontainer
-    devcontainer exec --workspace-folder "$WORKSPACE_DIR" /bin/bash -c 'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
+    {{ devcontainer_cli_bin }} exec --workspace-folder "$WORKSPACE_DIR" /bin/bash -c 'if command -v zsh &> /dev/null; then exec zsh; else exec bash; fi'
 
     # Check for uncommitted or unpushed changes
-    has_uncommitted=$(devcontainer exec --workspace-folder "$WORKSPACE_DIR" git status --porcelain 2>/dev/null)
-    has_unpushed=$(devcontainer exec --workspace-folder "$WORKSPACE_DIR" git log @{u}.. --oneline 2>/dev/null)
+    has_uncommitted=$({{ devcontainer_cli_bin }} exec --workspace-folder "$WORKSPACE_DIR" git status --porcelain 2>/dev/null)
+    has_unpushed=$({{ devcontainer_cli_bin }} exec --workspace-folder "$WORKSPACE_DIR" git log @{u}.. --oneline 2>/dev/null)
 
     if [ -n "$has_uncommitted" ] || [ -n "$has_unpushed" ]; then
         echo ""

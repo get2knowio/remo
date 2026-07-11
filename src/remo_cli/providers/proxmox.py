@@ -32,7 +32,12 @@ from remo_cli.core.snapshot import (
     validate_name as validate_snapshot_name,
 )
 from remo_cli.core.ssh import detect_timezone
-from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
+from remo_cli.core.validation import (
+    build_tool_args,
+    parse_volume_size,
+    resolve_devcontainer_runtime,
+    validate_name,
+)
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
@@ -188,6 +193,7 @@ def create(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     use_ip: bool = False,
+    devcontainer_runtime: str | None = None,
     verbose: bool = False,
 ) -> int:
     """Create a new Proxmox LXC container and configure dev tools.
@@ -236,6 +242,9 @@ def create(
         extra_vars.extend(["-e", f"timezone={tz}"])
 
     extra_vars.extend(build_tool_args(tools_only, tools_skip))
+
+    runtime = resolve_devcontainer_runtime(devcontainer_runtime)
+    extra_vars.extend(["-e", f"devcontainer_runtime={runtime}"])
 
     current = get_current_version()
     if current != "unknown":
@@ -377,6 +386,7 @@ def update(
     memory: int = 0,
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
+    devcontainer_runtime: str | None = None,
     verbose: bool = False,
 ) -> int:
     """Re-configure dev tools on an existing Proxmox LXC container.
@@ -447,6 +457,9 @@ def update(
     extra_vars: list[str] = ["-e", f"container_ip={container_ip}"]
 
     extra_vars.extend(build_tool_args(tools_only, tools_skip))
+
+    runtime = resolve_devcontainer_runtime(devcontainer_runtime)
+    extra_vars.extend(["-e", f"devcontainer_runtime={runtime}"])
 
     tz = detect_timezone()
     if tz:

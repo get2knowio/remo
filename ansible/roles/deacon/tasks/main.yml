@@ -1,0 +1,76 @@
+---
+# Install deacon (experimental devcontainer runtime) from its pinned GitHub
+# release. Single static Rust binary — no Node.js runtime required. Mirrors the
+# binary-download pattern in roles/zellij.
+
+- name: Check if deacon is already installed
+  ansible.builtin.command: deacon --version
+  register: deacon_current_version
+  changed_when: false
+  failed_when: false
+
+# Extract the exact semver(+rc) token so idempotency is a precise equality
+# check. A substring test would false-match across RC numbers (e.g. the pin
+# "0.2.0-rc.1" is a substring of an installed "0.2.0-rc.11").
+- name: Determine installed deacon version
+  ansible.builtin.set_fact:
+    deacon_installed_version: >-
+      {{ deacon_current_version.stdout | default('')
+         | regex_search('[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?') | default('') }}
+
+- name: Determine whether deacon needs installing
+  ansible.builtin.set_fact:
+    deacon_needs_install: >-
+      {{ (deacon_current_version.rc | default(1) != 0)
+         or (deacon_installed_version != deacon_version) }}
+
+- name: Install deacon from binary release
+  when: deacon_needs_install | bool
+  block:
+    - name: Get system architecture
+      ansible.builtin.command: uname -m
+      register: deacon_system_arch
+      changed_when: false
+
+    - name: Set architecture mapping
+      ansible.builtin.set_fact:
+        deacon_arch: "{{ 'x86_64' if deacon_system_arch.stdout == 'x86_64' else 'aarch64' }}"
+
+    - name: Create temporary directory for download
+      ansible.builtin.tempfile:
+        state: directory
+      register: deacon_temp_dir
+
+    - name: Download deacon tarball
+      ansible.builtin.get_url:
+        url: >-
+          https://github.com/get2knowio/deacon/releases/download/v{{ deacon_version }}/deacon-v{{ deacon_version }}-{{ deacon_arch }}-unknown-linux-musl.tar.gz
+        dest: "{{ deacon_temp_dir.path }}/deacon.tar.gz"
+        mode: '0644'
+
+    - name: Extract deacon binary
+      ansible.builtin.unarchive:
+        src: "{{ deacon_temp_dir.path }}/deacon.tar.gz"
+        dest: "{{ deacon_temp_dir.path }}"
+        remote_src: true
+
+    - name: Install deacon to /usr/local/bin
+      ansible.builtin.copy:
+        src: "{{ deacon_temp_dir.path }}/deacon"
+        dest: "{{ deacon_binary_path }}"
+        mode: '0755'
+        remote_src: true
+
+    - name: Clean up temporary directory
+      ansible.builtin.file:
+        path: "{{ deacon_temp_dir.path }}"
+        state: absent
+
+- name: Verify deacon installation
+  ansible.builtin.command: deacon --version
+  register: deacon_final_version
+  changed_when: false
+
+- name: Display deacon version
+  ansible.builtin.debug:
+    msg: "deacon: {{ deacon_final_version.stdout | default('unknown') }}"
