@@ -1,0 +1,5 @@
+---
+# The notifier runs as a Docker container, so it depends on the docker role
+# being applied first (installs the Docker runtime + community.docker prereqs).
+dependencies:
+  - role: docker

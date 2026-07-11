@@ -1,0 +1,26 @@
+{{ ansible_managed | comment }}
+[Unit]
+Description=Remo Notifier (agentsh approval bridge)
+After=docker.service
+Requires=docker.service
+
+[Service]
+# Clean up any stale container before starting (idempotent restarts).
+ExecStartPre=-/usr/bin/docker rm -f remo-notifier
+ExecStart=/usr/bin/docker run --rm \
+    --name remo-notifier \
+    --network bridge \
+    -p {{ remo_notifier_bind_address }}:{{ remo_notifier_listen_port }}:18181 \
+    -v {{ remo_notifier_config_dir }}/notifier.toml:/etc/notifier/notifier.toml:ro \
+    -v {{ remo_notifier_secrets_dir }}/telegram_bot_token:/run/secrets/telegram_bot_token:ro \
+    --read-only \
+    --tmpfs /tmp:rw,size=64m \
+    --cap-drop ALL \
+    --user 65532:65532 \
+    {{ remo_notifier_image }}
+ExecStop=/usr/bin/docker stop remo-notifier
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

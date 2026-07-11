@@ -21,13 +21,25 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-mock",
+    "pytest-asyncio",
+    "pytest-cov",
+    "httpx",
     "ruff",
     "mypy",
+]
+notifier = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "python-telegram-bot>=21.6",
+    "structlog>=24.4",
+    "tomli>=2.0; python_version<'3.11'",
 ]
 
 [project.scripts]
 remo-cli = "remo_cli.cli.main:cli"
 remo = "remo_cli.cli.main:cli"
+remo-notifier = "remo_cli.notifier.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/remo_cli"]
@@ -37,7 +49,14 @@ packages = ["src/remo_cli"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 src = ["src"]
 line-length = 100
+
+[tool.uv]
+# Supply-chain cooldown: ignore distributions uploaded in the last 7 days so a
+# malicious release has time to be detected/yanked before it can be resolved.
+# Relative (rolling) window; relies on PyPI's PEP 700 upload-time metadata.
+exclude-newer = "7 days"

@@ -1,0 +1,17 @@
+---
+# Deploy the remo notifier to an existing, provisioned host.
+#
+# Usage (via the CLI):
+#   remo notifier deploy <host>
+#
+# Direct usage:
+#   ansible-playbook notifier_deploy.yml -i "<host>," -e "ansible_user=remo" \
+#     -e "remo_notifier_build_context_local=/path/to/build/context"
+
+- name: Deploy remo notifier
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: remo_notifier

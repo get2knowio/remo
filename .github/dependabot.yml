@@ -7,6 +7,10 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # Supply-chain cooldown: hold newly published versions for 7 days so a
+    # compromised release can be detected/yanked before it's proposed.
+    cooldown:
+      default-days: 7
     groups:
       # One PR per week with all minor/patch production deps bumped together.
       production-minor-patch:
@@ -29,8 +33,22 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       actions:
         update-types:
           - "minor"
           - "patch"
+
+  # Docker base images (Dockerfile + notifier/Dockerfile)
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/notifier"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
