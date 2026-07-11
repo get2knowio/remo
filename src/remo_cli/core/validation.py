@@ -81,6 +81,27 @@ def validate_tool_name(tool: str, flag: str = "--tools") -> None:
         )
 
 
+def resolve_devcontainer_runtime(override: str | None) -> str:
+    """Resolve and validate the devcontainer runtime.
+
+    Precedence: explicit *override* (CLI flag) > REMO_DEVCONTAINER_RUNTIME env >
+    built-in default. Unlike the --devcontainer-runtime flag (guarded by
+    click.Choice), the env-var path is otherwise unchecked, so a mis-cased or
+    bogus value would silently fall back to the Node runtime; validate it here.
+    """
+    # Imported lazily to keep core.config free of validation dependencies.
+    from remo_cli.core.config import DEVCONTAINER_RUNTIMES, get_devcontainer_runtime
+
+    runtime = override or get_devcontainer_runtime()
+    if runtime not in DEVCONTAINER_RUNTIMES:
+        valid = ", ".join(DEVCONTAINER_RUNTIMES)
+        raise click.BadParameter(
+            f"Invalid devcontainer runtime: '{runtime}'. Valid runtimes are: {valid}. "
+            "Check the --devcontainer-runtime flag or REMO_DEVCONTAINER_RUNTIME.",
+        )
+    return runtime
+
+
 def build_tool_args(only: tuple[str, ...], skip: tuple[str, ...]) -> list[str]:
     for tool in only:
         validate_tool_name(tool)

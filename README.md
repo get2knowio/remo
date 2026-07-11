@@ -303,6 +303,7 @@ See platform-specific docs for full options:
 | Variable | Description |
 |----------|-------------|
 | `REMO_HOME` | Config directory for remo state (default: `~/.config/remo`) |
+| `REMO_DEVCONTAINER_RUNTIME` | Default devcontainer runtime for new deployments: `devcontainer` (default) or `deacon` (experimental). Overridden per-deployment by `--devcontainer-runtime`. See [Proxmox docs](docs/proxmox.md#experimental-deacon-runtime). |
 
 ---
 

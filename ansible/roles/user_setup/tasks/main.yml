@@ -316,9 +316,9 @@
               fi
               
               echo "Starting devcontainer for $ZELLIJ_SESSION_NAME..."
-              if ! devcontainer up --workspace-folder "$_project_dir" $_rebuild_flag; then
+              if ! {{ devcontainer_cli_bin }} up --workspace-folder "$_project_dir" {{ devcontainer_up_extra_args }} $_rebuild_flag; then
                   echo ""
-                  echo "devcontainer up failed. [Press any key to continue]"
+                  echo "{{ devcontainer_cli_bin }} up failed. [Press any key to continue]"
                   read -n 1 -s -r
                   exit 1
               fi
@@ -344,12 +344,12 @@
               fi
 
               # Run devcontainer shell (not exec, so we can stop container after)
-              if ! devcontainer exec --workspace-folder "$_project_dir" \
+              if ! {{ devcontainer_cli_bin }} exec --workspace-folder "$_project_dir" \
                   env REMO_INSTANCE="${REMO_INSTANCE:-$(hostname)}" \
                       REMO_PROJECT="$ZELLIJ_SESSION_NAME" \
                   /bin/bash $_bash_flags "$_exec_cmd"; then
                   echo ""
-                  echo "devcontainer exec failed. [Press any key to continue]"
+                  echo "{{ devcontainer_cli_bin }} exec failed. [Press any key to continue]"
                   read -n 1 -s -r
               fi
               unset _exec_cmd _bash_flags

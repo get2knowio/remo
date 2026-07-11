@@ -96,9 +96,9 @@ if $DETACH; then
 
     if $HAS_DC; then
         echo "Bringing up devcontainer for $PROJECT..."
-        devcontainer up --workspace-folder "$PROJECT_DIR" >/dev/null
+        {{ devcontainer_cli_bin }} up --workspace-folder "$PROJECT_DIR" {{ devcontainer_up_extra_args }} >/dev/null
         printf -- '----- %s detached launch: %s -----\n' "$(date -Iseconds)" "$EXEC_CMD" >>"$LOG_FILE"
-        nohup setsid devcontainer exec --workspace-folder "$PROJECT_DIR" \
+        nohup setsid {{ devcontainer_cli_bin }} exec --workspace-folder "$PROJECT_DIR" \
             env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
             bash -lc "$EXEC_CMD" >>"$LOG_FILE" 2>&1 </dev/null &
     else

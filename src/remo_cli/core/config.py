@@ -87,3 +87,21 @@ def get_known_hosts_path() -> Path:
 def is_verbose() -> bool:
     """Return True if REMO_VERBOSE is set to '1'."""
     return os.environ.get("REMO_VERBOSE") == "1"
+
+
+# Supported devcontainer runtimes. "deacon" is an experimental single-binary
+# Rust reimplementation opted into per deployment; "devcontainer" is the
+# default Node-based @devcontainers/cli.
+DEVCONTAINER_RUNTIMES: tuple[str, ...] = ("devcontainer", "deacon")
+DEFAULT_DEVCONTAINER_RUNTIME = "devcontainer"
+
+
+def get_devcontainer_runtime() -> str:
+    """Return the default devcontainer runtime.
+
+    Reads REMO_DEVCONTAINER_RUNTIME, falling back to "devcontainer". An empty
+    or unset value resolves to the default. Callers may override this per
+    deployment (e.g. the --devcontainer-runtime flag).
+    """
+    value = os.environ.get("REMO_DEVCONTAINER_RUNTIME", "").strip()
+    return value or DEFAULT_DEVCONTAINER_RUNTIME

@@ -7,6 +7,7 @@ import sys
 import click
 
 from remo_cli.core.completion import proxmox_name as _complete_name
+from remo_cli.core.config import DEVCONTAINER_RUNTIMES
 from remo_cli.core.known_hosts import get_known_hosts
 from remo_cli.core.output import print_error
 from remo_cli.core.snapshot import (
@@ -50,6 +51,14 @@ def proxmox() -> None:
     is_flag=True,
     help="Store the container's IP address in known_hosts instead of its name (for setups without DNS/MagicDNS).",
 )
+@click.option(
+    "--devcontainer-runtime",
+    type=click.Choice(DEVCONTAINER_RUNTIMES),
+    default=None,
+    help="Devcontainer runtime to install and invoke. 'deacon' is an experimental "
+    "single-binary Rust reimplementation. Overrides REMO_DEVCONTAINER_RUNTIME "
+    "(default: devcontainer).",
+)
 @click.option("--yes", "-y", is_flag=True, help="Auto-confirm prompts.")
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def create(
@@ -68,6 +77,7 @@ def create(
     only: tuple[str, ...],
     skip: tuple[str, ...],
     use_ip: bool,
+    devcontainer_runtime: str | None,
     yes: bool,
     verbose: bool,
 ) -> None:
@@ -88,6 +98,7 @@ def create(
         tools_only=only,
         tools_skip=skip,
         use_ip=use_ip,
+        devcontainer_runtime=devcontainer_runtime,
         verbose=verbose,
     )
     sys.exit(rc)
@@ -147,6 +158,14 @@ def destroy(
 )
 @click.option("--only", multiple=True, help="Only install these tools.")
 @click.option("--skip", multiple=True, help="Skip these tools.")
+@click.option(
+    "--devcontainer-runtime",
+    type=click.Choice(DEVCONTAINER_RUNTIMES),
+    default=None,
+    help="Devcontainer runtime to install and invoke. 'deacon' is an experimental "
+    "single-binary Rust reimplementation. Overrides REMO_DEVCONTAINER_RUNTIME "
+    "(default: devcontainer).",
+)
 @click.option("-v", "--verbose", is_flag=True, help="Verbose output.")
 def update(
     name: str,
@@ -157,6 +176,7 @@ def update(
     memory: int,
     only: tuple[str, ...],
     skip: tuple[str, ...],
+    devcontainer_runtime: str | None,
     verbose: bool,
 ) -> None:
     """Update tools on a Proxmox LXC container."""
@@ -169,6 +189,7 @@ def update(
         memory=memory,
         tools_only=only,
         tools_skip=skip,
+        devcontainer_runtime=devcontainer_runtime,
         verbose=verbose,
     )
     sys.exit(rc)
