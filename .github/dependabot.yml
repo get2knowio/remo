@@ -1,5 +1,13 @@
 version: 2
+
+# NOTE: Dependabot reads this file only from the repository's DEFAULT branch
+# (main). To also maintain the 1.0.x stable line we declare extra `updates`
+# entries below with an explicit `target-branch: "1.0.x"`. A copy of this file is
+# kept on the 1.0.x branch for parity, but it is NOT read by Dependabot while
+# 1.0.x is not the default branch — the entries here are what drive 1.0.x updates.
+
 updates:
+  # ---- main (default branch: target-branch omitted) ------------------------
   # Python dependencies (pyproject.toml)
   - package-ecosystem: "pip"
     directory: "/"
@@ -25,6 +33,40 @@ updates:
   # GitHub Actions workflow versions
   - package-ecosystem: "github-actions"
     directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # ---- 1.0.x stable maintenance branch -------------------------------------
+  # Same policy as main, targeted at the stable line so it self-maintains.
+  - package-ecosystem: "pip"
+    directory: "/"
+    target-branch: "1.0.x"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      production-minor-patch:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      dev-minor-patch:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "1.0.x"
     schedule:
       interval: "weekly"
       day: "monday"
