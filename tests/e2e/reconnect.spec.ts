@@ -43,7 +43,7 @@ test.describe("reconnect controls", () => {
       ws.connectToServer();
     });
 
-    await page.getByTestId(TESTID.targetOpen(victimId)).click();
+    await page.getByTestId(TESTID.sessionRow(victimId)).click();
 
     // Auto-reconnect (bounded, with backoff) exhausts, then the manual
     // "Reconnect" control appears (FR-020/FR-032).
@@ -58,7 +58,7 @@ test.describe("reconnect controls", () => {
     killModeActive = false;
 
     for (const id of otherIds) {
-      await page.getByTestId(TESTID.targetOpen(id)).click();
+      await page.getByTestId(TESTID.sessionRow(id)).click();
     }
     for (const id of otherIds) {
       await expect(page.getByTestId(TESTID.terminalCard(id))).toHaveAttribute(

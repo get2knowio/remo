@@ -44,6 +44,7 @@ class InstanceOut(BaseModel):
     instance_type: str
     instance_name: str
     status: str
+    region: str = ""
     capability: CapabilityOut | None = None
     error: ErrorOut | None = None
     refreshed_at: str | None = None
@@ -62,6 +63,10 @@ class SessionTargetOut(BaseModel):
     zellij_state: str
     devcontainer_running: str
     discovered_at: str
+    git_tracked: bool = False
+    git_dirty: bool = False
+    git_ahead: int = 0
+    git_behind: int = 0
 
 
 class SessionsResponse(BaseModel):
@@ -104,6 +109,7 @@ def _instance_out(snapshot: DiscoverySnapshot) -> InstanceOut:
         instance_type=snapshot.instance_type,
         instance_name=snapshot.instance_name,
         status=snapshot.status.value,
+        region=snapshot.region,
         capability=capability_out,
         error=error_out,
         refreshed_at=snapshot.refreshed_at or None,
@@ -120,6 +126,10 @@ def _target_out(target: SessionTarget) -> SessionTargetOut:
         zellij_state=target.zellij_state.value,
         devcontainer_running=target.devcontainer_running.value,
         discovered_at=target.discovered_at,
+        git_tracked=target.git_tracked,
+        git_dirty=target.git_dirty,
+        git_ahead=target.git_ahead,
+        git_behind=target.git_behind,
     )
 
 

@@ -49,6 +49,10 @@ has_docker() {
     command -v docker &>/dev/null
 }
 
+has_git() {
+    command -v git &>/dev/null
+}
+
 get_host_tools_version() {
     if [[ -f "$HOME/.remo-version" ]]; then
         cat "$HOME/.remo-version"
@@ -81,8 +85,10 @@ cmd_capabilities() {
 # ---------------------------------------------------------------------------
 # sessions list --json
 #
-# Read-only (FR-010): only find / zellij list-sessions / docker ps. Never
-# calls project-launch, zellij attach, git fetch, or anything mutating.
+# Read-only (FR-010): only find / zellij list-sessions / docker ps / git
+# status+rev-list. Never calls project-launch, zellij attach, `git fetch`, or
+# anything mutating — so git ahead/behind reflect the last-known upstream and
+# may be stale until something else fetches.
 # ---------------------------------------------------------------------------
 cmd_sessions_list() {
     local -A zellij_sessions=()
@@ -103,6 +109,7 @@ cmd_sessions_list() {
 
     local projects_json="" first=true
     local dir name has_dc zellij_state devcontainer_running container_id entry
+    local git_tracked git_dirty git_ahead git_behind git_counts
 
     if [[ -d "$PROJECTS_DIR" ]]; then
         while IFS= read -r dir; do
@@ -126,8 +133,29 @@ cmd_sessions_list() {
                 fi
             fi
 
-            entry="$(printf '{"name":"%s","has_devcontainer":%s,"zellij_state":"%s","devcontainer_running":"%s"}' \
-                "$(json_escape "$name")" "$has_dc" "$zellij_state" "$devcontainer_running")"
+            # Read-only git status: `git status` (dirty) and `git rev-list`
+            # (ahead/behind vs the already-known upstream). No `git fetch` — so
+            # ahead/behind can be stale (FR-010). Every call is guarded so a
+            # non-repo / missing-upstream leaves the defaults and never aborts
+            # under `set -e` (the `if <assignment>` form clears the error trap).
+            git_tracked="false"; git_dirty="false"; git_ahead=0; git_behind=0
+            # Check the printed value, not just the exit code: a *bare* repo
+            # prints "false" yet still exits 0, and only a real work tree can
+            # be dirty / have an upstream.
+            if has_git && [[ "$(git -C "$dir" rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
+                git_tracked="true"
+                if [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
+                    git_dirty="true"
+                fi
+                if git_counts="$(git -C "$dir" rev-list --left-right --count '@{upstream}...HEAD' 2>/dev/null)"; then
+                    git_behind="$(printf '%s' "$git_counts" | awk '{print $1+0}')"
+                    git_ahead="$(printf '%s' "$git_counts" | awk '{print $2+0}')"
+                fi
+            fi
+
+            entry="$(printf '{"name":"%s","has_devcontainer":%s,"zellij_state":"%s","devcontainer_running":"%s","git_tracked":%s,"git_dirty":%s,"git_ahead":%d,"git_behind":%d}' \
+                "$(json_escape "$name")" "$has_dc" "$zellij_state" "$devcontainer_running" \
+                "$git_tracked" "$git_dirty" "$git_ahead" "$git_behind")"
 
             if $first; then
                 projects_json="$entry"

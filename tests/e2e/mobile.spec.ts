@@ -39,7 +39,7 @@ test.describe("mobile viewport", () => {
     // `tap()` requires the mobile device profile's `hasTouch: true`
     // (provided by `devices["iPhone 13"]` above) rather than a plain click,
     // matching real mobile interaction.
-    await page.getByTestId(TESTID.targetOpen(targetId)).tap();
+    await page.getByTestId(TESTID.sessionRow(targetId)).tap();
 
     const card = page.getByTestId(TESTID.terminalCard(targetId));
     await expect(card).toBeVisible();
@@ -66,7 +66,7 @@ test.describe("mobile viewport", () => {
 
   test("reconnect/close controls remain reachable (tappable) on a mobile viewport", async ({ page }) => {
     const [targetId] = await waitForDiscoveredTargets(page);
-    await page.getByTestId(TESTID.targetOpen(targetId)).tap();
+    await page.getByTestId(TESTID.sessionRow(targetId)).tap();
 
     const closeButton = page.getByTestId(TESTID.terminalClose(targetId));
     await expect(closeButton).toBeVisible();

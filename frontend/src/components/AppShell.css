@@ -1,0 +1,75 @@
+.app-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-app);
+  font-size: 14px;
+  position: relative;
+}
+
+.app-refresh-bar {
+  flex: none;
+  height: 2px;
+  background: var(--border-soft);
+  overflow: hidden;
+}
+.app-refresh-bar-fill {
+  width: 25%;
+  height: 100%;
+  background: var(--accent);
+  animation: rbar 1s linear infinite;
+}
+
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.app-rail {
+  flex: none;
+  flex-direction: column;
+  border-right: 1px solid var(--border-soft);
+  background: var(--bg-rail);
+  min-height: 0;
+}
+
+.app-divider {
+  flex: none;
+  width: 6px;
+  margin: 0 -3px;
+  z-index: 8;
+  cursor: col-resize;
+  background: transparent;
+}
+.app-divider:hover {
+  background: color-mix(in oklch, var(--accent) 45%, transparent);
+}
+
+.app-pane {
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  background: var(--bg-pane);
+}
+
+.app-backbar {
+  flex: none;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-header);
+}
+.app-backbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-btn);
+  color: var(--text-1);
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: inherit;
+}

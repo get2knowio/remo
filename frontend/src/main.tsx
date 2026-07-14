@@ -1,6 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { Dashboard } from "./components/Dashboard";
+import "./theme/tokens.css";
+import "./theme/fonts";
+import { AppShell } from "./components/AppShell";
+import { restoreUploadedFonts } from "./state/fonts";
+import { initSettings } from "./state/settings";
 import { initRenderers } from "./terminal/defaultRenderer";
 
 // Dashboard (US1) plus the grid/tab/focused terminal workspace (US2/US3)
@@ -13,13 +17,15 @@ if (!container) {
 function mount(): void {
   createRoot(container!).render(
     <StrictMode>
-      <Dashboard />
+      <AppShell />
     </StrictMode>,
   );
 }
 
-// Load the ghostty-web WASM engine (the default terminal renderer, decision #6)
-// BEFORE mounting, so terminals can be constructed synchronously. initRenderers
-// never rejects — it falls back to xterm.js on failure — so `.finally` always
-// mounts the app.
-void initRenderers().finally(mount);
+// Apply persisted settings (accent + terminal font CSS vars on <html>) and
+// re-register any uploaded Nerd Fonts before first paint, then load the
+// ghostty-web WASM engine (the default renderer, decision #6) BEFORE mounting
+// so terminals can be constructed synchronously. initRenderers never rejects —
+// it falls back to xterm.js on failure — so `.finally` always mounts the app.
+initSettings();
+void Promise.allSettled([restoreUploadedFonts(), initRenderers()]).then(mount);

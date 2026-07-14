@@ -125,6 +125,7 @@ def _snapshot(
         targets=targets or [],
         error=error,
         refreshed_at=_now_iso(),
+        region=host.region or "",
     )
 
 
@@ -295,6 +296,10 @@ async def _discover_one(
                 zellij_state=entry.zellij_state,
                 devcontainer_running=entry.devcontainer_running,
                 discovered_at=_now_iso(),
+                git_tracked=entry.git_tracked,
+                git_dirty=entry.git_dirty,
+                git_ahead=entry.git_ahead,
+                git_behind=entry.git_behind,
             )
             for entry in entries
         ]

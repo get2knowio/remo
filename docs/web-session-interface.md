@@ -21,6 +21,7 @@ second launcher; it reuses the same host-side scripts (`project-launch`) that th
 ## Contents
 
 - [Architecture](#architecture)
+- [Browser console UI](#browser-console-ui)
 - [Security boundary](#security-boundary)
 - [Docker Compose deployment](#docker-compose-deployment)
 - [Credentials and SSM](#credentials-and-ssm)
@@ -75,6 +76,47 @@ Backend package: `src/remo_cli/web/` (`app.py` FastAPI factory, `config.py` sett
 [ghostty-web](https://github.com/ghostty-org) as the default terminal renderer behind a Remo-owned
 adapter (`frontend/src/terminal/RendererAdapter.ts`), with an xterm.js fallback
 (`frontend/src/terminal/XtermRenderer.ts`) if a compatibility gap ever requires swapping renderers.
+
+## Browser console UI
+
+The SPA is a two-pane **web console**:
+
+- **Session rail** (left, resizable/collapsible; auto-hidden on narrow viewports). Groups every
+  registered instance with a provider-colored dot, name, region, and typed status. Each project is a
+  row showing its name, git glyphs, and a Zellij-active bolt. A search box, provider-color filter
+  chips, and an "⚡ Active only" toggle narrow the list; "⊞ Open all · N" opens every available
+  target as a grid.
+- **Terminal pane** (right). Clicking a row opens that target **solo** (single view); ⌘/Ctrl-click a
+  row (or its `+` button) **adds** it to a responsive grid (1/2/3 columns by count). Clicking a grid
+  tile solos it; **Esc** collapses the grid back to the focused terminal; number keys **1–9** jump to
+  the numbered sessions (⌘ 1–9 add to the grid). Hidden terminals stay connected and keep their
+  scrollback. Each terminal header shows `provider · instance · region`, connection state, and
+  reconnect/close controls.
+
+**Session-row glyphs** (also shown in the rail legend):
+
+| Glyph | Meaning |
+|---|---|
+| ● | Uncommitted changes in the project's git work tree |
+| ⇡ | Local commits ahead of upstream (to push) |
+| ⇣ | Upstream commits behind (to pull) |
+| ⚡ | Active Zellij session |
+
+Git ahead/behind reflect the **last-known** upstream — discovery never runs `git fetch` (FR-010), so
+they can be stale until something else fetches. Git glyphs only appear on instances running a
+`remo-host` new enough to report git status; see [Upgrade compatibility](#upgrade-compatibility).
+
+**Settings** (⚙, top bar; stored in this browser only, FR-034): accent color, terminal font, font
+size, program ligatures, grid display mode (actual-size vs scale-to-fit), and a **Nerd Font uploader**.
+Because a browser can't read fonts installed on the instance, uploading a patched Nerd Font once
+registers it via the `FontFace` API (persisted in IndexedDB) and offers it as a terminal font — that's
+how Powerline/Git/devicon glyphs in a prompt or Zellij status bar render. Font changes apply live to
+every open terminal. The top bar also shows a health indicator (from `GET /api/v1/ready`) and an
+offline overlay if the service becomes unreachable (terminals reattach automatically when it returns).
+Press **?** for the keyboard-shortcut reference.
+
+All fonts are self-hosted (bundled `@fontsource` assets), never fetched from a CDN, so the restrictive
+same-origin CSP (`default-src 'self'`) is satisfied.
 
 ## Security boundary
 
@@ -283,6 +325,12 @@ remo aws update        # or: remo hetzner update / remo incus update / remo prox
 against the affected instance re-templates and reinstalls `remo-host` in place — no full recreate is
 needed, and the update is idempotent (safe to run repeatedly, on both fresh and already-configured
 hosts).
+
+**Git status glyphs require this re-provision.** Per-project git status (`git_tracked`/`git_dirty`/
+`git_ahead`/`git_behind`) was added to `remo-host` as additive, backward-compatible protocol-1 fields.
+An instance still running the older `remo-host` simply omits them and the console shows no git glyphs
+for its projects — nothing breaks. Run the `update` command above for each instance (e.g.
+`remo proxmox update --name dev1`) to start reporting git status.
 
 ## Configuration reference
 

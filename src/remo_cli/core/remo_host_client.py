@@ -190,6 +190,12 @@ class ProjectEntry:
     has_devcontainer: bool
     zellij_state: ZellijState
     devcontainer_running: DevcontainerRunning
+    # Read-only git status (protocol >= 1, additive keys). Older hosts omit
+    # them; defaults mean "not tracked / clean", so the entry still parses.
+    git_tracked: bool = False
+    git_dirty: bool = False
+    git_ahead: int = 0
+    git_behind: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +387,24 @@ def get_capabilities(
         raise MalformedResponseError(f"capabilities response invalid: {e}") from e
 
 
+def _coerce_count(value: object) -> int:
+    """Coerce a git ahead/behind count to a non-negative int, defaulting to 0.
+
+    Tolerant of the host emitting the count as a string or omitting it; a
+    negative or unparseable value clamps to 0 rather than failing the entry.
+    """
+    if isinstance(value, bool):  # bool is an int subclass — reject it explicitly
+        return 0
+    if isinstance(value, int):
+        return max(0, value)
+    if isinstance(value, str):
+        try:
+            return max(0, int(value.strip()))
+        except ValueError:
+            return 0
+    return 0
+
+
 def list_sessions(
     ssh_argv_prefix: list[str],
     *,
@@ -422,6 +446,10 @@ def list_sessions(
                     has_devcontainer=bool(raw.get("has_devcontainer", False)),
                     zellij_state=ZellijState(raw["zellij_state"]),
                     devcontainer_running=DevcontainerRunning(raw["devcontainer_running"]),
+                    git_tracked=bool(raw.get("git_tracked", False)),
+                    git_dirty=bool(raw.get("git_dirty", False)),
+                    git_ahead=_coerce_count(raw.get("git_ahead")),
+                    git_behind=_coerce_count(raw.get("git_behind")),
                 )
             )
         except (KeyError, ValueError):

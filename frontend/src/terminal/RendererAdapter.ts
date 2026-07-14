@@ -26,6 +26,13 @@ export interface TerminalDimensions {
   rows: number;
 }
 
+/** Live-tunable terminal font settings (driven by state/settings.ts). */
+export interface TerminalFontOptions {
+  fontFamily: string;
+  fontSize: number;
+  ligatures: boolean;
+}
+
 /**
  * A Remo-owned adapter over a concrete browser terminal renderer
  * (`ghostty-web` or `xterm`). Implementations translate this interface's
@@ -58,6 +65,14 @@ export interface RendererAdapter {
 
   /** Explicitly sets the terminal grid to `cols` x `rows`. */
   resize(cols: number, rows: number): void;
+
+  /**
+   * Applies new font settings (family/size/ligatures) to a live terminal.
+   * Callers should `fit()` afterwards and forward the new dimensions, since a
+   * font change alters the cell grid. Implementations must be safe to call
+   * before `open()` (they cache the options for the eventual open).
+   */
+  applyFont(options: TerminalFontOptions): void;
 
   /** Moves keyboard focus into the terminal. */
   focus(): void;

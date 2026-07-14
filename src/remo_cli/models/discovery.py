@@ -51,3 +51,7 @@ class DiscoverySnapshot:
     targets: list[SessionTarget] = field(default_factory=list)
     error: TypedError | None = None
     refreshed_at: str = ""
+    # Provider region from the Remo registry (`KnownHost.region`), surfaced so
+    # the UI can label an instance as `provider · name · region`. Registry-side
+    # only — no remote round-trip; empty string when the registry omits it.
+    region: str = ""

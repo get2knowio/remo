@@ -1,25 +1,16 @@
-// Keyboard input routing + focus cycling (US3 scenarios 2 & 3, FR-031).
-// See fixtures.ts for the REMO_E2E_BACKEND_URL gating rationale.
+// Keyboard input routing + focus / number-jump (console redesign, US3
+// scenarios 2 & 3, FR-031). See fixtures.ts for the REMO_E2E_BACKEND_URL
+// gating rationale.
 //
-// What CAN be asserted reliably from the DOM regardless of which renderer
-// (`GhosttyRenderer` default vs. `XtermRenderer` fallback) is active:
-//   - exactly one terminal-card carries the "focused" state at a time
-//     (`data-focused="true"` / `.terminal-card--focused`), and it's always
-//     the one the user just clicked or cycled to.
-//   - a terminal's `data-connection-state` never drops out of "ready" just
-//     because it stopped being the focused/visible one — this is the
-//     concrete, DOM-observable form of "hidden terminals remain connected".
+// DOM-observable invariants (renderer-agnostic):
+//   - exactly one terminal-card carries `data-focused="true"` at a time, and
+//     it's the one just clicked or jumped to.
+//   - a terminal's `data-connection-state` never drops out of "ready" merely
+//     because it stopped being the focused/visible one ("hidden terminals
+//     remain connected").
 //
-// What is intentionally NOT asserted here: literal rendered terminal
-// *content* (e.g. "typed marker echoes back only in the focused pane").
-// `GhosttyRenderer` draws to a canvas via WASM, which isn't text-queryable
-// from Playwright without an app-exposed serialize()/test hook that doesn't
-// exist today. If/when such a hook is added (or the suite runs against the
-// `XtermRenderer` fallback, which does expose an accessible text layer),
-// extend these specs with a real "marker only appears in the focused pane"
-// assertion — the DOM-state assertions below are a necessary but not
-// exhaustive proxy for FR-031/scenario 2's "input sent only to that
-// terminal".
+// Literal rendered terminal *content* is intentionally NOT asserted (Ghostty
+// draws to a WASM canvas that isn't text-queryable from Playwright).
 
 import { expect, test } from "@playwright/test";
 import { TESTID, openTerminalCardIds, requireBackendFixture, waitForDiscoveredTargets } from "./fixtures";
@@ -32,7 +23,6 @@ test.describe("keyboard input routing", () => {
   test("clicking a terminal's surface moves focus there and nowhere else", async ({ page }) => {
     await waitForDiscoveredTargets(page);
     await page.getByTestId(TESTID.openAll).click();
-    await page.getByTestId(TESTID.layoutMode("grid")).click();
 
     const openIds = await openTerminalCardIds(page);
     expect(openIds.length).toBeGreaterThan(1);
@@ -46,67 +36,47 @@ test.describe("keyboard input routing", () => {
     await expect(page.getByTestId(TESTID.terminalCard(secondId))).toHaveAttribute("data-focused", "true");
     await expect(page.getByTestId(TESTID.terminalCard(firstId))).toHaveAttribute("data-focused", "false");
 
-    // The previously-focused terminal is merely unfocused, not disconnected
-    // (US3 scenario 3).
+    // The previously-focused terminal is merely unfocused, not disconnected.
     await expect(page.getByTestId(TESTID.terminalCard(firstId))).toHaveAttribute(
       "data-connection-state",
       "ready",
     );
   });
 
-  test("Ctrl+Shift+ArrowRight/Left cycles focus among open terminals (T048)", async ({ page }) => {
-    await waitForDiscoveredTargets(page);
-    await page.getByTestId(TESTID.openAll).click();
-    await page.getByTestId(TESTID.layoutMode("grid")).click();
+  test("number keys 1–9 open the numbered session solo", async ({ page }) => {
+    const discoveredIds = await waitForDiscoveredTargets(page);
+    expect(discoveredIds.length).toBeGreaterThanOrEqual(2);
+    const [firstId, secondId] = discoveredIds;
 
-    const openIds = await openTerminalCardIds(page);
-    expect(openIds.length).toBeGreaterThanOrEqual(3);
+    await page.keyboard.press("1");
+    await expect(page.getByTestId(TESTID.terminalCard(firstId))).toBeVisible();
+    await expect(page.getByTestId(TESTID.terminalCard(firstId))).toHaveAttribute("data-focused", "true");
 
-    async function currentlyFocused(): Promise<string> {
-      for (const id of openIds) {
-        const value = await page.getByTestId(TESTID.terminalCard(id)).getAttribute("data-focused");
-        if (value === "true") {
-          return id;
-        }
-      }
-      throw new Error("no terminal-card currently focused");
-    }
-
-    const startId = await currentlyFocused();
-    const startIndex = openIds.indexOf(startId);
-
-    await page.keyboard.press("Control+Shift+ArrowRight");
-    const afterForward = await currentlyFocused();
-    expect(afterForward).toBe(openIds[(startIndex + 1) % openIds.length]);
-
-    await page.keyboard.press("Control+Shift+ArrowLeft");
-    const afterBackward = await currentlyFocused();
-    expect(afterBackward).toBe(startId);
-
-    // Wrapping: cycling backward from the first target lands on the last.
-    for (let i = 0; i < startIndex; i += 1) {
-      await page.keyboard.press("Control+Shift+ArrowLeft");
-    }
-    await page.keyboard.press("Control+Shift+ArrowLeft");
-    const wrapped = await currentlyFocused();
-    expect(wrapped).toBe(openIds[openIds.length - 1]);
+    // Pressing "2" solos the second target — the first is hidden but stays
+    // connected once it has been opened.
+    await page.keyboard.press("2");
+    await expect(page.getByTestId(TESTID.terminalCard(secondId))).toBeVisible();
+    await expect(page.getByTestId(TESTID.terminalCard(secondId))).toHaveAttribute("data-focused", "true");
+    await expect(page.getByTestId(TESTID.terminalCard(firstId))).toBeHidden();
+    await expect(page.getByTestId(TESTID.terminalCard(firstId))).toHaveAttribute(
+      "data-connection-state",
+      "ready",
+    );
   });
 
-  test("hidden terminals stay connected while cycling focus repeatedly", async ({ page }) => {
+  test("hidden terminals stay connected while soloing repeatedly", async ({ page }) => {
     await waitForDiscoveredTargets(page);
     await page.getByTestId(TESTID.openAll).click();
-    await page.getByTestId(TESTID.layoutMode("tabs")).click();
 
     const openIds = await openTerminalCardIds(page);
     expect(openIds.length).toBeGreaterThan(1);
 
-    // Cycle focus through every open terminal and back.
-    for (let i = 0; i < openIds.length + 1; i += 1) {
-      await page.keyboard.press("Control+Shift+ArrowRight");
+    // Solo each terminal in turn, then collapse back to the grid.
+    for (const id of openIds) {
+      await page.getByTestId(TESTID.terminalCard(id)).click();
+      await page.keyboard.press("Escape");
     }
 
-    // Every terminal — focused or not — is still "ready", never having been
-    // torn down by a focus change.
     for (const id of openIds) {
       await expect(page.getByTestId(TESTID.terminalCard(id))).toHaveAttribute(
         "data-connection-state",
@@ -125,7 +95,6 @@ test.describe("keyboard input routing", () => {
     for (const id of openIds) {
       const header = page.getByTestId(TESTID.terminalCard(id)).locator(".terminal-card-identity");
       await expect(header).toBeVisible();
-      await expect(header.locator(".terminal-card-instance")).not.toBeEmpty();
       await expect(header.locator(".terminal-card-project")).not.toBeEmpty();
     }
   });

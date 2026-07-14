@@ -51,36 +51,43 @@ export function requireBackendFixture(test: Skippable): void {
 /** data-testid prefixes used across `frontend/src/components/*` — kept in
  * one place so a rename only needs updating here. */
 export const TESTID = {
-  targetCard: (targetId: string) => `target-card-${targetId}`,
-  targetOpen: (targetId: string) => `target-open-${targetId}`,
+  // Session rail (console redesign): each row opens a target solo on click,
+  // ⌘/Ctrl-click (or the add-to-grid button) adds it to the grid.
+  sessionRow: (targetId: string) => `session-row-${targetId}`,
+  addToGrid: (targetId: string) => `add-to-grid-${targetId}`,
   openAllInstance: (instanceId: string) => `open-all-instance-${instanceId}`,
   openAll: "open-all-button",
-  openSelected: "open-selected-button",
-  layoutMode: (mode: "grid" | "tabs" | "focused") => `layout-${mode}`,
+  railSearch: "rail-search",
+  providerChip: (provider: string) => `provider-chip-${provider}`,
+  refresh: "refresh-button",
+  settings: "settings",
+  settingsPage: "settings-page",
+  shortcuts: "shortcuts",
+  shortcutsModal: "shortcuts-modal",
+  offlineOverlay: "offline-overlay",
   workspace: "workspace",
   terminalCard: (targetId: string) => `terminal-card-${targetId}`,
   terminalSurface: (targetId: string) => `terminal-surface-${targetId}`,
   terminalReconnect: (targetId: string) => `terminal-reconnect-${targetId}`,
   terminalClose: (targetId: string) => `terminal-close-${targetId}`,
-  tab: (targetId: string) => `tab-${targetId}`,
 } as const;
 
-/** Navigates to the dashboard and waits for at least one discovered target
- * to render. Returns the resolved discovery targets' testids (the trailing
- * `id` segment of each `target-card-*` element) in DOM order. */
+/** Navigates to the console and waits for at least one discovered session row
+ * to render. Returns the resolved targets' ids (the trailing `id` segment of
+ * each `session-row-*` element) in rail order. */
 export async function waitForDiscoveredTargets(page: Page): Promise<string[]> {
   await page.goto("/");
-  const targetCards = page.locator('[data-testid^="target-card-"]');
-  await targetCards.first().waitFor({ state: "visible", timeout: 15_000 });
+  const rows = page.locator('[data-testid^="session-row-"]');
+  await rows.first().waitFor({ state: "visible", timeout: 15_000 });
 
-  const testIds = await targetCards.evaluateAll((elements) =>
+  const testIds = await rows.evaluateAll((elements) =>
     elements.map((element) => element.getAttribute("data-testid") ?? ""),
   );
-  return testIds.map((testId) => testId.replace(/^target-card-/, "")).filter((id) => id.length > 0);
+  return testIds.map((testId) => testId.replace(/^session-row-/, "")).filter((id) => id.length > 0);
 }
 
-/** Reads currently-open terminal-card target ids from the DOM, in render
- * order (GridView/TabView order == workspace.openTargetIds order). */
+/** Reads currently-attached terminal-card target ids from the DOM, in render
+ * order (== workspace `attached` order; includes hidden-but-mounted cards). */
 export async function openTerminalCardIds(page: Page): Promise<string[]> {
   const cards = page.locator('[data-testid^="terminal-card-"]');
   const testIds = await cards.evaluateAll((elements) =>
@@ -89,7 +96,7 @@ export async function openTerminalCardIds(page: Page): Promise<string[]> {
   return testIds.map((testId) => testId.replace(/^terminal-card-/, "")).filter((id) => id.length > 0);
 }
 
-/** Opens the given target's terminal (clicking `TESTID.targetOpen`) and
+/** Opens the given target's terminal (clicking `TESTID.sessionRow`) and
  * waits for it to reach `data-connection-state="ready"`. Returns the card
  * and surface locators — nearly every T060 compatibility spec needs both,
  * so this centralizes the open+wait boilerplate rather than repeating it in
@@ -98,10 +105,20 @@ export async function openTerminal(
   page: Page,
   targetId: string,
 ): Promise<{ card: Locator; surface: Locator }> {
-  await page.getByTestId(TESTID.targetOpen(targetId)).click();
+  // Clicking a rail row opens the target solo in the single view.
+  await page.getByTestId(TESTID.sessionRow(targetId)).click();
   const card = page.getByTestId(TESTID.terminalCard(targetId));
   await expect(card).toHaveAttribute("data-connection-state", "ready", { timeout: 20_000 });
   return { card, surface: page.getByTestId(TESTID.terminalSurface(targetId)) };
+}
+
+/** Adds a target to the visible grid via its add-to-grid button (⌘-click
+ * equivalent), without soloing it. */
+export async function addTerminalToGrid(page: Page, targetId: string): Promise<Locator> {
+  await page.getByTestId(TESTID.addToGrid(targetId)).click();
+  const card = page.getByTestId(TESTID.terminalCard(targetId));
+  await expect(card).toHaveAttribute("data-connection-state", "ready", { timeout: 20_000 });
+  return card;
 }
 
 /** Clicks a terminal surface to focus it, types `command`, and presses
@@ -145,7 +162,7 @@ export interface CapturedFrames {
  * terminal behaves exactly as it would unintercepted.
  *
  * MUST be called before the terminal is opened (i.e. before
- * `openTerminal()`/clicking `TESTID.targetOpen`), same ordering requirement
+ * `openTerminal()`/clicking `TESTID.sessionRow`), same ordering requirement
  * as `reconnect.spec.ts`'s use of `page.routeWebSocket` — the route has to
  * be registered before the page's `new WebSocket(...)` call it targets.
  */

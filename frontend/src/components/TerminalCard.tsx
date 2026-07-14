@@ -1,27 +1,32 @@
-// One adapter-backed terminal (T042, US2). Renders a provider/instance/
-// project identity header (always visible, per US3 scenario 4), a connection
-// state indicator, a renderer surface, and reconnect/close controls
-// (FR-032). Standalone-usable given just a `SessionTarget` — Phase 5 (US3)
-// wires several of these into a grid/tab workspace around this component.
+// One adapter-backed terminal (US2/US3), styled as the console's single-view
+// terminal or a grid tile depending on `mode`. Owns exactly one
+// `TerminalConnection` + `RendererAdapter` for its lifetime; stays mounted even
+// when hidden (parent toggles `isVisible`) so the SSH connection and browser
+// scrollback survive (US3 scenario 3).
+//
+// Structural invariant: the `.terminal-card-surface` div is ALWAYS the last
+// child at the same tree position regardless of `mode`, so switching
+// single↔grid only re-renders the header chrome and never remounts the
+// terminal surface (which would tear down the live connection).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionTarget, TypedError } from "../api/client";
+import { providerMeta } from "./providerMeta";
+import {
+  terminalFontOptions,
+  useSettings,
+  type SettingsState,
+  type TerminalFontOptions,
+} from "../state/settings";
 import type { RendererAdapter } from "../terminal/RendererAdapter";
 import { createDefaultRenderer } from "../terminal/defaultRenderer";
 import { TerminalConnection, type TerminalConnectionState } from "../terminal/TerminalConnection";
 import "./TerminalCard.css";
 
-/** Factory for the renderer to attach — swappable per FR-036/SC-009 so the
- * default can change with no backend impact. Defaults to `GhosttyRenderer`
- * (spec decision #6) once its WASM engine has initialized (see
- * `terminal/defaultRenderer.ts`), automatically falling back to `XtermRenderer`
- * if that init failed. Pass `createRenderer` to force a specific renderer. */
-export type RendererFactory = () => RendererAdapter;
-
-const DEFAULT_RENDERER_FACTORY: RendererFactory = () => createDefaultRenderer();
-
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+/** How much to shrink the terminal font in a grid tile when "scale to fit". */
+const GRID_FIT_SCALE = 0.8;
 
 const STATE_LABELS: Record<TerminalConnectionState, string> = {
   connecting: "Connecting…",
@@ -32,63 +37,63 @@ const STATE_LABELS: Record<TerminalConnectionState, string> = {
   error: "Error",
 };
 
+export type TerminalCardMode = "single" | "grid";
+
 interface TerminalCardProps {
   target: SessionTarget;
-  /** Injectable renderer factory; defaults to `GhosttyRenderer`. */
-  createRenderer?: RendererFactory;
-  /** Called after the user closes this terminal (e.g. to unmount the card). */
-  onClose?: () => void;
-  /**
-   * Gates keyboard-input FORWARDING only (T046/T048, FR-031, US3 scenario
-   * 2). A `TerminalCard` may stay mounted (and its `TerminalConnection`
-   * connected) while hidden — e.g. in `TabView`'s non-active tabs, or any
-   * card that currently isn't the workspace's focused target — so that
-   * "hidden terminals remain connected" (US3 scenario 3). What must NOT
-   * happen is a hidden/unfocused card silently receiving the user's
-   * keystrokes.
-   *
-   * Design: the renderer adapter (`ghostty-web`/xterm) stays open and its
-   * `onData` subscription stays live regardless of focus, so connection
-   * keepalive/output rendering is unaffected — only the forward-to-server
-   * step (`connection.sendInput`) is conditional. The mount effect below
-   * only runs once per `target.id` (see its dependency array), so
-   * `isFocused` is read through a ref updated on every prop change rather
-   * than being a dependency itself — that avoids tearing down and
-   * recreating the terminal connection every time focus changes.
-   *
-   * Defaults to `true` so this component stays a fully standalone,
-   * always-forwarding terminal when used outside a multi-terminal workspace
-   * (e.g. in isolation/tests), matching its pre-T046 behavior.
-   */
-  isFocused?: boolean;
-  /**
-   * Called when the user clicks into this card's terminal surface. In
-   * `GridView` (T046) every card is simultaneously visible, so clicking
-   * directly into one is the natural "type here now" gesture — the caller
-   * (GridView/TabView) wires this to `workspace.setFocused(target.id)` so
-   * click-to-focus and the keyboard-cycling shortcut (T048) share the same
-   * `focusedTargetId` source of truth.
-   */
+  /** Registry region for this target's instance (badge only). */
+  region?: string;
+  mode: TerminalCardMode;
+  /** Whether this card is shown in the pane; hidden cards stay mounted. */
+  isVisible: boolean;
+  /** Whether this card currently receives keyboard input + the focus ring. */
+  isFocused: boolean;
+  /** 1-based position label shown on a grid tile. */
+  num?: number;
+  onClose: () => void;
+  /** Grid tile clicked → solo it (single view). */
+  onSolo?: () => void;
+  /** Single view "Back to grid" — omitted when there's no grid to return to. */
+  onBackToGrid?: () => void;
+  /** Called when the user clicks into the surface (focus this terminal). */
   onFocusRequest?: () => void;
+  /** Called when output arrives while this card is hidden (rail activity dot). */
+  onActivity?: () => void;
+}
+
+function effectiveFont(settings: SettingsState, mode: TerminalCardMode): TerminalFontOptions {
+  const base = terminalFontOptions(settings);
+  if (mode === "grid" && settings.gridFit) {
+    return { ...base, fontSize: Math.max(9, Math.round(base.fontSize * GRID_FIT_SCALE)) };
+  }
+  return base;
 }
 
 export function TerminalCard({
   target,
-  createRenderer,
+  region,
+  mode,
+  isVisible,
+  isFocused,
+  num,
   onClose,
-  isFocused = true,
+  onSolo,
+  onBackToGrid,
   onFocusRequest,
+  onActivity,
 }: TerminalCardProps): JSX.Element {
+  const settings = useSettings();
+
   const containerRef = useRef<HTMLDivElement | null>(null);
   const adapterRef = useRef<RendererAdapter | null>(null);
   const connectionRef = useRef<TerminalConnection | null>(null);
-  // Guards against React StrictMode's dev-mode double-invoke of effects,
-  // which would otherwise open two terminals for one card.
   const createdRef = useRef(false);
-  // Read inside the input handler below instead of being a mount-effect
-  // dependency, so toggling focus never tears down/recreates the terminal
-  // connection (see the `isFocused` prop doc above).
+  // Read inside handlers so toggling focus/visibility never tears down the
+  // connection (mount effect is keyed on target.id only).
   const isFocusedRef = useRef(isFocused);
+  const isVisibleRef = useRef(isVisible);
+  const onActivityRef = useRef(onActivity);
+  const fontRef = useRef<TerminalFontOptions>(effectiveFont(settings, mode));
 
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("connecting");
   const [needsManualReconnect, setNeedsManualReconnect] = useState(false);
@@ -97,6 +102,36 @@ export function TerminalCard({
   useEffect(() => {
     isFocusedRef.current = isFocused;
   }, [isFocused]);
+  useEffect(() => {
+    isVisibleRef.current = isVisible;
+  }, [isVisible]);
+  useEffect(() => {
+    onActivityRef.current = onActivity;
+  }, [onActivity]);
+
+  // Apply live font/size/ligature changes (and grid-fit scaling) to the open
+  // terminal, then re-fit and tell the server the new dimensions.
+  const font = effectiveFont(settings, mode);
+  useEffect(() => {
+    fontRef.current = font;
+    const adapter = adapterRef.current;
+    const connection = connectionRef.current;
+    const container = containerRef.current;
+    if (!adapter || !connection) {
+      return;
+    }
+    adapter.applyFont(font);
+    // Only re-fit/resize when actually visible: a hidden card collapses to
+    // 0x0, and fitting then would shrink the remote PTY to 1x1 and corrupt a
+    // backgrounded TUI. The ResizeObserver re-fits (with real dimensions) when
+    // the card is shown again, so applyFont alone is enough while hidden.
+    if (container && container.clientWidth > 0 && container.clientHeight > 0) {
+      const dims = adapter.fit();
+      connection.sendResize(dims.cols, dims.rows);
+    }
+    // font is a fresh object each render; compare by its fields.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [font.fontFamily, font.fontSize, font.ligatures]);
 
   useEffect(() => {
     if (createdRef.current) {
@@ -108,12 +143,17 @@ export function TerminalCard({
     }
     createdRef.current = true;
 
-    const adapter = (createRenderer ?? DEFAULT_RENDERER_FACTORY)();
+    const adapter = createDefaultRenderer(fontRef.current);
     adapterRef.current = adapter;
     adapter.open(container);
 
     const connection = new TerminalConnection(target.id, DEFAULT_COLS, DEFAULT_ROWS, {
-      onData: (data) => adapter.write(data),
+      onData: (data) => {
+        adapter.write(data);
+        if (!isVisibleRef.current) {
+          onActivityRef.current?.();
+        }
+      },
       onReady: () => setError(null),
       onError: (typedError) => setError(typedError),
       onStateChange: (state) => {
@@ -124,20 +164,16 @@ export function TerminalCard({
     connectionRef.current = connection;
 
     const unsubscribeInput = adapter.onData((data) => {
-      // Gate on the ref, not the `isFocused` prop directly — this closure is
-      // created once (mount effect keyed on target.id only) and must see
-      // up-to-date focus without re-running the whole connect/dispose cycle.
       if (isFocusedRef.current) {
         connection.sendInput(data);
       }
     });
 
     const resizeObserver = new ResizeObserver(() => {
-      // A hidden pane (TabView's non-active tabs use `display: none`) collapses
-      // to 0x0. Measuring + resizing then would compute a 1x1 grid and shrink
-      // the REMOTE PTY to a single column, corrupting a backgrounded Zellij/TUI
-      // layout. Skip while not visible; the observer fires again (with real
-      // dimensions) when the pane is shown, and `ready` re-syncs the size too.
+      // A hidden pane collapses to 0x0; measuring then would shrink the remote
+      // PTY to 1x1 and corrupt a backgrounded TUI. Skip while not visible; the
+      // observer fires again with real dimensions when shown, and `ready`
+      // re-syncs size too.
       if (container.clientWidth === 0 || container.clientHeight === 0) {
         return;
       }
@@ -157,10 +193,9 @@ export function TerminalCard({
       adapterRef.current = null;
       connectionRef.current = null;
     };
-    // Intentionally keyed on target.id only: this card owns exactly one
-    // terminal for its lifetime, and createRenderer is a factory the caller
-    // is expected to keep stable (or accept re-creation is not desired mid-
-    // life — swapping renderers is a deploy-time choice, not a live one).
+    // Keyed on target.id only: this card owns exactly one terminal for its
+    // lifetime (see file header).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.id]);
 
   const handleReconnect = useCallback(() => {
@@ -170,7 +205,7 @@ export function TerminalCard({
 
   const handleClose = useCallback(() => {
     void connectionRef.current?.close();
-    onClose?.();
+    onClose();
   }, [onClose]);
 
   const handleFocusSurface = useCallback(() => {
@@ -178,41 +213,78 @@ export function TerminalCard({
     onFocusRequest?.();
   }, [onFocusRequest]);
 
+  const prov = providerMeta(target.instance_type);
+  const badge = [prov.label, target.instance_name, region].filter(Boolean).join(" · ");
+
+  // Grid tile: clicking anywhere on the tile (outside the buttons) solos it.
+  const handleTileClick = mode === "grid" ? onSolo : undefined;
+
   return (
     <div
-      className={`terminal-card${isFocused ? " terminal-card--focused" : ""}`}
+      className={`terminal-card terminal-card--${mode}${isFocused ? " terminal-card--focused" : ""}`}
       data-testid={`terminal-card-${target.id}`}
       data-focused={isFocused}
       data-connection-state={connectionState}
+      style={{ display: isVisible ? undefined : "none" }}
+      onClick={handleTileClick}
     >
       <header className="terminal-card-header">
+        {mode === "grid" && num !== undefined && (
+          <span className="terminal-card-num">{num}</span>
+        )}
+        <span className="terminal-card-provider-dot" style={{ background: prov.color }} />
         <div className="terminal-card-identity">
-          <span className="terminal-card-instance">
-            {target.instance_type} / {target.instance_name}
-          </span>
           <span className="terminal-card-project">{target.project}</span>
+          {mode === "single" ? (
+            <span className="terminal-card-badge">{badge}</span>
+          ) : (
+            <span className="terminal-card-instance">{target.instance_name}</span>
+          )}
         </div>
+        <span
+          className={`terminal-card-state terminal-card-state--${connectionState}`}
+          title={STATE_LABELS[connectionState]}
+        >
+          {STATE_LABELS[connectionState]}
+        </span>
         <div className="terminal-card-controls">
-          <span className={`terminal-card-state terminal-card-state--${connectionState}`}>
-            {STATE_LABELS[connectionState]}
-          </span>
+          {mode === "single" && onBackToGrid && (
+            <button
+              type="button"
+              className="tc-btn"
+              title="Return to the grid you came from"
+              onClick={(e) => {
+                e.stopPropagation();
+                onBackToGrid();
+              }}
+            >
+              ⊞ Grid
+            </button>
+          )}
           {needsManualReconnect && (
             <button
               type="button"
-              className="terminal-card-reconnect-button"
+              className="tc-btn tc-btn--accent"
               data-testid={`terminal-reconnect-${target.id}`}
-              onClick={handleReconnect}
+              onClick={(e) => {
+                e.stopPropagation();
+                handleReconnect();
+              }}
             >
-              Reconnect
+              ↻ Reconnect
             </button>
           )}
           <button
             type="button"
-            className="terminal-card-close-button"
+            className="tc-btn tc-btn--close"
             data-testid={`terminal-close-${target.id}`}
-            onClick={handleClose}
+            title="Close terminal — remote Zellij session stays alive"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleClose();
+            }}
           >
-            Close
+            {mode === "grid" ? "✕" : "Close"}
           </button>
         </div>
       </header>
@@ -226,7 +298,14 @@ export function TerminalCard({
             <p className="terminal-card-error-remediation">{error.remediation}</p>
           )}
           {error.retryable && (
-            <button type="button" className="terminal-card-retry-button" onClick={handleReconnect}>
+            <button
+              type="button"
+              className="tc-btn tc-btn--accent"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleReconnect();
+              }}
+            >
               Retry
             </button>
           )}
@@ -237,7 +316,10 @@ export function TerminalCard({
         ref={containerRef}
         className="terminal-card-surface"
         data-testid={`terminal-surface-${target.id}`}
-        onClick={handleFocusSurface}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleFocusSurface();
+        }}
       />
     </div>
   );

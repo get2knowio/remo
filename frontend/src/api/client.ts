@@ -17,6 +17,14 @@ export interface SessionTarget {
   zellij_state: ZellijState;
   devcontainer_running: DevcontainerRunning;
   discovered_at: string;
+  // Read-only git status (added by hosts running the newer remo-host agent;
+  // older hosts omit these and the server defaults them to false/0, so the
+  // rail simply shows no git glyphs). ahead/behind may be stale — discovery
+  // never runs `git fetch`.
+  git_tracked: boolean;
+  git_dirty: boolean;
+  git_ahead: number;
+  git_behind: number;
 }
 
 export type InstanceStatus =
@@ -49,6 +57,7 @@ export interface DiscoveryInstance {
   instance_type: string;
   instance_name: string;
   status: InstanceStatus;
+  region: string;
   capability?: RemoteCapability;
   error?: TypedError;
   refreshed_at: string;
@@ -154,6 +163,51 @@ export async function refreshDiscovery(instanceId?: string): Promise<RefreshResp
     method: "POST",
     body: instanceId ? JSON.stringify({ instance_id: instanceId }) : undefined,
   });
+}
+
+// ---- Health / readiness ----
+
+export type ReadinessCheck = string; // e.g. "ok" | "missing" | "unreadable" | ...
+
+export interface ReadinessResponse {
+  /** true when GET /ready returned 200 (all gating checks pass). */
+  ready: boolean;
+  status: string;
+  checks: Record<string, ReadinessCheck>;
+  detail?: string;
+}
+
+/**
+ * `GET /api/v1/ready` — returns 200 (ready) or 503 (not_ready) but always with
+ * a `checks` body. Unlike the other calls this reads the body on BOTH statuses
+ * (a 503 is expected config state, not a transport error). A network-level
+ * failure rejects with `ApiError{code:"network_error"}` so callers can show the
+ * offline overlay.
+ */
+export async function getReady(): Promise<ReadinessResponse> {
+  let response: Response;
+  try {
+    response = await fetch("/api/v1/ready", { method: "GET" });
+  } catch (cause) {
+    throw new ApiError({
+      code: "network_error",
+      message: cause instanceof Error ? cause.message : "Network request failed",
+      retryable: true,
+      remediation: "Check that the Remo web service is reachable.",
+    });
+  }
+  let body: { status?: string; checks?: Record<string, string>; detail?: string } = {};
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    body = {};
+  }
+  return {
+    ready: response.ok,
+    status: body.status ?? (response.ok ? "ready" : "not_ready"),
+    checks: body.checks ?? {},
+    detail: body.detail,
+  };
 }
 
 // ---- Terminals (T041, US2) ----

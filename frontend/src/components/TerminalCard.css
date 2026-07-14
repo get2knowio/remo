@@ -1,162 +1,187 @@
 .terminal-card {
   display: flex;
   flex-direction: column;
-  border: 1px solid #dcdcdf;
-  border-radius: 5px;
-  background: #1e1e1e;
+  min-height: 0;
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  min-height: 320px;
+  background: var(--bg-term);
+  border: 1.5px solid var(--border-soft);
 }
 
-/* Focused terminal (T046/T048): the only card currently receiving forwarded
-   keyboard input (see TerminalCard's `isFocused` prop). Purely visual — a
-   clear "type here" indicator, especially important when several cards with
-   similar project names are visible at once (US3 scenario 4). */
-.terminal-card--focused {
-  border-color: #3a7bd5;
-  box-shadow: 0 0 0 2px rgba(58, 123, 213, 0.4);
+/* Single view: a prominent, accent-ringed panel. */
+.terminal-card--single {
+  flex: 1;
+  border-color: color-mix(in oklch, var(--accent) 50%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 12%, transparent);
+}
+
+/* Grid tile: compact, clickable to solo. */
+.terminal-card--grid {
+  cursor: pointer;
+  border-color: var(--border);
+}
+
+.terminal-card--grid.terminal-card--focused {
+  border-color: color-mix(in oklch, var(--accent) 60%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 13%, transparent);
 }
 
 .terminal-card-header {
+  flex: none;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 9px;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  background: #fafafa;
-  border-bottom: 1px solid #dcdcdf;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 8px 12px;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.terminal-card--grid .terminal-card-header {
+  padding: 7px 10px;
+  gap: 8px;
+}
+
+.terminal-card-num {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+
+.terminal-card-provider-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
 }
 
 .terminal-card-identity {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
+  gap: 8px;
   min-width: 0;
 }
 
-.terminal-card-instance {
-  font-size: 0.75rem;
-  color: #666;
-  white-space: nowrap;
-}
-
 .terminal-card-project {
+  font-family: var(--font-mono);
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: 13px;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.terminal-card-controls {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
+.terminal-card--grid .terminal-card-project {
+  font-size: 12px;
+}
+
+.terminal-card-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.terminal-card-instance {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .terminal-card-state {
-  font-size: 0.75rem;
-  padding: 0.1rem 0.45rem;
-  border-radius: 3px;
-  background: #eee;
-  color: #444;
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.terminal-card--grid .terminal-card-state {
+  font-size: 10px;
 }
 
 .terminal-card-state--ready {
-  background: #dff3e3;
-  color: #1e6b34;
+  color: var(--ok);
 }
-
 .terminal-card-state--connecting,
 .terminal-card-state--reconnecting {
-  background: #fff3d6;
-  color: #93630e;
+  color: var(--warn);
 }
-
 .terminal-card-state--disconnected,
 .terminal-card-state--error {
-  background: #fbdada;
-  color: #8a1f1f;
+  color: var(--danger);
 }
-
 .terminal-card-state--closed {
-  background: #eee;
-  color: #777;
+  color: var(--text-faint);
 }
 
-.terminal-card-reconnect-button,
-.terminal-card-close-button,
-.terminal-card-retry-button {
-  padding: 0.25rem 0.6rem;
-  font-size: 0.8rem;
-  border: 1px solid #888;
-  border-radius: 4px;
-  background: #fff;
+.terminal-card-controls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+
+.tc-btn {
+  padding: 5px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-btn);
+  color: var(--text-1);
+  font-size: 12px;
+  font-family: inherit;
   cursor: pointer;
 }
+.tc-btn:hover {
+  background: var(--bg-btn-hover);
+}
 
-.terminal-card-reconnect-button:hover,
-.terminal-card-close-button:hover,
-.terminal-card-retry-button:hover {
-  background: #eee;
+.terminal-card--grid .tc-btn--close {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 10px;
+}
+
+.tc-btn--accent {
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--border-strong));
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
+  color: color-mix(in oklch, var(--accent) 80%, white);
+  font-weight: 600;
+}
+
+.tc-btn--close:hover {
+  background: oklch(0.3 0.05 25);
+  color: oklch(0.85 0.11 25);
 }
 
 .terminal-card-error {
-  padding: 0.5rem 0.75rem;
-  background: #fbdada;
-  color: #8a1f1f;
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-size: 0.85rem;
+  flex: none;
+  padding: 9px 12px;
+  background: oklch(0.2 0.03 25);
+  color: oklch(0.85 0.09 25);
+  border-bottom: 1px solid oklch(0.38 0.08 25);
+  font-size: 12px;
 }
 
 .terminal-card-error-message {
-  margin: 0 0 0.25rem;
+  margin: 0 0 4px;
   font-weight: 600;
 }
 
 .terminal-card-error-remediation {
-  margin: 0 0 0.4rem;
+  margin: 0 0 6px;
+  color: var(--text-2);
 }
 
 .terminal-card-surface {
   flex: 1;
-  min-height: 260px;
-  background: #1e1e1e;
-  padding: 0.25rem;
-}
-
-@media (prefers-color-scheme: dark) {
-  .terminal-card {
-    border-color: #3a3d42;
-  }
-
-  .terminal-card-header {
-    background: #24262b;
-    border-bottom-color: #3a3d42;
-  }
-
-  .terminal-card-instance {
-    color: #aaa;
-  }
-
-  .terminal-card-state {
-    background: #2f3238;
-    color: #ccc;
-  }
-
-  .terminal-card-reconnect-button,
-  .terminal-card-close-button,
-  .terminal-card-retry-button {
-    background: #24262b;
-    border-color: #555;
-    color: #eaeaea;
-  }
-
-  .terminal-card-reconnect-button:hover,
-  .terminal-card-close-button:hover,
-  .terminal-card-retry-button:hover {
-    background: #2f3238;
-  }
+  min-height: 0;
+  background: var(--bg-term);
+  padding: 2px 4px;
 }

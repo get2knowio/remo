@@ -14,7 +14,7 @@
 // otherwise.
 
 import { init as ghosttyInit } from "ghostty-web";
-import type { RendererAdapter } from "./RendererAdapter";
+import type { RendererAdapter, TerminalFontOptions } from "./RendererAdapter";
 import { GhosttyRenderer } from "./GhosttyRenderer";
 import { XtermRenderer } from "./XtermRenderer";
 
@@ -47,7 +47,8 @@ export function isGhosttyReady(): boolean {
   return ghosttyReady;
 }
 
-/** The renderer `TerminalCard` uses by default: Ghostty when ready, else xterm. */
-export function createDefaultRenderer(): RendererAdapter {
-  return ghosttyReady ? new GhosttyRenderer() : new XtermRenderer();
+/** The renderer `TerminalCard` uses by default: Ghostty when ready, else xterm.
+ * `font` seeds the initial family/size/ligatures from the settings store. */
+export function createDefaultRenderer(font?: TerminalFontOptions): RendererAdapter {
+  return ghosttyReady ? new GhosttyRenderer(font) : new XtermRenderer(font);
 }

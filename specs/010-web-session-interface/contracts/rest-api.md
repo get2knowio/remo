@@ -26,7 +26,7 @@ Returns the current `DiscoverySnapshot` per instance (from cache; typed status),
 the dashboard (FR-029). Does not block on unreachable hosts.
 ```json
 {"instances":[
-  {"instance_id":"…","instance_type":"proxmox","instance_name":"pve/dev","status":"ok",
+  {"instance_id":"…","instance_type":"proxmox","instance_name":"pve/dev","status":"ok","region":"local",
    "capability":{"protocol_version":1,"host_tools_version":"2.1.0","projects_root":"/home/remo/projects"},
    "refreshed_at":"2026-07-13T12:00:00Z"},
   {"instance_id":"…","instance_type":"aws","instance_name":"box","status":"unreachable",
@@ -44,9 +44,12 @@ Flattened `SessionTarget[]` across `ok` instances (FR-029/FR-030 selection).
 {"targets":[
   {"id":"opaque…","instance_type":"proxmox","instance_name":"pve/dev","project":"my-api",
    "has_devcontainer":true,"zellij_state":"active","devcontainer_running":"running",
+   "git_tracked":true,"git_dirty":true,"git_ahead":2,"git_behind":0,
    "discovered_at":"2026-07-13T12:00:00Z"}
 ]}
 ```
+Instances running an older `remo-host` omit the `git_*` fields, which the server defaults to
+`false`/`0`. `region` on `/hosts` defaults to `""` when the registry entry has no region.
 
 ## `POST /api/v1/discovery/refresh` — force re-discovery
 

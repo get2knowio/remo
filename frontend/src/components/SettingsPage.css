@@ -1,0 +1,298 @@
+.settings {
+  position: absolute;
+  inset: 0;
+  z-index: 75;
+  background: var(--bg-app);
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-header);
+}
+.settings-back {
+  padding: 6px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-btn);
+  color: var(--text-1);
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.settings-back:hover {
+  background: var(--bg-btn-hover);
+}
+.settings-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.settings-note {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.settings-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 26px 20px 60px;
+}
+.settings-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.settings-heading {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+.settings-sub {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  margin: 0 0 14px;
+  line-height: 1.5;
+}
+
+/* accents */
+.settings-accents {
+  display: flex;
+  gap: 10px;
+}
+.settings-accent {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.settings-accent--on {
+  border-color: var(--text);
+  box-shadow: 0 0 0 3px var(--bg-app);
+}
+
+/* font cards */
+.settings-fonts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(224px, 1fr));
+  gap: 10px;
+}
+.settings-font {
+  text-align: left;
+  padding: 13px 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  background: var(--bg-btn);
+  border: 1.5px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  font-family: inherit;
+}
+.settings-font:hover {
+  border-color: color-mix(in oklch, var(--accent) 55%, var(--border-strong));
+}
+.settings-font--on {
+  border-color: color-mix(in oklch, var(--accent) 60%, var(--border-strong));
+  background: color-mix(in oklch, var(--accent) 9%, var(--bg-btn));
+}
+.settings-font-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-radio {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border-strong);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  color: var(--accent);
+  flex: none;
+}
+.settings-font--on .settings-radio,
+.settings-gridmode--on .settings-radio {
+  border-color: var(--accent);
+}
+.settings-font-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-font-tag {
+  margin-left: auto;
+  font-size: 9px;
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.settings-font-preview {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--bg-term);
+  border: 1px solid var(--border-soft);
+  border-radius: 7px;
+  padding: 8px 10px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* grid modes */
+.settings-gridmodes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+.settings-gridmode {
+  text-align: left;
+  padding: 14px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  background: var(--bg-btn);
+  border: 1.5px solid var(--border);
+}
+.settings-gridmode--on {
+  border-color: color-mix(in oklch, var(--accent) 60%, var(--border-strong));
+  background: color-mix(in oklch, var(--accent) 9%, var(--bg-btn));
+}
+.settings-gridmode-title {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-gridmode-desc {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  margin-top: 3px;
+}
+
+/* size + ligatures row */
+.settings-row2 {
+  display: flex;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+.settings-col {
+  flex: 1;
+  min-width: 240px;
+}
+.settings-row2-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 9px;
+}
+.settings-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+.settings-range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.settings-liga {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12.5px;
+  border: 1px solid var(--border);
+  background: var(--bg-btn);
+  color: var(--text-2);
+}
+.settings-liga--on {
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--border-strong));
+  background: color-mix(in oklch, var(--accent) 12%, var(--bg-btn));
+  color: var(--text-1);
+}
+.settings-liga-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 20px;
+  background: var(--border-strong);
+  position: relative;
+  flex: none;
+}
+.settings-liga--on .settings-liga-track {
+  background: var(--accent);
+}
+.settings-liga-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: oklch(0.96 0 0);
+  transition: left 0.15s;
+}
+.settings-liga--on .settings-liga-knob {
+  left: 16px;
+}
+
+/* nerd font upload */
+.settings-upload {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 26px;
+  border-radius: 12px;
+  border: 1.5px dashed var(--border-strong);
+  background: var(--bg-input);
+  cursor: pointer;
+  text-align: center;
+}
+.settings-upload:hover {
+  border-color: color-mix(in oklch, var(--accent) 55%, var(--border-strong));
+  background: var(--bg-btn);
+}
+.settings-upload-icon {
+  font-size: 22px;
+  opacity: 0.7;
+}
+.settings-upload-title {
+  font-size: 12.5px;
+  color: var(--text-1);
+  font-weight: 500;
+}
+.settings-upload-hint {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.settings-upload-error {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--danger);
+}

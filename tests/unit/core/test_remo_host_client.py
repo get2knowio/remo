@@ -524,6 +524,73 @@ class TestSessionsListHappyPath:
             ),
         ]
 
+    def test_parses_git_status_fields_when_present(self, mocker):
+        payload = {
+            "protocol_version": 1,
+            "projects_root": "/home/remo/projects",
+            "projects": [
+                {
+                    "name": "api",
+                    "has_devcontainer": True,
+                    "zellij_state": "active",
+                    "devcontainer_running": "running",
+                    "git_tracked": True,
+                    "git_dirty": True,
+                    "git_ahead": 2,
+                    "git_behind": 1,
+                }
+            ],
+        }
+        mocker.patch(
+            "remo_cli.core.remo_host_client.subprocess.run",
+            return_value=_completed(0, stdout=json.dumps(payload).encode()),
+        )
+        entry = list_sessions(SSH_PREFIX)[0]
+        assert (entry.git_tracked, entry.git_dirty, entry.git_ahead, entry.git_behind) == (
+            True,
+            True,
+            2,
+            1,
+        )
+
+    def test_git_fields_default_when_absent_backcompat(self, mocker):
+        # An older host omits git_* keys entirely; the entry must still parse
+        # with git defaults (not tracked, clean, no ahead/behind).
+        mocker.patch(
+            "remo_cli.core.remo_host_client.subprocess.run",
+            return_value=_completed(0, stdout=json.dumps(SESSIONS_JSON).encode()),
+        )
+        entry = list_sessions(SSH_PREFIX)[0]
+        assert (entry.git_tracked, entry.git_dirty, entry.git_ahead, entry.git_behind) == (
+            False,
+            False,
+            0,
+            0,
+        )
+
+    def test_git_counts_coerced_from_strings_and_clamped(self, mocker):
+        payload = {
+            "protocol_version": 1,
+            "projects_root": "/home/remo/projects",
+            "projects": [
+                {
+                    "name": "api",
+                    "has_devcontainer": False,
+                    "zellij_state": "absent",
+                    "devcontainer_running": "unknown",
+                    "git_tracked": True,
+                    "git_ahead": "3",  # host emitted a string
+                    "git_behind": -1,  # nonsense negative clamps to 0
+                }
+            ],
+        }
+        mocker.patch(
+            "remo_cli.core.remo_host_client.subprocess.run",
+            return_value=_completed(0, stdout=json.dumps(payload).encode()),
+        )
+        entry = list_sessions(SSH_PREFIX)[0]
+        assert (entry.git_ahead, entry.git_behind) == (3, 0)
+
     def test_unknown_extra_fields_on_entry_are_tolerated(self, mocker):
         payload = {
             "protocol_version": 1,

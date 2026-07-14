@@ -40,6 +40,9 @@ The `(instance, project)` pair openable in a terminal.
 | `has_devcontainer` | bool | `.devcontainer` present (FR-058 — false ⇒ plain Zellij, not shown as devcontainer). |
 | `zellij_state` | enum | `active` \| `exited` \| `absent`. |
 | `devcontainer_running` | enum | `running` \| `stopped` \| `unknown` (unknown when docker unavailable). |
+| `git_tracked` | bool | Project is a git work tree. Read-only; defaults `false` on older hosts. |
+| `git_dirty` | bool | Uncommitted changes present (`git status --porcelain`). |
+| `git_ahead` / `git_behind` | int | Commits ahead/behind the last-known upstream (no `git fetch`, so possibly stale; FR-010). `0` when no upstream. |
 | `discovered_at` | timestamp | When this datum was produced (stamped by server after workflow). |
 
 **Validation / rules**: `project` must match the discovered set at attach time (revalidated, FR-011/
@@ -57,6 +60,7 @@ Per-instance discovery result; typed status, never an empty-success (FR-006).
 | `instance_type` / `instance_name` | string | As above. |
 | `status` | enum | `ok` \| `unreachable` \| `auth_failed` \| `no_remo_host` \| `incompatible_protocol` \| `malformed` \| `timeout`. |
 | `capability` | RemoteCapability? | Present when `status = ok`. |
+| `region` | string | Provider region from `KnownHost.region` (registry-side; empty when unset). Surfaced for the `provider · instance · region` identity label. |
 | `targets` | SessionTarget[] | Present when `status = ok`; may be empty (instance has no projects). |
 | `error` | TypedError? | `{code, message, retryable, remediation}` for non-ok; e.g. `no_remo_host` → remediation names the Remo update action (FR-059). |
 | `refreshed_at` | timestamp | Snapshot time; replaced on refresh, not authoritative for provider lifecycle. |

@@ -46,6 +46,15 @@ class SessionTarget:
     zellij_state: ZellijState
     devcontainer_running: DevcontainerRunning
     discovered_at: str
+    # Read-only git status of the project's working tree, reported by
+    # `remo-host` (never a `git fetch`, so ahead/behind reflect the
+    # last-known upstream and may be stale — FR-010). Defaults keep older
+    # hosts (whose payloads omit these keys) parseable: git_tracked=False
+    # means "not a git repo / unknown", and the UI shows no git glyphs.
+    git_tracked: bool = False
+    git_dirty: bool = False
+    git_ahead: int = 0
+    git_behind: int = 0
 
 
 def derive_session_target_id(instance_type: str, instance_name: str, project: str) -> str:

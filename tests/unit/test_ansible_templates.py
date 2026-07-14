@@ -32,6 +32,7 @@ TEMPLATE_ROOT = REPO_ROOT / "ansible"
 REMO_HOST_TEMPLATE = TEMPLATE_ROOT / "roles" / "user_setup" / "templates" / "remo-host.sh.j2"
 
 BASH = shutil.which("bash")
+GIT = shutil.which("git")
 
 
 def _all_templates() -> list[Path]:
@@ -181,6 +182,40 @@ def test_remo_host_sessions_list_json_stdout_only(rendered_script: Path, tmp_pat
         assert projects["beta"]["devcontainer_running"] == "unknown"
     else:
         assert projects["beta"]["devcontainer_running"] in ("stopped", "running")
+
+    # Git status fields are always present; the throwaway fixtures are not git
+    # repos, so they default to "not tracked / clean / no ahead-behind".
+    for name in ("alpha", "beta"):
+        assert projects[name]["git_tracked"] is False
+        assert projects[name]["git_dirty"] is False
+        assert projects[name]["git_ahead"] == 0
+        assert projects[name]["git_behind"] == 0
+
+
+@pytest.mark.skipif(BASH is None or GIT is None, reason="bash/git not available in this sandbox")
+def test_remo_host_sessions_list_reports_git_status(tmp_path: Path) -> None:
+    """A project that IS a git work tree reports tracked + dirty read-only."""
+    projects_dir = tmp_path / "projects"
+    repo = projects_dir / "gitproj"
+    repo.mkdir(parents=True)
+    # A fresh repo with an untracked file is "dirty" per `git status --porcelain`
+    # without needing a commit or a configured identity.
+    subprocess.run([GIT, "init", "-q", str(repo)], check=True)
+    (repo / "file.txt").write_text("hello\n")
+
+    rendered = _render_remo_host(str(projects_dir))
+    script_path = tmp_path / "remo-host"
+    script_path.write_text(rendered)
+    script_path.chmod(0o755)
+
+    result = _run_remo_host(script_path, tmp_path, "sessions", "list", "--json")
+    assert result.returncode == 0, result.stderr
+    project = {p["name"]: p for p in json.loads(result.stdout)["projects"]}["gitproj"]
+    assert project["git_tracked"] is True
+    assert project["git_dirty"] is True
+    # No upstream configured, so ahead/behind stay 0 (discovery never fetches).
+    assert project["git_ahead"] == 0
+    assert project["git_behind"] == 0
 
 
 @pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")

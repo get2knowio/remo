@@ -1,9 +1,17 @@
-// Grid/tab/focus layout switching + bulk-open (US3 scenarios 1 & 4,
-// FR-030/FR-031). See fixtures.ts for why these are gated behind
-// REMO_E2E_BACKEND_URL and unexecuted in this sandbox.
+// Rail-driven single↔grid workspace (console redesign, US3 scenarios 1 & 4,
+// FR-030/FR-031). Clicking a rail row opens a target solo; "Open all" fills a
+// responsive grid; clicking a grid tile solos it; Esc collapses back to the
+// focused terminal. Hidden-but-attached terminals stay connected. See
+// fixtures.ts for why these are gated behind REMO_E2E_BACKEND_URL.
 
 import { expect, test } from "@playwright/test";
-import { TESTID, openTerminalCardIds, requireBackendFixture, waitForDiscoveredTargets } from "./fixtures";
+import {
+  TESTID,
+  addTerminalToGrid,
+  openTerminalCardIds,
+  requireBackendFixture,
+  waitForDiscoveredTargets,
+} from "./fixtures";
 
 test.describe("workspace layout", () => {
   test.beforeEach(() => {
@@ -23,9 +31,7 @@ test.describe("workspace layout", () => {
     expect(openIds.sort()).toEqual(discoveredIds.sort());
 
     // Each opened terminal reaches "ready" independently — no shared
-    // failure/success state across cards (per-terminal progress/error, per
-    // scenario 1's "connect independently with per-terminal progress and
-    // error state").
+    // failure/success state across cards.
     for (const id of openIds) {
       await expect(page.getByTestId(TESTID.terminalCard(id))).toHaveAttribute(
         "data-connection-state",
@@ -35,77 +41,66 @@ test.describe("workspace layout", () => {
     }
   });
 
-  test("grid mode renders every open terminal simultaneously, none hidden", async ({ page }) => {
-    await waitForDiscoveredTargets(page);
+  test("open all renders every open terminal simultaneously in the grid", async ({ page }) => {
+    const discoveredIds = await waitForDiscoveredTargets(page);
+    expect(discoveredIds.length).toBeGreaterThan(1);
     await page.getByTestId(TESTID.openAll).click();
-    await page.getByTestId(TESTID.layoutMode("grid")).click();
 
     const openIds = await openTerminalCardIds(page);
-    expect(openIds.length).toBeGreaterThan(1);
-
-    // Grid mode: every terminal-card is visible at once (nothing behind a
-    // `display: none` tab pane).
+    // Two-plus visible → grid: every card is visible at once.
     for (const id of openIds) {
       await expect(page.getByTestId(TESTID.terminalCard(id))).toBeVisible();
     }
   });
 
-  test("tabs mode shows a tab strip and switches the visible pane on click", async ({ page }) => {
-    await waitForDiscoveredTargets(page);
+  test("clicking a grid tile solos it; Esc returns to the grid", async ({ page }) => {
+    const discoveredIds = await waitForDiscoveredTargets(page);
+    expect(discoveredIds.length).toBeGreaterThan(1);
     await page.getByTestId(TESTID.openAll).click();
-    await page.getByTestId(TESTID.layoutMode("tabs")).click();
-
     const openIds = await openTerminalCardIds(page);
-    expect(openIds.length).toBeGreaterThan(1);
     const [firstId, secondId] = openIds;
 
-    // Only one pane is CSS-visible at a time...
-    await page.getByTestId(TESTID.tab(firstId)).click();
+    // Solo the first tile — only it is visible, the rest stay mounted+hidden.
+    await page.getByTestId(TESTID.terminalCard(firstId)).click();
     await expect(page.getByTestId(TESTID.terminalCard(firstId))).toBeVisible();
     await expect(page.getByTestId(TESTID.terminalCard(secondId))).toBeHidden();
-
-    await page.getByTestId(TESTID.tab(secondId)).click();
-    await expect(page.getByTestId(TESTID.terminalCard(secondId))).toBeVisible();
-    await expect(page.getByTestId(TESTID.terminalCard(firstId))).toBeHidden();
-
-    // ...but BOTH stay mounted with a live connection throughout (US3
-    // scenario 3: hidden terminals remain connected, not torn down). If
-    // switching tabs unmounted/reconnected the hidden card, this attribute
-    // would transiently drop to "connecting"/"disconnected" instead of
-    // staying "ready".
-    await expect(page.getByTestId(TESTID.terminalCard(firstId))).toHaveAttribute(
+    // Hidden card keeps its live connection (US3 scenario 3).
+    await expect(page.getByTestId(TESTID.terminalCard(secondId))).toHaveAttribute(
       "data-connection-state",
       "ready",
     );
+
+    // Esc collapses back to the remembered grid.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId(TESTID.terminalCard(secondId))).toBeVisible();
   });
 
-  test("focused mode shows a single pane with no clickable tab strip", async ({ page }) => {
-    await waitForDiscoveredTargets(page);
-    await page.getByTestId(TESTID.openAll).click();
-    await page.getByTestId(TESTID.layoutMode("focused")).click();
+  test("⌘-click / add-to-grid builds a grid without soloing", async ({ page }) => {
+    const discoveredIds = await waitForDiscoveredTargets(page);
+    expect(discoveredIds.length).toBeGreaterThan(1);
+    const [firstId, secondId] = discoveredIds;
 
-    const openIds = await openTerminalCardIds(page);
-    // No tab buttons rendered in focused mode (minimal chrome).
-    for (const id of openIds) {
-      await expect(page.getByTestId(TESTID.tab(id))).toHaveCount(0);
-    }
-    // Exactly one card visible.
-    const visibleCount = await Promise.all(
-      openIds.map(async (id) => (await page.getByTestId(TESTID.terminalCard(id)).isVisible()) ? 1 : 0),
-    );
-    expect(visibleCount.reduce((a, b) => a + b, 0)).toBe(1);
+    await page.getByTestId(TESTID.sessionRow(firstId)).click(); // solo first
+    await addTerminalToGrid(page, secondId); // add second → grid of two
+
+    await expect(page.getByTestId(TESTID.terminalCard(firstId))).toBeVisible();
+    await expect(page.getByTestId(TESTID.terminalCard(secondId))).toBeVisible();
   });
 
-  test("layout mode persists across a reload (FR-034, localStorage only)", async ({ page }) => {
-    await waitForDiscoveredTargets(page);
-    await page.getByTestId(TESTID.openAll).click();
-    await page.getByTestId(TESTID.layoutMode("tabs")).click();
+  test("open set persists across a reload (FR-034, localStorage only)", async ({ page }) => {
+    const discoveredIds = await waitForDiscoveredTargets(page);
+    const [firstId] = discoveredIds;
+    await page.getByTestId(TESTID.sessionRow(firstId)).click();
 
     const stored = await page.evaluate(() => window.localStorage.getItem("remo-web:workspace"));
     expect(stored).not.toBeNull();
-    expect(JSON.parse(stored ?? "{}")).toMatchObject({ layoutMode: "tabs" });
+    expect(JSON.parse(stored ?? "{}")).toMatchObject({
+      attached: [firstId],
+      visible: [firstId],
+      focusedId: firstId,
+    });
 
     await page.reload();
-    await expect(page.getByTestId(TESTID.layoutMode("tabs"))).toHaveClass(/dashboard-layout-button--active/);
+    await expect(page.getByTestId(TESTID.terminalCard(firstId))).toBeVisible();
   });
 });
