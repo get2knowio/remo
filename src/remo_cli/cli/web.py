@@ -11,6 +11,7 @@ ordinary CLI works even when the `web` extra is not installed.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import click
 
@@ -19,6 +20,39 @@ _INSTALL_HINT = 'Web support is not installed. Install it with: pip install "rem
 #: Seconds uvicorn waits for in-flight connections/lifespan shutdown to
 #: finish before forcing them closed (NFR-007/SC-014: bounded shutdown).
 _GRACEFUL_SHUTDOWN_TIMEOUT_S = 5
+
+
+def _ensure_ssh_control_dir(control_dir: str) -> str:
+    """Ensure the SSH ControlMaster socket dir exists and is writable.
+
+    The default (``/run/remo-ssh``) is a tmpfs mount that only exists inside
+    the container image. When running ``remo web serve`` directly on a
+    workstation that path is usually absent and can't be created without root
+    (e.g. macOS has no ``/run`` at all), which makes every multiplexed terminal
+    attach fail with ``unix_listener: cannot bind to path ...``. Create the
+    configured dir when possible; otherwise fall back to a short per-user dir
+    under ``$HOME`` so local runs work with no manual setup. Returns the path
+    actually used (absolute).
+    """
+    candidate = Path(control_dir).expanduser()
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        if os.access(candidate, os.W_OK):
+            return str(candidate)
+    except OSError:
+        pass
+
+    # `~/.remo/ssh` is intentionally short: the ControlPath socket path
+    # (dir + "remo-%r@%h-%p" + ssh's random suffix) must stay under the
+    # ~104-byte AF_UNIX limit, which a deep temp path can blow past.
+    fallback = Path.home() / ".remo" / "ssh"
+    fallback.mkdir(parents=True, exist_ok=True)
+    if str(fallback) != str(candidate):
+        click.echo(
+            f"SSH control dir '{control_dir}' is not usable; using {fallback} instead. "
+            f"Set REMO_WEB_SSH_CONTROL_DIR to override."
+        )
+    return str(fallback)
 
 
 @click.group()
@@ -49,6 +83,12 @@ def serve(bind_host: str | None, bind_port: int | None) -> None:
         settings.bind_host = bind_host
     if bind_port:
         settings.bind_port = bind_port
+
+    # Ensure the ControlMaster socket dir is usable (create it, or fall back to
+    # a per-user dir for local runs where the container's /run/remo-ssh tmpfs
+    # doesn't exist). Do this BEFORE exporting REMO_SSH_CONTROL_DIR / building
+    # the app so every SSH attach uses the resolved, writable path.
+    settings.ssh_control_dir = _ensure_ssh_control_dir(settings.ssh_control_dir)
 
     # Every web call site that builds an SSH command threads
     # settings.ssh_control_dir explicitly through build_ssh_base_cmd's
