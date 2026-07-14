@@ -1,0 +1,271 @@
+#!/bin/bash
+# remo-host - Machine-readable discovery/attach protocol for the Remo web
+# session interface. See specs/010-web-session-interface/contracts/
+# remo-host-protocol.md for the full contract (JSON shapes, versioning).
+# Managed by Ansible - do not edit manually
+#
+# Usage:
+#   remo-host capabilities --json
+#   remo-host sessions list --json
+#   remo-host sessions attach --project NAME
+#
+# JSON commands (capabilities, sessions list) print ONLY the JSON payload to
+# stdout; all diagnostics go to stderr. `sessions attach` is interactive: it
+# validates NAME then execs project-launch, becoming the terminal stream.
+#
+# Exit codes:
+#   0  success
+#   2  usage error (bad/missing flags, unrecognized subcommand)
+#   3  invalid/nonexistent/rejected project name
+#   4  unsupported subcommand (recognized shape, not yet implemented)
+#   5  internal error
+
+set -e
+
+PROTOCOL_VERSION=1
+PROJECTS_DIR="{{ dev_workspace_dir }}"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# Minimal JSON string escaper (no jq dependency assumed on hosts): backslash,
+# double-quote, and the common whitespace control characters.
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    printf '%s' "$s"
+}
+
+has_zellij() {
+    command -v zellij &>/dev/null
+}
+
+has_docker() {
+    command -v docker &>/dev/null
+}
+
+get_host_tools_version() {
+    if [[ -f "$HOME/.remo-version" ]]; then
+        cat "$HOME/.remo-version"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# capabilities --json
+# ---------------------------------------------------------------------------
+cmd_capabilities() {
+    local version zellij_bool docker_bool
+    version="$(get_host_tools_version)"
+    zellij_bool="false"
+    docker_bool="false"
+    if has_zellij; then
+        zellij_bool="true"
+    fi
+    if has_docker; then
+        docker_bool="true"
+    fi
+
+    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach"],"zellij":%s,"docker":%s}\n' \
+        "$PROTOCOL_VERSION" \
+        "$(json_escape "$version")" \
+        "$(json_escape "$PROJECTS_DIR")" \
+        "$zellij_bool" \
+        "$docker_bool"
+}
+
+# ---------------------------------------------------------------------------
+# sessions list --json
+#
+# Read-only (FR-010): only find / zellij list-sessions / docker ps. Never
+# calls project-launch, zellij attach, git fetch, or anything mutating.
+# ---------------------------------------------------------------------------
+cmd_sessions_list() {
+    local -A zellij_sessions=()
+
+    if has_zellij; then
+        local line sess_name
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            sess_name="$(printf '%s' "$line" | awk '{print $1}')"
+            [[ -z "$sess_name" ]] && continue
+            if printf '%s' "$line" | grep -q 'EXITED'; then
+                zellij_sessions["$sess_name"]="exited"
+            else
+                zellij_sessions["$sess_name"]="active"
+            fi
+        done < <(zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+    fi
+
+    local projects_json="" first=true
+    local dir name has_dc zellij_state devcontainer_running container_id entry
+
+    if [[ -d "$PROJECTS_DIR" ]]; then
+        while IFS= read -r dir; do
+            [[ -z "$dir" ]] && continue
+            name="$(basename "$dir")"
+
+            has_dc="false"
+            if [[ -d "$dir/.devcontainer" ]] || [[ -f "$dir/.devcontainer.json" ]]; then
+                has_dc="true"
+            fi
+
+            zellij_state="${zellij_sessions[$name]:-absent}"
+
+            devcontainer_running="unknown"
+            if [[ "$has_dc" == "true" ]] && has_docker; then
+                container_id="$(docker ps -q --filter "label=devcontainer.local_folder=$dir" 2>/dev/null)"
+                if [[ -n "$container_id" ]]; then
+                    devcontainer_running="running"
+                else
+                    devcontainer_running="stopped"
+                fi
+            fi
+
+            entry="$(printf '{"name":"%s","has_devcontainer":%s,"zellij_state":"%s","devcontainer_running":"%s"}' \
+                "$(json_escape "$name")" "$has_dc" "$zellij_state" "$devcontainer_running")"
+
+            if $first; then
+                projects_json="$entry"
+                first=false
+            else
+                projects_json="$projects_json,$entry"
+            fi
+        done < <(find "$PROJECTS_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+    fi
+
+    printf '{"protocol_version":%d,"projects_root":"%s","projects":[%s]}\n' \
+        "$PROTOCOL_VERSION" \
+        "$(json_escape "$PROJECTS_DIR")" \
+        "$projects_json"
+}
+
+# ---------------------------------------------------------------------------
+# sessions attach --project NAME
+# ---------------------------------------------------------------------------
+
+# Validate a project name before any launch (FR-011). Prints a diagnostic to
+# stderr and returns non-zero on the first violation found.
+validate_project_name() {
+    local name="$1"
+
+    if [[ -z "$name" ]]; then
+        echo "remo-host: sessions attach: project name must not be empty" >&2
+        return 1
+    fi
+
+    if LC_ALL=C printf '%s' "$name" | grep -q '[[:cntrl:]]'; then
+        echo "remo-host: sessions attach: project name contains control characters: $name" >&2
+        return 1
+    fi
+
+    if [[ "$name" == /* ]]; then
+        echo "remo-host: sessions attach: absolute paths are not allowed: $name" >&2
+        return 1
+    fi
+
+    case "$name" in
+        .. | ../* | */.. | */../*)
+            echo "remo-host: sessions attach: path traversal is not allowed: $name" >&2
+            return 1
+            ;;
+    esac
+
+    if [[ "$name" == */* ]]; then
+        echo "remo-host: sessions attach: path separators are not allowed: $name" >&2
+        return 1
+    fi
+
+    if [[ ! -d "$PROJECTS_DIR/$name" ]]; then
+        echo "remo-host: sessions attach: project not found: $name" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+cmd_sessions_attach() {
+    local name=""
+    local project_given=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)
+                name="$2"
+                project_given=true
+                shift 2
+                ;;
+            *)
+                echo "remo-host: sessions attach: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    # Missing flag entirely is a usage error (exit 2); an explicit empty
+    # value (--project "") reaches validate_project_name and is rejected
+    # there as an invalid project name (exit 3).
+    if ! $project_given; then
+        echo "remo-host: sessions attach: --project NAME is required" >&2
+        exit 2
+    fi
+
+    validate_project_name "$name" || exit 3
+
+    exec "$HOME/.local/bin/project-launch" --project "$name"
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+case "${1:-}" in
+    capabilities)
+        shift
+        if [[ "${1:-}" != "--json" ]]; then
+            echo "remo-host: capabilities: --json is required" >&2
+            exit 2
+        fi
+        cmd_capabilities
+        ;;
+    sessions)
+        shift
+        case "${1:-}" in
+            list)
+                shift
+                if [[ "${1:-}" != "--json" ]]; then
+                    echo "remo-host: sessions list: --json is required" >&2
+                    exit 2
+                fi
+                cmd_sessions_list
+                ;;
+            attach)
+                shift
+                cmd_sessions_attach "$@"
+                ;;
+            "")
+                echo "remo-host: usage: remo-host sessions {list|attach} ..." >&2
+                exit 2
+                ;;
+            *)
+                echo "remo-host: unsupported subcommand: sessions $1" >&2
+                exit 4
+                ;;
+        esac
+        ;;
+    -h|--help)
+        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    "")
+        echo "remo-host: usage: remo-host {capabilities|sessions} ..." >&2
+        exit 2
+        ;;
+    *)
+        echo "remo-host: unrecognized subcommand: $1" >&2
+        exit 2
+        ;;
+esac

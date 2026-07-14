@@ -1,0 +1,70 @@
+# docker/compose.example.yml
+#
+# Example Compose file for running `remo web` in a home lab (010-web-session-
+# interface, US4). Copy/adapt this file — it is not used automatically.
+#
+# See specs/010-web-session-interface/quickstart.md "B. Container run" and
+# research.md R8 for the full rationale behind these hardening defaults.
+
+services:
+  remo-web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      # Bind to loopback only by default — this is a LAN-trust-boundary
+      # service (FR-052), not meant to be exposed directly to the internet.
+      # Change to "0.0.0.0:8080:8080" (or a specific LAN IP) deliberately if
+      # you want other hosts on your LAN to reach it.
+      - "127.0.0.1:8080:8080"
+    # Deployment-specific env vars: set these to your actual LAN hostname/IP
+    # or tailnet name so the browser can reach the service (FR-048 — no
+    # wildcard host/origin allowlisting, ever). Uncomment `environment:` and
+    # adapt the values below if you need to override the localhost-only
+    # defaults.
+    # environment:
+    #   - "REMO_WEB_ALLOWED_HOSTS=remo-web.lan,127.0.0.1,localhost"
+    #   - "REMO_WEB_ALLOWED_ORIGINS=http://remo-web.lan:8080,http://127.0.0.1:8080"
+    #
+    # NOTE: REMO_WEB_FRONTEND_DIST_DIR is already baked into the image via
+    # `ENV` in docker/Dockerfile (it must match where the built frontend
+    # assets actually live in this image) — no need to repeat it here.
+    #
+    # NOTE: REMO_HOME / the registry path do not need an explicit override
+    # either — core/config.py resolves the registry under `~/.config/remo`
+    # by default, and the `remo` user's $HOME is /home/remo inside this
+    # image, matching the registry volume mount below.
+    volumes:
+      # Registry (read-only): host/instance/project discovery data.
+      # NOTE: this is the registry, NOT SSH auth material (FR-026) — see the
+      # separate mounts below for that.
+      - "${HOME}/.config/remo:/home/remo/.config/remo:ro"
+      # SSH material (read-only): private key, client config, known_hosts.
+      # Mount only what you need; paths below are common defaults.
+      - "${HOME}/.ssh/id_ed25519:/home/remo/.ssh/id_ed25519:ro"
+      - "${HOME}/.ssh/config:/home/remo/.ssh/config:ro"
+      - "${HOME}/.ssh/known_hosts:/home/remo/.ssh/known_hosts:ro"
+      # Optional: AWS credentials/profile for SSM-routed targets (SC-006).
+      # Uncomment and adapt if any registered targets use the SSM proxy path.
+      # - "${HOME}/.aws:/home/remo/.aws:ro"
+    tmpfs:
+      # Per-instance SSH ControlMaster sockets (R5) — must be writable even
+      # though the root filesystem is read-only.
+      - "/run/remo-ssh"
+    read_only: true
+    user: "1000:1000"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - "ALL"
+    healthcheck:
+      # Matches GET /api/v1/ready (contracts/rest-api.md) — 200 only when
+      # registry/SSH identity/runtime dir/executables all check out; 503
+      # otherwise. `curl` is installed as a runtime dependency in the image
+      # (docker/Dockerfile) specifically so this healthcheck can run.
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

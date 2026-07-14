@@ -8,6 +8,7 @@
 .remo
 .venv
 venv
+node_modules
 dist
 build
 *.egg-info

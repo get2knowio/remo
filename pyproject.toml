@@ -20,9 +20,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest-asyncio",
     "pytest-mock",
     "ruff",
     "mypy",
+]
+web = [
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+    "pydantic>=2",
 ]
 
 [project.scripts]
@@ -41,3 +48,8 @@ testpaths = ["tests"]
 [tool.ruff]
 src = ["src"]
 line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+ignore_missing_imports = true

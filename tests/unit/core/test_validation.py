@@ -11,6 +11,7 @@ from remo_cli.core.validation import (
     parse_volume_size,
     validate_name,
     validate_port,
+    validate_project_name,
     validate_region,
     validate_tool_name,
 )
@@ -260,6 +261,94 @@ class TestBuildToolArgs:
         args = build_tool_args(only=ALL_TOOLS, skip=())
         for tool in ALL_TOOLS:
             assert f"configure_{tool}=true" in args
+
+
+class TestValidateProjectName:
+    """Tests for validate_project_name() (T059).
+
+    Rules mirror `ansible/roles/user_setup/templates/remo-host.sh.j2`'s
+    bash `validate_project_name()` exactly: reject empty names, control
+    characters, absolute paths, `..` traversal, and embedded path
+    separators. Spaces, Unicode, punctuation, and leading dashes are all
+    otherwise ALLOWED -- this validator must not over-reject them.
+    """
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "my-app",
+            "my_app",
+            "my.app",
+            "MyApp123",
+            "weird name",  # spaces allowed
+            "café-projet",  # unicode allowed
+            "-leading-dash",  # leading dash allowed (unlike validate_name)
+            "name'with\"quotes",  # punctuation allowed (shlex.quote handles it)
+            "name;rm -rf .",  # shell metacharacters allowed here -- shlex.quote
+            "a",
+            "...three-dots-but-not-traversal",
+            "..hidden",  # starts with .. but is not exactly ".."/"../*"
+            "trailing..",  # ends with .. but not "/.."
+        ],
+    )
+    def test_valid_names_accepted(self, name):
+        # Should not raise
+        validate_project_name(name)
+
+    def test_empty_string_rejected(self):
+        with pytest.raises(ValueError, match="must not be empty"):
+            validate_project_name("")
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "bad\x00name",
+            "bad\x1fname",
+            "bad\x7fname",
+            "bad\nname",
+            "bad\tname",
+            "bad\rname",
+        ],
+    )
+    def test_control_characters_rejected(self, name):
+        with pytest.raises(ValueError, match="control characters"):
+            validate_project_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "/etc/passwd",
+            "/absolute/path",
+            "/",
+        ],
+    )
+    def test_absolute_paths_rejected(self, name):
+        with pytest.raises(ValueError, match="absolute paths"):
+            validate_project_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "..",
+            "../etc/passwd",
+            "foo/..",
+            "foo/../bar",
+        ],
+    )
+    def test_path_traversal_rejected(self, name):
+        with pytest.raises(ValueError, match="traversal"):
+            validate_project_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "foo/bar",
+            "a/b/c",
+        ],
+    )
+    def test_path_separators_rejected(self, name):
+        with pytest.raises(ValueError, match="path separators"):
+            validate_project_name(name)
 
 
 class TestParseVolumeSize:

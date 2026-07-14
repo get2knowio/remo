@@ -42,6 +42,13 @@ venv/
 .venv/
 env/
 
+# Node.js / frontend (frontend/)
+node_modules/
+*.log
+.env
+.env.*
+!.env.example
+
 # IDE files
 .idea/
 .vscode/

@@ -6,6 +6,29 @@ import os
 from pathlib import Path
 
 
+def _resolve_remo_home() -> Path:
+    """Resolve the remo config directory path with no filesystem side effects.
+
+    Resolution order:
+    1. REMO_HOME env var if set
+    2. XDG_CONFIG_HOME/remo if XDG_CONFIG_HOME is set
+    3. ~/.config/remo as fallback
+
+    Pure path resolution — does not create the directory. Shared by
+    :func:`get_remo_home` (which does create it) and
+    :func:`get_remo_home_readonly` (which does not), so both stay in sync.
+    """
+    remo_home_env = os.environ.get("REMO_HOME")
+    if remo_home_env:
+        return Path(remo_home_env)
+
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    if xdg_config_home:
+        return Path(xdg_config_home) / "remo"
+
+    return Path.home() / ".config" / "remo"
+
+
 def get_remo_home() -> Path:
     """Return the remo config directory path.
 
@@ -16,18 +39,21 @@ def get_remo_home() -> Path:
 
     Creates the directory if it does not exist.
     """
-    remo_home_env = os.environ.get("REMO_HOME")
-    if remo_home_env:
-        path = Path(remo_home_env)
-    else:
-        xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
-        if xdg_config_home:
-            path = Path(xdg_config_home) / "remo"
-        else:
-            path = Path.home() / ".config" / "remo"
-
+    path = _resolve_remo_home()
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def get_remo_home_readonly() -> Path:
+    """Return the remo config directory path WITHOUT creating it.
+
+    Same resolution order as :func:`get_remo_home` (REMO_HOME env var ->
+    XDG_CONFIG_HOME/remo -> ~/.config/remo), but performs pure path
+    resolution with no filesystem side effects. Safe to call against a
+    read-only bind mount (e.g. a Docker ``:ro`` mount of ``~/.config/remo``)
+    where ``.mkdir()`` would fail or be unsafe.
+    """
+    return _resolve_remo_home()
 
 
 def get_ansible_dir() -> Path:
@@ -82,6 +108,17 @@ def get_project_root() -> Path:
 def get_known_hosts_path() -> Path:
     """Return the path to the remo known_hosts file."""
     return get_remo_home() / "known_hosts"
+
+
+def get_known_hosts_path_readonly() -> Path:
+    """Return the path to the remo known_hosts file WITHOUT creating its parent.
+
+    Mirrors :func:`get_known_hosts_path` but is built on
+    :func:`get_remo_home_readonly`, so it never triggers a ``mkdir`` side
+    effect. This is what read-only callers (e.g. the web service's discovery
+    layer, which only ever reads the registry) should use.
+    """
+    return get_remo_home_readonly() / "known_hosts"
 
 
 def is_verbose() -> bool:

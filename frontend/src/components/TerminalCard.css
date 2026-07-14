@@ -1,0 +1,162 @@
+.terminal-card {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #dcdcdf;
+  border-radius: 5px;
+  background: #1e1e1e;
+  overflow: hidden;
+  min-height: 320px;
+}
+
+/* Focused terminal (T046/T048): the only card currently receiving forwarded
+   keyboard input (see TerminalCard's `isFocused` prop). Purely visual — a
+   clear "type here" indicator, especially important when several cards with
+   similar project names are visible at once (US3 scenario 4). */
+.terminal-card--focused {
+  border-color: #3a7bd5;
+  box-shadow: 0 0 0 2px rgba(58, 123, 213, 0.4);
+}
+
+.terminal-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #fafafa;
+  border-bottom: 1px solid #dcdcdf;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.terminal-card-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.terminal-card-instance {
+  font-size: 0.75rem;
+  color: #666;
+  white-space: nowrap;
+}
+
+.terminal-card-project {
+  font-weight: 600;
+  font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-card-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.terminal-card-state {
+  font-size: 0.75rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 3px;
+  background: #eee;
+  color: #444;
+}
+
+.terminal-card-state--ready {
+  background: #dff3e3;
+  color: #1e6b34;
+}
+
+.terminal-card-state--connecting,
+.terminal-card-state--reconnecting {
+  background: #fff3d6;
+  color: #93630e;
+}
+
+.terminal-card-state--disconnected,
+.terminal-card-state--error {
+  background: #fbdada;
+  color: #8a1f1f;
+}
+
+.terminal-card-state--closed {
+  background: #eee;
+  color: #777;
+}
+
+.terminal-card-reconnect-button,
+.terminal-card-close-button,
+.terminal-card-retry-button {
+  padding: 0.25rem 0.6rem;
+  font-size: 0.8rem;
+  border: 1px solid #888;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.terminal-card-reconnect-button:hover,
+.terminal-card-close-button:hover,
+.terminal-card-retry-button:hover {
+  background: #eee;
+}
+
+.terminal-card-error {
+  padding: 0.5rem 0.75rem;
+  background: #fbdada;
+  color: #8a1f1f;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 0.85rem;
+}
+
+.terminal-card-error-message {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+}
+
+.terminal-card-error-remediation {
+  margin: 0 0 0.4rem;
+}
+
+.terminal-card-surface {
+  flex: 1;
+  min-height: 260px;
+  background: #1e1e1e;
+  padding: 0.25rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  .terminal-card {
+    border-color: #3a3d42;
+  }
+
+  .terminal-card-header {
+    background: #24262b;
+    border-bottom-color: #3a3d42;
+  }
+
+  .terminal-card-instance {
+    color: #aaa;
+  }
+
+  .terminal-card-state {
+    background: #2f3238;
+    color: #ccc;
+  }
+
+  .terminal-card-reconnect-button,
+  .terminal-card-close-button,
+  .terminal-card-retry-button {
+    background: #24262b;
+    border-color: #555;
+    color: #eaeaea;
+  }
+
+  .terminal-card-reconnect-button:hover,
+  .terminal-card-close-button:hover,
+  .terminal-card-retry-button:hover {
+    background: #2f3238;
+  }
+}
