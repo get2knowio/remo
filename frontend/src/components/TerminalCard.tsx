@@ -7,16 +7,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionTarget, TypedError } from "../api/client";
 import type { RendererAdapter } from "../terminal/RendererAdapter";
-import { GhosttyRenderer } from "../terminal/GhosttyRenderer";
+import { XtermRenderer } from "../terminal/XtermRenderer";
 import { TerminalConnection, type TerminalConnectionState } from "../terminal/TerminalConnection";
 import "./TerminalCard.css";
 
-/** Factory for the renderer to attach — swappable per FR-036/SC-009 so a
- * fallback to `XtermRenderer` (or any other adapter) is a one-line change
- * with no backend impact. Defaults to `GhosttyRenderer` (spec decision #6). */
+/** Factory for the renderer to attach — swappable per FR-036/SC-009 so the
+ * default can change with no backend impact. Defaults to `XtermRenderer`, the
+ * stable release-blocking fallback: `ghostty-web` (spec decision #6) is still
+ * pre-1.0 and requires an async `init()` (WASM load) plus API verification
+ * before it can be the default (see GhosttyRenderer.ts). Pass `createRenderer`
+ * to opt back into `GhosttyRenderer` once that's wired up. */
 export type RendererFactory = () => RendererAdapter;
 
-const DEFAULT_RENDERER_FACTORY: RendererFactory = () => new GhosttyRenderer();
+const DEFAULT_RENDERER_FACTORY: RendererFactory = () => new XtermRenderer();
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;

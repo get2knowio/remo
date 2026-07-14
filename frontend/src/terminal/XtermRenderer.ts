@@ -13,6 +13,9 @@
 
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";
+// xterm ships its own stylesheet; without it the terminal renders with broken
+// cell sizing/positioning. Bundled here so it loads whenever this renderer is.
+import "xterm/css/xterm.css";
 import type { RendererAdapter, TerminalDimensions } from "./RendererAdapter";
 
 export class XtermRenderer implements RendererAdapter {
