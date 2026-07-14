@@ -37,6 +37,7 @@ __all__ = [
     "IncompatibleProtocolError",
     "MalformedResponseError",
     "PayloadTooLargeError",
+    "REMOTE_PATH_PREFIX",
     "ProjectEntry",
     "RemoHostClientError",
     "RemoHostCommandError",
@@ -65,6 +66,16 @@ DEFAULT_PAYLOAD_CAP = 256 * 1024
 SSH_TRANSPORT_EXIT_CODE = 255
 
 DEFAULT_TIMEOUT = 10.0
+
+#: The `user_setup` Ansible role installs `remo-host` (and `project-launch`) to
+#: ``~/.local/bin``, which is NOT on the PATH of a non-interactive
+#: ``ssh <host> <command>`` shell (it doesn't source ``.bashrc``/``.profile``).
+#: So every remote invocation is prefixed with this assignment, which the
+#: remote shell evaluates before running the command — locating ``remo-host``
+#: in ``~/.local/bin`` while still honoring any system-wide install on ``$PATH``
+#: (this is also why the CLI's `project-launch` path uses an explicit
+#: ``~/.local/bin/...`` path — see ``core.ssh.build_project_launch_remote_cmd``).
+REMOTE_PATH_PREFIX = 'PATH="$HOME/.local/bin:$PATH"'
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +239,10 @@ def build_remo_host_shell_cmd(
 
     For embedding as the remote command in ``ssh <opts> <target> "<cmd>"``
     (e.g. ``ssh -tt ... "remo-host sessions attach --project <quoted>"``).
+    Prefixed with :data:`REMOTE_PATH_PREFIX` so the remote shell can locate
+    ``remo-host`` in ``~/.local/bin`` (not on a non-interactive shell's PATH).
     """
-    return shlex.join(build_remo_host_argv(verb, project=project, json=json))
+    return f"{REMOTE_PATH_PREFIX} {shlex.join(build_remo_host_argv(verb, project=project, json=json))}"
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +346,10 @@ def run_remo_host_json(
     :class:`PayloadTooLargeError`, :class:`MalformedResponseError`, or
     :class:`IncompatibleProtocolError` on failure.
     """
-    argv = [*ssh_argv_prefix, *build_remo_host_argv(verb, json=True)]
+    # REMOTE_PATH_PREFIX is a separate command word; ssh joins the post-target
+    # words with spaces, so the remote shell evaluates it as a `PATH=... cmd`
+    # assignment prefix that locates remo-host in ~/.local/bin.
+    argv = [*ssh_argv_prefix, REMOTE_PATH_PREFIX, *build_remo_host_argv(verb, json=True)]
     result = _invoke(argv, timeout=timeout)
     _classify_exit(result, verb=verb)
     payload = _decode_json_payload(result.stdout, payload_cap=payload_cap)

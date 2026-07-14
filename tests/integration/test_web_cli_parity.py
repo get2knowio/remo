@@ -133,9 +133,13 @@ class TestSsmArgvParity:
         assert argv[0] == "ssh"
         assert "-tt" in argv
         assert any("ProxyCommand=" in part and "aws ssm start-session" in part for part in argv)
-        # Target (user@instance_id) immediately precedes the remote command.
+        # Target (user@instance_id) immediately precedes the remote command,
+        # which prefixes PATH so the remote shell finds remo-host in
+        # ~/.local/bin (not on a non-interactive ssh shell's PATH).
         target_idx = argv.index("remo@i-0abc123def")
-        assert argv[target_idx + 1] == "remo-host sessions attach --project demo-project"
+        assert argv[target_idx + 1] == (
+            'PATH="$HOME/.local/bin:$PATH" remo-host sessions attach --project demo-project'
+        )
 
     def test_cli_and_web_transports_agree_on_target_and_proxy_shape(self, ssm_host, tmp_path):
         """Direct structural comparison: strip the CLI's -tt/target/remote-cmd

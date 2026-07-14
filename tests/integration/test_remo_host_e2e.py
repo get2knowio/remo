@@ -304,34 +304,38 @@ def _stop_container(name: str) -> None:
 def _install_remo_host_script(container_name: str, script_text: str) -> None:
     """Copy *script_text* into the container as an executable `remo-host`.
 
-    Installed at `/usr/local/bin` (and mirrored to `/usr/bin`) rather than
-    `~/.local/bin` -- see the module docstring's PATH note.
+    Installed ONLY at the `remo` user's `~/.local/bin/remo-host` — the exact
+    location the `user_setup` Ansible role uses in production, and NOT on the
+    default PATH of a non-interactive `ssh <host> <command>` shell. This makes
+    the test faithful: it passes only because the client prefixes the remote
+    command with `PATH="$HOME/.local/bin:$PATH"` (regression guard for the
+    "remo-host: command not found" bug that a `/usr/local/bin` install hid).
     """
     with tempfile.NamedTemporaryFile("w", suffix="-remo-host", delete=False) as f:
         f.write(script_text)
         local_path = f.name
+    dest = "/home/remo/.local/bin/remo-host"
     try:
         subprocess.run(
-            ["docker", "cp", local_path, f"{container_name}:/usr/local/bin/remo-host"],
+            ["docker", "exec", container_name, "mkdir", "-p", "/home/remo/.local/bin"],
             check=True,
             capture_output=True,
             timeout=10,
         )
         subprocess.run(
-            ["docker", "exec", container_name, "chmod", "755", "/usr/local/bin/remo-host"],
+            ["docker", "cp", local_path, f"{container_name}:{dest}"],
             check=True,
             capture_output=True,
             timeout=10,
         )
         subprocess.run(
-            [
-                "docker",
-                "exec",
-                container_name,
-                "cp",
-                "/usr/local/bin/remo-host",
-                "/usr/bin/remo-host",
-            ],
+            ["docker", "exec", container_name, "chmod", "755", dest],
+            check=True,
+            capture_output=True,
+            timeout=10,
+        )
+        subprocess.run(
+            ["docker", "exec", container_name, "chown", "-R", "remo:remo", "/home/remo/.local"],
             check=True,
             capture_output=True,
             timeout=10,

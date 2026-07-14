@@ -129,22 +129,35 @@ class TestBuildRemoHostArgv:
 class TestBuildRemoHostShellCmd:
     def test_quotes_project_with_space(self):
         cmd = build_remo_host_shell_cmd("sessions attach", project="my project")
-        assert cmd == "remo-host sessions attach --project 'my project'"
+        assert cmd == (
+            'PATH="$HOME/.local/bin:$PATH" remo-host sessions attach --project \'my project\''
+        )
+
+    def test_prefixes_path_so_remote_shell_finds_local_bin(self):
+        # ~/.local/bin isn't on a non-interactive ssh shell's PATH, so the
+        # command must carry the PATH prefix (unquoted, so the remote shell
+        # expands $HOME/$PATH) before remo-host.
+        cmd = build_remo_host_shell_cmd("sessions attach", project="api")
+        assert cmd.startswith('PATH="$HOME/.local/bin:$PATH" remo-host ')
 
     def test_quotes_leading_dash_project_safely(self):
         cmd = build_remo_host_shell_cmd("sessions attach", project="-rf")
         # shlex.join always quotes tokens that could be misparsed as options
-        # when re-split; critically, re-splitting the string must reproduce
-        # the exact original argv.
+        # when re-split; critically, re-splitting the command portion must
+        # reproduce the exact original argv (the PATH prefix is the first word).
         import shlex
 
-        assert shlex.split(cmd) == ["remo-host", "sessions", "attach", "--project", "-rf"]
+        split = shlex.split(cmd)
+        assert split[0].startswith("PATH=")
+        assert split[1:] == ["remo-host", "sessions", "attach", "--project", "-rf"]
 
     def test_quotes_shell_metacharacters(self):
         cmd = build_remo_host_shell_cmd("sessions attach", project="$(whoami); rm -rf /")
         import shlex
 
-        assert shlex.split(cmd) == [
+        split = shlex.split(cmd)
+        assert split[0].startswith("PATH=")
+        assert split[1:] == [
             "remo-host",
             "sessions",
             "attach",
@@ -166,7 +179,13 @@ class TestSubprocessArgvComposition:
         get_capabilities(SSH_PREFIX)
 
         called_argv = mock_run.call_args[0][0]
-        assert called_argv == [*SSH_PREFIX, "remo-host", "capabilities", "--json"]
+        assert called_argv == [
+            *SSH_PREFIX,
+            'PATH="$HOME/.local/bin:$PATH"',
+            "remo-host",
+            "capabilities",
+            "--json",
+        ]
 
     def test_list_sessions_invokes_expected_argv(self, mocker):
         mock_run = mocker.patch("remo_cli.core.remo_host_client.subprocess.run")
@@ -175,7 +194,14 @@ class TestSubprocessArgvComposition:
         list_sessions(SSH_PREFIX)
 
         called_argv = mock_run.call_args[0][0]
-        assert called_argv == [*SSH_PREFIX, "remo-host", "sessions", "list", "--json"]
+        assert called_argv == [
+            *SSH_PREFIX,
+            'PATH="$HOME/.local/bin:$PATH"',
+            "remo-host",
+            "sessions",
+            "list",
+            "--json",
+        ]
 
     def test_no_shell_true_used(self, mocker):
         """subprocess.run must be called with an argv list, never shell=True."""
