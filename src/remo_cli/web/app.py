@@ -10,6 +10,7 @@ installed.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -94,7 +95,23 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
         # Startup: remove ControlMaster sockets left by a previously crashed
         # process (T035); the next attachment re-establishes a master.
         stale_socket_cleanup(settings.ssh_control_dir)
+
+        # Kick off an initial discovery so the cache is populated shortly after
+        # boot -- GET /hosts and GET /sessions only READ the cache, so without
+        # this the dashboard shows an empty registry until a client explicitly
+        # POSTs /discovery/refresh (or clicks "Refresh"). Fire-and-forget: never
+        # block startup on SSH round-trips (a slow/unreachable instance must not
+        # delay readiness). refresh() isolates per-host failures itself
+        # (FR-006); the done-callback just drains any unexpected exception so it
+        # isn't reported as "never retrieved".
+        initial_discovery = asyncio.create_task(app.state.discovery_service.refresh())
+        initial_discovery.add_done_callback(lambda t: t.cancelled() or t.exception())
+        app.state.initial_discovery_task = initial_discovery
+
         yield
+
+        if not initial_discovery.done():
+            initial_discovery.cancel()
         # Shutdown (NFR-007/SC-014): flip `shutting_down` BEFORE reaping, so
         # `POST /terminals` (web/api/terminals.py) starts rejecting new
         # terminal creation the instant shutdown begins -- otherwise a

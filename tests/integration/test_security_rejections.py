@@ -77,6 +77,9 @@ class _StubDiscovery:
             return self._host
         return None
 
+    async def refresh(self, instance_id: str | None = None, *, force: bool = True) -> None:
+        return None
+
 
 class _EmptyDiscovery:
     """A discovery service that has never discovered anything at all."""
@@ -85,6 +88,9 @@ class _EmptyDiscovery:
         return None
 
     def find_host(self, instance_type: str, instance_name: str):
+        return None
+
+    async def refresh(self, instance_id: str | None = None, *, force: bool = True) -> None:
         return None
 
 

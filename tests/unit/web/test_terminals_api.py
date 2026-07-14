@@ -64,6 +64,11 @@ class _StubDiscovery:
             return self._host
         return None
 
+    async def refresh(self, instance_id: str | None = None, *, force: bool = True) -> None:
+        # No-op: the app lifespan kicks off an initial discovery on startup;
+        # this stub has a fixed target and needs no real discovery run.
+        return None
+
 
 @pytest.fixture
 def target() -> SessionTarget:
