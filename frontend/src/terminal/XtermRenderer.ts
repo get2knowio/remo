@@ -4,24 +4,25 @@
 // against day to day; `GhosttyRenderer` is the opt-in alternative (SC-009),
 // selectable in Settings → Terminal engine.
 //
-// Targets `xterm@^5` plus `xterm-addon-fit` (`^0.8`, container fit),
-// `xterm-addon-ligatures` (`^0.6`, programming ligatures — activated only when
-// ligatures are enabled in Settings), and `xterm-addon-webgl` (`^0.16`,
-// GPU-accelerated rendering). Both renderers implement the same
-// `RendererAdapter`, so the engine choice has no backend impact (FR-036).
+// Targets the scoped `@xterm/*` packages: `@xterm/xterm@^5.5` plus
+// `@xterm/addon-fit` (`^0.10`, container fit), `@xterm/addon-ligatures`
+// (`^0.9`, programming ligatures — activated only when ligatures are enabled
+// in Settings), and `@xterm/addon-webgl` (`^0.18`, GPU-accelerated rendering).
+// Both renderers implement the same `RendererAdapter`, so the engine choice
+// has no backend impact (FR-036).
 //
 // WebGL is loaded AFTER open() (the addon requires an attached terminal) and is
 // strictly a rendering optimization: if the GPU context can't be created (e.g.
 // a headless/software browser) or is later lost, we drop the addon and xterm
 // falls back to its DOM/canvas renderer automatically — output is unaffected.
 
-import { Terminal } from "xterm";
-import { FitAddon } from "xterm-addon-fit";
-import { LigaturesAddon } from "xterm-addon-ligatures";
-import { WebglAddon } from "xterm-addon-webgl";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { LigaturesAddon } from "@xterm/addon-ligatures";
+import { WebglAddon } from "@xterm/addon-webgl";
 // xterm ships its own stylesheet; without it the terminal renders with broken
 // cell sizing/positioning. Bundled here so it loads whenever this renderer is.
-import "xterm/css/xterm.css";
+import "@xterm/xterm/css/xterm.css";
 import type {
   RendererAdapter,
   TerminalDimensions,
