@@ -18,6 +18,8 @@ interface WorkspacePaneProps {
   targetsById: Map<string, SessionTarget>;
   /** "type::name" -> registry region, for the terminal identity badge. */
   regionByKey: Map<string, string>;
+  /** Re-run discovery for a target's instance (its terminal exited/closed). */
+  onTerminalEnded: (target: SessionTarget) => void;
   narrow: boolean;
 }
 
@@ -37,6 +39,7 @@ function gridColumns(visibleCount: number, narrow: boolean): number {
 export function WorkspacePane({
   targetsById,
   regionByKey,
+  onTerminalEnded,
   narrow,
 }: WorkspacePaneProps): JSX.Element {
   const workspace = useWorkspace();
@@ -104,6 +107,7 @@ export function WorkspacePane({
               onBackToGrid={mode === "single" && canBackToGrid ? workspace.backToGrid : undefined}
               onFocusRequest={() => workspace.setFocused(target.id)}
               onActivity={() => workspace.markUnread(target.id)}
+              onEnded={() => onTerminalEnded(target)}
             />
           );
         })}

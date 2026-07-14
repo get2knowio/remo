@@ -68,6 +68,26 @@ export function AppShell(): JSX.Element {
     return map;
   }, [discovery.instances]);
 
+  const instanceIdByKey = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const i of discovery.instances) {
+      map.set(`${i.instance_type}::${i.instance_name}`, i.instance_id);
+    }
+    return map;
+  }, [discovery.instances]);
+
+  // A terminal exited or was closed: re-discover its instance so the rail's
+  // live ⚡/git state stops being stale (e.g. the ⚡ clears once a quit Zellij
+  // session is gone). Targeted to the one instance to keep it cheap.
+  const refresh = discovery.refresh;
+  const onTerminalEnded = useCallback(
+    (target: SessionTarget) => {
+      const id = instanceIdByKey.get(`${target.instance_type}::${target.instance_name}`);
+      void refresh(id);
+    },
+    [instanceIdByKey, refresh],
+  );
+
   const providers = useMemo(
     () => [...new Set(discovery.instances.map((i) => i.instance_type))],
     [discovery.instances],
@@ -196,7 +216,12 @@ export function AppShell(): JSX.Element {
               </button>
             </div>
           )}
-          <WorkspacePane targetsById={targetsById} regionByKey={regionByKey} narrow={narrow} />
+          <WorkspacePane
+            targetsById={targetsById}
+            regionByKey={regionByKey}
+            onTerminalEnded={onTerminalEnded}
+            narrow={narrow}
+          />
         </div>
       </div>
 

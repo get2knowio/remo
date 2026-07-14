@@ -59,6 +59,10 @@ interface TerminalCardProps {
   onFocusRequest?: () => void;
   /** Called when output arrives while this card is hidden (rail activity dot). */
   onActivity?: () => void;
+  /** Called when the remote process exits (session may have ended) or the
+   * terminal is closed — the caller should re-run discovery for this instance
+   * so the rail's live Zellij/git state stops being stale. */
+  onEnded?: () => void;
 }
 
 function effectiveFont(settings: SettingsState, mode: TerminalCardMode): TerminalFontOptions {
@@ -81,6 +85,7 @@ export function TerminalCard({
   onBackToGrid,
   onFocusRequest,
   onActivity,
+  onEnded,
 }: TerminalCardProps): JSX.Element {
   const settings = useSettings();
 
@@ -93,6 +98,7 @@ export function TerminalCard({
   const isFocusedRef = useRef(isFocused);
   const isVisibleRef = useRef(isVisible);
   const onActivityRef = useRef(onActivity);
+  const onEndedRef = useRef(onEnded);
   const fontRef = useRef<TerminalFontOptions>(effectiveFont(settings, mode));
 
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("connecting");
@@ -108,6 +114,9 @@ export function TerminalCard({
   useEffect(() => {
     onActivityRef.current = onActivity;
   }, [onActivity]);
+  useEffect(() => {
+    onEndedRef.current = onEnded;
+  }, [onEnded]);
 
   // Apply live font/size/ligature changes (and grid-fit scaling) to the open
   // terminal, then re-fit and tell the server the new dimensions.
@@ -155,6 +164,12 @@ export function TerminalCard({
         }
       },
       onReady: () => setError(null),
+      onExit: () => {
+        // The remote process exited — the Zellij session may have ended (e.g.
+        // the user quit Zellij). Re-run discovery so the rail's ⚡/git state
+        // reflects reality instead of the now-stale cache.
+        onEndedRef.current?.();
+      },
       onError: (typedError) => setError(typedError),
       onStateChange: (state) => {
         setConnectionState(state);
@@ -206,6 +221,9 @@ export function TerminalCard({
   const handleClose = useCallback(() => {
     void connectionRef.current?.close();
     onClose();
+    // Closing the card is also a good moment to re-check the instance: the
+    // user may have quit/detached the session before closing.
+    onEndedRef.current?.();
   }, [onClose]);
 
   const handleFocusSurface = useCallback(() => {
