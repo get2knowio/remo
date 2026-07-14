@@ -120,7 +120,13 @@ export function AppShell(): JSX.Element {
   const paneHidden = narrow && !paneHasContent;
   const showDivider = !narrow && !settings.railCollapsed;
 
-  const isLoading = discovery.lastRefreshedAt === null && discovery.instances.length === 0;
+  // "Loading" until the first discovery has produced instances — either before
+  // the first poll (lastRefreshedAt null) or while a refresh is still in flight
+  // (the auto-triggered first launch discovery). This keeps the "Empty
+  // registry" notice from flashing before discovery has actually finished.
+  const isLoading =
+    discovery.instances.length === 0 &&
+    (discovery.lastRefreshedAt === null || discovery.isRefreshing);
   const noRegistry = !isLoading && discovery.instances.length === 0;
   const noCredentials = health.checks.ssh_identity === "missing";
 

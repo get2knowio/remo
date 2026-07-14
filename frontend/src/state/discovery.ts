@@ -109,7 +109,12 @@ function startAutoRefresh(intervalMs: number): void {
   if (autoRefreshHandle !== undefined) {
     return;
   }
-  void pollOnce();
+  // First launch: the backend discovery cache is empty until a discovery run
+  // happens (GET /hosts only READS the cache). Trigger a full refresh — POST
+  // /discovery/refresh + follow-up polls — so the registry is discovered
+  // automatically without the user having to click "Refresh". Subsequent
+  // interval ticks just poll the now-populated cache.
+  void manualRefresh();
   autoRefreshHandle = setInterval(() => {
     void pollOnce();
   }, intervalMs);
