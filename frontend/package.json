@@ -21,7 +21,8 @@
     "react-dom": "^18",
     "xterm": "^5",
     "xterm-addon-fit": "^0.8",
-    "xterm-addon-ligatures": "^0.6.0"
+    "xterm-addon-ligatures": "^0.6.0",
+    "xterm-addon-webgl": "^0.16.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.48",
