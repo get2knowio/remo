@@ -72,6 +72,28 @@ export const TESTID = {
   terminalClose: (targetId: string) => `terminal-close-${targetId}`,
 } as const;
 
+/** Seeds the browser-local settings store so the console boots with a specific
+ * terminal engine. Uses `addInitScript`, so it MUST run before the first
+ * navigation — call it in a `beforeEach`. xterm.js is the app default; the
+ * Ghostty compatibility specs force `"ghostty"` so they exercise the engine
+ * they're named for. */
+export async function forceRenderer(
+  page: Page,
+  renderer: "xterm" | "ghostty",
+): Promise<void> {
+  await page.addInitScript((chosen) => {
+    try {
+      const key = "remo-web:settings";
+      const raw = window.localStorage.getItem(key);
+      const parsed: Record<string, unknown> = raw ? JSON.parse(raw) : {};
+      parsed.renderer = chosen;
+      window.localStorage.setItem(key, JSON.stringify(parsed));
+    } catch {
+      /* localStorage unavailable — the app falls back to its default engine. */
+    }
+  }, renderer);
+}
+
 /** Navigates to the console and waits for at least one discovered session row
  * to render. Returns the resolved targets' ids (the trailing `id` segment of
  * each `session-row-*` element) in rail order. */

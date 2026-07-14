@@ -9,6 +9,7 @@ import {
   FONT_OPTIONS,
   MAX_TERM_SIZE,
   MIN_TERM_SIZE,
+  RENDERER_OPTIONS,
   settingsActions,
   useSettings,
   type FontOption,
@@ -211,6 +212,37 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
               />
             </label>
             {uploadError && <p className="settings-upload-error">{uploadError}</p>}
+          </section>
+
+          {/* Terminal engine */}
+          <section>
+            <div className="settings-heading">Terminal engine</div>
+            <p className="settings-sub">
+              Which browser terminal emulator renders your sessions. Switching rebuilds each open
+              terminal and reconnects to the same remote session.
+            </p>
+            <div className="settings-gridmodes">
+              {RENDERER_OPTIONS.map((r) => {
+                const selected = settings.renderer === r.value;
+                return (
+                  <button
+                    key={r.value}
+                    type="button"
+                    data-testid={`renderer-${r.value}`}
+                    className={`settings-gridmode${selected ? " settings-gridmode--on" : ""}`}
+                    onClick={() => settingsActions.setRenderer(r.value)}
+                  >
+                    <span className="settings-radio">{selected ? "✓" : ""}</span>
+                    <span>
+                      <span className="settings-gridmode-title">
+                        {r.label} <span className="settings-font-tag">{r.tag}</span>
+                      </span>
+                      <span className="settings-gridmode-desc">{r.desc}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </section>
         </div>
       </div>

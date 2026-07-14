@@ -18,6 +18,33 @@ const STORAGE_KEY = "remo-web:settings";
 
 export const ACCENT_OPTIONS = ["#38bdf8", "#4ade80", "#a78bfa", "#fb923c", "#e5e7eb"] as const;
 
+/** Which browser terminal engine backs each terminal. xterm.js is the stable
+ * default; ghostty-web is the opt-in WASM engine (falls back to xterm if its
+ * one-time init failed — see terminal/defaultRenderer.ts). */
+export type RendererChoice = "xterm" | "ghostty";
+
+export interface RendererOption {
+  value: RendererChoice;
+  label: string;
+  tag: string;
+  desc: string;
+}
+
+export const RENDERER_OPTIONS: RendererOption[] = [
+  {
+    value: "xterm",
+    label: "xterm.js",
+    tag: "Stable",
+    desc: "The battle-tested emulator behind VS Code and many web IDEs. Recommended.",
+  },
+  {
+    value: "ghostty",
+    label: "ghostty-web",
+    tag: "Experimental",
+    desc: "Ghostty's WASM VT engine. Pre-1.0; falls back to xterm.js if it can't load.",
+  },
+];
+
 export interface FontOption {
   label: string;
   css: string;
@@ -54,6 +81,8 @@ export interface SettingsState {
   railCollapsed: boolean;
   /** Family name of the currently-registered uploaded Nerd Font, if any. */
   nerdFontName: string | null;
+  /** Browser terminal engine to back each terminal. */
+  renderer: RendererChoice;
 }
 
 export interface TerminalFontOptions {
@@ -71,6 +100,7 @@ const DEFAULTS: SettingsState = {
   railWidth: DEFAULT_RAIL_WIDTH,
   railCollapsed: false,
   nerdFontName: null,
+  renderer: "xterm",
 };
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -106,6 +136,7 @@ function loadPersisted(): SettingsState {
           : DEFAULTS.railWidth,
       railCollapsed: typeof c.railCollapsed === "boolean" ? c.railCollapsed : DEFAULTS.railCollapsed,
       nerdFontName: typeof c.nerdFontName === "string" ? c.nerdFontName : null,
+      renderer: c.renderer === "ghostty" || c.renderer === "xterm" ? c.renderer : DEFAULTS.renderer,
     };
   } catch (error) {
     console.error("settings: failed to restore from localStorage", error);
@@ -182,6 +213,7 @@ export const settingsActions = {
     setState({ railWidth: clamp(Math.round(railWidth), MIN_RAIL_WIDTH, MAX_RAIL_WIDTH) }),
   toggleRailCollapsed: () => setState({ railCollapsed: !state.railCollapsed }),
   setNerdFontName: (nerdFontName: string | null) => setState({ nerdFontName }),
+  setRenderer: (renderer: RendererChoice) => setState({ renderer }),
 };
 
 export function useSettings(): SettingsState {

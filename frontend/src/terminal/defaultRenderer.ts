@@ -1,19 +1,25 @@
-// Default renderer selection (spec decision #6 + SC-009 fallback).
+// Renderer selection (spec decision #6 + SC-009 fallback).
 //
-// `ghostty-web` is the intended default renderer, but it requires an async
-// `init()` (loads its WASM VT engine) to run exactly once before ANY
-// `new Terminal()` is constructed. `RendererAdapter.open()` is synchronous and
-// `GhosttyRenderer`'s constructor builds the terminal eagerly, so we perform
-// that one-time init here at app startup (see `main.tsx`) BEFORE the first
-// `TerminalCard` mounts.
+// `xterm.js` is the DEFAULT renderer: it's the stable, battle-tested emulator
+// (VS Code et al.), which is what we want for day-to-day polish. `ghostty-web`
+// is an opt-in choice (Settings → Terminal engine) — its WASM VT engine is
+// pre-1.0. Users pick the engine via `settings.renderer`.
+//
+// `ghostty-web` requires an async `init()` (loads its WASM VT engine) to run
+// exactly once before ANY `new Terminal()` is constructed. `RendererAdapter.
+// open()` is synchronous and `GhosttyRenderer`'s constructor builds the
+// terminal eagerly, so we perform that one-time init here at app startup (see
+// `main.tsx`) BEFORE the first `TerminalCard` mounts — that way flipping to
+// ghostty in Settings takes effect immediately without a reload.
 //
 // If `init()` fails (e.g. the same-origin WASM asset can't be fetched), we log
-// it and fall back to `XtermRenderer` — the stable, release-blocking fallback
-// (FR-036/SC-009) — so a terminal still works. `createDefaultRenderer()` is
-// what `TerminalCard` calls; it returns Ghostty once init succeeded, xterm
-// otherwise.
+// it and force `XtermRenderer` even when ghostty was requested (FR-036/SC-009),
+// so a terminal always works. `createDefaultRenderer(font, choice)` is what
+// `TerminalCard` calls; it honors the requested engine, falling back to xterm
+// when ghostty isn't available.
 
 import { init as ghosttyInit } from "ghostty-web";
+import type { RendererChoice } from "../state/settings";
 import type { RendererAdapter, TerminalFontOptions } from "./RendererAdapter";
 import { GhosttyRenderer } from "./GhosttyRenderer";
 import { XtermRenderer } from "./XtermRenderer";
@@ -42,13 +48,18 @@ export function initRenderers(): Promise<void> {
   return initPromise;
 }
 
-/** True once ghostty-web initialized successfully (default renderer is Ghostty). */
+/** True once ghostty-web initialized successfully (opt-in engine is available). */
 export function isGhosttyReady(): boolean {
   return ghosttyReady;
 }
 
-/** The renderer `TerminalCard` uses by default: Ghostty when ready, else xterm.
- * `font` seeds the initial family/size/ligatures from the settings store. */
-export function createDefaultRenderer(font?: TerminalFontOptions): RendererAdapter {
-  return ghosttyReady ? new GhosttyRenderer(font) : new XtermRenderer(font);
+/** Build the renderer `TerminalCard` uses. `choice` is the user's selected
+ * engine (default "xterm"); ghostty is used only when explicitly chosen AND its
+ * WASM init succeeded, else we fall back to xterm. `font` seeds the initial
+ * family/size/ligatures from the settings store. */
+export function createDefaultRenderer(
+  font?: TerminalFontOptions,
+  choice: RendererChoice = "xterm",
+): RendererAdapter {
+  return choice === "ghostty" && ghosttyReady ? new GhosttyRenderer(font) : new XtermRenderer(font);
 }

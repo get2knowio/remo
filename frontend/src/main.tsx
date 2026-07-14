@@ -24,8 +24,9 @@ function mount(): void {
 
 // Apply persisted settings (accent + terminal font CSS vars on <html>) and
 // re-register any uploaded Nerd Fonts before first paint, then load the
-// ghostty-web WASM engine (the default renderer, decision #6) BEFORE mounting
-// so terminals can be constructed synchronously. initRenderers never rejects —
-// it falls back to xterm.js on failure — so `.finally` always mounts the app.
+// ghostty-web WASM engine BEFORE mounting so a terminal can be constructed
+// synchronously if the user has opted into ghostty (xterm.js is the default
+// engine and needs no such init). initRenderers never rejects — it forces
+// xterm.js on failure — so this always mounts the app.
 initSettings();
 void Promise.allSettled([restoreUploadedFonts(), initRenderers()]).then(mount);

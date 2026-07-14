@@ -34,6 +34,7 @@ import { expect, test } from "@playwright/test";
 import type { CapturedFrames } from "./fixtures";
 import {
   captureTerminalFrames,
+  forceRenderer,
   openTerminal,
   requireBackendFixture,
   typeCommand,
@@ -42,8 +43,11 @@ import {
 } from "./fixtures";
 
 test.describe("Ghostty Web compatibility: shell I/O fidelity", () => {
-  test.beforeEach(() => {
+  // xterm.js is the default engine; force ghostty-web so this suite exercises
+  // the renderer it's named for.
+  test.beforeEach(async ({ page }) => {
     requireBackendFixture(test);
+    await forceRenderer(page, "ghostty");
   });
 
   test("bash: prompt accepts a command and echoes exact, uncorrupted output", async ({ page }) => {

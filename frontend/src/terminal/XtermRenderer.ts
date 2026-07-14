@@ -1,12 +1,13 @@
 // RendererAdapter implementation wrapping `xterm` (xterm.js), the well-known,
-// stable terminal emulator library (T040, US2, FR-036 fallback renderer).
+// stable terminal emulator library (T040, US2, FR-036). This is the DEFAULT
+// terminal engine — battle-tested (VS Code et al.) and the surface we polish
+// against day to day; `GhosttyRenderer` is the opt-in alternative (SC-009),
+// selectable in Settings → Terminal engine.
 //
 // Targets `xterm@^5` plus `xterm-addon-fit` (`^0.8`, container fit) and
 // `xterm-addon-ligatures` (`^0.6`, programming ligatures — activated only when
-// ligatures are enabled in Settings). This is the release-blocking fallback
-// for `GhosttyRenderer` (SC-009): both implement the same `RendererAdapter`,
-// so swapping the default in `defaultRenderer.ts` is a one-line change with no
-// backend impact (FR-036).
+// ligatures are enabled in Settings). Both renderers implement the same
+// `RendererAdapter`, so the engine choice has no backend impact (FR-036).
 
 import { Terminal } from "xterm";
 import { FitAddon } from "xterm-addon-fit";

@@ -4,9 +4,10 @@
 // interface, never on `ghostty-web`/`xterm` classes directly — that is what
 // makes it a decoupling adapter (spec decision: "do not couple application
 // state directly to Ghostty Web classes"). Concrete implementations live in
-// `GhosttyRenderer.ts` (default, FR-036) and `XtermRenderer.ts` (fallback,
-// SC-009) so swapping the default is a one-line change with no backend
-// impact.
+// `XtermRenderer.ts` (the default engine — stable, battle-tested) and
+// `GhosttyRenderer.ts` (opt-in via Settings, FR-036/SC-009). The user picks
+// between them at runtime (`settings.renderer`); either satisfies this same
+// interface, so the choice has no backend impact.
 //
 // Naming follows xterm.js's well-established public API vocabulary — the de
 // facto reference shape for a browser terminal adapter — since both

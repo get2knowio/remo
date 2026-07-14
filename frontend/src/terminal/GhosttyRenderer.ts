@@ -1,5 +1,6 @@
-// RendererAdapter implementation wrapping `ghostty-web` (T040, US2, FR-036
-// default renderer per spec decision #6 / research.md R6).
+// RendererAdapter implementation wrapping `ghostty-web` (T040, US2, FR-036 /
+// research.md R6). Selectable via Settings → Terminal engine; xterm.js is the
+// default engine (see XtermRenderer.ts / defaultRenderer.ts).
 //
 // Targets `ghostty-web@0.4.0` (per `frontend/package.json`). The method-name
 // mapping below (`new Terminal()` / `.open(container)` / `.write()` /

@@ -152,7 +152,7 @@ export function TerminalCard({
     }
     createdRef.current = true;
 
-    const adapter = createDefaultRenderer(fontRef.current);
+    const adapter = createDefaultRenderer(fontRef.current, settings.renderer);
     adapterRef.current = adapter;
     adapter.open(container);
 
@@ -208,10 +208,12 @@ export function TerminalCard({
       adapterRef.current = null;
       connectionRef.current = null;
     };
-    // Keyed on target.id only: this card owns exactly one terminal for its
-    // lifetime (see file header).
+    // Keyed on target.id (+ renderer engine): this card owns exactly one
+    // terminal for its lifetime (see file header). Flipping the engine in
+    // Settings intentionally tears down and rebuilds the terminal with the
+    // chosen renderer, reconnecting to the same remote Zellij session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target.id]);
+  }, [target.id, settings.renderer]);
 
   const handleReconnect = useCallback(() => {
     setError(null);

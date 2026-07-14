@@ -42,6 +42,7 @@
 import { expect, test } from "@playwright/test";
 import {
   captureTerminalFrames,
+  forceRenderer,
   openTerminal,
   requireBackendFixture,
   typeCommand,
@@ -57,8 +58,11 @@ const ALT_SCREEN_DISABLE = "\u001b[?1049l";
 const BOX_DRAWING = /[─-╿]/;
 
 test.describe("Ghostty Web compatibility: Zellij and full-screen TUIs", () => {
-  test.beforeEach(() => {
+  // xterm.js is the default engine; force ghostty-web so this suite exercises
+  // the renderer it's named for.
+  test.beforeEach(async ({ page }) => {
     requireBackendFixture(test);
+    await forceRenderer(page, "ghostty");
   });
 
   test("Zellij: attaching to a project lands in a real Zellij session (alt-screen + styled borders)", async ({

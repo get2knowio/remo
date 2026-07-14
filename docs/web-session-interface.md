@@ -72,10 +72,13 @@ session-target IDs. Three protocol layers make this work, each documented in ful
 
 Backend package: `src/remo_cli/web/` (`app.py` FastAPI factory, `config.py` settings, `discovery.py`,
 `ssh_master.py`, `terminal.py`, `terminal_registry.py`, `tokens.py`, `health.py`, `check.py`, plus
-`api/hosts.py` and `api/terminals.py`). Frontend: `frontend/` (Vite + React + TypeScript), using
-[ghostty-web](https://github.com/ghostty-org) as the default terminal renderer behind a Remo-owned
-adapter (`frontend/src/terminal/RendererAdapter.ts`), with an xterm.js fallback
-(`frontend/src/terminal/XtermRenderer.ts`) if a compatibility gap ever requires swapping renderers.
+`api/hosts.py` and `api/terminals.py`). Frontend: `frontend/` (Vite + React + TypeScript). Terminals
+render behind a Remo-owned adapter (`frontend/src/terminal/RendererAdapter.ts`) with two
+interchangeable engines: **xterm.js** (`XtermRenderer.ts`) is the default — stable and
+battle-tested — and **[ghostty-web](https://github.com/coder/ghostty-web)** (`GhosttyRenderer.ts`,
+its WASM VT engine) is opt-in. The user switches between them at runtime via **Settings → Terminal
+engine** (`settings.renderer`, persisted browser-side); ghostty falls back to xterm.js if its WASM
+engine can't load. Either engine satisfies the same adapter, so the choice has no backend impact.
 
 ## Browser console UI
 
