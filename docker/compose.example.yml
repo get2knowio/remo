@@ -40,9 +40,24 @@ services:
       # separate mounts below for that.
       - "${HOME}/.config/remo:/home/remo/.config/remo:ro"
       # SSH material (read-only): private key, client config, known_hosts.
-      # Mount only what you need; paths below are common defaults.
+      #
+      # Every source path below must already EXIST on the host. Docker creates
+      # a missing bind source as a root-owned empty *directory* rather than
+      # failing, and ssh then silently ignores a directory-shaped config /
+      # known_hosts — `remo web check` still passes (it only asserts an
+      # identity file exists), so the breakage surfaces later as puzzling
+      # per-instance connection failures. Delete any mount below you don't
+      # actually have rather than letting Docker fabricate it.
+      #
+      # Only the private key is required. Adjust the key path if yours isn't
+      # id_ed25519 (or point $REMO_WEB_SSH_IDENTITY_FILE at it).
       - "${HOME}/.ssh/id_ed25519:/home/remo/.ssh/id_ed25519:ro"
+      # Optional: remo connects to registry entries by explicit user@host and
+      # never relies on `Host` aliases, so this is only needed if your setup
+      # depends on extra client config (e.g. ProxyJump to reach an instance).
       - "${HOME}/.ssh/config:/home/remo/.ssh/config:ro"
+      # Host keys for direct-access (incus/proxmox/hetzner) instances, which
+      # — unlike SSM-routed ones — are subject to strict host key checking.
       - "${HOME}/.ssh/known_hosts:/home/remo/.ssh/known_hosts:ro"
       # Optional: AWS credentials/profile for SSM-routed targets (SC-006).
       # Uncomment and adapt if any registered targets use the SSM proxy path.
