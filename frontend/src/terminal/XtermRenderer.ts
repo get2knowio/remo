@@ -41,6 +41,9 @@ export class XtermRenderer implements RendererAdapter {
   private ligaturesAddon: LigaturesAddon | null = null;
   private webglAddon: WebglAddon | null = null;
   private opened = false;
+  /** Desired ligature state; the addon is only actually (un)loaded after
+   * open() since it registers a character joiner that needs an opened terminal. */
+  private ligaturesEnabled = false;
 
   constructor(font: TerminalFontOptions = DEFAULT_FONT) {
     this.terminal = new Terminal({
@@ -59,8 +62,13 @@ export class XtermRenderer implements RendererAdapter {
   }
 
   private applyLigatures(enabled: boolean): void {
-    // The ligatures addon registers on the terminal; if loaded pre-open it
-    // still takes effect once open() runs.
+    this.ligaturesEnabled = enabled;
+    // @xterm/addon-ligatures calls registerCharacterJoiner in activate(), which
+    // throws "Terminal must be opened first" if loaded pre-open. Defer to
+    // open() when we're not attached yet; open() re-invokes with this state.
+    if (!this.opened) {
+      return;
+    }
     if (enabled && !this.ligaturesAddon) {
       this.ligaturesAddon = new LigaturesAddon();
       this.terminal.loadAddon(this.ligaturesAddon);
@@ -74,6 +82,8 @@ export class XtermRenderer implements RendererAdapter {
     this.terminal.open(container);
     this.opened = true;
     this.enableWebgl();
+    // Now that the terminal is attached, load the ligatures addon if wanted.
+    this.applyLigatures(this.ligaturesEnabled);
   }
 
   // GPU-accelerated rendering. Must run after open(). Best-effort: a failed
