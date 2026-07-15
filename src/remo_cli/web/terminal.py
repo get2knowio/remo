@@ -398,6 +398,25 @@ class TerminalSession:
                 apply_winsize(self._master_fd, self._cols, self._rows)
             except OSError:
                 pass
+            # The child ssh runs in its own session (start_new_session=True)
+            # WITHOUT the slave PTY as its controlling terminal, so the kernel
+            # does NOT deliver SIGWINCH to ssh on a master-side TIOCSWINSZ — and
+            # ssh only forwards a window-change to the remote when it *catches*
+            # SIGWINCH and re-reads TIOCGWINSZ from its stdin. Without this, the
+            # remote PTY (and any TUI on it) stays pinned at the initial size ssh
+            # read at startup, so the browser terminal appears not to resize.
+            # Deliver the signal explicitly, now that the master winsize (which
+            # the slave reflects) is already updated (FR-060).
+            self._signal_winch()
+
+    def _signal_winch(self) -> None:
+        proc = self._proc
+        if proc is None or proc.returncode is not None:
+            return
+        try:
+            os.kill(proc.pid, signal.SIGWINCH)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
 
     # -- state / observability -------------------------------------------
 

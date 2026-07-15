@@ -7,9 +7,11 @@ actually took effect.
 
 from __future__ import annotations
 
+import asyncio
 import fcntl
 import os
 import struct
+import sys
 import termios
 
 import pytest
@@ -85,5 +87,47 @@ async def test_session_resize_applies_to_live_pty():
         # Out-of-bounds resize is clamped, never propagated raw.
         session.resize(0, 100000)
         assert _read_winsize(session._master_fd) == (MIN_DIMENSION, MAX_DIMENSION)  # noqa: SLF001
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_session_resize_delivers_sigwinch_to_child():
+    """resize() must SIGWINCH the child so ssh re-reads + forwards the new size.
+
+    The child ssh is spawned in its own session without the slave PTY as its
+    controlling terminal, so a master-side TIOCSWINSZ raises no SIGWINCH on its
+    own. This child traps SIGWINCH and echoes a marker; seeing it proves the
+    signal was delivered (without this, ssh never tells the remote to resize).
+    """
+    # A tiny child that reports every SIGWINCH it receives, then idles.
+    child = (
+        "import signal,sys,time\n"
+        "signal.signal(signal.SIGWINCH, lambda *a: (sys.stdout.write('WINCH\\n'), sys.stdout.flush()))\n"
+        "sys.stdout.write('READY\\n'); sys.stdout.flush()\n"
+        "time.sleep(5)\n"
+    )
+    session = TerminalSession([sys.executable, "-u", "-c", child], cols=80, rows=24)
+    await session.start()
+
+    async def _drain_until(marker: bytes, timeout: float = 3.0) -> bool:
+        acc = bytearray()
+        async def _pump() -> bool:
+            while True:
+                chunk = await session.read_output()
+                if not chunk:
+                    return False
+                acc.extend(chunk)
+                if marker in acc:
+                    return True
+        try:
+            return await asyncio.wait_for(_pump(), timeout)
+        except (TimeoutError, asyncio.TimeoutError):
+            return False
+
+    try:
+        assert await _drain_until(b"READY"), "child never started"
+        session.resize(133, 55)
+        assert await _drain_until(b"WINCH"), "child did not receive SIGWINCH on resize"
     finally:
         await session.close()
