@@ -371,7 +371,13 @@ jobs:
       - name: Test connectivity
         run: |
           # Get container IP from incus (known_hosts stores name, not IP)
-          HOST=$(sudo incus list $CONTAINER_NAME --format=json | \
+          # Query via sg (as the runner), never `sudo incus`: sudo keeps
+          # HOME=/home/runner here, so a root-run incus client writes a
+          # root-owned ~/.config/incus/config.yml that every later
+          # runner-owned `remo incus ...` step then fails to read with
+          # "permission denied". Same incus-admin group route as every other
+          # incus call in this job.
+          HOST=$(sg incus-admin -c "incus list $CONTAINER_NAME --format=json" | \
             python3 -c "import sys,json; d=json.load(sys.stdin)[0]['state']['network']['eth0']['addresses']; print([a['address'] for a in d if a['family']=='inet'][0])")
           echo "HOST=$HOST" >> "$GITHUB_ENV"
           echo "Testing SSH to remo@$HOST..."
@@ -536,7 +542,13 @@ jobs:
           # Re-create the container for downstream steps (cp tests etc.)
           sg incus-admin -c "uv run remo incus create --name $CONTAINER_NAME"
           # Refresh $HOST since the container was rebuilt
-          HOST=$(sudo incus list $CONTAINER_NAME --format=json | \
+          # Query via sg (as the runner), never `sudo incus`: sudo keeps
+          # HOME=/home/runner here, so a root-run incus client writes a
+          # root-owned ~/.config/incus/config.yml that every later
+          # runner-owned `remo incus ...` step then fails to read with
+          # "permission denied". Same incus-admin group route as every other
+          # incus call in this job.
+          HOST=$(sg incus-admin -c "incus list $CONTAINER_NAME --format=json" | \
             python3 -c "import sys,json; d=json.load(sys.stdin)[0]['state']['network']['eth0']['addresses']; print([a['address'] for a in d if a['family']=='inet'][0])")
           echo "HOST=$HOST" >> "$GITHUB_ENV"
 
