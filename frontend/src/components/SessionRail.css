@@ -355,6 +355,36 @@
   color: var(--ok);
 }
 
+/* Touch devices (iPad et al.): grow the rail's tap targets — taller session
+ * rows and larger per-row/instance action buttons — while leaving the compact
+ * pointer layout unchanged. The whole row is already tappable to open, so this
+ * mainly helps the small +/open-all controls and finger-precision on rows. */
+@media (pointer: coarse) {
+  .rail-row {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
+  .rail-row-add {
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+  .rail-inst-openall {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+  }
+  .rail-toggle,
+  .rail-openall {
+    padding: 9px 8px;
+    font-size: 12px;
+  }
+  .rail-chip {
+    padding: 6px 11px;
+    font-size: 12px;
+  }
+}
+
 /* --- legend --- */
 .rail-legend {
   flex: none;

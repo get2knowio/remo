@@ -185,3 +185,17 @@
   background: var(--bg-term);
   padding: 2px 4px;
 }
+
+/* Touch devices (iPad et al.): enlarge the card's header controls, especially
+ * the compact grid-tile close ✕, so they're comfortably tappable. */
+@media (pointer: coarse) {
+  .tc-btn {
+    padding: 8px 13px;
+    font-size: 13px;
+  }
+  .terminal-card--grid .tc-btn--close {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+  }
+}

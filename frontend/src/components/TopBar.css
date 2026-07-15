@@ -113,3 +113,17 @@
 .topbar-btn:hover {
   background: var(--bg-btn-hover);
 }
+
+/* Touch devices (iPad et al.): enlarge the header controls toward a
+ * comfortable tap target without disturbing the dense pointer layout. */
+@media (pointer: coarse) {
+  .topbar-icon-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 17px;
+  }
+  .topbar-btn {
+    padding: 9px 14px;
+    font-size: 13.5px;
+  }
+}
