@@ -302,7 +302,17 @@ def registry_and_ssh_mounts(tmp_path):
         check=True,
         timeout=15,
     )
-    key_path.chmod(0o600)
+    # World-readable, not the conventional 0600: the container runs as uid
+    # 1000 (`--user 1000:1000`, matching compose.example.yml) while this key
+    # is owned by whatever uid runs pytest. Those coincide on a workstation
+    # whose user is uid 1000, but not on a GitHub runner (uid 1001) -- there
+    # a 0600 key is unreadable to the container, `remo web check`'s
+    # os.access(R_OK) probe reports "no SSH private key found", and the
+    # entrypoint gate exits before the assertions below ever run. The key is
+    # a throwaway generated into tmp_path and never used to authenticate, so
+    # loosening the mode costs nothing. Any change here must keep the file
+    # readable by a *different* uid than the one running the tests.
+    key_path.chmod(0o644)
     return registry_dir, key_path
 
 

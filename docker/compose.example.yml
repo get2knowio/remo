@@ -68,6 +68,23 @@ services:
       #
       # Only the private key is required. Adjust the key path if yours isn't
       # id_ed25519 (or point $REMO_WEB_SSH_IDENTITY_FILE at it).
+      #
+      # The key must be READABLE BY UID 1000 — the uid this container runs as
+      # (see `user:` below). Bind mounts keep their host ownership, so if your
+      # login account isn't uid 1000, the conventional 0600 key you mounted is
+      # unreadable inside the container and startup fails with "no SSH private
+      # key found" — which reads like the mount is missing when it is really
+      # just unreadable. Check with `id -u`; if it isn't 1000, grant uid 1000
+      # read access to the key, e.g. with a POSIX ACL that leaves the host
+      # mode 0600 intact:
+      #
+      #   setfacl -m u:1000:r ~/.ssh/id_ed25519
+      #
+      # Note that changing `user:` to your own uid is NOT a workaround: the
+      # image's /home/remo is mode 0700 owned by uid 1000, so any other uid
+      # cannot traverse it and every mount below becomes unreachable. Grant
+      # uid 1000 access to the key instead, or use a dedicated key for this
+      # service.
       - "${HOME}/.ssh/id_ed25519:/home/remo/.ssh/id_ed25519:ro"
       # Optional: remo connects to registry entries by explicit user@host and
       # never relies on `Host` aliases, so this is only needed if your setup
