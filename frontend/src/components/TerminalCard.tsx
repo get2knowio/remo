@@ -100,6 +100,10 @@ export function TerminalCard({
   const onActivityRef = useRef(onActivity);
   const onEndedRef = useRef(onEnded);
   const fontRef = useRef<TerminalFontOptions>(effectiveFont(settings, mode));
+  // Coalesced-fit bookkeeping: a pending rAF handle, and the last dims we sent
+  // (to skip redundant resize frames).
+  const fitRafRef = useRef<number | null>(null);
+  const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null);
 
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("connecting");
   const [needsManualReconnect, setNeedsManualReconnect] = useState(false);
@@ -118,26 +122,54 @@ export function TerminalCard({
     onEndedRef.current = onEnded;
   }, [onEnded]);
 
+  // Coalesce fit()+resize into at most one per animation frame, and only send a
+  // resize frame when the cell grid actually changed. A window drag fires the
+  // ResizeObserver many times per second; without this each tick would fit()
+  // and push a SIGWINCH-triggering resize to the remote PTY (and can trip the
+  // browser's "ResizeObserver loop" warning). Stable identity (empty deps): it
+  // reads everything through refs.
+  const scheduleFit = useCallback(() => {
+    if (fitRafRef.current !== null) {
+      return; // a fit is already scheduled for this frame
+    }
+    fitRafRef.current = requestAnimationFrame(() => {
+      fitRafRef.current = null;
+      const adapter = adapterRef.current;
+      const connection = connectionRef.current;
+      const container = containerRef.current;
+      if (!adapter || !connection || !container) {
+        return;
+      }
+      // A hidden pane collapses to 0x0; fitting then would shrink the remote
+      // PTY to 1x1 and corrupt a backgrounded TUI. Skip — the observer fires
+      // again with real dimensions when the card is shown, and TerminalConnection
+      // re-sends the last dims on `ready` after a reconnect.
+      if (container.clientWidth === 0 || container.clientHeight === 0) {
+        return;
+      }
+      const dims = adapter.fit();
+      const last = lastSentDimsRef.current;
+      if (last && last.cols === dims.cols && last.rows === dims.rows) {
+        return; // grid unchanged — no need to resize the remote PTY
+      }
+      lastSentDimsRef.current = dims;
+      connection.sendResize(dims.cols, dims.rows);
+    });
+  }, []);
+
   // Apply live font/size/ligature changes (and grid-fit scaling) to the open
-  // terminal, then re-fit and tell the server the new dimensions.
+  // terminal, then re-fit so the new cell grid reaches the remote PTY.
   const font = effectiveFont(settings, mode);
   useEffect(() => {
     fontRef.current = font;
     const adapter = adapterRef.current;
-    const connection = connectionRef.current;
-    const container = containerRef.current;
-    if (!adapter || !connection) {
+    if (!adapter) {
       return;
     }
     adapter.applyFont(font);
-    // Only re-fit/resize when actually visible: a hidden card collapses to
-    // 0x0, and fitting then would shrink the remote PTY to 1x1 and corrupt a
-    // backgrounded TUI. The ResizeObserver re-fits (with real dimensions) when
-    // the card is shown again, so applyFont alone is enough while hidden.
-    if (container && container.clientWidth > 0 && container.clientHeight > 0) {
-      const dims = adapter.fit();
-      connection.sendResize(dims.cols, dims.rows);
-    }
+    // A font/size change alters the cell grid; re-fit (coalesced) so the new
+    // cols/rows reach the remote PTY. scheduleFit no-ops while hidden (0x0).
+    scheduleFit();
     // font is a fresh object each render; compare by its fields.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [font.fontFamily, font.fontSize, font.ligatures]);
@@ -184,23 +216,21 @@ export function TerminalCard({
       }
     });
 
-    const resizeObserver = new ResizeObserver(() => {
-      // A hidden pane collapses to 0x0; measuring then would shrink the remote
-      // PTY to 1x1 and corrupt a backgrounded TUI. Skip while not visible; the
-      // observer fires again with real dimensions when shown, and `ready`
-      // re-syncs size too.
-      if (container.clientWidth === 0 || container.clientHeight === 0) {
-        return;
-      }
-      const dims = adapter.fit();
-      connection.sendResize(dims.cols, dims.rows);
-    });
+    // Reflow on every container size change (window resize, rail drag, grid
+    // <-> single, tile show/hide). scheduleFit coalesces bursts to one fit per
+    // frame and skips the hidden-0x0 case.
+    const resizeObserver = new ResizeObserver(() => scheduleFit());
     resizeObserver.observe(container);
 
     void connection.connect();
 
     return () => {
       createdRef.current = false;
+      if (fitRafRef.current !== null) {
+        cancelAnimationFrame(fitRafRef.current);
+        fitRafRef.current = null;
+      }
+      lastSentDimsRef.current = null;
       unsubscribeInput();
       resizeObserver.disconnect();
       void connection.close();
