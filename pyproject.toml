@@ -24,6 +24,11 @@ dev = [
     "pytest-mock",
     "ruff",
     "mypy",
+    # Transport backing starlette's TestClient, which every tests/**/web
+    # suite builds on. Starlette does not depend on it (the service itself
+    # never makes HTTP client calls), so without this the web tests fail at
+    # collection, not as assertions.
+    "httpx2",
 ]
 web = [
     "fastapi",
