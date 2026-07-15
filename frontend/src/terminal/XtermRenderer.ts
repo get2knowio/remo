@@ -49,6 +49,9 @@ export class XtermRenderer implements RendererAdapter {
       scrollback: 5000,
       fontFamily: font.fontFamily,
       fontSize: font.fontSize,
+      // @xterm/addon-ligatures registers a character joiner, which lives behind
+      // xterm's "proposed API" guard; without this the addon throws on load.
+      allowProposedApi: true,
     });
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
