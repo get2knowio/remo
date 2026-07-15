@@ -172,10 +172,39 @@ instance — your own LAN, your own tailnet, or behind a reverse proxy you contr
 ## Docker Compose deployment
 
 See [`docker/compose.example.yml`](../docker/compose.example.yml) — copy and adapt it; it is not run
-automatically. It builds from the multi-stage [`docker/Dockerfile`](../docker/Dockerfile) (stage 1
+automatically. It pulls the published image and needs no source checkout, so the Compose file is the
+only file you need:
+
+```bash
+curl -O https://raw.githubusercontent.com/get2knowio/remo/main/docker/compose.example.yml
+# adapt the mounts to your host, then:
+docker compose -f compose.example.yml up -d
+```
+
+### The published image
+
+`ghcr.io/get2knowio/remo-web` is published on every stable release by
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) as a multi-arch manifest
+(`linux/amd64` + `linux/arm64`), so the same `image:` line works on an x86 box and a Raspberry Pi.
+
+| Tag | Moves | Use when |
+|---|---|---|
+| `latest` | Each stable release. Pre-release tags (`rc`/`beta`/`alpha`/`dev`) are **never** published as `latest`. | You want `docker compose pull` to track stable releases. |
+| `2.1.0` (exact version) | Never — immutable. | You'd rather upgrade deliberately. Recommended if you care about reproducibility. |
+| `2.1` (major.minor) | Each stable patch within that minor. | You want patch fixes but not minor bumps. |
+
+### Building from source instead
+
+Comment out `image:` and uncomment the `build:` block in the Compose file to build the same
+multi-stage [`docker/Dockerfile`](../docker/Dockerfile) the published image comes from (stage 1
 builds the `frontend/` SPA with Node; stage 2 builds a `remo-cli[web]` wheel; stage 3 is a slim Python
 runtime with `openssh-client`, AWS CLI v2, and the Session Manager Plugin, arch-selected via
-`$TARGETARCH` for amd64/arm64).
+`$TARGETARCH` for amd64/arm64). That path needs a full repo checkout, and the Compose file must stay
+in `docker/` for its relative build context to resolve.
+
+Both paths are exercised on every PR by the `docker-image` job in
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml), which really builds the image for amd64 and
+arm64 and runs it under the hardening flags below (see `tests/image/`).
 
 ### What each mount is for
 

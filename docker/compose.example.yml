@@ -3,14 +3,31 @@
 # Example Compose file for running `remo web` in a home lab (010-web-session-
 # interface, US4). Copy/adapt this file — it is not used automatically.
 #
+# This file is self-contained: it pulls a published image, so it is the only
+# file you need. Everything it references from the repo is either a comment
+# or an optional build override.
+#
 # See specs/010-web-session-interface/quickstart.md "B. Container run" and
 # research.md R8 for the full rationale behind these hardening defaults.
 
 services:
   remo-web:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
+    # Published on each stable release by .github/workflows/release.yml, as a
+    # multi-arch manifest (linux/amd64 + linux/arm64) — Docker selects the
+    # right one for your host, so a Pi and an x86 box use the same line.
+    #
+    # `latest` only ever tracks stable releases (pre-release tags are never
+    # published as latest). Pin a specific version — e.g. :2.1.0 — if you'd
+    # rather upgrade deliberately than on every `docker compose pull`.
+    image: ghcr.io/get2knowio/remo-web:latest
+    # To build from a source checkout instead of pulling (local development,
+    # or to run an unreleased change), comment out `image:` above and
+    # uncomment this — it is the same Dockerfile the published image is built
+    # from. Requires the full repo, and this file must stay at docker/ for the
+    # relative context to resolve.
+    # build:
+    #   context: ..
+    #   dockerfile: docker/Dockerfile
     ports:
       # Bind to loopback only by default — this is a LAN-trust-boundary
       # service (FR-052), not meant to be exposed directly to the internet.
