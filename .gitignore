@@ -48,6 +48,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+# TypeScript incremental build cache (regenerated on every build)
+*.tsbuildinfo
 
 # IDE files
 .idea/
