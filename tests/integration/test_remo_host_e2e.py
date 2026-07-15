@@ -374,9 +374,21 @@ async def _discover_via_service(
 
 
 @pytest.mark.asyncio
-async def test_unreachable_closed_port_yields_unreachable_snapshot(monkeypatch, tmp_path):
-    """A real `ssh` attempt against a closed local port -- no server, no Docker."""
-    host = KnownHost(type="incus", name="closed-port", host="127.0.0.1", user="nobody")
+async def test_unreachable_host_yields_unreachable_snapshot(monkeypatch, tmp_path):
+    """A real `ssh` attempt against an unreachable host -- no server, no Docker.
+
+    Targets an RFC 2606 `.invalid` name, which is reserved precisely so it can
+    never resolve. This deliberately does NOT probe a "closed" port on
+    127.0.0.1: `KnownHost` carries no port and `build_ssh_base_cmd` always
+    uses 22, so that only reads as unreachable where nothing happens to be
+    listening on the loopback ssh port. On any host running sshd -- including
+    GitHub's runners -- the connection is answered and rejected instead,
+    yielding AUTH_FAILED and failing this test. An unresolvable name keeps the
+    failure environment-independent, and still exercises the path under test:
+    SshTransportError -> `_classify_ssh_transport` -> a retryable, target-less
+    snapshot.
+    """
+    host = KnownHost(type="incus", name="unreachable", host="unreachable.invalid", user="nobody")
     snapshot = await _discover_via_service(monkeypatch, tmp_path, host, discovery_timeout_s=5.0)
 
     assert snapshot.status in (InstanceStatus.UNREACHABLE, InstanceStatus.TIMEOUT)
