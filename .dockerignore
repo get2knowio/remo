@@ -8,8 +8,14 @@
 .remo
 .venv
 venv
-node_modules
-dist
+# Patterns match against the full context-relative path, so a bare
+# `node_modules` would only match one at the context root (there is none) and
+# would miss frontend/node_modules — ~59MB of host-built deps that npm ci
+# discards anyway, and that bust the frontend-builder layer cache on every
+# local npm install. The frontend build (docker/Dockerfile stage 1) produces
+# frontend/dist itself, so the host copy is likewise never wanted.
+**/node_modules
+**/dist
 build
 *.egg-info
 *.egg
