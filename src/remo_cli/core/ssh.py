@@ -13,11 +13,36 @@ from pathlib import Path
 from remo_cli.core.known_hosts import get_aws_region, get_known_hosts, resolve_remo_host_by_name
 from remo_cli.core.output import print_info
 from remo_cli.core.picker import pick_environment
-from remo_cli.core.validation import validate_port
+from remo_cli.core.validation import validate_port, validate_project_name
 from remo_cli.models.host import KnownHost
 
 
-def build_ssh_opts(host: KnownHost, multiplex: bool = False) -> tuple[list[str], str]:
+def resolve_ssh_control_dir(control_dir: str | None = None) -> str:
+    """Resolve the directory that holds SSH ControlMaster sockets.
+
+    Resolution order:
+
+    1. *control_dir* argument, when given explicitly by the caller.
+    2. The ``$REMO_SSH_CONTROL_DIR`` environment variable, when set.
+    3. ``~/.ssh`` (today's hard-coded default), otherwise.
+
+    This lets CLI call sites keep working with zero changes (they never pass
+    *control_dir* and, ordinarily, never set the env var either) while giving
+    the web service a single hook — set ``$REMO_SSH_CONTROL_DIR`` once — to
+    point ControlPath sockets at a writable tmpfs (e.g. ``/run/remo-ssh``)
+    instead of a read-only-mounted ``~/.ssh``.
+    """
+    if control_dir:
+        return control_dir
+    env_dir = os.environ.get("REMO_SSH_CONTROL_DIR")
+    if env_dir:
+        return env_dir
+    return "~/.ssh"
+
+
+def build_ssh_opts(
+    host: KnownHost, multiplex: bool = False, control_dir: str | None = None
+) -> tuple[list[str], str]:
     """Build SSH option flags and target string for the given host.
 
     Parameters
@@ -28,6 +53,11 @@ def build_ssh_opts(host: KnownHost, multiplex: bool = False) -> tuple[list[str],
         When ``True``, add ControlMaster/ControlPath/ControlPersist options so
         that subsequent SSH connections to the same host reuse the existing
         master socket.
+    control_dir:
+        Directory for the ControlMaster socket (the ``ControlPath`` becomes
+        ``f"{control_dir}/remo-%r@%h-%p"``). When ``None`` (the default for
+        every existing CLI call site), falls back to ``$REMO_SSH_CONTROL_DIR``
+        and finally to ``~/.ssh`` — see :func:`resolve_ssh_control_dir`.
 
     Returns
     -------
@@ -43,9 +73,10 @@ def build_ssh_opts(host: KnownHost, multiplex: bool = False) -> tuple[list[str],
     # Multiplexing
     # ------------------------------------------------------------------
     if multiplex:
+        resolved_control_dir = resolve_ssh_control_dir(control_dir)
         ssh_opts += [
             "-o", "ControlMaster=auto",
-            "-o", "ControlPath=~/.ssh/remo-%r@%h-%p",
+            "-o", f"ControlPath={resolved_control_dir}/remo-%r@%h-%p",
             "-o", "ControlPersist=60s",
         ]
 
@@ -88,6 +119,62 @@ def build_ssh_opts(host: KnownHost, multiplex: bool = False) -> tuple[list[str],
         ssh_opts += ["-o", "SendEnv=TZ"]
 
     return ssh_opts, ssh_target
+
+
+def build_ssh_base_cmd(
+    host: KnownHost,
+    *,
+    tty: bool = False,
+    multiplex: bool = False,
+    control_dir: str | None = None,
+    extra_opts: list[str] | None = None,
+) -> list[str]:
+    """Build the full ``ssh`` argv for connecting to *host*.
+
+    This is the single shared builder for both the CLI (:func:`shell_connect`)
+    and the web terminal service: it delegates all option construction (SSM
+    ``ProxyCommand``, direct-target selection, timezone ``SendEnv``,
+    ControlMaster/ControlPath) to :func:`build_ssh_opts` so that logic is
+    never duplicated, then assembles the final argv as a plain list — never a
+    shell string — so hostnames/usernames/proxy commands can't be
+    reinterpreted by a shell.
+
+    Parameters
+    ----------
+    host:
+        The registered host to connect to.
+    tty:
+        When ``True``, force remote TTY allocation with ``-tt`` (used for
+        attaching to an interactive remote session, e.g. Zellij). When
+        ``False`` (the default), no TTY flag is added, matching a plain
+        ``ssh <opts> <target>`` invocation.
+    multiplex:
+        Forwarded to :func:`build_ssh_opts`.
+    control_dir:
+        Forwarded to :func:`build_ssh_opts`.
+    extra_opts:
+        Extra argv elements inserted after *ssh_opts* but before the
+        ``-tt``/target elements — e.g. ``["-L", "8080:localhost:8080"]``
+        port-tunnel flags for :func:`shell_connect`. ``None``/empty (the
+        default for both existing call sites) leaves today's argv shape
+        unchanged.
+
+    Returns
+    -------
+    list[str]
+        ``["ssh", *ssh_opts, *extra_opts, "-tt"?, ssh_target]`` ready to pass
+        to ``subprocess``/``asyncio.create_subprocess_exec`` without
+        ``shell=True``.
+    """
+    ssh_opts, ssh_target = build_ssh_opts(host, multiplex=multiplex, control_dir=control_dir)
+
+    cmd: list[str] = ["ssh"] + ssh_opts
+    if extra_opts:
+        cmd += extra_opts
+    if tty:
+        cmd.append("-tt")
+    cmd.append(ssh_target)
+    return cmd
 
 
 def resolve_remo_host(name: str | None = None) -> KnownHost:
@@ -312,7 +399,22 @@ def build_project_launch_remote_cmd(
     typed it after ``--exec``) and forwarded as a single shell-quoted arg
     to ``--exec`` on the remote. The remote runs it via ``bash -lc`` so
     variable expansion, pipes, ``&&`` etc. all work as the user wrote them.
+
+    *project* is checked against :func:`~remo_cli.core.validation.
+    validate_project_name` (T059) BEFORE ``shlex.quote()`` — an additional,
+    client-side safety check on top of (not a replacement for) shell
+    quoting: today's ``project-launch`` direct-invocation CLI path has no
+    upfront validation at all, relying solely on the remote script's own
+    ``[[ ! -d "$PROJECT_DIR" ]]`` existence check. This runs the SAME
+    validator the web attach path runs (:func:`~remo_cli.web.terminal.
+    build_attach_argv`), so both surfaces identify/reject a given project
+    name identically (US5 scenario 3).
     """
+    try:
+        validate_project_name(project)
+    except ValueError as e:
+        raise SystemExit(f"Error: invalid project name: {e}")
+
     # Absolute path: SSH non-interactive commands don't source .bashrc, so
     # ~/.local/bin isn't in PATH. The remote login shell expands ~ for us.
     parts = ["~/.local/bin/project-launch", "--project", shlex.quote(project)]
@@ -356,16 +458,13 @@ def shell_connect(
     """
     use_project_launch = bool(project)
 
-    ssh_opts, ssh_target = build_ssh_opts(host, multiplex=True)
-
     print_info(f"Connecting to {host.type}: {host.name} ({host.host})...")
-
-    ssh_cmd: list[str] = ["ssh"] + ssh_opts
 
     # ------------------------------------------------------------------
     # Parse and validate tunnel specifications
     # ------------------------------------------------------------------
     parsed_tunnels: list[tuple[int, int]] = []
+    tunnel_opts: list[str] = []
     for spec in tunnels:
         if ":" in spec:
             parts = spec.split(":", 1)
@@ -394,21 +493,46 @@ def shell_connect(
             if result.stdout.strip():
                 raise SystemExit(f"Error: Local port {local_port} is already in use.")
 
-        ssh_cmd += ["-L", f"{local_port}:localhost:{remote_port}"]
+        tunnel_opts += ["-L", f"{local_port}:localhost:{remote_port}"]
         print_info(f"Tunnel: localhost:{local_port} -> remote :{remote_port}")
         parsed_tunnels.append((local_port, remote_port))
 
-    if use_project_launch:
-        # -t forces TTY allocation so the interactive zellij+devcontainer flow
-        # inside project-launch behaves correctly. The detach branch also
-        # benefits — devcontainer up prints progress that should reach the
-        # user's terminal even though the command exits immediately after.
-        ssh_cmd.append("-t")
-
-    ssh_cmd.append(ssh_target)
+    # ------------------------------------------------------------------
+    # Build the SSH argv via the shared builder (T058): the same
+    # build_ssh_opts()-backed option construction the web terminal service
+    # uses (build_attach_argv), so both paths share one SSH-argv-construction
+    # layer. `-L` tunnel flags (extra_opts) land before any `-tt`/target,
+    # matching today's flag ordering; `-tt` is added only for the
+    # *interactive* project-launch flow, so zellij+devcontainer reach the
+    # user's terminal.
+    #
+    # Detaching must NOT allocate a pty. sshd kills the pty session's
+    # process group when the channel closes, and project-launch's detach
+    # branch does `nohup setsid ... &` then `exit 0` -- returning
+    # immediately, by design. The child is killed mid-exec before setsid(2)
+    # can move it to a new session, so its command never runs and the log
+    # gets its header and nothing else. nohup's ignored SIGHUP does not save
+    # it; the process group is torn down regardless. Without a pty there is
+    # no such teardown and the child survives (verified over real ssh, with
+    # and without -tt). The detach branch needs no tty of its own: it sends
+    # `devcontainer up` output to /dev/null, and its only terminal output is
+    # a plain echo that reaches the client over ordinary stdout.
+    #
+    # `control_dir=None` preserves the CLI's default `~/.ssh` ControlPath.
+    # ------------------------------------------------------------------
+    ssh_cmd = build_ssh_base_cmd(
+        host,
+        tty=use_project_launch and not detach,
+        multiplex=True,
+        control_dir=None,
+        extra_opts=tunnel_opts or None,
+    )
 
     if use_project_launch:
         assert project is not None  # narrowed by use_project_launch
+        # build_project_launch_remote_cmd() runs validate_project_name()
+        # (T059) before shlex.quote(), so a malicious/malformed name is
+        # rejected here with a clear SystemExit rather than reaching ssh.
         ssh_cmd.append(build_project_launch_remote_cmd(project, detach, exec_cmd))
 
     # ------------------------------------------------------------------

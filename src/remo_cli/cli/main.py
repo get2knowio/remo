@@ -83,6 +83,7 @@ def _register_commands() -> None:
     from remo_cli.cli.providers.proxmox import proxmox  # noqa: F811
     from remo_cli.cli.providers.hetzner import hetzner  # noqa: F811
     from remo_cli.cli.providers.aws import aws  # noqa: F811
+    from remo_cli.cli.web import web  # noqa: F811
 
     cli.add_command(shell)
     cli.add_command(cp)
@@ -90,6 +91,7 @@ def _register_commands() -> None:
     cli.add_command(proxmox)
     cli.add_command(hetzner)
     cli.add_command(aws)
+    cli.add_command(web)
 
 
 _register_commands()

@@ -1,0 +1,52 @@
+.offline-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 80;
+  background: oklch(0.13 0.01 255 / 0.93);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.offline-card {
+  max-width: 460px;
+  text-align: center;
+  background: oklch(0.2 0.02 25);
+  border: 1px solid oklch(0.4 0.09 25);
+  border-radius: 16px;
+  padding: 38px 32px;
+}
+
+.offline-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+  animation: rpulse 1.5s ease infinite;
+}
+
+.offline-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: oklch(0.85 0.08 25);
+  margin-bottom: 8px;
+}
+
+.offline-body {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: oklch(0.72 0.02 25);
+  margin: 0 0 20px;
+}
+
+.offline-retry {
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: none;
+  background: var(--ok);
+  color: oklch(0.16 0.05 150);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+}

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "remo-cli"
-version = "2.1.0"
+version = "2.2.0rc1"
 description = "Remote development environment CLI"
 readme = "README.md"
 license = "MIT"
@@ -20,9 +20,21 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "pytest-asyncio",
     "pytest-mock",
     "ruff",
     "mypy",
+    # Transport backing starlette's TestClient, which every tests/**/web
+    # suite builds on. Starlette does not depend on it (the service itself
+    # never makes HTTP client calls), so without this the web tests fail at
+    # collection, not as assertions.
+    "httpx2",
+]
+web = [
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+    "pydantic>=2",
 ]
 
 [project.scripts]
@@ -41,3 +53,8 @@ testpaths = ["tests"]
 [tool.ruff]
 src = ["src"]
 line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src"]
+ignore_missing_imports = true

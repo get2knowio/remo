@@ -307,6 +307,38 @@ See platform-specific docs for full options:
 
 ---
 
+## Web Session Interface
+
+Don't have the `remo` CLI or an SSH setup on the device in front of you? `remo web` runs a small
+home-lab Docker service that discovers every project across all of your registered instances
+(Proxmox, AWS, Hetzner, Incus) and streams a real interactive terminal to any browser — no local
+CLI, no SSH keys on the client. It connects to your instances server-to-instance over SSH, the same
+way the CLI does, and attaches to the exact same persistent Zellij/devcontainer session `remo shell`
+would.
+
+> ⚠️ **Security boundary:** `remo web` is a **single-trusted-user MVP with no login**. Anyone who can
+> reach the service can open a shell on **every instance in your registry**. There is no
+> authentication, no per-user isolation, and no public-internet exposure story. Bind it only to a
+> trusted LAN interface, a Tailscale/tailnet address, or a loopback reverse proxy — **never expose it
+> to the public internet.**
+
+### Quick install
+
+```bash
+uv sync --extra web             # installs the FastAPI/Uvicorn web extra (not part of the normal CLI)
+uv run remo web check           # validates registry, SSH identity, runtime dir, executables, reachability
+uv run remo web serve --host 127.0.0.1 --port 8080   # local dev
+```
+
+For a home-lab install, use Docker Compose — see [`docker/compose.example.yml`](docker/compose.example.yml)
+for a ready-to-adapt file (read-only registry + SSH material mounts, tmpfs runtime dir, healthcheck,
+non-root/read-only hardening).
+
+Full architecture, security model, Compose walkthrough, credentials/SSM setup, discovery states,
+terminal limits, troubleshooting, and upgrade notes: **[docs/web-session-interface.md](docs/web-session-interface.md)**.
+
+---
+
 ## Troubleshooting
 
 **Installed remo on a new machine with existing instances?**

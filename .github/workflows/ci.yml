@@ -28,6 +28,42 @@ jobs:
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} pytest --tb=short -q
 
+  docker-image:
+    name: Docker image (amd64 + arm64)
+    runs-on: ubuntu-latest
+    # This job is the only thing that actually builds docker/Dockerfile. The
+    # tests/image/ checks that run in the `test` job above are structural --
+    # they grep the Dockerfile for the right strings -- so without this a
+    # genuinely broken image (failed npm ci, moved asset path, bad arch
+    # branch) ships green. Multi-minute by nature: an emulated arm64 build
+    # runs npm ci and pip install under QEMU.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+
+      # Registers binfmt handlers so the arm64 half of tests/image/ can build
+      # under emulation on an amd64 runner. The arch-selection branch
+      # (FR-027/FR-042) has no other way to be exercised here.
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      # REMO_RUN_IMAGE_TESTS=1 opts into tier 2 of tests/image/: real
+      # `docker buildx build` for amd64 + arm64, then runs the built image
+      # under compose.example.yml's hardening flags and asserts non-root UID,
+      # a genuinely read-only rootfs, an arch-correct session-manager-plugin,
+      # and that /api/v1/ready gates on missing mounts. The tests skip
+      # honestly (not fail) if emulation turns out to be unusable.
+      - name: Build and verify the remo-web image
+        env:
+          REMO_RUN_IMAGE_TESTS: "1"
+        run: uv run pytest tests/image/ -v --tb=short
+
   wheel-install:
     name: Wheel install smoke test
     runs-on: ubuntu-latest

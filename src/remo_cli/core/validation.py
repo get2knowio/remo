@@ -72,6 +72,44 @@ def validate_region(value: str) -> None:
         )
 
 
+def validate_project_name(name: str) -> None:
+    """Validate a project name shared by the CLI and web attach paths.
+
+    Mirrors, check-for-check and in the same order, the bash
+    ``validate_project_name()`` in
+    ``ansible/roles/user_setup/templates/remo-host.sh.j2`` (contracts/
+    remo-host-protocol.md, FR-011) so both surfaces reject exactly the same
+    inputs before ever constructing a remote command (US5 scenario 3):
+    empty names, control characters, absolute paths, ``..`` traversal, and
+    embedded path separators. Spaces, Unicode, punctuation, and leading
+    dashes are all otherwise permitted.
+
+    This is a syntactic pre-check only — it does NOT verify the project
+    exists on the remote host (that requires filesystem access on the
+    instance and stays the remote script's job via
+    ``[[ -d "$PROJECTS_DIR/$name" ]]``).
+
+    Raises
+    ------
+    ValueError
+        With a human-readable reason describing the first violation found.
+    """
+    if not name:
+        raise ValueError("project name must not be empty")
+
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in name):
+        raise ValueError(f"project name contains control characters: {name!r}")
+
+    if name.startswith("/"):
+        raise ValueError(f"absolute paths are not allowed: {name}")
+
+    if name == ".." or name.startswith("../") or name.endswith("/..") or "/../" in name:
+        raise ValueError(f"path traversal is not allowed: {name}")
+
+    if "/" in name:
+        raise ValueError(f"path separators are not allowed: {name}")
+
+
 def validate_tool_name(tool: str, flag: str = "--tools") -> None:
     if tool not in ALL_TOOLS:
         valid = ", ".join(ALL_TOOLS)

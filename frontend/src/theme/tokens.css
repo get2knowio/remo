@@ -1,0 +1,128 @@
+/* Design tokens for the remo web console (adopted from docs/remo-web.html).
+ *
+ * Single source of truth for the console's oklch palette, the live-tunable
+ * terminal font variables (driven by state/settings.ts), and the shared
+ * keyframe animations. Every component .css references these vars instead of
+ * repeating literals. The console commits to a dark theme (matching the
+ * mockup); the terminal surface is dark regardless. */
+
+:root {
+  color-scheme: dark;
+
+  /* --- live, user-tunable (written to <html> by state/settings.ts) --- */
+  --accent: #38bdf8;
+  --sp: 16px;
+  --term-font: "IBM Plex Mono", monospace;
+  --term-size: 13px;
+  --term-liga: normal; /* "normal" | "none" */
+
+  /* --- fonts --- */
+  --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* --- surfaces --- */
+  --bg-app: oklch(0.17 0.012 255);
+  --bg-header: oklch(0.195 0.012 255);
+  --bg-rail: oklch(0.185 0.012 255);
+  --bg-pane: oklch(0.155 0.01 255);
+  --bg-term: oklch(0.12 0.008 255);
+  --bg-elev: oklch(0.21 0.012 255);
+  --bg-input: oklch(0.155 0.01 255);
+  --bg-btn: oklch(0.23 0.012 255);
+  --bg-btn-hover: oklch(0.27 0.012 255);
+  --bg-row-hover: oklch(0.22 0.012 255);
+
+  /* --- borders --- */
+  --border: oklch(0.27 0.012 255);
+  --border-soft: oklch(0.25 0.012 255);
+  --border-strong: oklch(0.31 0.012 255);
+
+  /* --- text --- */
+  --text: oklch(0.92 0.006 255);
+  --text-1: oklch(0.86 0.01 255);
+  --text-2: oklch(0.72 0.01 255);
+  --text-dim: oklch(0.62 0.012 255);
+  --text-faint: oklch(0.5 0.012 255);
+
+  /* --- status --- */
+  --ok: oklch(0.8 0.15 150);
+  --warn: oklch(0.83 0.13 88);
+  --danger: oklch(0.72 0.17 25);
+  --info: oklch(0.78 0.1 235);
+  --mag: oklch(0.72 0.18 350);
+  --cyan: oklch(0.8 0.09 200);
+
+  /* --- git / session glyphs --- */
+  --git-changes: oklch(0.78 0.13 62);
+  --git-sync: oklch(0.72 0.11 12);
+  --git-active: oklch(0.85 0.14 92);
+
+  /* --- provider accents --- */
+  --prov-aws: oklch(0.78 0.13 70);
+  --prov-hetzner: oklch(0.72 0.16 25);
+  --prov-proxmox: oklch(0.72 0.13 300);
+  --prov-incus: oklch(0.78 0.11 200);
+  --prov-unknown: oklch(0.62 0.012 255);
+
+  --radius: 8px;
+  --radius-lg: 11px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg-app);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100vh;
+}
+
+/* Shared animations used across the console. */
+@keyframes rpop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes rbar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+
+@keyframes rspin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes rpulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}

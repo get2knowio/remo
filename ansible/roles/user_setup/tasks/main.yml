@@ -417,6 +417,14 @@
     group: "{{ remo_user }}"
     mode: '0755'
 
+- name: Install remo-host script
+  ansible.builtin.template:
+    src: remo-host.sh.j2
+    dest: "/home/{{ remo_user }}/.local/bin/remo-host"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0755'
+
 - name: Verify remo user exists
   ansible.builtin.command: id {{ remo_user }}
   register: user_setup_user_info

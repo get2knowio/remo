@@ -1,0 +1,70 @@
+.workspace {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-pane);
+}
+
+.workspace-body {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  gap: 10px;
+}
+
+.workspace-body--single {
+  display: flex;
+  flex-direction: column;
+}
+
+.workspace-body--grid {
+  display: grid;
+}
+
+/* Empty state */
+.workspace-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 24px;
+  color: var(--text-dim);
+}
+
+.workspace-empty-art {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.25;
+  color: color-mix(in oklch, var(--accent) 55%, var(--text-faint));
+  margin: 0 0 18px;
+}
+
+.workspace-empty-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 7px;
+}
+
+.workspace-empty-text {
+  font-size: 12.5px;
+  max-width: 340px;
+  line-height: 1.6;
+  margin: 0 0 4px;
+}
+
+.workspace-empty-text kbd,
+.workspace-empty-text span {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+
+.workspace-empty-hint {
+  font-size: 11.5px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}

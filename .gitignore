@@ -42,6 +42,15 @@ venv/
 .venv/
 env/
 
+# Node.js / frontend (frontend/)
+node_modules/
+*.log
+.env
+.env.*
+!.env.example
+# TypeScript incremental build cache (regenerated on every build)
+*.tsbuildinfo
+
 # IDE files
 .idea/
 .vscode/

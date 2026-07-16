@@ -7,8 +7,10 @@ import pytest
 from remo_cli.core.config import (
     get_ansible_dir,
     get_known_hosts_path,
+    get_known_hosts_path_readonly,
     get_project_root,
     get_remo_home,
+    get_remo_home_readonly,
     is_verbose,
 )
 
@@ -69,6 +71,71 @@ class TestGetRemoHome:
 
 
 # -----------------------------------------------------------------------
+# get_remo_home_readonly()
+# -----------------------------------------------------------------------
+
+
+class TestGetRemoHomeReadonly:
+    """Read-only-safe resolution of the remo config directory (T015)."""
+
+    def test_does_not_create_directory(self, tmp_path, monkeypatch):
+        """Unlike get_remo_home(), the readonly accessor must not mkdir."""
+        config_dir = tmp_path / "nonexistent" / "deep" / "path"
+        monkeypatch.setenv("REMO_HOME", str(config_dir))
+        assert not config_dir.exists()
+
+        result = get_remo_home_readonly()
+
+        assert result == config_dir
+        # Behavioral contrast with get_remo_home(): the directory must
+        # NOT have been created as a side effect of merely resolving it.
+        assert not config_dir.exists()
+
+    def test_contrasts_with_get_remo_home_side_effect(self, tmp_path, monkeypatch):
+        """Same env/path resolves identically, but only get_remo_home()
+        actually creates the directory."""
+        config_dir = tmp_path / "another" / "missing" / "path"
+        monkeypatch.setenv("REMO_HOME", str(config_dir))
+
+        readonly_result = get_remo_home_readonly()
+        assert readonly_result == config_dir
+        assert not config_dir.exists()
+
+        # Now call the mkdir-ing variant and confirm it DOES create it.
+        result = get_remo_home()
+        assert result == config_dir
+        assert config_dir.is_dir()
+
+    def test_resolves_same_path_as_get_remo_home_env_var(self, tmp_path, monkeypatch):
+        """Same REMO_HOME resolution as get_remo_home()."""
+        config_dir = tmp_path / "custom_remo"
+        monkeypatch.setenv("REMO_HOME", str(config_dir))
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+        assert get_remo_home_readonly() == get_remo_home()
+
+    def test_resolves_same_path_as_get_remo_home_xdg_fallback(self, tmp_path, monkeypatch):
+        """Same XDG_CONFIG_HOME/remo resolution as get_remo_home()."""
+        monkeypatch.delenv("REMO_HOME", raising=False)
+        xdg_dir = tmp_path / "xdg_config"
+        monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg_dir))
+
+        assert get_remo_home_readonly() == xdg_dir / "remo"
+        assert not (xdg_dir / "remo").exists()
+
+    def test_resolves_same_path_as_get_remo_home_default_fallback(self, tmp_path, monkeypatch):
+        """Same ~/.config/remo resolution as get_remo_home() when both env
+        vars are unset."""
+        monkeypatch.delenv("REMO_HOME", raising=False)
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        result = get_remo_home_readonly()
+        assert result == tmp_path / ".config" / "remo"
+        assert not result.exists()
+
+
+# -----------------------------------------------------------------------
 # get_known_hosts_path()
 # -----------------------------------------------------------------------
 
@@ -84,6 +151,33 @@ class TestGetKnownHostsPath:
         assert result == config_dir / "known_hosts"
         # The parent directory should have been created by get_remo_home().
         assert result.parent.is_dir()
+
+
+# -----------------------------------------------------------------------
+# get_known_hosts_path_readonly()
+# -----------------------------------------------------------------------
+
+
+class TestGetKnownHostsPathReadonly:
+    """Read-only-safe path to the known_hosts registry file (T015)."""
+
+    def test_does_not_create_parent_directory(self, tmp_path, monkeypatch):
+        """Unlike get_known_hosts_path(), must not create the parent dir."""
+        config_dir = tmp_path / "remo_cfg_ro"
+        monkeypatch.setenv("REMO_HOME", str(config_dir))
+        assert not config_dir.exists()
+
+        result = get_known_hosts_path_readonly()
+
+        assert result == config_dir / "known_hosts"
+        assert not result.parent.exists()
+
+    def test_resolves_same_path_as_get_known_hosts_path(self, tmp_path, monkeypatch):
+        """Same registry path as get_known_hosts_path() for the same env."""
+        config_dir = tmp_path / "remo_cfg"
+        monkeypatch.setenv("REMO_HOME", str(config_dir))
+
+        assert get_known_hosts_path_readonly() == config_dir / "known_hosts"
 
 
 # -----------------------------------------------------------------------

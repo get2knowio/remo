@@ -1,0 +1,49 @@
+.shortcuts-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 70;
+  background: oklch(0.1 0.006 255 / 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shortcuts-card {
+  width: 390px;
+  max-width: calc(100vw - 32px);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 24px 60px oklch(0 0 0 / 0.6);
+  animation: rpop 0.14s ease;
+}
+
+.shortcuts-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.shortcuts-desc {
+  font-size: 12.5px;
+  color: var(--text-1);
+}
+
+.shortcuts-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-term);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  padding: 2px 8px;
+  color: var(--text-1);
+}

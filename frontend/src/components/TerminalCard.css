@@ -1,0 +1,201 @@
+.terminal-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-term);
+  border: 1.5px solid var(--border-soft);
+}
+
+/* Single view: a prominent, accent-ringed panel. */
+.terminal-card--single {
+  flex: 1;
+  border-color: color-mix(in oklch, var(--accent) 50%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 12%, transparent);
+}
+
+/* Grid tile: compact, clickable to solo. */
+.terminal-card--grid {
+  cursor: pointer;
+  border-color: var(--border);
+}
+
+.terminal-card--grid.terminal-card--focused {
+  border-color: color-mix(in oklch, var(--accent) 60%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 13%, transparent);
+}
+
+.terminal-card-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background: var(--bg-header);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.terminal-card--grid .terminal-card-header {
+  padding: 7px 10px;
+  gap: 8px;
+}
+
+.terminal-card-num {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-faint);
+}
+
+.terminal-card-provider-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.terminal-card-identity {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.terminal-card-project {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-card--grid .terminal-card-project {
+  font-size: 12px;
+}
+
+.terminal-card-badge {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
+.terminal-card-instance {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.terminal-card-state {
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.terminal-card--grid .terminal-card-state {
+  font-size: 10px;
+}
+
+.terminal-card-state--ready {
+  color: var(--ok);
+}
+.terminal-card-state--connecting,
+.terminal-card-state--reconnecting {
+  color: var(--warn);
+}
+.terminal-card-state--disconnected,
+.terminal-card-state--error {
+  color: var(--danger);
+}
+.terminal-card-state--closed {
+  color: var(--text-faint);
+}
+
+.terminal-card-controls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+}
+
+.tc-btn {
+  padding: 5px 11px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-btn);
+  color: var(--text-1);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.tc-btn:hover {
+  background: var(--bg-btn-hover);
+}
+
+.terminal-card--grid .tc-btn--close {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 10px;
+}
+
+.tc-btn--accent {
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--border-strong));
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
+  color: color-mix(in oklch, var(--accent) 80%, white);
+  font-weight: 600;
+}
+
+.tc-btn--close:hover {
+  background: oklch(0.3 0.05 25);
+  color: oklch(0.85 0.11 25);
+}
+
+.terminal-card-error {
+  flex: none;
+  padding: 9px 12px;
+  background: oklch(0.2 0.03 25);
+  color: oklch(0.85 0.09 25);
+  border-bottom: 1px solid oklch(0.38 0.08 25);
+  font-size: 12px;
+}
+
+.terminal-card-error-message {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.terminal-card-error-remediation {
+  margin: 0 0 6px;
+  color: var(--text-2);
+}
+
+.terminal-card-surface {
+  flex: 1;
+  min-height: 0;
+  background: var(--bg-term);
+  padding: 2px 4px;
+}
+
+/* Touch devices (iPad et al.): enlarge the card's header controls, especially
+ * the compact grid-tile close ✕, so they're comfortably tappable. */
+@media (pointer: coarse) {
+  .tc-btn {
+    padding: 8px 13px;
+    font-size: 13px;
+  }
+  .terminal-card--grid .tc-btn--close {
+    width: 32px;
+    height: 32px;
+    font-size: 13px;
+  }
+}
