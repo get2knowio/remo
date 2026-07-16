@@ -502,15 +502,27 @@ def shell_connect(
     # build_ssh_opts()-backed option construction the web terminal service
     # uses (build_attach_argv), so both paths share one SSH-argv-construction
     # layer. `-L` tunnel flags (extra_opts) land before any `-tt`/target,
-    # matching today's flag ordering; `-tt` is added only when launching
-    # project-launch (today's single `-t` also forces TTY allocation so the
-    # interactive zellij+devcontainer flow, and the detach branch's
-    # devcontainer-up progress output, both reach the user's terminal).
+    # matching today's flag ordering; `-tt` is added only for the
+    # *interactive* project-launch flow, so zellij+devcontainer reach the
+    # user's terminal.
+    #
+    # Detaching must NOT allocate a pty. sshd kills the pty session's
+    # process group when the channel closes, and project-launch's detach
+    # branch does `nohup setsid ... &` then `exit 0` -- returning
+    # immediately, by design. The child is killed mid-exec before setsid(2)
+    # can move it to a new session, so its command never runs and the log
+    # gets its header and nothing else. nohup's ignored SIGHUP does not save
+    # it; the process group is torn down regardless. Without a pty there is
+    # no such teardown and the child survives (verified over real ssh, with
+    # and without -tt). The detach branch needs no tty of its own: it sends
+    # `devcontainer up` output to /dev/null, and its only terminal output is
+    # a plain echo that reaches the client over ordinary stdout.
+    #
     # `control_dir=None` preserves the CLI's default `~/.ssh` ControlPath.
     # ------------------------------------------------------------------
     ssh_cmd = build_ssh_base_cmd(
         host,
-        tty=use_project_launch,
+        tty=use_project_launch and not detach,
         multiplex=True,
         control_dir=None,
         extra_opts=tunnel_opts or None,
