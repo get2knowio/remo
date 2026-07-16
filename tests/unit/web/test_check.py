@@ -16,6 +16,7 @@ opening an interactive session").
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 import pytest
@@ -23,6 +24,8 @@ from click.testing import CliRunner
 
 from remo_cli.cli.main import cli
 from remo_cli.web import check as check_module
+from remo_cli.web import health
+from remo_cli.web.discovery import _read_known_hosts_readonly
 from remo_cli.web.check import all_passed, format_results, run_checks
 from remo_cli.web.config import WebSettings
 
@@ -232,3 +235,50 @@ class TestInstanceUnreachable:
         assert "ssm_plugin" in names
 
         _assert_no_interactive_argv(mock_run)
+
+
+# ---------------------------------------------------------------------------
+# FAIL path: registry present but unreadable (permission denied)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses permission bits")
+class TestUnreadableRegistry:
+    """A registry that exists but cannot be read must report, not traceback.
+
+    `Path.exists()` swallows only ENOENT-ish errors and raises on EACCES, so
+    every probe of an unreadable registry used to escape as a PermissionError
+    traceback. This is a real deployment shape rather than a corner case: bind
+    mounts keep host ownership, so a host user whose uid isn't 1000 mounting a
+    0700 ~/.config/remo into the container reproduces it exactly.
+    """
+
+    def test_check_registry_reports_unreadable(self, tmp_config_dir):
+        _write_registry(tmp_config_dir, ["incus:dev:127.0.0.1:remo"])
+        tmp_config_dir.chmod(0o000)
+        try:
+            assert health._check_registry() == "unreadable"
+        finally:
+            tmp_config_dir.chmod(0o700)
+
+    def test_read_known_hosts_degrades_to_empty(self, tmp_config_dir):
+        _write_registry(tmp_config_dir, ["incus:dev:127.0.0.1:remo"])
+        tmp_config_dir.chmod(0o000)
+        try:
+            assert _read_known_hosts_readonly() == []
+        finally:
+            tmp_config_dir.chmod(0o700)
+
+    def test_run_checks_fails_registry_without_raising(self, tmp_config_dir, tmp_path):
+        _write_registry(tmp_config_dir, ["incus:dev:127.0.0.1:remo"])
+        tmp_config_dir.chmod(0o000)
+        try:
+            settings = WebSettings(ssh_control_dir=str(tmp_path / "ssh-ctrl"))
+            results = run_checks(settings, include_instances=False)
+        finally:
+            tmp_config_dir.chmod(0o700)
+
+        registry_result = next(r for r in results if r.name == "registry")
+        assert registry_result.passed is False
+        assert "not readable" in registry_result.detail
+        assert registry_result.remediation is not None

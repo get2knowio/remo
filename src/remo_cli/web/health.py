@@ -93,9 +93,20 @@ def _check_registry() -> str:
     mount); a missing *directory* means nothing was mounted at all.
     """
     path = get_known_hosts_path_readonly()
-    if not path.parent.is_dir():
-        return "missing"
-    if path.exists() and not os.access(path, os.R_OK):
+    # `Path.is_dir()`/`Path.exists()` swallow only ENOENT-ish errors and
+    # *raise* on EACCES, so probing a registry this process cannot traverse
+    # escapes as a PermissionError traceback and the os.access() branch
+    # below is never reached. That is a real deployment case, not a corner:
+    # bind mounts keep their host ownership, so a host user whose uid isn't
+    # 1000 mounting a 0700 ~/.config/remo produces exactly this. Report it
+    # as "unreadable" (callers turn that into a 503 / a [FAIL] line with
+    # remediation) rather than crashing.
+    try:
+        if not path.parent.is_dir():
+            return "missing"
+        if path.exists() and not os.access(path, os.R_OK):
+            return "unreadable"
+    except OSError:
         return "unreadable"
     return "ok"
 

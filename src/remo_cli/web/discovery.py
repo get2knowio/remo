@@ -76,19 +76,28 @@ def _read_known_hosts_readonly() -> list[KnownHost]:
     directly against `get_known_hosts_path_readonly()` instead.
     """
     path = get_known_hosts_path_readonly()
-    if not path.exists():
+    try:
+        if not path.exists():
+            return []
+        raw_lines = path.read_text().splitlines()
+    except OSError:
+        # `Path.exists()`/`read_text()` raise on EACCES (only ENOENT-ish
+        # errors are swallowed). An unreadable registry -- e.g. bind-mounted
+        # from a host directory this uid cannot traverse -- must not escape
+        # as a traceback from every caller, `remo web check` included.
+        # Degrade to "no instances"; `health._check_registry` separately
+        # reports the mount as unreadable, with remediation.
         return []
 
     hosts: list[KnownHost] = []
-    with path.open() as fh:
-        for raw_line in fh:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                hosts.append(KnownHost.from_line(line))
-            except ValueError:
-                continue
+    for raw_line in raw_lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            hosts.append(KnownHost.from_line(line))
+        except ValueError:
+            continue
     return hosts
 
 
