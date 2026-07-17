@@ -14,7 +14,14 @@ Payload field semantics: [../data-model.md](../data-model.md).
 | Token NOT configured | `404` on every setup route — surface disabled, indistinguishable from absent (fail closed) |
 
 Existing global middleware (Host allowlist, origin rules, redaction) applies
-unchanged.
+unchanged, with one scoped exception: Origin-less state-changing requests to
+`/api/v1/setup/*` bypass the browser-CSRF origin allowlist (the surface is
+bearer-token-only — no ambient credentials — and a cross-origin browser
+request cannot attach an Authorization header; a genuine browser CSRF
+attempt always carries an Origin header, which is still enforced). This is
+what lets the Origin-less CLI client — including `--via` tunnels whose
+`127.0.0.1:<random-port>` origin could never be allowlisted — reach the
+setup API.
 
 ## GET /api/v1/setup/status
 

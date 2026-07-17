@@ -113,6 +113,57 @@ def test_csp_includes_hardening_directives():
     assert "form-action 'self'" in csp
 
 
+def test_originless_setup_request_bypasses_origin_check(tmp_path, monkeypatch):
+    # The setup API is bearer-token-only (no ambient credentials), so the
+    # browser-CSRF origin check exempts Origin-less requests to
+    # /api/v1/setup/* — this is what lets the `remo web adopt` CLI (and its
+    # --via tunnel) talk to a live service. The bearer dependency still gates
+    # the route: with a token configured and presented, the request reaches
+    # domain validation (422 for a garbage body), never 403.
+    settings = _settings()
+    settings.api_token = "csp-test-token"
+    settings.web_identity_dir = tmp_path / "web-identity"
+    monkeypatch.setenv("REMO_HOME", str(tmp_path))
+    application = app_module.create_app(settings)
+    with TestClient(application, base_url=_ORIGIN) as client:
+        resp = client.put(
+            "/api/v1/setup/registry",
+            json={},
+            headers={"Authorization": "Bearer csp-test-token"},
+        )
+    assert resp.status_code == 422
+
+
+def test_setup_request_with_disallowed_origin_still_rejected():
+    # A present-but-disallowed Origin on a setup route is still a 403 — only
+    # the Origin-less (non-browser) case is exempt.
+    settings = _settings()
+    settings.api_token = "csp-test-token"
+    application = app_module.create_app(settings)
+    with TestClient(application, base_url=_ORIGIN) as client:
+        resp = client.put(
+            "/api/v1/setup/registry",
+            json={},
+            headers={
+                "Authorization": "Bearer csp-test-token",
+                "Origin": "http://evil.example",
+            },
+        )
+    assert resp.status_code == 403
+
+
+def test_originless_non_setup_request_still_rejected():
+    # The exemption is scoped to /api/v1/setup/* — every other state-changing
+    # route still requires an allowed Origin.
+    application = app_module.create_app(_settings())
+    with TestClient(application, base_url=_ORIGIN) as client:
+        resp = client.post(
+            "/api/v1/terminals",
+            json={"session_target_id": "x", "cols": 80, "rows": 24},
+        )
+    assert resp.status_code == 403
+
+
 def test_csp_present_on_forbidden_origin_response_too():
     # Even a 403 (rejected-origin) response should carry the CSP header --
     # it's attached unconditionally in the middleware after call_next().

@@ -164,7 +164,21 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     async def _origin_allowlist_and_csp(request: Request, call_next):  # noqa: ANN001, ANN202
         if request.method not in _ORIGIN_EXEMPT_METHODS:
             origin = request.headers.get("origin")
-            if origin is None or origin not in settings.allowed_origins:
+            # The origin allowlist is a browser-CSRF defense. The setup API is
+            # bearer-token-only (no ambient credentials), and a cross-origin
+            # browser request cannot attach an Authorization header without a
+            # CORS preflight this app never grants — while a genuine browser
+            # CSRF attempt always carries an Origin header. So Origin-less
+            # requests to /api/v1/setup/* (the `remo web adopt` CLI, including
+            # --via tunnels whose 127.0.0.1:<random-port> origin could never
+            # be allowlisted) are exempt; a present-but-disallowed Origin is
+            # still rejected.
+            is_originless_setup = origin is None and request.url.path.startswith(
+                "/api/v1/setup"
+            )
+            if not is_originless_setup and (
+                origin is None or origin not in settings.allowed_origins
+            ):
                 rejection = JSONResponse(
                     status_code=403,
                     content={

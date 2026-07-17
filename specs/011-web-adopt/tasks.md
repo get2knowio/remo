@@ -76,7 +76,7 @@ working terminals, re-run is a zero-change no-op.
 - [X] T023 [P] [US1] Unit tests: trust decision table (match/mismatch/absent × interactive/non-interactive, hashed known_hosts) with mocked subprocess in tests/unit/core/test_web_adopt_trust.py
 - [X] T024 [P] [US1] Unit tests: authorized_keys command construction + marker replacement idempotence + rotation replacement in tests/unit/core/test_web_adopt_authorize.py
 - [X] T025 [P] [US1] Unit tests: setup endpoints (status/identity/registry/verify happy paths, 409 mount-configured, 422 invalid/empty, atomicity on mid-apply failure) via TestClient in tests/unit/web/test_setup_api.py
-- [ ] T026 [US1] Integration test: full adopt against a live local `remo web serve` (temp `REMO_HOME`, real HTTP): end-state files, verify report, second-run idempotence, unreachable instance via `.invalid` host, and an established terminal attachment surviving a registry push untouched (FR-019 session continuity) in tests/integration/test_web_adopt_e2e.py
+- [X] T026 [US1] Integration test: full adopt against a live local `remo web serve` (temp `REMO_HOME`, real HTTP): end-state files, verify report, second-run idempotence, unreachable instance via `.invalid` host, and an established terminal attachment surviving a registry push untouched (FR-019 session continuity) in tests/integration/test_web_adopt_e2e.py
 - [X] T027 [P] [US1] Unit tests: adopt CLI command (resolution order, exit codes, mount-configured message, works without the `web` extra installed) in tests/unit/cli/test_web_adopt_cmd.py
 
 **Checkpoint**: Adoption works end-to-end against a locally served instance — MVP
@@ -136,10 +136,10 @@ new instance live in the dashboard < 60 s; rotated token → clear re-auth failu
 
 ### Implementation for User Story 4
 
-- [ ] T039 [US4] Add saved-credentials read/write (0600 `~/.config/remo/web-service.json`, explicit-consent prompt, `deployment_id` stored) in src/remo_cli/core/web_adopt.py (FR-025, research R10)
-- [ ] T040 [US4] Add push orchestration in src/remo_cli/core/web_adopt.py: `deployment_id` mismatch → abort with re-adopt guidance; delta detection so unchanged instances skip keyscan/authorize; full mirror still pushed (FR-026/FR-027, clarification Q1)
-- [ ] T041 [US4] Add `remo web push` Click command (`--allow-empty`, `--yes`; missing credentials → adopt-style prompts) in src/remo_cli/cli/web.py
-- [ ] T042 [P] [US4] Unit tests: saved-credentials lifecycle (consent, perms, absent, rejected token, deployment-id mismatch) + delta logic in tests/unit/core/test_web_push.py
+- [X] T039 [US4] Add saved-credentials read/write (0600 `~/.config/remo/web-service.json`, explicit-consent prompt, `deployment_id` stored) in src/remo_cli/core/web_adopt.py (FR-025, research R10)
+- [X] T040 [US4] Add push orchestration in src/remo_cli/core/web_adopt.py: `deployment_id` mismatch → abort with re-adopt guidance; delta detection so unchanged instances skip keyscan/authorize; full mirror still pushed (FR-026/FR-027, clarification Q1)
+- [X] T041 [US4] Add `remo web push` Click command (`--allow-empty`, `--yes`; missing credentials → adopt-style prompts) in src/remo_cli/cli/web.py
+- [X] T042 [P] [US4] Unit tests: saved-credentials lifecycle (consent, perms, absent, rejected token, deployment-id mismatch) + delta logic in tests/unit/core/test_web_push.py
 - [ ] T043 [US4] Extend the integration test with the push-after-adopt scenario (new registry entry → only it gets authorized; token rotation → exit 1 with guidance) in tests/integration/test_web_adopt_e2e.py
 
 **Checkpoint**: All four stories independently functional
