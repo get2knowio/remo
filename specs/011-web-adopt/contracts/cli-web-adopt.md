@@ -6,7 +6,7 @@
 ## remo web adopt
 
 ```text
-remo web adopt [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes]
+remo web adopt [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes] [--save]
 ```
 
 | Input | Resolution order |

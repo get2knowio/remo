@@ -72,12 +72,12 @@ working terminals, re-run is a zero-change no-op.
 - [X] T019 [US1] Add `--via` SSH tunnel helper in src/remo_cli/core/web_adopt.py: free-port probe, `ssh -N -L` with `ExitOnForwardFailure=yes`, readiness wait, teardown; Host-allowlist failure message names `REMO_WEB_ALLOWED_HOSTS` (FR-018, research R9)
 - [X] T020 [US1] Add adopt orchestration in src/remo_cli/core/web_adopt.py: contract flow steps 1–7, per-instance `AdoptionRunOutcome` accumulation with bounded timeouts and failure isolation, verification rendering with "reachable from workstation but not from the service" annotation, prominent security-flag output (FR-013/FR-014/FR-015)
 - [X] T021 [US1] Add `remo web adopt` Click command in src/remo_cli/cli/web.py: URL/token resolution order (arg → `REMO_API_URL`/`REMO_API_TOKEN` → prompt), `--token/--via/--allow-empty/--yes`, exit codes per contracts/cli-web-adopt.md, no web-extra imports at any level (FR-006)
-- [ ] T022 [P] [US1] Unit tests: payload builder (mirror, SSM exclusion, empty guard; negative assertion that the serialized payload never contains private-key material — FR-007) in tests/unit/core/test_web_adopt_payload.py
-- [ ] T023 [P] [US1] Unit tests: trust decision table (match/mismatch/absent × interactive/non-interactive, hashed known_hosts) with mocked subprocess in tests/unit/core/test_web_adopt_trust.py
-- [ ] T024 [P] [US1] Unit tests: authorized_keys command construction + marker replacement idempotence + rotation replacement in tests/unit/core/test_web_adopt_authorize.py
+- [X] T022 [P] [US1] Unit tests: payload builder (mirror, SSM exclusion, empty guard; negative assertion that the serialized payload never contains private-key material — FR-007) in tests/unit/core/test_web_adopt_payload.py
+- [X] T023 [P] [US1] Unit tests: trust decision table (match/mismatch/absent × interactive/non-interactive, hashed known_hosts) with mocked subprocess in tests/unit/core/test_web_adopt_trust.py
+- [X] T024 [P] [US1] Unit tests: authorized_keys command construction + marker replacement idempotence + rotation replacement in tests/unit/core/test_web_adopt_authorize.py
 - [X] T025 [P] [US1] Unit tests: setup endpoints (status/identity/registry/verify happy paths, 409 mount-configured, 422 invalid/empty, atomicity on mid-apply failure) via TestClient in tests/unit/web/test_setup_api.py
 - [ ] T026 [US1] Integration test: full adopt against a live local `remo web serve` (temp `REMO_HOME`, real HTTP): end-state files, verify report, second-run idempotence, unreachable instance via `.invalid` host, and an established terminal attachment surviving a registry push untouched (FR-019 session continuity) in tests/integration/test_web_adopt_e2e.py
-- [ ] T027 [P] [US1] Unit tests: adopt CLI command (resolution order, exit codes, mount-configured message, works without the `web` extra installed) in tests/unit/cli/test_web_adopt_cmd.py
+- [X] T027 [P] [US1] Unit tests: adopt CLI command (resolution order, exit codes, mount-configured message, works without the `web` extra installed) in tests/unit/cli/test_web_adopt_cmd.py
 
 **Checkpoint**: Adoption works end-to-end against a locally served instance — MVP
 
@@ -95,13 +95,13 @@ existing RO-mount image tests stay green unchanged.
 
 ### Implementation for User Story 2
 
-- [ ] T028 [US2] Extend readiness in src/remo_cli/web/health.py: `unconfigured` as a 200 status variant, identity candidates include the service key path, `broken` keeps 503 (FR-001/FR-003, research R11)
-- [ ] T029 [US2] Teach `remo web check` the unconfigured state in src/remo_cli/web/check.py: PASS with "awaiting adoption — run `remo web adopt`" detail; mount-configured and adopted modes report their mode (FR-003/FR-005)
-- [ ] T030 [US2] Generate the service identity at startup when unconfigured (app lifespan / serve bootstrap) in src/remo_cli/web/app.py + src/remo_cli/cli/web.py (FR-002)
-- [ ] T031 [US2] Verify/adjust docker/entrypoint.sh so the startup gate passes in the unconfigured state (SC-006 no-crash-loop; likely follows from T029 — confirm and document)
-- [ ] T032 [P] [US2] Extend the ready-payload types + polling to expose service state in frontend/src/api/client.ts
-- [ ] T033 [US2] Add `AwaitingAdoption` page (explanation + pre-filled `remo web adopt <origin>` command, poll-flip to dashboard on state change, no instance data) in frontend/src/components/AwaitingAdoption.tsx wired into the dashboard root (FR-004, research R12)
-- [ ] T034 [P] [US2] Unit tests: ready/check outputs across all four states in tests/unit/web/test_health_states.py
+- [X] T028 [US2] Extend readiness in src/remo_cli/web/health.py: `unconfigured` as a 200 status variant, identity candidates include the service key path, `broken` keeps 503 (FR-001/FR-003, research R11)
+- [X] T029 [US2] Teach `remo web check` the unconfigured state in src/remo_cli/web/check.py: PASS with "awaiting adoption — run `remo web adopt`" detail; mount-configured and adopted modes report their mode (FR-003/FR-005)
+- [X] T030 [US2] Generate the service identity at startup when unconfigured (app lifespan / serve bootstrap) in src/remo_cli/web/app.py + src/remo_cli/cli/web.py (FR-002)
+- [X] T031 [US2] Verify/adjust docker/entrypoint.sh so the startup gate passes in the unconfigured state (SC-006 no-crash-loop; likely follows from T029 — confirm and document)
+- [X] T032 [P] [US2] Extend the ready-payload types + polling to expose service state in frontend/src/api/client.ts
+- [X] T033 [US2] Add `AwaitingAdoption` page (explanation + pre-filled `remo web adopt <origin>` command, poll-flip to dashboard on state change, no instance data) in frontend/src/components/AwaitingAdoption.tsx wired into the dashboard root (FR-004, research R12)
+- [X] T034 [P] [US2] Unit tests: ready/check outputs across all four states in tests/unit/web/test_health_states.py
 - [ ] T035 [US2] Image tests: unconfigured boot with empty named volume + token (ready `unconfigured` < 30 s, keypair in volume, restart reuses keypair) added to tests/image/test_docker_image.py; existing RO-mount tests must pass unchanged (SC-005/SC-006)
 - [ ] T036 [US2] Add the adopted-mode deployment variant (named state volume + `REMO_WEB_API_TOKEN`) alongside the RO-mount variant in docker/compose.example.yml
 
@@ -119,8 +119,8 @@ token-set and token-unset deployments.
 
 ### Implementation for User Story 3
 
-- [ ] T037 [P] [US3] Contract tests: auth matrix on every setup route (valid/invalid/missing token → 200-family/401/401; unset token → 404 on all; non-setup surface unaffected) in tests/unit/web/test_setup_auth.py (FR-020/FR-021)
-- [ ] T038 [US3] Implement + test failed-auth observability: log line without the presented credential, redaction assertions over captured logs for token and Authorization header in src/remo_cli/web/api/setup.py and tests/unit/web/test_setup_auth.py (FR-022/FR-024)
+- [X] T037 [P] [US3] Contract tests: auth matrix on every setup route (valid/invalid/missing token → 200-family/401/401; unset token → 404 on all; non-setup surface unaffected) in tests/unit/web/test_setup_auth.py (FR-020/FR-021)
+- [X] T038 [US3] Implement + test failed-auth observability: log line without the presented credential, redaction assertions over captured logs for token and Authorization header in src/remo_cli/web/api/setup.py and tests/unit/web/test_setup_auth.py (FR-022/FR-024)
 
 **Checkpoint**: Security posture verified — safe to expose behind Traefik
 

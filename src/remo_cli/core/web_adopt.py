@@ -279,9 +279,13 @@ def is_direct_access(host: KnownHost) -> bool:
     """True when the entry is reached over plain SSH (not SSM-routed).
 
     SSM entries appear in the pushed ``registry`` mirror but must never carry
-    ``host_keys`` entries and are never key-authorized (FR-012).
+    ``host_keys`` entries and are never key-authorized (FR-012). Mirrors
+    ``KnownHost.to_line``: an entry with an ``instance_id`` and no explicit
+    ``access_mode`` defaults to SSM.
     """
-    return host.access_mode != "ssm"
+    if host.access_mode == "ssm":
+        return False
+    return not (host.instance_id and not host.access_mode)
 
 
 def _registry_entry(host: KnownHost) -> dict[str, str]:
@@ -458,7 +462,11 @@ def scan_and_verify_host_key(
     scanned_lines = [
         line.strip()
         for line in result.stdout.splitlines()
-        if line.strip() and not line.strip().startswith("#")
+        if line.strip()
+        and not line.strip().startswith("#")
+        # only structurally valid known_hosts lines may reach the payload;
+        # anything else would bypass the match/mismatch verification below
+        and len(line.split()) >= 3
     ]
     scanned_pairs = _parse_known_hosts_pairs("\n".join(scanned_lines))
     if not scanned_pairs:

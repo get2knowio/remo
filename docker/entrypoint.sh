@@ -20,6 +20,14 @@
 # Full per-instance diagnostics remain available via `remo web check` (no
 # flag), and readiness is (correctly) config-only via GET /api/v1/ready.
 #
+# 011-web-adopt (SC-006): *unconfigured* is a PASSING state for this gate.
+# A fresh writable state volume with no registry/key material yet makes
+# `remo web check` report "awaiting adoption — run `remo web adopt`" and
+# exit 0, so an adopted-mode container boots cleanly (no crash loop under
+# `restart: unless-stopped`) while it waits for adoption. Only genuinely
+# broken configuration (mounted artifacts present but unusable, missing
+# runtime prerequisites) still aborts here.
+#
 # `exec` replaces this script's process (PID 1) with `remo web serve` so it
 # receives signals (SIGTERM) directly, which graceful shutdown depends on.
 

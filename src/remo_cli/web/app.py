@@ -11,6 +11,7 @@ installed.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -28,7 +29,15 @@ from remo_cli.web.discovery import DiscoveryService
 from remo_cli.web.health import router as health_router
 from remo_cli.web.logging_config import configure_logging
 from remo_cli.web.ssh_master import stale_socket_cleanup
+from remo_cli.web.state import (
+    ConfigurationState,
+    ServiceIdentityError,
+    detect_state,
+    ensure_service_identity,
+)
 from remo_cli.web.terminal_registry import TerminalRegistry
+
+logger = logging.getLogger("remo_cli.web.app")
 
 # Restrictive CSP compatible with the local (same-origin, no-CDN) Ghostty
 # WASM renderer and the same-origin terminal WebSocket (FR-038/FR-051), plus
@@ -93,6 +102,20 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Startup (011-web-adopt T030/FR-002, research R3): mint the service
+        # identity the first time the service boots unconfigured. Gated on
+        # detect_state so a read-only REMO_HOME (mount_configured) is never
+        # written to, and an existing/damaged keypair is never regenerated
+        # (ensure_service_identity loads a complete pair as-is and refuses a
+        # half-pair by design). A generation failure is logged, not fatal:
+        # the service must still reach its running unconfigured state
+        # (FR-001); the setup API retries generation on demand.
+        if detect_state(settings) is ConfigurationState.UNCONFIGURED:
+            try:
+                ensure_service_identity(settings)
+            except (ServiceIdentityError, OSError):
+                logger.exception("service identity generation failed at startup")
+
         # Startup: remove ControlMaster sockets left by a previously crashed
         # process (T035); the next attachment re-establishes a master.
         stale_socket_cleanup(settings.ssh_control_dir)

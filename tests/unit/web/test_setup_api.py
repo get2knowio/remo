@@ -99,8 +99,12 @@ def _assert_nothing_written(state_dir) -> None:
 
 def test_status_unconfigured_without_identity(state_dir):
     state_dir.unconfigured()
-    with _client(state_dir) as client:
-        resp = client.get("/api/v1/setup/status", headers=_AUTH)
+    # No `with` (lifespan skipped): since T030 the app lifespan generates the
+    # service identity when unconfigured, which is exactly the pre-identity
+    # window this test asserts. tests/unit/web/test_health_states.py covers
+    # the lifespan-generation behavior itself.
+    client = _client(state_dir)
+    resp = client.get("/api/v1/setup/status", headers=_AUTH)
     assert resp.status_code == 200
     assert resp.json() == {
         "state": "unconfigured",

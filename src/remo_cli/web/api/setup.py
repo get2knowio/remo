@@ -78,9 +78,15 @@ async def require_setup_token(request: Request) -> None:
     ):
         return
 
-    # Log the failure, never the presented credential (FR-024).
+    # Log the failure with route/method context, never the presented
+    # credential (FR-024).
     client = request.client.host if request.client else "unknown"
-    logger.warning("setup API authentication failure from %s on %s", client, request.url.path)
+    logger.warning(
+        "setup API authentication failure from %s: %s %s",
+        client,
+        request.method,
+        request.url.path,
+    )
     raise HTTPException(status_code=401, detail="unauthorized")
 
 
