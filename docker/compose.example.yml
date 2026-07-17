@@ -117,3 +117,100 @@ services:
       retries: 3
       start_period: 10s
     restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Adopted mode (011-web-adopt) — an ALTERNATIVE to `remo-web` above; run one
+  # or the other, not both (they publish the same host port).
+  #
+  # When to use which:
+  #
+  #   - `remo-web` (above, bind-mount mode): you are happy to mount your
+  #     existing registry and SSH material read-only into the container. The
+  #     service boots fully configured with YOUR key; nothing else to do.
+  #     Upgrading to this release changes nothing about that mode (SC-005).
+  #
+  #   - `remo-web-adopted` (below): nothing from your workstation is mounted.
+  #     The service boots UNCONFIGURED with an empty named state volume,
+  #     generates its own service-scoped SSH identity there on first start
+  #     (under web-identity/, comment `remo-web@<deployment-id>`), and waits
+  #     in a stable "awaiting adoption" state (GET /api/v1/ready -> 200
+  #     `{"status": "unconfigured"}`). Complete setup from a workstation with
+  #     a working remo CLI:
+  #
+  #       remo web adopt http://<docker-host>:8080
+  #
+  #     which pushes your registry + instance host keys and authorizes the
+  #     service's OWN public key on each instance — your personal private key
+  #     never leaves the workstation. Later registry changes are re-pushed
+  #     with `remo web push`.
+  #
+  # This service carries `profiles: ["adopted"]` so a plain `docker compose
+  # up` still starts only the bind-mount service above. Start this one with:
+  #
+  #   docker compose --profile adopted up -d
+  remo-web-adopted:
+    profiles: ["adopted"]
+    # Same image (and the same optional `build:` override) as `remo-web`
+    # above — the mode is chosen purely by what is mounted, not by the image.
+    image: ghcr.io/get2knowio/remo-web:latest
+    ports:
+      # Adoption traffic (the token-gated /api/v1/setup/* calls made by
+      # `remo web adopt`) arrives over this same port. Loopback-only means
+      # the workstation running the CLI must be the Docker host itself —
+      # otherwise bind a LAN IP here deliberately, or keep loopback and run
+      # `remo web adopt --via <docker-host>` to tunnel over SSH.
+      - "127.0.0.1:8080:8080"
+    environment:
+      # REQUIRED for adopted mode: while this is unset/empty the setup API
+      # does not exist at all (every /api/v1/setup/* request gets a plain
+      # 404), so adoption is impossible. Generate a strong random value,
+      # e.g.:
+      #
+      #   openssl rand -hex 24
+      #
+      # and pass the same value to the CLI via $REMO_API_TOKEN (or the
+      # interactive prompt) when running `remo web adopt`.
+      - "REMO_WEB_API_TOKEN=replace-me--generate-with--openssl-rand-hex-24"
+      # The REMO_WEB_ALLOWED_HOSTS / REMO_WEB_ALLOWED_ORIGINS notes on the
+      # service above apply here unchanged.
+    volumes:
+      # A writable named state volume at REMO_HOME — the ONLY volume in this
+      # mode (no registry mount, no ~/.ssh mounts; presence of those is what
+      # puts the service in mount-configured mode instead). It holds the
+      # pushed registry, per-instance host keys, and the service identity
+      # keypair. Deleting the volume resets the service to unconfigured with
+      # a NEW identity on next boot; it revokes nothing on the instances —
+      # remove the old `remo-web@<deployment-id>` authorized_keys line there.
+      - "remo-web-state:/home/remo/.config/remo"
+    # Identical hardening to the bind-mount service: adopted mode only moves
+    # WHERE configuration comes from, never loosens the runtime posture.
+    #
+    # The tmpfs mode is pinned because an option-less tmpfs mount is
+    # remounted root-owned 0755 (unwritable to uid 1000) by a container
+    # *restart* — `docker compose restart`, or the restart policy reviving
+    # the process — which would fail the startup runtime-dir check on every
+    # boot after the first. `rw,mode=1777` is exactly what Docker mounts on
+    # first boot anyway; pinning it just makes restarts behave the same.
+    tmpfs:
+      - "/run/remo-ssh:rw,mode=1777"
+    read_only: true
+    user: "1000:1000"
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - "ALL"
+    healthcheck:
+      # /api/v1/ready answers 200 for BOTH `ready` and `unconfigured` — a
+      # container awaiting adoption is healthy and must not crash-loop or
+      # flap the healthcheck while it waits (SC-006).
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  # Adopted-mode state (see `remo-web-adopted`). Created on first
+  # `--profile adopted` start; harmless if you only use bind-mount mode.
+  remo-web-state:

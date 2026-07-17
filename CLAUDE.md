@@ -13,6 +13,7 @@ See `.specify/memory/constitution.md` for project principles and non-negotiable 
 - Flat file (`~/.config/remo/known_hosts`, colon-delimited) (003-python-cli-rewrite)
 - Cross-provider snapshot model (`models/snapshot.py`) + shared helpers in `core/snapshot.py` (name generator, validator, table formatter, destroy-time cleanup hook). No new runtime deps. (005-provider-snapshots)
 - FastAPI/Uvicorn + WebSockets (backend, optional `web` extra), TypeScript/Vite/React + ghostty-web (frontend), Bash (`remo-host` host command templated by Ansible) (010-web-session-interface)
+- Stdlib `urllib.request` CLI setup client + token-gated `/api/v1/setup/*` FastAPI surface; service state in flat files under the writable `REMO_HOME` volume (`web-identity/` keypair + service known_hosts, `~/.config/remo/web-service.json` saved credentials) (011-web-adopt)
 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module) (001-bootstrap-incus-host)
 
@@ -27,7 +28,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── shell.py           # remo shell
 │   ├── cp.py              # remo cp
 │   ├── init_cmd.py        # remo init
-│   ├── web.py             # remo web {serve,check} — lazy-imports remo_cli.web.* (NFR-008)
+│   ├── web.py             # remo web {serve,check,adopt,push} — serve/check lazy-import remo_cli.web.* (NFR-008); adopt/push use core/web_adopt only
 │   └── providers/         # Provider CLI groups
 │       ├── incus.py       # remo incus {create,destroy,update,list,sync,bootstrap}
 │       ├── hetzner.py     # remo hetzner {create,destroy,update,list,sync}
@@ -45,6 +46,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── known_hosts.py     # Flat-file host registry
 │   ├── ssh.py             # build_ssh_base_cmd(), SSH options, terminal reset, timezone
 │   ├── remo_host_client.py  # Versioned remo-host protocol client (shared by CLI + web)
+│   ├── web_adopt.py       # Workstation-side adoption/push engine (stdlib HTTP, keyscan trust verify, authorized_keys mgmt, --via tunnel)
 │   ├── ansible_runner.py  # Ansible playbook subprocess
 │   ├── picker.py          # InquirerPy fuzzy picker
 │   ├── rsync.py           # File transfer
@@ -52,7 +54,8 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   └── init.py            # remo init logic
 ├── web/                    # remo-web service — FastAPI; optional `web` extra, lazily imported
 │   ├── app.py               # FastAPI factory: routers, Host/Origin+CSP middleware, serves built SPA
-│   ├── config.py             # WebSettings (REMO_WEB_* env vars, see docs/web-session-interface.md)
+│   ├── config.py             # WebSettings (REMO_WEB_* env vars incl. api_token, see docs/web-session-interface.md)
+│   ├── state.py              # ConfigurationState detection (unconfigured/adopted/mount_configured/broken) + service identity generation
 │   ├── discovery.py          # Concurrent per-instance discovery via remo-host + SSH
 │   ├── ssh_master.py         # Per-instance SSH ControlMaster lifecycle
 │   ├── terminal.py           # PTY + `ssh -tt … remo-host sessions attach`, resize/backpressure
@@ -64,6 +67,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── models.py               # Service-only entities: TerminalAttachment, WsToken, SshMaster
 │   └── api/
 │       ├── hosts.py            # GET /api/v1/hosts, /sessions, POST /discovery/refresh
+│       ├── setup.py            # Token-gated /api/v1/setup/{status,identity,registry,verify} (011-web-adopt)
 │       └── terminals.py        # POST/GET/DELETE /api/v1/terminals, WS /api/v1/terminals/{id}
 └── models/
     ├── host.py             # KnownHost dataclass
@@ -182,10 +186,9 @@ Provider SDKs (boto3, hcloud) are lazy-imported with clear error messages if mis
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
+- 011-web-adopt: Added CLI-to-web adoption — unconfigured boot with service-scoped ed25519 identity, token-gated `/api/v1/setup/*` (REMO_WEB_API_TOKEN, fail-closed), `remo web adopt`/`remo web push` (registry mirror + workstation-verified host keys + idempotent `remo-web@<id>` authorized_keys entries), AwaitingAdoption SPA page.
 - 010-web-session-interface: Added remo-web Docker service (FastAPI + React/ghostty-web) brokering browser terminal sessions across all Remo-managed instances via a new remo-host SSH command; web extra + remo web {serve,check} CLI group.
 - 005-provider-snapshots: Added cross-provider snapshot CLI (`remo <P> snapshot {create,list,restore,delete}`) + destroy-time cleanup hook across Incus / Proxmox / AWS / Hetzner.
-- 003-python-cli-rewrite: Added Python 3.11+ + Click (CLI framework), InquirerPy (interactive picker), boto3 (AWS, optional), hcloud (Hetzner, optional)
-- 002-incus-container-support: Added Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (existing), Incus CLI (local)
 
 
 <!-- MANUAL ADDITIONS START -->

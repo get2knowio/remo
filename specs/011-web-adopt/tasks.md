@@ -102,8 +102,8 @@ existing RO-mount image tests stay green unchanged.
 - [X] T032 [P] [US2] Extend the ready-payload types + polling to expose service state in frontend/src/api/client.ts
 - [X] T033 [US2] Add `AwaitingAdoption` page (explanation + pre-filled `remo web adopt <origin>` command, poll-flip to dashboard on state change, no instance data) in frontend/src/components/AwaitingAdoption.tsx wired into the dashboard root (FR-004, research R12)
 - [X] T034 [P] [US2] Unit tests: ready/check outputs across all four states in tests/unit/web/test_health_states.py
-- [ ] T035 [US2] Image tests: unconfigured boot with empty named volume + token (ready `unconfigured` < 30 s, keypair in volume, restart reuses keypair) added to tests/image/test_docker_image.py; existing RO-mount tests must pass unchanged (SC-005/SC-006)
-- [ ] T036 [US2] Add the adopted-mode deployment variant (named state volume + `REMO_WEB_API_TOKEN`) alongside the RO-mount variant in docker/compose.example.yml
+- [X] T035 [US2] Image tests: unconfigured boot with empty named volume + token (ready `unconfigured` < 30 s, keypair in volume, restart reuses keypair) added to tests/image/test_docker_image.py; existing RO-mount tests must pass unchanged (SC-005/SC-006)
+- [X] T036 [US2] Add the adopted-mode deployment variant (named state volume + `REMO_WEB_API_TOKEN`) alongside the RO-mount variant in docker/compose.example.yml
 
 **Checkpoint**: Both deployment modes boot correctly and are visibly distinguishable
 
@@ -140,7 +140,7 @@ new instance live in the dashboard < 60 s; rotated token → clear re-auth failu
 - [X] T040 [US4] Add push orchestration in src/remo_cli/core/web_adopt.py: `deployment_id` mismatch → abort with re-adopt guidance; delta detection so unchanged instances skip keyscan/authorize; full mirror still pushed (FR-026/FR-027, clarification Q1)
 - [X] T041 [US4] Add `remo web push` Click command (`--allow-empty`, `--yes`; missing credentials → adopt-style prompts) in src/remo_cli/cli/web.py
 - [X] T042 [P] [US4] Unit tests: saved-credentials lifecycle (consent, perms, absent, rejected token, deployment-id mismatch) + delta logic in tests/unit/core/test_web_push.py
-- [ ] T043 [US4] Extend the integration test with the push-after-adopt scenario (new registry entry → only it gets authorized; token rotation → exit 1 with guidance) in tests/integration/test_web_adopt_e2e.py
+- [X] T043 [US4] Extend the integration test with the push-after-adopt scenario (new registry entry → only it gets authorized; token rotation → exit 1 with guidance) in tests/integration/test_web_adopt_e2e.py
 
 **Checkpoint**: All four stories independently functional
 
@@ -148,11 +148,11 @@ new instance live in the dashboard < 60 s; rotated token → clear re-auth failu
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T044 [P] Document the adoption workflow end-to-end in docs/web-session-interface.md: state volume, token config (compose + hola), adopt/push usage, `--via` fallback, key rotation via state reset + re-adoption, manual de-authorization of removed instances, reverse-proxy/SSO caveat + future forward-auth bypass note (FR-028/FR-029)
-- [ ] T045 [P] Update agent context (`.specify/scripts/bash/update-agent-context.sh claude`) and the Recent Changes section so CLAUDE.md reflects 011-web-adopt
-- [ ] T046 Run the full quickstart validation (scenarios A–H in specs/011-web-adopt/quickstart.md) against the built image and record outcomes
-- [ ] T047 Full quality sweep: `uv run pytest`, `uv run mypy src/remo_cli`, `uv run ruff check src/remo_cli`, `cd frontend && npm run lint && npm run build`, `REMO_RUN_IMAGE_TESTS=1 uv run pytest tests/image/ -v`
-- [ ] T048 Verify SC-003 idempotence + SC-005 regression explicitly: back-to-back adopt runs diff-clean; pre-feature compose example boots identically on this build
+- [X] T044 [P] Document the adoption workflow end-to-end in docs/web-session-interface.md: state volume, token config (compose + hola), adopt/push usage, `--via` fallback, key rotation via state reset + re-adoption, manual de-authorization of removed instances, reverse-proxy/SSO caveat + future forward-auth bypass note (FR-028/FR-029)
+- [X] T045 [P] Update agent context (`.specify/scripts/bash/update-agent-context.sh claude`) and the Recent Changes section so CLAUDE.md reflects 011-web-adopt
+- [X] T046 Run the full quickstart validation (scenarios A–H in specs/011-web-adopt/quickstart.md) against the built image and record outcomes
+- [X] T047 Full quality sweep: `uv run pytest`, `uv run mypy src/remo_cli`, `uv run ruff check src/remo_cli`, `cd frontend && npm run lint && npm run build`, `REMO_RUN_IMAGE_TESTS=1 uv run pytest tests/image/ -v`
+- [X] T048 Verify SC-003 idempotence + SC-005 regression explicitly: back-to-back adopt runs diff-clean; pre-feature compose example boots identically on this build
 
 ---
 

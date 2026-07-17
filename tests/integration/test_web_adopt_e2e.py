@@ -1,7 +1,8 @@
-"""End-to-end integration test for CLI-to-Web adoption (011-web-adopt, T026).
+"""End-to-end integration test for CLI-to-Web adoption (011-web-adopt, T026/T043).
 
-Proves quickstart.md scenarios C (first-time adoption, SC-001/SC-002) and D
-(idempotence, FR-015/SC-003) against a LIVE local service: a real uvicorn
+Proves quickstart.md scenarios C (first-time adoption, SC-001/SC-002), D
+(idempotence, FR-015/SC-003), and E (`remo web push` after adoption,
+FR-025/FR-026/FR-027) against a LIVE local service: a real uvicorn
 subprocess serving `create_app()` on an ephemeral 127.0.0.1 port, with
 `REMO_WEB_API_TOKEN` set and its own writable service-side `REMO_HOME`
 (distinct from the workstation-side temp `REMO_HOME`/`$HOME` the adopt flow
@@ -105,6 +106,18 @@ _CANNED_HOST_KEY_LINES = [
 ]
 
 _EXPECTED_SERVICE_KNOWN_HOSTS = "".join(line + "\n" for line in _CANNED_HOST_KEY_LINES)
+
+#: A direct-access instance registered AFTER the first adoption. Quickstart
+#: scenario E: `remo web push` must give it -- and only it -- the full adopt
+#: treatment (keyscan + authorize) while the already-adopted instance is
+#: reported `unchanged` (FR-026). Another TEST-NET-1 address, canned in
+#: `adoption_ssh_mocks` exactly like the first direct instance.
+_NEW_ADDR = "192.0.2.20"
+_NEW_DIRECT = KnownHost(type="incus", name="newbox", host=_NEW_ADDR, user="remo")
+_NEW_CANNED_HOST_KEY_LINES = [
+    f"{_NEW_ADDR} ssh-ed25519 "
+    "AAAAC3NzaC1lZDI1NTE5AAAAIGpushTESTnewboxKeyMaterial4kAcWTOQqmpvSF3Y5LFbT",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -266,21 +279,29 @@ def workstation(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 def adoption_ssh_mocks(monkeypatch: pytest.MonkeyPatch) -> dict:
     """Selective passthrough around the real workstation-side SSH helpers.
 
-    Only the direct-access instance (`192.0.2.10`) is canned; any other
-    hostname -- in this suite, exactly `unreachable.invalid` -- goes through
-    the REAL `scan_and_verify_host_key`, whose keyscan genuinely fails, so
-    the `skipped_unreachable` classification is exercised for real.
-    `authorize_service_key` records what would have been installed (host
-    name + service public key) and reports success.
+    Only the known direct-access instances (`192.0.2.10`, plus `192.0.2.20`
+    for the push scenarios) are canned; any other hostname -- in this suite,
+    exactly `unreachable.invalid` -- goes through the REAL
+    `scan_and_verify_host_key`, whose keyscan genuinely fails, so the
+    `skipped_unreachable` classification is exercised for real. Every scan
+    target (`calls["scanned"]`) and every would-be authorized_keys install
+    (`calls["authorized"]`: host name + service public key, reported as
+    success) is recorded, so tests can prove which instances were -- and
+    were NOT -- processed.
     """
-    calls: dict = {"authorized": []}
+    calls: dict = {"authorized": [], "scanned": []}
     real_scan = web_adopt.scan_and_verify_host_key
+    canned_lines = {
+        _DIRECT_ADDR: _CANNED_HOST_KEY_LINES,
+        _NEW_ADDR: _NEW_CANNED_HOST_KEY_LINES,
+    }
 
     def selective_scan(hostname: str, **kwargs) -> web_adopt.HostKeyScan:
-        if hostname == _DIRECT_ADDR:
+        calls["scanned"].append(hostname)
+        if hostname in canned_lines:
             return web_adopt.HostKeyScan(
                 "trusted",
-                lines=list(_CANNED_HOST_KEY_LINES),
+                lines=list(canned_lines[hostname]),
                 detail="matches trusted known_hosts entry (canned for e2e test)",
             )
         return real_scan(hostname, **kwargs)
@@ -502,3 +523,214 @@ def test_registry_put_preserves_established_sessions(
             conn.close()
     finally:
         os.close(held_fd)
+
+
+# ---------------------------------------------------------------------------
+# 5-7. T043: push after adoption (US4; quickstart scenario E;
+# FR-025/FR-026/FR-027) against the live service
+# ---------------------------------------------------------------------------
+
+
+def _fast_adopt_and_save(service: LiveService) -> web_adopt.SavedCredentials:
+    """Establish the adopted + credentials-saved state on the cheap.
+
+    Direct PUT of the same mirror payload the adopt flow builds (as in the
+    session-continuity test: no per-instance SSH, no verify round-trips)
+    plus `save_credentials()` with the service's REAL identity and the same
+    seeded push cache `run_adopt(save=True)` leaves behind. Used by the
+    failure-path push tests, where re-running the whole adopt flow would
+    only add runtime.
+    """
+    client = web_adopt.SetupApiClient(service.url, service.token)
+    identity = client.get_identity()
+    applied = client.put_registry(
+        web_adopt.build_adoption_payload(
+            _HOSTS, {_DIRECT.name: list(_CANNED_HOST_KEY_LINES)}
+        )
+    )
+    assert applied["applied"] is True
+
+    credentials = web_adopt.SavedCredentials(
+        url=service.url,
+        token=service.token,
+        deployment_id=str(identity["deployment_id"]),
+        push_cache={
+            _DIRECT.name: web_adopt.CachedInstance(
+                fingerprint=web_adopt.instance_fingerprint(_DIRECT),
+                host_keys=list(_CANNED_HOST_KEY_LINES),
+            )
+        },
+    )
+    web_adopt.save_credentials(credentials)
+    return credentials
+
+
+def _corrupt_saved_credentials(ws_remo: Path, **overrides: str) -> Path:
+    """Rewrite fields of the saved web-service.json in place (simulating a
+    service-side token rotation / state-volume reset without a restart)."""
+    path = ws_remo / "web-service.json"
+    data = json.loads(path.read_text())
+    data.update(overrides)
+    path.write_text(json.dumps(data))
+    return path
+
+
+@requires_live_web
+def test_push_after_adopt_processes_only_the_new_instance(
+    service: LiveService,
+    workstation: Path,
+    adoption_ssh_mocks: dict,
+):
+    """Scenario E happy path: adopt + save, register a new direct-access
+    instance workstation-side, `run_push()` -- only the new instance gets
+    keyscan+authorize; the original is `unchanged` from the delta cache but
+    still contributes its cached host-key lines to the full mirror PUT."""
+    # ---- Adopt with explicit credential save (FR-025) --------------------
+    result = web_adopt.run_adopt(
+        service.url, service.token, interactive=False, save=True
+    )
+    assert {o.host.name: o.outcome for o in result.outcomes} == {
+        "webbox": web_adopt.OUTCOME_ADOPTED,
+        "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
+        "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
+    }
+
+    creds_path = workstation / "web-service.json"
+    assert creds_path.stat().st_mode & 0o777 == 0o600
+    saved = json.loads(creds_path.read_text())
+    assert saved["url"] == service.url
+    assert saved["deployment_id"] == result.deployment_id
+    # Delta cache seeded with exactly the adopted instance + its pushed lines.
+    assert set(saved["push_cache"]) == {"webbox"}
+    assert saved["push_cache"]["webbox"]["host_keys"] == _CANNED_HOST_KEY_LINES
+
+    adoption_ssh_mocks["scanned"].clear()
+    adoption_ssh_mocks["authorized"].clear()
+
+    # ---- A NEW direct-access instance is registered workstation-side ----
+    registry = workstation / "known_hosts"
+    registry.write_text(registry.read_text() + _NEW_DIRECT.to_line() + "\n")
+
+    # ---- Zero-argument push (FR-026) -------------------------------------
+    push = web_adopt.run_push(interactive=False)
+
+    assert {o.host.name: o.outcome for o in push.outcomes} == {
+        "webbox": web_adopt.OUTCOME_UNCHANGED,
+        "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
+        "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
+        "newbox": web_adopt.OUTCOME_ADOPTED,
+    }
+    assert push.deployment_id == result.deployment_id
+    assert push.applied == {
+        "applied": True,
+        "registry_instances": 4,
+        "host_key_instances": 2,
+    }
+
+    # Call recording proves the delta: the original instance was never
+    # re-scanned, the new one was scanned exactly once (ghost still goes
+    # through its real, failing keyscan), and the ONLY authorized_keys
+    # install targeted the new instance -- with the service's EXISTING
+    # identity (same deployment_id as adoption).
+    assert _DIRECT_ADDR not in adoption_ssh_mocks["scanned"]
+    assert adoption_ssh_mocks["scanned"].count(_NEW_ADDR) == 1
+    assert _UNREACHABLE_ADDR in adoption_ssh_mocks["scanned"]
+    assert [name for name, _ in adoption_ssh_mocks["authorized"]] == ["newbox"]
+    authorized_key = adoption_ssh_mocks["authorized"][0][1]
+    assert authorized_key.endswith(f"remo-web@{result.deployment_id}")
+
+    # Service-side end state: the mirror gained exactly the new entry, and
+    # the service known_hosts holds the cached webbox lines (reused from the
+    # delta cache) plus the new instance's freshly scanned lines, in
+    # registry order.
+    assert (
+        service.registry_path.read_text()
+        == _EXPECTED_SERVICE_REGISTRY + _NEW_DIRECT.to_line() + "\n"
+    )
+    assert (
+        service.identity_dir / "known_hosts"
+    ).read_text() == _EXPECTED_SERVICE_KNOWN_HOSTS + "".join(
+        line + "\n" for line in _NEW_CANNED_HOST_KEY_LINES
+    )
+
+    status, setup = _http_json(
+        "GET", f"{service.url}/api/v1/setup/status", token=service.token
+    )
+    assert status == 200
+    assert setup["state"] == "adopted"
+    assert setup["registry_instances"] == 4
+
+    # The delta cache was rewritten after the successful PUT: both adopted
+    # instances now present, so the NEXT push would skip newbox too.
+    resaved = json.loads(creds_path.read_text())
+    assert set(resaved["push_cache"]) == {"webbox", "newbox"}
+    assert resaved["push_cache"]["newbox"]["host_keys"] == _NEW_CANNED_HOST_KEY_LINES
+    assert resaved["push_cache"]["webbox"] == saved["push_cache"]["webbox"]
+
+
+@requires_live_web
+def test_push_with_rotated_token_fails_with_reauth_guidance(
+    service: LiveService,
+    workstation: Path,
+    adoption_ssh_mocks: dict,
+):
+    """FR-027: a saved token the service no longer accepts (token rotation,
+    simulated by corrupting web-service.json) must fail with clear re-adopt
+    guidance -- before any per-instance work or registry PUT."""
+    _fast_adopt_and_save(service)
+    _corrupt_saved_credentials(workstation, token="rotated-away-token")
+
+    registry_before = service.registry_path.read_bytes()
+    with pytest.raises(web_adopt.SetupAuthError) as excinfo:
+        web_adopt.run_push(interactive=False)
+
+    assert excinfo.value.status == 401
+    message = str(excinfo.value)
+    assert "rejected the saved API token" in message
+    assert "remo web adopt" in message  # the documented re-auth remediation
+
+    # Failed at the identity precheck: no instance was touched, no PUT.
+    assert adoption_ssh_mocks["scanned"] == []
+    assert adoption_ssh_mocks["authorized"] == []
+    assert service.registry_path.read_bytes() == registry_before
+
+
+@requires_live_web
+def test_push_with_stale_deployment_id_fails_without_put(
+    service: LiveService,
+    workstation: Path,
+    adoption_ssh_mocks: dict,
+):
+    """A deployment_id mismatch (service state volume reset since the save)
+    must abort the push with re-adopt guidance BEFORE any PUT, leaving the
+    service registry, known_hosts, and workstation credentials untouched."""
+    _fast_adopt_and_save(service)
+    creds_path = _corrupt_saved_credentials(
+        workstation, deployment_id="00000000-stale-deployment-id"
+    )
+
+    registry_before = service.registry_path.read_bytes()
+    known_hosts_before = (service.identity_dir / "known_hosts").read_bytes()
+
+    with pytest.raises(web_adopt.AdoptError) as excinfo:
+        web_adopt.run_push(interactive=False)
+
+    message = str(excinfo.value)
+    assert "service identity changed" in message
+    assert "00000000-stale-deployment-id" in message
+    assert "re-adopt" in message  # remediation: run `remo web adopt` again
+    # A mismatch is a local trust decision, not an HTTP failure.
+    assert not isinstance(excinfo.value, web_adopt.SetupApiError)
+
+    # No PUT happened: service-side files are byte-identical, no instance
+    # was scanned or authorized, and the saved credentials (including the
+    # corrupted deployment_id) were not rewritten -- the cache rewrite only
+    # ever follows a successful PUT.
+    assert adoption_ssh_mocks["scanned"] == []
+    assert adoption_ssh_mocks["authorized"] == []
+    assert service.registry_path.read_bytes() == registry_before
+    assert (service.identity_dir / "known_hosts").read_bytes() == known_hosts_before
+    assert (
+        json.loads(creds_path.read_text())["deployment_id"]
+        == "00000000-stale-deployment-id"
+    )

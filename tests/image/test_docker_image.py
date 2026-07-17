@@ -36,6 +36,15 @@ tests (skip honestly rather than fail when infra isn't available):
    for both platforms, `/api/v1/ready` correctly 503s with a missing-mount
    `detail` message and 200s once registry + SSH identity + writable
    `/run/remo-ssh` are all mounted).
+
+011-web-adopt (T035) adds a third group to tier 2: unconfigured-boot tests
+(quickstart A/B, SC-006) that start the image with an EMPTY writable bind at
+the container's REMO_HOME and no registry/SSH mounts at all, then assert the
+service reaches its "awaiting adoption" state (ready 200 `unconfigured`)
+within 30s, generates a persistent service identity (same fingerprint across
+a container restart, FR-002), and token-gates the setup API (404 when
+`REMO_WEB_API_TOKEN` is unset, FR-021). The pre-existing RO-mount tests
+above are intentionally untouched — them still passing IS SC-005.
 """
 
 from __future__ import annotations
@@ -550,7 +559,6 @@ def _elf_machine(path: Path) -> int:
     return int.from_bytes(data[18:20], byteorder="little" if data[5] == 1 else "big")
 
 
-@requires_image_build
 def _ensure_docker_container_builder(name: str) -> bool:
     """The default `docker`-driver builder cannot route non-native
     platforms through QEMU (confirmed empirically: it fails arm64 builds
@@ -579,6 +587,7 @@ def _ensure_docker_container_builder(name: str) -> bool:
     return bootstrap.returncode == 0
 
 
+@requires_image_build
 def test_build_and_run_arm64(tmp_path):
     """Builds the arm64 image for real via `docker buildx build` (BuildKit
     has QEMU emulation for build-time RUN steps here, confirmed working),
@@ -654,6 +663,254 @@ def test_build_and_run_arm64(tmp_path):
             _docker_rm(name)
     finally:
         _docker_rmi(tag)
+
+
+# ---------------------------------------------------------------------------
+# Tier 2, group 3: unconfigured boot (011-web-adopt T035; quickstart A/B,
+# SC-006/FR-002/FR-021). Same opt-in gate and hardening flags as above.
+# ---------------------------------------------------------------------------
+
+_CONTAINER_REMO_HOME = "/home/remo/.config/remo"
+_IDENTITY_DIR = f"{_CONTAINER_REMO_HOME}/web-identity"
+_SETUP_TOKEN = "image-test-token-123"
+_SETUP_STATUS_URL = "http://127.0.0.1:8080/api/v1/setup/status"
+
+
+@pytest.fixture
+def empty_state_dir(tmp_path, amd64_image):
+    """An EMPTY writable dir bind-mounted at the container's REMO_HOME.
+
+    Quickstart A uses `docker volume create` + a named volume; a host tmp-dir
+    bind is equivalent for the service (an empty writable REMO_HOME) while
+    staying deterministic about ownership: chmod 0o777 so uid 1000 (the
+    container user) can write even when pytest runs as a different uid — the
+    same cross-uid reasoning as `registry_and_ssh_mounts`' 0644 key above.
+
+    Cleanup runs `rm -rf` as root *inside a throwaway container*: the booted
+    service writes a 0700, uid-1000-owned `web-identity/` into this dir,
+    which the pytest uid cannot necessarily delete from the host side.
+    """
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    state_dir.chmod(0o777)
+    yield state_dir
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--user",
+            "0:0",
+            "--entrypoint",
+            "sh",
+            "-v",
+            f"{state_dir}:/state",
+            amd64_image,
+            "-c",
+            "rm -rf /state/web-identity /state/known_hosts",
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+
+
+def _run_unconfigured_container(
+    image: str, name: str, state_dir: Path, *, token: str | None
+) -> None:
+    """`docker run` with compose.example.yml's hardening flags, an empty
+    writable state volume at REMO_HOME, and NO registry/SSH mounts.
+
+    The tmpfs mode is pinned explicitly: a bare `--tmpfs` first mounts as
+    1777 but is REMOUNTED root-owned 0755 by `docker restart` (verified
+    empirically on Docker 29; a long-standing Docker quirk), which would
+    make the runtime-dir check fail on the second boot of the FR-002
+    restart test below. `rw,mode=1777` pins Docker's own first-boot default
+    so every (re)mount is identical.
+    """
+    cmd = [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        name,
+        "--read-only",
+        "--user",
+        "1000:1000",
+        "--tmpfs",
+        "/run/remo-ssh:rw,mode=1777",
+        "-v",
+        f"{state_dir}:{_CONTAINER_REMO_HOME}",
+    ]
+    if token is not None:
+        cmd += ["-e", f"REMO_WEB_API_TOKEN={token}"]
+    cmd.append(image)
+    run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+
+
+def _wait_for_ready_payload(name: str, timeout_s: float = 30.0) -> dict:
+    """Poll GET /api/v1/ready until it answers 200; the 30s default budget is
+    SC-006's bound for reaching the awaiting-adoption state. Unlike
+    `_curl_in_container` this tolerates the not-yet-listening window."""
+    deadline = time.time() + timeout_s
+    last = ""
+    while time.time() < deadline:
+        result = subprocess.run(
+            [
+                "docker",
+                "exec",
+                name,
+                "curl",
+                "-s",
+                "-w",
+                "\\n%{http_code}",
+                "http://127.0.0.1:8080/api/v1/ready",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        body, _, status = result.stdout.rpartition("\n")
+        if result.returncode == 0 and status.strip() == "200" and body:
+            return json.loads(body)
+        last = result.stdout + result.stderr
+        time.sleep(0.5)
+    logs = subprocess.run(["docker", "logs", name], capture_output=True, text=True, timeout=10)
+    raise AssertionError(
+        f"/api/v1/ready did not answer 200 within {timeout_s}s "
+        f"(last: {last!r}); container logs:\n{logs.stdout}{logs.stderr}"
+    )
+
+
+def _curl_status_and_json(name: str, url: str, headers: tuple[str, ...] = ()) -> tuple[str, dict]:
+    """Like `_curl_in_container`, plus request headers and the status code in
+    the return value (the setup-API tests assert on 200 vs 401 vs 404)."""
+    cmd = ["docker", "exec", name, "curl", "-s", "-w", "\\n%{http_code}"]
+    for header in headers:
+        cmd += ["-H", header]
+    cmd.append(url)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    body, _, status = result.stdout.rpartition("\n")
+    return status.strip(), (json.loads(body) if body else {})
+
+
+def _service_key_fingerprint(name: str) -> str:
+    result = subprocess.run(
+        ["docker", "exec", name, "ssh-keygen", "-lf", f"{_IDENTITY_DIR}/id_ed25519.pub"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout.split()[1]  # the SHA256:... field
+
+
+@requires_image_build
+def test_amd64_unconfigured_boot_reports_unconfigured_and_generates_identity(
+    amd64_image, empty_state_dir
+):
+    """Quickstart A: empty writable REMO_HOME + token, no registry/key
+    mounts. The entrypoint gate must PASS (unconfigured is a passing state,
+    SC-006), ready must answer 200 `unconfigured` within 30s, and the boot
+    must have generated the service identity into the state volume."""
+    name = f"remo-web-test-unconf-{uuid.uuid4().hex[:8]}"
+    try:
+        _run_unconfigured_container(amd64_image, name, empty_state_dir, token=_SETUP_TOKEN)
+        payload = _wait_for_ready_payload(name)
+        assert payload["status"] == "unconfigured"
+
+        probe = subprocess.run(
+            [
+                "docker",
+                "exec",
+                name,
+                "sh",
+                "-c",
+                f"test -f {_IDENTITY_DIR}/id_ed25519 && "
+                f"test -f {_IDENTITY_DIR}/id_ed25519.pub && "
+                f"test -f {_IDENTITY_DIR}/state.json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if probe.returncode != 0:
+            listing = subprocess.run(
+                ["docker", "exec", name, "ls", "-laR", _CONTAINER_REMO_HOME],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            raise AssertionError(
+                f"service identity not generated under {_IDENTITY_DIR}:\n"
+                f"{listing.stdout}{listing.stderr}"
+            )
+    finally:
+        _docker_rm(name)
+
+
+@requires_image_build
+def test_amd64_service_identity_survives_container_restart(amd64_image, empty_state_dir):
+    """FR-002: the keypair is generated once and NEVER regenerated while the
+    key files exist — a restart must come back with the same fingerprint."""
+    name = f"remo-web-test-restart-{uuid.uuid4().hex[:8]}"
+    try:
+        _run_unconfigured_container(amd64_image, name, empty_state_dir, token=_SETUP_TOKEN)
+        assert _wait_for_ready_payload(name)["status"] == "unconfigured"
+        fingerprint_before = _service_key_fingerprint(name)
+
+        restart = subprocess.run(
+            ["docker", "restart", name], capture_output=True, text=True, timeout=60
+        )
+        assert restart.returncode == 0, restart.stderr
+
+        assert _wait_for_ready_payload(name)["status"] == "unconfigured"
+        assert _service_key_fingerprint(name) == fingerprint_before
+    finally:
+        _docker_rm(name)
+
+
+@requires_image_build
+def test_amd64_setup_status_token_gated(amd64_image, empty_state_dir):
+    """With REMO_WEB_API_TOKEN set: the right bearer token sees the setup
+    surface (state `unconfigured`); a wrong token gets 401 (SC-004)."""
+    name = f"remo-web-test-setup-{uuid.uuid4().hex[:8]}"
+    try:
+        _run_unconfigured_container(amd64_image, name, empty_state_dir, token=_SETUP_TOKEN)
+        _wait_for_ready_payload(name)
+
+        status, payload = _curl_status_and_json(
+            name, _SETUP_STATUS_URL, headers=(f"Authorization: Bearer {_SETUP_TOKEN}",)
+        )
+        assert status == "200", payload
+        assert payload["state"] == "unconfigured"
+        assert payload["public_key_available"] is True
+        assert payload["registry_instances"] == 0
+
+        status, payload = _curl_status_and_json(
+            name, _SETUP_STATUS_URL, headers=("Authorization: Bearer wrong-token",)
+        )
+        assert status == "401", payload
+    finally:
+        _docker_rm(name)
+
+
+@requires_image_build
+def test_amd64_setup_routes_hidden_without_token_env(amd64_image, empty_state_dir):
+    """With REMO_WEB_API_TOKEN entirely unset the setup surface must not
+    exist (404, indistinguishable from an unknown route — FR-021) while the
+    service still boots and reports `unconfigured` on ready."""
+    name = f"remo-web-test-notoken-{uuid.uuid4().hex[:8]}"
+    try:
+        _run_unconfigured_container(amd64_image, name, empty_state_dir, token=None)
+        payload = _wait_for_ready_payload(name)
+        assert payload["status"] == "unconfigured"
+
+        status, body = _curl_status_and_json(name, _SETUP_STATUS_URL)
+        assert status == "404", body
+        assert body == {"detail": "Not Found"}
+    finally:
+        _docker_rm(name)
 
 
 # ---------------------------------------------------------------------------
