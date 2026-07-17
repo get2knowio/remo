@@ -147,7 +147,16 @@ def _executable_check(name: str, binary: str) -> CheckResult:
 
 def _instance_check(host: KnownHost, settings: WebSettings) -> CheckResult:
     name = f"instance {host.type}/{host.name}"
-    ssh_argv_prefix = build_ssh_base_cmd(host, control_dir=settings.ssh_control_dir)
+    # Same transport the rest of the service uses (R6): in adopted mode the
+    # WebSettings properties resolve to the service identity/known_hosts under
+    # web-identity/; in every other mode they are None and the argv is
+    # byte-identical to before (FR-005/FR-023).
+    ssh_argv_prefix = build_ssh_base_cmd(
+        host,
+        control_dir=settings.ssh_control_dir,
+        identity_file=settings.ssh_identity_file,
+        known_hosts_file=settings.ssh_known_hosts_file,
+    )
 
     try:
         capability = get_capabilities(ssh_argv_prefix, timeout=_INSTANCE_CHECK_TIMEOUT_S)
