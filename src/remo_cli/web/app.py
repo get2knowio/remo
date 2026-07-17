@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from remo_cli.web.api.hosts import router as hosts_router
+from remo_cli.web.api.setup import router as setup_router
 from remo_cli.web.api.terminals import router as terminals_router
 from remo_cli.web.config import WebSettings
 from remo_cli.web.discovery import DiscoveryService
@@ -165,6 +166,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(hosts_router, prefix="/api/v1")
     app.include_router(terminals_router, prefix="/api/v1")
+    app.include_router(setup_router, prefix="/api/v1")
 
     # --- Same-origin frontend static files (FR-038, no CDN) -----------------
     # The built frontend won't exist until the Docker image build stage (or a

@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from remo_cli.core.config import get_remo_home_readonly
+
 # Plain stdlib dataclass rather than pydantic's BaseSettings: pydantic is
 # already a transitive dependency of the `web` extra (via FastAPI), but this
 # module has no other reason to require pydantic v2's settings machinery, and
@@ -118,3 +120,66 @@ class WebSettings:
 
     # Directory the built frontend SPA is served from (same-origin, FR-038).
     frontend_dist_dir: Path = field(default_factory=_default_frontend_dist_dir)
+
+    # Setup API bearer token (011-web-adopt, FR-020/FR-021). Unset or empty
+    # means "not configured": the entire /api/v1/setup surface is disabled
+    # (404 on every setup route -- fail closed, see web/api/setup.py).
+    api_token: str = field(default_factory=lambda: _env_str("API_TOKEN", "").strip())
+
+    # Service identity state directory (011-web-adopt, research R1).
+    # Everything the adopted service owns lives under
+    # <REMO_HOME>/web-identity/: id_ed25519 + id_ed25519.pub (service
+    # keypair), known_hosts (service-managed SSH host keys), state.json
+    # (deployment id + adoption metadata). Resolved once at instantiation via
+    # the read-only-safe REMO_HOME accessor (no mkdir side effect).
+    web_identity_dir: Path = field(
+        default_factory=lambda: get_remo_home_readonly() / "web-identity"
+    )
+
+    # -- Service identity paths (research R1 layout) -----------------------
+
+    @property
+    def service_private_key_path(self) -> Path:
+        return self.web_identity_dir / "id_ed25519"
+
+    @property
+    def service_public_key_path(self) -> Path:
+        return self.web_identity_dir / "id_ed25519.pub"
+
+    @property
+    def service_known_hosts_path(self) -> Path:
+        return self.web_identity_dir / "known_hosts"
+
+    @property
+    def service_state_path(self) -> Path:
+        return self.web_identity_dir / "state.json"
+
+    # -- Resolved SSH options for web call sites (research R6) -------------
+    #
+    # Adopted mode -> the service's own identity/known_hosts under
+    # web-identity/; every other mode (mounted, unconfigured, broken) ->
+    # None, which leaves core.ssh.build_ssh_opts()'s argv byte-identical to
+    # today's (ambient ~/.ssh defaults -- FR-005/FR-023 regression safety).
+    # Computed on demand from the detected configuration state, never stored,
+    # so a registry PUT that flips the state to adopted is picked up by the
+    # next SSH invocation without a restart.
+
+    @property
+    def ssh_identity_file(self) -> str | None:
+        if self._service_identity_active():
+            return str(self.service_private_key_path)
+        return None
+
+    @property
+    def ssh_known_hosts_file(self) -> str | None:
+        if self._service_identity_active():
+            return str(self.service_known_hosts_path)
+        return None
+
+    def _service_identity_active(self) -> bool:
+        # Lazy import: web.state imports WebSettings from this module at
+        # module level; deferring the reverse import to call time keeps the
+        # cycle harmless.
+        from remo_cli.web.state import ConfigurationState, detect_state
+
+        return detect_state(self) is ConfigurationState.ADOPTED

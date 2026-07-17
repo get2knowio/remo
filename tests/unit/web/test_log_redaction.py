@@ -165,6 +165,45 @@ class TestRedactingFilter:
         assert "b3BlbnNzaC1rZXktdjEA" not in rendered
         assert "<redacted>" in rendered
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "401 for request with Authorization: Bearer abcDEF123-_veryLongOpaqueValue1234567890",
+            "authorization=Bearer abcDEF123-_veryLongOpaqueValue1234567890 from 127.0.0.1",
+            "AUTHORIZATION:   bearer abcDEF123-_veryLongOpaqueValue1234567890",
+            'headers={"Authorization": "Bearer abcDEF123-_veryLongOpaqueValue1234567890"}',
+            "Authorization: Basic YWRtaW46aHVudGVyMg==",
+        ],
+    )
+    def test_authorization_header_values_are_masked(self, message: str):
+        record = _make_record(message)
+        RedactingFilter().filter(record)
+        rendered = record.getMessage()
+        assert "abcDEF123" not in rendered
+        assert "YWRtaW46" not in rendered
+        assert "<redacted>" in rendered
+
+    def test_bare_bearer_token_is_masked(self):
+        message = "presented credential Bearer abcDEF123-_veryLongOpaqueValue1234567890 expired"
+        record = _make_record(message)
+        RedactingFilter().filter(record)
+        rendered = record.getMessage()
+        assert "abcDEF123" not in rendered
+        assert "<redacted>" in rendered
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Authorized user connected from 127.0.0.1",
+            "authorization checks passed for terminal-3",
+            "the standard bearer of the release process",
+        ],
+    )
+    def test_authorization_like_prose_passes_through(self, message: str):
+        record = _make_record(message)
+        RedactingFilter().filter(record)
+        assert record.getMessage() == message
+
     def test_ordinary_message_passes_through_unchanged(self):
         message = "Remo web service starting on http://127.0.0.1:8080"
         record = _make_record(message)

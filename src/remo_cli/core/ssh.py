@@ -41,7 +41,11 @@ def resolve_ssh_control_dir(control_dir: str | None = None) -> str:
 
 
 def build_ssh_opts(
-    host: KnownHost, multiplex: bool = False, control_dir: str | None = None
+    host: KnownHost,
+    multiplex: bool = False,
+    control_dir: str | None = None,
+    identity_file: str | None = None,
+    known_hosts_file: str | None = None,
 ) -> tuple[list[str], str]:
     """Build SSH option flags and target string for the given host.
 
@@ -58,6 +62,18 @@ def build_ssh_opts(
         ``f"{control_dir}/remo-%r@%h-%p"``). When ``None`` (the default for
         every existing CLI call site), falls back to ``$REMO_SSH_CONTROL_DIR``
         and finally to ``~/.ssh`` — see :func:`resolve_ssh_control_dir`.
+    identity_file:
+        When set, emit ``-o IdentityFile=<path>`` plus ``-o
+        IdentitiesOnly=yes`` so SSH uses exactly this key and never falls back
+        to ambient ``~/.ssh`` identities or agent keys (adopted-mode web
+        service identity, R6). ``None`` (the default) emits nothing, leaving
+        the argv byte-identical to before this parameter existed.
+    known_hosts_file:
+        When set, emit ``-o UserKnownHostsFile=<path>``. ``None`` (the
+        default) emits nothing. For SSM hosts the access-mode block's
+        ``UserKnownHostsFile=/dev/null`` comes first in the argv and — since
+        SSH honors the first value obtained per option — keeps winning, which
+        preserves SSM's deliberate no-host-key-checking behavior.
 
     Returns
     -------
@@ -111,6 +127,17 @@ def build_ssh_opts(
         ssh_target = f"{host.user}@{host.host}"
 
     # ------------------------------------------------------------------
+    # Explicit identity / known-hosts (adopted-mode web service, R6)
+    # ------------------------------------------------------------------
+    if identity_file is not None:
+        ssh_opts += [
+            "-o", f"IdentityFile={identity_file}",
+            "-o", "IdentitiesOnly=yes",
+        ]
+    if known_hosts_file is not None:
+        ssh_opts += ["-o", f"UserKnownHostsFile={known_hosts_file}"]
+
+    # ------------------------------------------------------------------
     # Timezone forwarding
     # ------------------------------------------------------------------
     tz = detect_timezone()
@@ -127,6 +154,8 @@ def build_ssh_base_cmd(
     tty: bool = False,
     multiplex: bool = False,
     control_dir: str | None = None,
+    identity_file: str | None = None,
+    known_hosts_file: str | None = None,
     extra_opts: list[str] | None = None,
 ) -> list[str]:
     """Build the full ``ssh`` argv for connecting to *host*.
@@ -152,6 +181,14 @@ def build_ssh_base_cmd(
         Forwarded to :func:`build_ssh_opts`.
     control_dir:
         Forwarded to :func:`build_ssh_opts`.
+    identity_file:
+        Forwarded to :func:`build_ssh_opts` — emits ``-o IdentityFile=<path>``
+        and ``-o IdentitiesOnly=yes`` when set; ``None`` (the default) leaves
+        the argv unchanged.
+    known_hosts_file:
+        Forwarded to :func:`build_ssh_opts` — emits ``-o
+        UserKnownHostsFile=<path>`` when set; ``None`` (the default) leaves
+        the argv unchanged.
     extra_opts:
         Extra argv elements inserted after *ssh_opts* but before the
         ``-tt``/target elements — e.g. ``["-L", "8080:localhost:8080"]``
@@ -166,7 +203,13 @@ def build_ssh_base_cmd(
         to ``subprocess``/``asyncio.create_subprocess_exec`` without
         ``shell=True``.
     """
-    ssh_opts, ssh_target = build_ssh_opts(host, multiplex=multiplex, control_dir=control_dir)
+    ssh_opts, ssh_target = build_ssh_opts(
+        host,
+        multiplex=multiplex,
+        control_dir=control_dir,
+        identity_file=identity_file,
+        known_hosts_file=known_hosts_file,
+    )
 
     cmd: list[str] = ["ssh"] + ssh_opts
     if extra_opts:

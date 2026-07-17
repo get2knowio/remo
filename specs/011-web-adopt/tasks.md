@@ -24,8 +24,8 @@ keeping each story independently testable.
 
 **Purpose**: Baseline verification and shared test scaffolding
 
-- [ ] T001 Verify baseline is green (`uv sync --all-extras && uv run pytest && cd frontend && npm ci && npm run lint`) so feature regressions are attributable
-- [ ] T002 Add shared pytest fixtures for a temp writable/read-only `REMO_HOME` state dir (registry + `web-identity/` layouts for all four configuration states) in tests/unit/web/conftest.py
+- [X] T001 Verify baseline is green (`uv sync --all-extras && uv run pytest && cd frontend && npm ci && npm run lint`) so feature regressions are attributable
+- [X] T002 Add shared pytest fixtures for a temp writable/read-only `REMO_HOME` state dir (registry + `web-identity/` layouts for all four configuration states) in tests/unit/web/conftest.py
 
 ---
 
@@ -36,14 +36,14 @@ dependency that every user story builds on
 
 **⚠️ CRITICAL**: No user story phase can begin until this phase is complete
 
-- [ ] T003 Add `api_token`, service-identity paths (`web-identity/` under `REMO_HOME`), and resolved `ssh_identity_file`/`ssh_known_hosts_file` settings to `WebSettings` in src/remo_cli/web/config.py (per research R1/R6)
-- [ ] T004 Create `ConfigurationState` detection (`unconfigured`/`adopted`/`mount_configured`/`broken`, writability probes, mount-precedence rule, EACCES-safe per research R2) in src/remo_cli/web/state.py
-- [ ] T005 Add `ServiceIdentity` generation to src/remo_cli/web/state.py: `ssh-keygen -t ed25519` subprocess, `deployment_id` minting, `state.json` persistence, 0600/0644 enforcement, reuse-never-regenerate (FR-002, research R3)
-- [ ] T006 [P] Extend `build_ssh_opts()`/`build_ssh_base_cmd()` with optional `identity_file`/`known_hosts_file` params emitting `IdentityFile`+`IdentitiesOnly` / `UserKnownHostsFile` opts; `None` default keeps argv byte-identical in src/remo_cli/core/ssh.py (research R6)
-- [ ] T007 [P] Add `Authorization` header + bearer-token redaction patterns to src/remo_cli/web/logging_config.py (FR-022)
-- [ ] T008 Create the setup router scaffold with `require_setup_token` dependency (`hmac.compare_digest`; unset token → 404 on every route; mismatch → 401) in src/remo_cli/web/api/setup.py and register it in src/remo_cli/web/app.py (FR-020/FR-021, research R4)
-- [ ] T009 [P] Unit tests: full state-detection matrix (4 states × probe failures × precedence) in tests/unit/web/test_state.py
-- [ ] T010 [P] Unit tests: ssh-opts regression (default `None` → today's argv, byte-compared) + new param emission in tests/unit/core/test_ssh_identity_opts.py
+- [X] T003 Add `api_token`, service-identity paths (`web-identity/` under `REMO_HOME`), and resolved `ssh_identity_file`/`ssh_known_hosts_file` settings to `WebSettings` in src/remo_cli/web/config.py (per research R1/R6)
+- [X] T004 Create `ConfigurationState` detection (`unconfigured`/`adopted`/`mount_configured`/`broken`, writability probes, mount-precedence rule, EACCES-safe per research R2) in src/remo_cli/web/state.py
+- [X] T005 Add `ServiceIdentity` generation to src/remo_cli/web/state.py: `ssh-keygen -t ed25519` subprocess, `deployment_id` minting, `state.json` persistence, 0600/0644 enforcement, reuse-never-regenerate (FR-002, research R3)
+- [X] T006 [P] Extend `build_ssh_opts()`/`build_ssh_base_cmd()` with optional `identity_file`/`known_hosts_file` params emitting `IdentityFile`+`IdentitiesOnly` / `UserKnownHostsFile` opts; `None` default keeps argv byte-identical in src/remo_cli/core/ssh.py (research R6)
+- [X] T007 [P] Add `Authorization` header + bearer-token redaction patterns to src/remo_cli/web/logging_config.py (FR-022)
+- [X] T008 Create the setup router scaffold with `require_setup_token` dependency (`hmac.compare_digest`; unset token → 404 on every route; mismatch → 401) in src/remo_cli/web/api/setup.py and register it in src/remo_cli/web/app.py (FR-020/FR-021, research R4)
+- [X] T009 [P] Unit tests: full state-detection matrix (4 states × probe failures × precedence) in tests/unit/web/test_state.py
+- [X] T010 [P] Unit tests: ssh-opts regression (default `None` → today's argv, byte-compared) + new param emission in tests/unit/core/test_ssh_identity_opts.py
 
 **Checkpoint**: Foundation ready — user story phases can begin
 
