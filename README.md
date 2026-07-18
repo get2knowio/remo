@@ -331,11 +331,19 @@ uv run remo web serve --host 127.0.0.1 --port 8080   # local dev
 ```
 
 For a home-lab install, use Docker Compose — see [`docker/compose.example.yml`](docker/compose.example.yml)
-for a ready-to-adapt file (read-only registry + SSH material mounts, tmpfs runtime dir, healthcheck,
-non-root/read-only hardening).
+for a ready-to-adapt file covering both deployment modes (tmpfs runtime dir, healthcheck,
+non-root/read-only hardening in either case):
 
-Full architecture, security model, Compose walkthrough, credentials/SSM setup, discovery states,
-terminal limits, troubleshooting, and upgrade notes: **[docs/web-session-interface.md](docs/web-session-interface.md)**.
+- **Bind-mount mode**: mount your existing registry and SSH key read-only — the container runs with
+  your identity, on the same box as your config.
+- **Adopted mode**: mount nothing. The container generates its own SSH identity in a writable state
+  volume, and a single `remo web adopt` from your workstation pushes your registry and authorizes
+  that identity on every instance — your personal private key never leaves the workstation
+  (`remo web push` re-syncs later changes).
+
+Full architecture, security model, Compose walkthrough, adoption workflow, credentials/SSM setup,
+discovery states, terminal limits, troubleshooting, and upgrade notes:
+**[docs/web-session-interface.md](docs/web-session-interface.md)**.
 
 ---
 

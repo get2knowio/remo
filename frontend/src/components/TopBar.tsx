@@ -4,9 +4,13 @@
 import type { HealthStatus } from "../state/health";
 import "./TopBar.css";
 
+// "unconfigured" is included for Record exhaustiveness, but in practice the
+// root gate renders the AwaitingAdoption page (not the shell/top bar) while
+// the service is awaiting adoption.
 const HEALTH_LABEL: Record<HealthStatus, string> = {
   loading: "Discovering…",
   healthy: "Service healthy",
+  unconfigured: "Awaiting adoption",
   degraded: "Degraded",
   offline: "Service offline",
 };
@@ -14,6 +18,7 @@ const HEALTH_LABEL: Record<HealthStatus, string> = {
 const HEALTH_COLOR: Record<HealthStatus, string> = {
   loading: "var(--warn)",
   healthy: "var(--ok)",
+  unconfigured: "var(--warn)",
   degraded: "var(--warn)",
   offline: "var(--danger)",
 };

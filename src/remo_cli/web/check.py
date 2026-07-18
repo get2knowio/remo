@@ -50,6 +50,7 @@ from remo_cli.core.ssh import build_ssh_base_cmd
 from remo_cli.models.host import KnownHost
 from remo_cli.web import health
 from remo_cli.web.config import WebSettings
+from remo_cli.web.state import ConfigurationState, detect_state
 from remo_cli.web.discovery import (
     _classify_ssh_transport,
     _looks_like_missing_remo_host,
@@ -78,6 +79,10 @@ _REMEDIATE_RUNTIME_DIR = (
 )
 _REMEDIATE_UPDATE_HOST_TOOLS = "Update this instance's Remo host tools (re-run configure)."
 _REMEDIATE_CHECK_REACHABLE = "Check instance is running / reachable."
+_REMEDIATE_BROKEN = (
+    "Check that the mounted registry/key files are readable; a damaged "
+    "service identity (half-generated keypair) requires a state-volume reset."
+)
 
 
 @dataclass(frozen=True)
@@ -100,6 +105,39 @@ def _is_ssm_host(host: KnownHost) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _configuration_check(state: ConfigurationState) -> CheckResult:
+    """The 011-web-adopt configuration-state line (FR-003/FR-005).
+
+    `unconfigured` is a PASSING state (research R11): a fresh writable state
+    volume awaiting `remo web adopt` is healthy, and the Docker entrypoint's
+    startup gate must not crash-loop on it (SC-006). `broken` is the only
+    failing state here.
+    """
+    if state is ConfigurationState.UNCONFIGURED:
+        return CheckResult(
+            "configuration",
+            True,
+            "unconfigured — awaiting adoption; run `remo web adopt <service-url>` "
+            "from a workstation",
+        )
+    if state is ConfigurationState.ADOPTED:
+        return CheckResult(
+            "configuration",
+            True,
+            "adopted — configured via `remo web adopt` (service identity in web-identity/)",
+        )
+    if state is ConfigurationState.MOUNT_CONFIGURED:
+        return CheckResult(
+            "configuration", True, "mount_configured — configured via read-only mounts"
+        )
+    return CheckResult(
+        "configuration",
+        False,
+        "configuration present but unusable (broken)",
+        _REMEDIATE_BROKEN,
+    )
+
+
 def _registry_check(hosts: list[KnownHost]) -> CheckResult:
     status = health._check_registry()
     path = get_known_hosts_path_readonly()
@@ -112,8 +150,8 @@ def _registry_check(hosts: list[KnownHost]) -> CheckResult:
     )
 
 
-def _ssh_identity_check() -> CheckResult:
-    status = health._check_ssh_identity()
+def _ssh_identity_check(settings: WebSettings) -> CheckResult:
+    status = health._check_ssh_identity(settings)
     if status == "ok":
         return CheckResult("ssh_identity", True, "identity file found")
     return CheckResult("ssh_identity", False, "no SSH private key found", _REMEDIATE_SSH_IDENTITY)
@@ -147,7 +185,16 @@ def _executable_check(name: str, binary: str) -> CheckResult:
 
 def _instance_check(host: KnownHost, settings: WebSettings) -> CheckResult:
     name = f"instance {host.type}/{host.name}"
-    ssh_argv_prefix = build_ssh_base_cmd(host, control_dir=settings.ssh_control_dir)
+    # Same transport the rest of the service uses (R6): in adopted mode the
+    # WebSettings properties resolve to the service identity/known_hosts under
+    # web-identity/; in every other mode they are None and the argv is
+    # byte-identical to before (FR-005/FR-023).
+    ssh_argv_prefix = build_ssh_base_cmd(
+        host,
+        control_dir=settings.ssh_control_dir,
+        identity_file=settings.ssh_identity_file,
+        known_hosts_file=settings.ssh_known_hosts_file,
+    )
 
     try:
         capability = get_capabilities(ssh_argv_prefix, timeout=_INSTANCE_CHECK_TIMEOUT_S)
@@ -200,13 +247,33 @@ def run_checks(
     stay visible with actionable status, they don't gate boot). The config,
     SSH-identity, runtime-dir, and executable checks still run in that mode,
     so genuinely broken config/mounts still fail fast.
+
+    The first result line reports the 011-web-adopt configuration state
+    (FR-003/FR-005): `unconfigured` PASSES with an "awaiting adoption"
+    detail (registry/identity checks are skipped — their absence is the
+    expected pre-adoption shape), `adopted`/`mount_configured` PASS naming
+    their mode, and `broken` FAILS with remediation.
     """
     settings = settings or WebSettings()
+    state = detect_state(settings)
+
+    # Unconfigured (011-web-adopt, FR-001/FR-003): registry and SSH-identity
+    # *absence* is the expected pre-adoption shape, never a failure — only
+    # the runtime prerequisites are validated. Instance checks are vacuously
+    # satisfied (there is no registry to enumerate).
+    if state is ConfigurationState.UNCONFIGURED:
+        return [
+            _configuration_check(state),
+            _runtime_dir_check(settings.ssh_control_dir),
+            _executable_check("ssh", "ssh"),
+        ]
+
     hosts = _read_known_hosts_readonly()
 
     results = [
+        _configuration_check(state),
         _registry_check(hosts),
-        _ssh_identity_check(),
+        _ssh_identity_check(settings),
         _runtime_dir_check(settings.ssh_control_dir),
         _executable_check("ssh", "ssh"),
     ]

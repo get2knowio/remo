@@ -11,6 +11,7 @@ installed.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,13 +22,22 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from remo_cli.web.api.hosts import router as hosts_router
+from remo_cli.web.api.setup import router as setup_router
 from remo_cli.web.api.terminals import router as terminals_router
 from remo_cli.web.config import WebSettings
 from remo_cli.web.discovery import DiscoveryService
 from remo_cli.web.health import router as health_router
 from remo_cli.web.logging_config import configure_logging
 from remo_cli.web.ssh_master import stale_socket_cleanup
+from remo_cli.web.state import (
+    ConfigurationState,
+    ServiceIdentityError,
+    detect_state,
+    ensure_service_identity,
+)
 from remo_cli.web.terminal_registry import TerminalRegistry
+
+logger = logging.getLogger("remo_cli.web.app")
 
 # Restrictive CSP compatible with the local (same-origin, no-CDN) Ghostty
 # WASM renderer and the same-origin terminal WebSocket (FR-038/FR-051), plus
@@ -92,6 +102,20 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        # Startup (011-web-adopt T030/FR-002, research R3): mint the service
+        # identity the first time the service boots unconfigured. Gated on
+        # detect_state so a read-only REMO_HOME (mount_configured) is never
+        # written to, and an existing/damaged keypair is never regenerated
+        # (ensure_service_identity loads a complete pair as-is and refuses a
+        # half-pair by design). A generation failure is logged, not fatal:
+        # the service must still reach its running unconfigured state
+        # (FR-001); the setup API retries generation on demand.
+        if detect_state(settings) is ConfigurationState.UNCONFIGURED:
+            try:
+                ensure_service_identity(settings)
+            except (ServiceIdentityError, OSError):
+                logger.exception("service identity generation failed at startup")
+
         # Startup: remove ControlMaster sockets left by a previously crashed
         # process (T035); the next attachment re-establishes a master.
         stale_socket_cleanup(settings.ssh_control_dir)
@@ -140,7 +164,21 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     async def _origin_allowlist_and_csp(request: Request, call_next):  # noqa: ANN001, ANN202
         if request.method not in _ORIGIN_EXEMPT_METHODS:
             origin = request.headers.get("origin")
-            if origin is None or origin not in settings.allowed_origins:
+            # The origin allowlist is a browser-CSRF defense. The setup API is
+            # bearer-token-only (no ambient credentials), and a cross-origin
+            # browser request cannot attach an Authorization header without a
+            # CORS preflight this app never grants — while a genuine browser
+            # CSRF attempt always carries an Origin header. So Origin-less
+            # requests to /api/v1/setup/* (the `remo web adopt` CLI, including
+            # --via tunnels whose 127.0.0.1:<random-port> origin could never
+            # be allowlisted) are exempt; a present-but-disallowed Origin is
+            # still rejected.
+            is_originless_setup = origin is None and request.url.path.startswith(
+                "/api/v1/setup"
+            )
+            if not is_originless_setup and (
+                origin is None or origin not in settings.allowed_origins
+            ):
                 rejection = JSONResponse(
                     status_code=403,
                     content={
@@ -165,6 +203,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(hosts_router, prefix="/api/v1")
     app.include_router(terminals_router, prefix="/api/v1")
+    app.include_router(setup_router, prefix="/api/v1")
 
     # --- Same-origin frontend static files (FR-038, no CDN) -----------------
     # The built frontend won't exist until the Docker image build stage (or a

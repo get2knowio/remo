@@ -4,19 +4,25 @@
 // offline overlay. Same shared-interval, ref-counted `useSyncExternalStore`
 // pattern as `discovery.ts`.
 //
-//   - "loading"  before the first poll returns.
-//   - "healthy"  /ready returned 200 (all gating checks pass).
-//   - "degraded" /ready returned 503 (reachable, but a config check failed —
-//                e.g. missing SSH identity). `detail`/`checks` explain it.
-//   - "offline"  the request failed at the network level (service down /
-//                restarting). Drives the offline overlay.
+//   - "loading"       before the first poll returns.
+//   - "healthy"       /ready returned 200 (all gating checks pass).
+//   - "unconfigured"  /ready returned 200 with status "unconfigured" — the
+//                     service is up but awaiting adoption (011-web-adopt).
+//                     Drives the AwaitingAdoption page; polling continues so
+//                     the app flips to the dashboard automatically once
+//                     `remo web adopt` completes.
+//   - "degraded"      /ready returned 503 (reachable, but a config check
+//                     failed — e.g. missing SSH identity). `detail`/`checks`
+//                     explain it.
+//   - "offline"       the request failed at the network level (service down /
+//                     restarting). Drives the offline overlay.
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import { ApiError, getReady, type ReadinessResponse } from "../api/client";
 
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 
-export type HealthStatus = "loading" | "healthy" | "degraded" | "offline";
+export type HealthStatus = "loading" | "healthy" | "unconfigured" | "degraded" | "offline";
 
 interface HealthState {
   status: HealthStatus;
@@ -53,8 +59,14 @@ async function pollOnce(): Promise<void> {
   pollInFlight = true;
   try {
     const ready: ReadinessResponse = await getReady();
+    // Any 200 status other than "unconfigured" (e.g. "ok") means configured.
+    const status: HealthStatus = ready.ready
+      ? ready.status === "unconfigured"
+        ? "unconfigured"
+        : "healthy"
+      : "degraded";
     setState({
-      status: ready.ready ? "healthy" : "degraded",
+      status,
       checks: ready.checks,
       detail: ready.detail ?? null,
     });

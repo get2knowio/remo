@@ -4,10 +4,14 @@ Implements the two endpoints from `contracts/rest-api.md`:
 
 - ``GET /health`` — liveness. Always ``200`` while the process is up,
   independent of configuration validity (FR-045).
-- ``GET /ready`` — readiness. ``200`` only when the registry is readable, an
-  SSH identity is available, the SSH ControlMaster runtime dir is writable,
-  and required executables are present; otherwise ``503`` with per-check
-  detail (FR-045/FR-046).
+- ``GET /ready`` — readiness. ``200`` when the service is configured and its
+  prerequisites hold (registry readable, an SSH identity available, the SSH
+  ControlMaster runtime dir writable, required executables present), and
+  *also* ``200`` with ``"status": "unconfigured"`` when the service is
+  healthy-awaiting-adoption (011-web-adopt research R11 / FR-001/FR-003: an
+  unconfigured deployment must pass compose healthchecks, never crash-loop).
+  ``broken`` keeps the ``503`` semantics with per-check detail
+  (FR-045/FR-046).
 
 These are best-effort checks appropriate for process-level health probing.
 The full `remo web check` CLI diagnostic (reachability + protocol
@@ -25,10 +29,24 @@ from fastapi.responses import JSONResponse
 
 from remo_cli.core.config import get_known_hosts_path_readonly
 from remo_cli.web.config import WebSettings
+from remo_cli.web.state import ConfigurationState, detect_state
 
 router = APIRouter()
 
 _SSH_IDENTITY_CANDIDATES = ("id_ed25519", "id_ecdsa", "id_rsa", "id_dsa")
+
+_UNCONFIGURED_DETAIL = (
+    "Awaiting adoption. Run `remo web adopt <service-url>` from a workstation "
+    "to push a registry and authorize this service's identity."
+)
+
+#: Broken-state detail used when the four per-check probes all pass but the
+#: configuration is still unusable (e.g. a half-generated service keypair).
+_BROKEN_DETAIL = (
+    "Configuration is present but unusable. If the service identity is "
+    "damaged (half-generated keypair), reset the state volume; otherwise "
+    "check that the mounted registry/key files are readable."
+)
 
 
 @router.get("/health")
@@ -39,11 +57,12 @@ async def health() -> dict:
 
 @router.get("/ready")
 async def ready(request: Request) -> JSONResponse:
-    """Readiness probe: registry + SSH identity + runtime dir + executables."""
+    """Readiness probe: configuration state + registry/identity/runtime/executables."""
     settings: WebSettings = getattr(request.app.state, "settings", None) or WebSettings()
+    state = detect_state(settings)
 
     registry_status = _check_registry()
-    ssh_identity_status = _check_ssh_identity()
+    ssh_identity_status = _check_ssh_identity(settings)
     runtime_dir_status = _check_runtime_dir(settings.ssh_control_dir)
     ssh_status = "ok" if shutil.which("ssh") else "missing"
     aws_cli_status = "ok" if shutil.which("aws") else "missing"
@@ -58,6 +77,26 @@ async def ready(request: Request) -> JSONResponse:
         "ssm_plugin": ssm_plugin_status,
     }
 
+    # Unconfigured is a *healthy* 200 state (research R11): the container is
+    # doing its job — awaiting adoption — and must pass compose healthchecks
+    # (SC-006 no-crash-loop). Registry/identity absence is expected here and
+    # never gates readiness; missing runtime prerequisites (runtime dir, ssh
+    # executable) are still "broken", not "unconfigured" (US2 scenario 5),
+    # and fall through to the 503 path below.
+    if (
+        state is ConfigurationState.UNCONFIGURED
+        and runtime_dir_status == "ok"
+        and ssh_status == "ok"
+    ):
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "unconfigured",
+                "checks": checks,
+                "detail": _UNCONFIGURED_DETAIL,
+            },
+        )
+
     # aws_cli/ssm_plugin only gate readiness when SSM targets are actually
     # registered; that requires reading the registry contents (deferred to
     # `remo web check`, T051). Here they gate liveness-of-config only via
@@ -70,15 +109,28 @@ async def ready(request: Request) -> JSONResponse:
         and ssh_status == "ok"
     )
 
-    if required_ok:
+    # `broken` keeps today's 503 even when the four probes above happen to
+    # pass (e.g. a half-generated service keypair alongside a mounted user
+    # identity): unusable configuration is never "ready".
+    if required_ok and state is not ConfigurationState.BROKEN:
         return JSONResponse(status_code=200, content={"status": "ready", "checks": checks})
+
+    if state is ConfigurationState.UNCONFIGURED:
+        # Only reachable when a runtime prerequisite failed; mask the
+        # (expected, non-gating) registry/identity statuses so the detail
+        # names the actual problem.
+        detail = _not_ready_detail({**checks, "registry": "ok", "ssh_identity": "ok"})
+    else:
+        detail = _not_ready_detail(checks)
+        if detail == "Not ready." and state is ConfigurationState.BROKEN:
+            detail = _BROKEN_DETAIL
 
     return JSONResponse(
         status_code=503,
         content={
             "status": "not_ready",
             "checks": checks,
-            "detail": _not_ready_detail(checks),
+            "detail": detail,
         },
     )
 
@@ -111,24 +163,31 @@ def _check_registry() -> str:
     return "ok"
 
 
-def _check_ssh_identity() -> str:
+def _check_ssh_identity(settings: WebSettings | None = None) -> str:
     """Best-effort check for a readable SSH private key.
 
-    Checks ``$REMO_WEB_SSH_IDENTITY_FILE`` (explicit override) and the
-    conventional ``~/.ssh/id_*`` filenames. The registry is metadata, not
-    authentication material (see the 503 detail message below) — this is a
-    deliberately separate check.
+    Checks ``$REMO_WEB_SSH_IDENTITY_FILE`` (explicit override), the service
+    keypair under ``<REMO_HOME>/web-identity/`` (011-web-adopt T028 — an
+    *adopted* deployment authenticates with its own generated identity, so it
+    must pass this probe), and the conventional ``~/.ssh/id_*`` filenames.
+    The registry is metadata, not authentication material (see the 503 detail
+    message below) — this is a deliberately separate check.
     """
+    settings = settings or WebSettings()
     explicit = os.environ.get("REMO_WEB_SSH_IDENTITY_FILE")
     candidates: list[Path] = []
     if explicit:
         candidates.append(Path(explicit))
+    candidates.append(settings.service_private_key_path)
     ssh_dir = Path.home() / ".ssh"
     candidates.extend(ssh_dir / name for name in _SSH_IDENTITY_CANDIDATES)
 
     for candidate in candidates:
-        if candidate.is_file() and os.access(candidate, os.R_OK):
-            return "ok"
+        try:
+            if candidate.is_file() and os.access(candidate, os.R_OK):
+                return "ok"
+        except OSError:
+            continue
     return "missing"
 
 

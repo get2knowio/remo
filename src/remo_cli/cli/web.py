@@ -163,3 +163,158 @@ def check(skip_instance_checks: bool) -> None:
     click.echo(web_check.format_results(results))
     if not web_check.all_passed(results):
         raise SystemExit(1)
+
+
+@web.command()
+@click.argument("url", required=False, default=None)
+@click.option(
+    "--token",
+    default=None,
+    help="Setup API token (falls back to REMO_API_TOKEN, then a hidden prompt).",
+)
+@click.option(
+    "--via",
+    "via_host",
+    default=None,
+    metavar="HOST",
+    help=(
+        "SSH host to tunnel through: opens `ssh -N -L <free-port>:127.0.0.1:"
+        "<service-port> HOST` and runs the flow via http://127.0.0.1:<free-port>. "
+        "Requires 127.0.0.1 in the service's REMO_WEB_ALLOWED_HOSTS."
+    ),
+)
+@click.option(
+    "--allow-empty",
+    is_flag=True,
+    default=False,
+    help="Push even when the local registry is empty (wipes the service's instance list).",
+)
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    help=(
+        "Non-interactive: skip fingerprint prompts (unverified instances are "
+        "reported as skipped_no_trust) and never prompt to save credentials."
+    ),
+)
+@click.option(
+    "--save",
+    "save_credentials_flag",
+    is_flag=True,
+    default=False,
+    help="Save the service URL and token to ~/.config/remo/web-service.json (0600) on success.",
+)
+def adopt(
+    url: str | None,
+    token: str | None,
+    via_host: str | None,
+    allow_empty: bool,
+    assume_yes: bool,
+    save_credentials_flag: bool,
+) -> None:
+    """Adopt a running remo web service from this workstation.
+
+    Pushes the local registry (full mirror) plus verified SSH host keys to the
+    service and authorizes the service's SSH key on each reachable
+    direct-access instance, then runs a service-side verification pass.
+
+    URL resolution: argument, then $REMO_API_URL, then an interactive prompt.
+    Token resolution: --token, then $REMO_API_TOKEN, then a hidden prompt.
+
+    Exits 0 when the flow completes (per-instance skips/flags are reported in
+    the summary, not fatal); exits 1 on hard failure (auth, mount-configured
+    deployment, empty registry without --allow-empty, tunnel failure, payload
+    rejected).
+    """
+    # Deliberately imports only remo_cli.core.* — `remo web adopt` must work
+    # without the `web` extra installed (stdlib HTTP only, research R9).
+    from remo_cli.core.output import print_error  # noqa: PLC0415
+    from remo_cli.core.web_adopt import AdoptError, run_adopt  # noqa: PLC0415
+
+    resolved_url = url or os.environ.get("REMO_API_URL") or click.prompt("Service URL")
+    resolved_token = (
+        token or os.environ.get("REMO_API_TOKEN") or click.prompt("API token", hide_input=True)
+    )
+
+    try:
+        run_adopt(
+            resolved_url,
+            resolved_token,
+            via=via_host,
+            allow_empty=allow_empty,
+            assume_yes=assume_yes,
+            save=save_credentials_flag,
+        )
+    except AdoptError as e:
+        print_error(str(e))
+        raise SystemExit(1) from e
+
+
+@web.command()
+@click.option(
+    "--allow-empty",
+    is_flag=True,
+    default=False,
+    help="Push even when the local registry is empty (wipes the service's instance list).",
+)
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    help=(
+        "Non-interactive: skip fingerprint prompts for new/changed instances "
+        "(unverified instances are reported as skipped_no_trust)."
+    ),
+)
+def push(allow_empty: bool, assume_yes: bool) -> None:
+    """Re-sync the local registry to the adopted remo web service.
+
+    Zero-argument push (uses the URL/token saved by `remo web adopt`):
+    updates the service's registry (full mirror — removals propagate), pushes
+    host keys, and authorizes the service's identity on new or changed
+    direct-access instances. Instances unchanged since the last push skip the
+    keyscan/authorize work and are reported as `unchanged`.
+
+    When no credentials were saved, falls back to the first-time adopt flow
+    (URL from $REMO_API_URL or a prompt, token from $REMO_API_TOKEN or a
+    hidden prompt, including the save offer). A saved token the service now
+    rejects, or a changed service identity, exits 1 with re-adopt guidance.
+
+    Exits 0 when the flow completes (per-instance skips/flags are reported in
+    the summary, not fatal); exits 1 on hard failure.
+    """
+    # Deliberately imports only remo_cli.core.* — `remo web push` must work
+    # without the `web` extra installed (stdlib HTTP only, research R9).
+    from remo_cli.core.output import print_error, print_info  # noqa: PLC0415
+    from remo_cli.core.web_adopt import (  # noqa: PLC0415
+        AdoptError,
+        MissingCredentialsError,
+        run_adopt,
+        run_push,
+    )
+
+    try:
+        try:
+            run_push(allow_empty=allow_empty, assume_yes=assume_yes)
+            return
+        except MissingCredentialsError as e:
+            # US4 scenario 4: no saved credentials -> behave like first-time
+            # adopt, prompting for URL/token and offering to save on success.
+            print_info(f"{e} Running the first-time adopt flow instead.")
+
+        resolved_url = os.environ.get("REMO_API_URL") or click.prompt("Service URL")
+        resolved_token = os.environ.get("REMO_API_TOKEN") or click.prompt(
+            "API token", hide_input=True
+        )
+        run_adopt(
+            resolved_url,
+            resolved_token,
+            allow_empty=allow_empty,
+            assume_yes=assume_yes,
+        )
+    except AdoptError as e:
+        print_error(str(e))
+        raise SystemExit(1) from e

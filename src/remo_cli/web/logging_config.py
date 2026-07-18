@@ -43,6 +43,20 @@ _TOKEN_KV_RE = re.compile(r"(?i)\b((?:ws_)?token)\s*[=:]\s*([^\s&\"']+)")
 #: `ProxyCommand=...` (the SSH option embedding the AWS SSM invocation).
 _PROXY_COMMAND_RE = re.compile(r"(?i)(ProxyCommand)\s*=\s*(\S+(?:\s+\S+)*)")
 
+#: `Authorization` header values (FR-022, 011-web-adopt): masks the whole
+#: header value -- scheme included -- however it was interpolated
+#: (`Authorization: Bearer x`, `authorization=Bearer x`,
+#: `{"Authorization": "Bearer x"}`), case-insensitively.
+_AUTHORIZATION_HEADER_RE = re.compile(
+    r"(?i)\b(authorization)\b[\"']?\s*[=:]\s*[\"']?"
+    r"(?:(?:bearer|basic|token)\s+)?[^\s&\"',;}]+"
+)
+
+#: Bare bearer-token values (FR-022) appearing outside an `Authorization:`
+#: header context, e.g. a naively logged credential string. The minimum
+#: length keeps prose like "bearer of" from being mangled.
+_BEARER_TOKEN_RE = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}")
+
 #: PEM-encoded private key material, any key type, whole block.
 _PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"
@@ -69,6 +83,8 @@ class RedactingFilter(logging.Filter):
 
         redacted = _TOKEN_KV_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", message)
         redacted = _PROXY_COMMAND_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", redacted)
+        redacted = _AUTHORIZATION_HEADER_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", redacted)
+        redacted = _BEARER_TOKEN_RE.sub(lambda m: f"{m.group(1)} {_REDACTED}", redacted)
         redacted = _PRIVATE_KEY_RE.sub(_REDACTED, redacted)
 
         if redacted != message:

@@ -169,10 +169,19 @@ export async function refreshDiscovery(instanceId?: string): Promise<RefreshResp
 
 export type ReadinessCheck = string; // e.g. "ok" | "missing" | "unreadable" | ...
 
+/**
+ * Top-level service state reported by `GET /api/v1/ready` (011-web-adopt).
+ * On a 200 response, `"unconfigured"` means the service is up but awaiting
+ * adoption (`remo web adopt`); any OTHER 200 status (e.g. `"ok"`) means the
+ * service is configured. 503 keeps its existing "broken/degraded" semantics.
+ * Open union so unknown future 200 statuses are treated as configured.
+ */
+export type ServiceStatus = "ok" | "unconfigured" | (string & {});
+
 export interface ReadinessResponse {
   /** true when GET /ready returned 200 (all gating checks pass). */
   ready: boolean;
-  status: string;
+  status: ServiceStatus;
   checks: Record<string, ReadinessCheck>;
   detail?: string;
 }
@@ -180,9 +189,10 @@ export interface ReadinessResponse {
 /**
  * `GET /api/v1/ready` — returns 200 (ready) or 503 (not_ready) but always with
  * a `checks` body. Unlike the other calls this reads the body on BOTH statuses
- * (a 503 is expected config state, not a transport error). A network-level
- * failure rejects with `ApiError{code:"network_error"}` so callers can show the
- * offline overlay.
+ * (a 503 is expected config state, not a transport error). A 200 with
+ * `status: "unconfigured"` means the service is awaiting adoption — see
+ * `ServiceStatus` above. A network-level failure rejects with
+ * `ApiError{code:"network_error"}` so callers can show the offline overlay.
  */
 export async function getReady(): Promise<ReadinessResponse> {
   let response: Response;

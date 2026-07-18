@@ -44,6 +44,7 @@ from remo_cli.core.remo_host_client import build_remo_host_shell_cmd
 from remo_cli.core.ssh import build_ssh_base_cmd
 from remo_cli.core.validation import validate_project_name
 from remo_cli.models.host import KnownHost
+from remo_cli.web.config import WebSettings
 
 __all__ = [
     "MAX_DIMENSION",
@@ -152,13 +153,31 @@ def classify_exit(returncode: int | None, recent_output: bytes) -> ErrorClass | 
     return ErrorClass.REMOTE_LAUNCH
 
 
-def build_attach_argv(host: KnownHost, project: str, *, control_dir: str | None = None) -> list[str]:
+def build_attach_argv(
+    host: KnownHost,
+    project: str,
+    *,
+    control_dir: str | None = None,
+    settings: WebSettings | None = None,
+) -> list[str]:
     """Build the ``ssh -tt ... "remo-host sessions attach --project X"`` argv.
 
     Reuses the shared :func:`build_ssh_base_cmd` (so SSM ProxyCommand, direct
     targeting, timezone SendEnv and ControlMaster multiplexing all match the
     CLI), inserts ``-o BatchMode=yes`` for non-interactive local auth (FR-025),
     and appends the shlex-quoted remote command as a single argv element.
+
+    *settings* supplies the service SSH identity/known-hosts resolution
+    (011-web-adopt, research R6): in adopted mode
+    ``WebSettings.ssh_identity_file``/``ssh_known_hosts_file`` resolve to the
+    ``web-identity/`` paths and are threaded into :func:`build_ssh_base_cmd`;
+    in every other mode (mounted, unconfigured, broken) both properties are
+    ``None`` and the argv is byte-identical to before this parameter existed
+    (FR-005/FR-023). When ``None`` (the default), a fresh :class:`WebSettings`
+    is constructed on demand — the properties re-detect the configuration
+    state per call anyway, so any instance yields the same answer and an
+    adoption that lands mid-flight is picked up by the next attach without a
+    restart.
 
     *project* is checked against the same :func:`~remo_cli.core.validation.
     validate_project_name` the CLI's :func:`~remo_cli.core.ssh.
@@ -176,7 +195,15 @@ def build_attach_argv(host: KnownHost, project: str, *, control_dir: str | None 
         :func:`validate_project_name`).
     """
     validate_project_name(project)
-    base = build_ssh_base_cmd(host, tty=True, multiplex=True, control_dir=control_dir)
+    resolved_settings = settings if settings is not None else WebSettings()
+    base = build_ssh_base_cmd(
+        host,
+        tty=True,
+        multiplex=True,
+        control_dir=control_dir,
+        identity_file=resolved_settings.ssh_identity_file,
+        known_hosts_file=resolved_settings.ssh_known_hosts_file,
+    )
     remote_cmd = build_remo_host_shell_cmd("sessions attach", project=project)
     # base == ["ssh", *opts, "-tt", target]; keep BatchMode right after "ssh".
     return [base[0], "-o", "BatchMode=yes", *base[1:], remote_cmd]
