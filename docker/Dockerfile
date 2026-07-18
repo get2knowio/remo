@@ -60,8 +60,14 @@ WORKDIR /app
 #   curl           - AWS CLI/SSM plugin install below, and the container
 #                    healthcheck (compose.example.yml) at runtime
 #   unzip          - AWS CLI v2 install below
+#   gosu           - drops from root to the unprivileged `remo` user in the
+#                    entrypoint AFTER self-healing filesystem permissions
+#                    (see docker/entrypoint.sh). Unlike `su`, it stays PID 1
+#                    with correct signal semantics and adds no setuid-binary
+#                    surface. Packaged for both amd64 and arm64 in Debian, so
+#                    the multi-arch build is unaffected.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends openssh-client curl unzip && \
+    apt-get install -y --no-install-recommends openssh-client curl unzip gosu && \
     rm -rf /var/lib/apt/lists/*
 
 # Install AWS CLI v2 (needed for SSM proxy), arch-selected via $TARGETARCH.
@@ -85,10 +91,10 @@ RUN if [ "$TARGETARCH" = "arm64" ]; then SM_ARCH="arm64"; else SM_ARCH="64bit"; 
 # Non-root user (UID/GID 1000 to match compose.example.yml `user: "1000:1000"`).
 RUN useradd -u 1000 -m -s /bin/bash remo
 
-# Install remo-cli[web] system-wide (as root, before USER remo) from the
-# wheel built in stage 2 — avoids needing build tools in this final layer
-# and avoids `pip install --user` (so no PATH fix-up is needed; `remo` /
-# `remo web` land directly on the system PATH for the `remo` user).
+# Install remo-cli[web] system-wide (as root) from the wheel built in stage 2
+# — avoids needing build tools in this final layer and avoids `pip install
+# --user` (so no PATH fix-up is needed; `remo` / `remo web` land directly on
+# the system PATH for the `remo` user the entrypoint drops to).
 COPY --from=wheel-builder /build/wheels/*.whl /tmp/
 RUN pip install --no-cache-dir "$(ls /tmp/*.whl)[web]" && \
     rm /tmp/*.whl
@@ -118,6 +124,19 @@ ENV REMO_WEB_FRONTEND_DIST_DIR=/app/frontend-dist
 # default, FR-052), same as any other containerized service.
 ENV REMO_WEB_BIND_HOST=0.0.0.0
 
-USER remo
+# Pin HOME to the `remo` user's home so config-path resolution
+# (core/config.py `Path.home()` / REMO_HOME) is identical whether the
+# entrypoint is running its root-side healing pass or the dropped-to `remo`
+# process — otherwise root's ambient HOME (/root) would resolve the config
+# dir to a different path than the app later reads.
+ENV HOME=/home/remo
 
+# NOTE: intentionally NO `USER remo` here. The image starts as root so the
+# entrypoint can self-heal ownership on a bind-mounted, root-owned config dir
+# and on the /run/remo-ssh tmpfs (which a container *restart* remounts
+# root-owned) BEFORE dropping — via gosu — to the unprivileged `remo` user.
+# The app still ends up running as non-root `remo`; the drop just happens at
+# runtime in the entrypoint instead of at image-build time. A deployer that
+# sets an explicit `--user`/`user:` starts non-root, and the entrypoint skips
+# healing (best-effort) and execs directly. See docker/entrypoint.sh.
 ENTRYPOINT ["/app/docker/entrypoint.sh"]

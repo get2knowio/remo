@@ -45,6 +45,16 @@ within 30s, generates a persistent service identity (same fingerprint across
 a container restart, FR-002), and token-gates the setup API (404 when
 `REMO_WEB_API_TOKEN` is unset, FR-021). The pre-existing RO-mount tests
 above are intentionally untouched — them still passing IS SC-005.
+
+A fourth group covers the self-healing permissions model: the image starts
+as root and its entrypoint chowns a ROOT-OWNED (bind-mounted) config dir and
+re-heals the /run/remo-ssh tmpfs on every start, then drops to the non-root
+`remo` user via gosu. These tests start the container with a root-owned bind
+dir, an option-less `--tmpfs /run/remo-ssh` (no `rw,mode=1777` pin), a
+read-only rootfs, `no-new-privileges`, and only the heal-then-drop caps, then
+assert: boot reaches `unconfigured`, web-identity/ is generated owned by
+`remo`, the app process (PID 1) runs as uid 1000 (not root), and a
+`docker restart` keeps the same identity with a still-writable tmpfs.
 """
 
 from __future__ import annotations
@@ -126,11 +136,53 @@ def test_dockerfile_sets_frontend_dist_dir_override():
     assert dist_path in text.replace(dist_env_line, "")  # referenced by a COPY --from= too
 
 
-def test_dockerfile_runs_as_non_root():
+def test_dockerfile_starts_as_root_for_self_healing_entrypoint():
+    """The image must NOT hard-pin `USER remo` — it starts as root so the
+    entrypoint can self-heal ownership on a bind-mounted, root-owned config
+    dir and on the /run/remo-ssh tmpfs before dropping privileges. The drop
+    to non-root now happens at runtime (via gosu in docker/entrypoint.sh),
+    not via a build-time USER line."""
     text = DOCKERFILE.read_text()
-    assert "USER remo" in text
-    # USER remo must come after the package/asset installs (root-only ops).
-    assert text.index("USER remo") > text.index("useradd")
+    # No active `USER remo` directive (a commented mention is fine).
+    assert not any(
+        line.strip().startswith("USER remo") for line in text.splitlines()
+    ), "Dockerfile must start as root; the entrypoint drops to `remo` via gosu"
+    # gosu must be installed for the entrypoint's privilege drop.
+    assert "gosu" in text
+    # The remo user must still be created (root-only op) for gosu to drop to.
+    assert "useradd" in text
+    # HOME is pinned so config-path resolution matches across the root heal
+    # pass and the dropped-to `remo` process.
+    assert "ENV HOME=/home/remo" in text
+
+
+def test_entrypoint_self_heals_as_root_then_drops_via_gosu():
+    """Root branch: mkdir/chown the config dir and the SSH control tmpfs, then
+    `exec gosu` to the unprivileged user (PID 1 / signal semantics preserved)."""
+    text = ENTRYPOINT.read_text()
+    # Guarded on being UID 0 so an explicit non-root `--user` skips healing.
+    assert "id -u" in text
+    assert "chown" in text
+    # The drop is an exec-form gosu (never backgrounded).
+    assert "exec gosu" in text
+    # It heals both the config dir and the SSH control (runtime) dir.
+    assert "CONFIG_DIR" in text
+    assert "CONTROL_DIR" in text
+
+
+def test_entrypoint_healing_is_best_effort():
+    """Healing must never hard-fail startup (a read-only config mount can't be
+    chowned; a deployer may drop CAP_CHOWN) — `remo web check` is the real
+    gate. Every mkdir/chown/chmod step tolerates failure."""
+    text = ENTRYPOINT.read_text()
+    heal_lines = [
+        ln.strip()
+        for ln in text.splitlines()
+        if ln.strip().startswith(("mkdir", "chown", "chmod"))
+    ]
+    assert heal_lines, "expected filesystem-healing lines in the entrypoint"
+    for line in heal_lines:
+        assert "|| true" in line or "2>/dev/null" in line, line
 
 
 def test_dockerfile_entrypoint_is_the_finalized_script():
@@ -214,6 +266,30 @@ def test_compose_mounts_registry_and_ssh_material_readonly():
     assert "/home/remo/.config/remo:ro" in joined  # registry
     assert "/home/remo/.ssh/" in joined  # SSH material, distinct mounts
     assert all(v.endswith(":ro") for v in volumes if not v.strip().startswith("#"))
+
+
+def test_compose_adopted_service_self_heals_without_workarounds():
+    """The adopted-mode service must rely on the entrypoint's self-healing,
+    not on deployer workarounds: a PLAIN tmpfs (no `rw,mode=1777` pin) and no
+    `user:` pin (so it starts as root and heals), while keeping the read-only
+    rootfs + no-new-privileges posture and granting only the capabilities the
+    heal-then-drop needs."""
+    svc = _load_compose()["services"]["remo-web-adopted"]
+    # Plain, option-less tmpfs — the entrypoint re-heals it on every start.
+    assert "/run/remo-ssh" in svc["tmpfs"]
+    assert not any("mode=" in t for t in svc["tmpfs"]), (
+        "the rw,mode=1777 tmpfs pin should be gone — the entrypoint re-heals "
+        "/run/remo-ssh on restart"
+    )
+    # No `user:` pin: starts as root so the entrypoint can heal the state
+    # volume before dropping to `remo`.
+    assert "user" not in svc
+    # Hardening preserved; caps are drop-ALL + only the heal-then-drop set.
+    assert svc["read_only"] is True
+    assert "no-new-privileges:true" in svc["security_opt"]
+    assert svc["cap_drop"] == ["ALL"]
+    for cap in ("CHOWN", "SETUID", "SETGID"):
+        assert cap in svc["cap_add"], cap
 
 
 @pytest.mark.skipif(
@@ -909,6 +985,180 @@ def test_amd64_setup_routes_hidden_without_token_env(amd64_image, empty_state_di
         status, body = _curl_status_and_json(name, _SETUP_STATUS_URL)
         assert status == "404", body
         assert body == {"detail": "Not Found"}
+    finally:
+        _docker_rm(name)
+
+
+# ---------------------------------------------------------------------------
+# Tier 2, group 4: self-healing permissions (root-start heal -> drop). Same
+# opt-in gate and hardening flags, plus the heal-then-drop capability set.
+# ---------------------------------------------------------------------------
+
+# cap_drop ALL + only what the heal-then-drop entrypoint needs, mirroring the
+# `remo-web-adopted` service in compose.example.yml.
+_HEAL_RUN_FLAGS = [
+    "--read-only",
+    "--cap-drop", "ALL",
+    "--cap-add", "CHOWN",
+    "--cap-add", "DAC_OVERRIDE",
+    "--cap-add", "FOWNER",
+    "--cap-add", "SETUID",
+    "--cap-add", "SETGID",
+    "--security-opt", "no-new-privileges:true",
+    # Option-less tmpfs (NO rw,mode=1777 pin): the entrypoint re-heals it.
+    "--tmpfs", "/run/remo-ssh",
+]
+
+
+@pytest.fixture
+def root_owned_state_dir(tmp_path, amd64_image):
+    """A root:root 0755 dir bind-mounted at the container's REMO_HOME.
+
+    Reproduces the bind-mount-from-an-app-platform case the self-healing
+    entrypoint exists for: a non-root process cannot create web-identity/
+    there. Ownership is set (and later cleaned up) via a throwaway root
+    container so the test needs no host root — the same technique
+    `empty_state_dir` uses for cleanup.
+    """
+    state_dir = tmp_path / "rootstate"
+    state_dir.mkdir()
+
+    def _root_sh(script: str, check: bool) -> None:
+        subprocess.run(
+            [
+                "docker", "run", "--rm", "--user", "0:0", "--entrypoint", "sh",
+                "-v", f"{state_dir}:/state", amd64_image, "-c", script,
+            ],
+            check=check,
+            capture_output=True,
+            timeout=30,
+        )
+
+    _root_sh("chown 0:0 /state && chmod 0755 /state", check=True)
+    yield state_dir
+    _root_sh("rm -rf /state/web-identity /state/known_hosts", check=False)
+
+
+def _proc1_uid(name: str) -> str:
+    """The real (numeric) uid of PID 1 inside the container, read from
+    /proc/1/status (python:3.11-slim ships no `ps`)."""
+    result = subprocess.run(
+        ["docker", "exec", name, "cat", "/proc/1/status"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    for line in result.stdout.splitlines():
+        if line.startswith("Uid:"):
+            # "Uid:\treal\teffective\tsaved\tfilesystem"
+            return line.split()[1]
+    raise AssertionError(f"no Uid line in /proc/1/status:\n{result.stdout}")
+
+
+@requires_image_build
+def test_amd64_root_owned_bind_dir_self_heals_and_app_runs_non_root(
+    amd64_image, root_owned_state_dir
+):
+    """Acceptance: a root-owned bind dir + read-only rootfs + option-less
+    tmpfs boots to awaiting-adoption, generates web-identity/ OWNED BY remo,
+    and the app process (PID 1) runs as the non-root `remo` user (uid 1000),
+    not root — the entrypoint healed as root then dropped via gosu."""
+    name = f"remo-web-test-heal-{uuid.uuid4().hex[:8]}"
+    try:
+        cmd = ["docker", "run", "-d", "--name", name]
+        cmd += _HEAL_RUN_FLAGS
+        cmd += [
+            "-v", f"{root_owned_state_dir}:{_CONTAINER_REMO_HOME}",
+            "-e", f"REMO_WEB_API_TOKEN={_SETUP_TOKEN}",
+            amd64_image,
+        ]
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert run.returncode == 0, run.stderr
+
+        assert _wait_for_ready_payload(name)["status"] == "unconfigured"
+
+        # The app must run as non-root remo despite starting from root.
+        assert _proc1_uid(name) == "1000"
+
+        # web-identity/ was generated and is owned by remo (uid 1000), proving
+        # the root-side chown healed the root-owned bind dir.
+        owner = subprocess.run(
+            ["docker", "exec", name, "stat", "-c", "%u", f"{_IDENTITY_DIR}/id_ed25519"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert owner.returncode == 0, owner.stdout + owner.stderr
+        assert owner.stdout.strip() == "1000", owner.stdout
+    finally:
+        _docker_rm(name)
+
+
+@requires_image_build
+def test_amd64_bare_tmpfs_survives_restart_via_reheal(amd64_image, root_owned_state_dir):
+    """Acceptance: with an OPTION-LESS `--tmpfs /run/remo-ssh` (no
+    rw,mode=1777 pin), a `docker restart` — which remounts the tmpfs
+    root-owned 0755 — still comes back `unconfigured` with the SAME identity
+    and a still-writable control dir, because the entrypoint re-heals the
+    tmpfs on every start."""
+    name = f"remo-web-test-reheal-{uuid.uuid4().hex[:8]}"
+    try:
+        cmd = ["docker", "run", "-d", "--name", name]
+        cmd += _HEAL_RUN_FLAGS
+        cmd += [
+            "-v", f"{root_owned_state_dir}:{_CONTAINER_REMO_HOME}",
+            "-e", f"REMO_WEB_API_TOKEN={_SETUP_TOKEN}",
+            amd64_image,
+        ]
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert run.returncode == 0, run.stderr
+
+        assert _wait_for_ready_payload(name)["status"] == "unconfigured"
+        fingerprint_before = _service_key_fingerprint(name)
+
+        restart = subprocess.run(
+            ["docker", "restart", name], capture_output=True, text=True, timeout=60
+        )
+        assert restart.returncode == 0, restart.stderr
+
+        # Ready again (the re-heal made the restart-remounted tmpfs writable),
+        # same identity (FR-002).
+        assert _wait_for_ready_payload(name)["status"] == "unconfigured"
+        assert _service_key_fingerprint(name) == fingerprint_before
+
+        # The control dir is writable by the dropped-to remo user after the
+        # restart re-heal.
+        probe = subprocess.run(
+            ["docker", "exec", "--user", "1000:1000", name, "touch", "/run/remo-ssh/probe"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        assert probe.returncode == 0, probe.stdout + probe.stderr
+    finally:
+        _docker_rm(name)
+
+
+@requires_image_build
+def test_amd64_explicit_non_root_user_still_boots(amd64_image, empty_state_dir):
+    """A deployer that pins an explicit non-root `--user` starts non-root, so
+    the entrypoint skips healing (best-effort) and execs directly. With a
+    writable state dir it must still boot to `unconfigured` — healing being
+    skipped must never be fatal."""
+    name = f"remo-web-test-explicituser-{uuid.uuid4().hex[:8]}"
+    try:
+        cmd = ["docker", "run", "-d", "--name", name, "--user", "1000:1000"]
+        cmd += _HEAL_RUN_FLAGS
+        cmd += [
+            "-v", f"{empty_state_dir}:{_CONTAINER_REMO_HOME}",
+            "-e", f"REMO_WEB_API_TOKEN={_SETUP_TOKEN}",
+            amd64_image,
+        ]
+        run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        assert run.returncode == 0, run.stderr
+        assert _wait_for_ready_payload(name)["status"] == "unconfigured"
+        assert _proc1_uid(name) == "1000"
     finally:
         _docker_rm(name)
 
