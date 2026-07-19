@@ -78,9 +78,20 @@ export class GhosttyRenderer implements RendererAdapter {
     return true;
   }
 
+  // Native `copy` event (⌘C, Edit▸Copy, right-click▸Copy): write the selection
+  // synchronously via clipboardData — reliable in Safari (see XtermRenderer).
+  private readonly handleCopyEvent = (e: ClipboardEvent): void => {
+    const selection = this.getSelection();
+    if (selection && e.clipboardData) {
+      e.clipboardData.setData("text/plain", selection);
+      e.preventDefault();
+    }
+  };
+
   open(container: HTMLElement): void {
     this.container = container;
     this.terminal.open(container);
+    container.addEventListener("copy", this.handleCopyEvent);
   }
 
   write(data: Uint8Array | string): void {
@@ -149,6 +160,7 @@ export class GhosttyRenderer implements RendererAdapter {
   }
 
   dispose(): void {
+    this.container?.removeEventListener("copy", this.handleCopyEvent);
     this.terminal.dispose();
   }
 }

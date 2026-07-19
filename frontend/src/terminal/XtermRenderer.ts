@@ -55,6 +55,7 @@ export class XtermRenderer implements RendererAdapter {
   private readonly fitAddon: FitAddon;
   private ligaturesAddon: LigaturesAddon | null = null;
   private webglAddon: WebglAddon | null = null;
+  private container: HTMLElement | null = null;
   private opened = false;
   /** Desired ligature state; the addon is only actually (un)loaded after
    * open() since it registers a character joiner that needs an opened terminal. */
@@ -92,6 +93,18 @@ export class XtermRenderer implements RendererAdapter {
       handler(data);
     }
   }
+
+  // Native `copy` event (⌘C on macOS, Edit▸Copy, right-click▸Copy). Writing the
+  // xterm selection synchronously via clipboardData is reliable everywhere
+  // including Safari — unlike an async clipboard write off a keydown. Bare Ctrl+C
+  // never reaches here: xterm preventDefaults it (SIGINT), so no copy event fires.
+  private readonly handleCopyEvent = (e: ClipboardEvent): void => {
+    const selection = this.getSelection();
+    if (selection && e.clipboardData) {
+      e.clipboardData.setData("text/plain", selection);
+      e.preventDefault();
+    }
+  };
 
   private handleKeyEvent(e: KeyboardEvent): boolean {
     // Copy the selection on ⌘C / Ctrl+Shift+C — but only when something is
@@ -133,6 +146,8 @@ export class XtermRenderer implements RendererAdapter {
 
   open(container: HTMLElement): void {
     this.terminal.open(container);
+    this.container = container;
+    container.addEventListener("copy", this.handleCopyEvent);
     this.opened = true;
     this.enableWebgl();
     // Now that the terminal is attached, load the ligatures addon if wanted.
@@ -221,6 +236,8 @@ export class XtermRenderer implements RendererAdapter {
   }
 
   dispose(): void {
+    this.container?.removeEventListener("copy", this.handleCopyEvent);
+    this.container = null;
     // Dispose the WebGL addon before the terminal so its GPU context/canvas is
     // released cleanly (Terminal.dispose would also drop it, but ordering is
     // explicit here).
