@@ -10,6 +10,7 @@
 // configured font/size so the cell grid stays correct after a font change.
 
 import { Terminal } from "ghostty-web";
+import { inputForKeyEvent } from "./keymap";
 import type {
   RendererAdapter,
   TerminalDimensions,
@@ -62,11 +63,10 @@ export class GhosttyRenderer implements RendererAdapter {
   }
 
   private handleKeyEvent(e: KeyboardEvent): boolean {
-    if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (e.type === "keydown") {
-        e.preventDefault();
-        this.emit("\x1b\r");
-      }
+    const seq = inputForKeyEvent(e);
+    if (seq !== null) {
+      e.preventDefault();
+      this.emit(seq);
       return false;
     }
     return true;
