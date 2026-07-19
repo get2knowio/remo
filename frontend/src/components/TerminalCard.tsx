@@ -335,25 +335,12 @@ export function TerminalCard({
               ↻ Reconnect
             </button>
           )}
-          {/* Window-control cluster: mutually-exclusive display modes (the
-           * current one shown active + disabled) plus close. Fullscreen toggles.
-           * Icons only; the label is the tooltip. */}
+          {/* Window-control cluster: mutually-exclusive display modes ordered
+           * by how much space they take — Grid (smaller/tiled) → Normal (fills
+           * the app's main pane) → Fullscreen (whole window) — plus close. The
+           * current mode is shown active + disabled; Fullscreen toggles. Icons
+           * only; the label is the tooltip. */}
           <div className="tc-winctl" role="group" aria-label="Terminal display mode">
-            <button
-              type="button"
-              className={`tc-btn tc-btn--icon${viewState === "normal" ? " tc-btn--active" : ""}`}
-              data-testid={`terminal-normal-${target.id}`}
-              title="Normal (single view)"
-              aria-label="Normal view"
-              aria-pressed={viewState === "normal"}
-              disabled={viewState === "normal"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onNormal();
-              }}
-            >
-              ▭
-            </button>
             <button
               type="button"
               className={`tc-btn tc-btn--icon${viewState === "grid" ? " tc-btn--active" : ""}`}
@@ -368,6 +355,21 @@ export function TerminalCard({
               }}
             >
               ⊞
+            </button>
+            <button
+              type="button"
+              className={`tc-btn tc-btn--icon${viewState === "normal" ? " tc-btn--active" : ""}`}
+              data-testid={`terminal-normal-${target.id}`}
+              title="Fill the main pane (single view)"
+              aria-label="Fill the main pane"
+              aria-pressed={viewState === "normal"}
+              disabled={viewState === "normal"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onNormal();
+              }}
+            >
+              ◻
             </button>
             <button
               type="button"
