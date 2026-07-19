@@ -28,9 +28,6 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 /** How much to shrink the terminal font in a grid tile when "scale to fit". */
 const GRID_FIT_SCALE = 0.8;
-/** Focus-follows-mouse dwell: the pointer must REST on a tile this long before
- * it takes focus, so passing through tiles (or a small drift) doesn't steal it. */
-const HOVER_FOCUS_DELAY_MS = 220;
 
 const STATE_LABELS: Record<TerminalConnectionState, string> = {
   connecting: "Connecting…",
@@ -124,6 +121,9 @@ export function TerminalCard({
   const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null);
   // Pending focus-follows-mouse dwell timer (cleared if the pointer leaves first).
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest focus-dwell setting, read inside the timer without re-creating the handler.
+  const dwellMsRef = useRef(settings.focusDwellMs);
+  dwellMsRef.current = settings.focusDwellMs;
 
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("connecting");
   const [needsManualReconnect, setNeedsManualReconnect] = useState(false);
@@ -343,7 +343,7 @@ export function TerminalCard({
     hoverTimerRef.current = setTimeout(() => {
       hoverTimerRef.current = null;
       onHoverFocus();
-    }, HOVER_FOCUS_DELAY_MS);
+    }, dwellMsRef.current);
   }, [onHoverFocus, clearHoverTimer]);
 
   // Cancel a pending dwell when the pointer leaves or the card unmounts.

@@ -7,7 +7,9 @@ import { listUploadedFonts, registerUploadedFont } from "../state/fonts";
 import {
   ACCENT_OPTIONS,
   FONT_OPTIONS,
+  MAX_FOCUS_DWELL_MS,
   MAX_TERM_SIZE,
+  MIN_FOCUS_DWELL_MS,
   MIN_TERM_SIZE,
   RENDERER_OPTIONS,
   settingsActions,
@@ -155,6 +157,30 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
                 );
               })}
             </div>
+          </section>
+
+          {/* Focus-follows-mouse dwell */}
+          <section>
+            <div className="settings-row2-head">
+              <span className="settings-heading">Focus dwell</span>
+              <span className="settings-value">
+                {settings.focusDwellMs === 0 ? "instant" : `${settings.focusDwellMs} ms`}
+              </span>
+            </div>
+            <p className="settings-sub">
+              In a grid, how long the pointer must rest on a tile before it takes focus
+              (focus-follows-mouse). Lower is snappier; higher is calmer. 0 = instant.
+            </p>
+            <input
+              type="range"
+              min={MIN_FOCUS_DWELL_MS}
+              max={MAX_FOCUS_DWELL_MS}
+              step={20}
+              value={settings.focusDwellMs}
+              onChange={(e) => settingsActions.setFocusDwell(Number(e.target.value))}
+              className="settings-range"
+              data-testid="focus-dwell-range"
+            />
           </section>
 
           {/* Size + ligatures */}
