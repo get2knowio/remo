@@ -1,4 +1,4 @@
-# Feature Specification: Ephemeral Device-Pairing Adoption (Operator-Auth Gated)
+# Feature Specification: Ephemeral Device-Pairing Adoption (Forward-Auth Gated)
 
 **Feature Branch**: `012-web-adopt-pairing`
 
@@ -11,8 +11,11 @@ time, the awaiting-adoption web page mints a short-lived ephemeral pairing code
 (streaming-service QR sign-on model). The setup API is dormant until an operator
 browses to the adopt page and a pairing session is live. Future re-syncs use the
 same flow. Access to the page — and thus the ability to mint a code — is gated by
-operator authentication (forward auth OR OIDC — the app platform supports both),
-so the service positively knows the operator is authenticated."
+operator authentication so the service positively knows the operator is logged
+in. v1 implements that gate with forward auth (the app platform terminates SSO
+and injects a trusted identity header), keeping remo-web a thin header-consumer;
+OIDC verification inside remo-web is a deferred enhancement behind the same
+provider seam."
 
 ## Overview
 
@@ -38,16 +41,16 @@ not be:
    does not exist at rest.
 2. **Minting a pairing code is gated by operator authentication.** The service
    only mints a code for a request that carries proof the operator is
-   authenticated. Two interchangeable providers are supported, both offered by
-   the app platform:
-   - **Forward auth** — a trusted, proxy-injected identity header (Traefik
-     ForwardAuth / oauth2-proxy / Authelia / a hola app's SSO). Simplest;
-     trust rests on the proxy being the only ingress.
-   - **OIDC** — a token minted by the identity provider and presented to the
-     service, which the service **cryptographically verifies** (signature via
-     the IdP's JWKS, plus issuer/audience/expiry). Strongest, because trust
-     does not depend on a network boundary — a spoofed header without a
-     validly-signed token is rejected. Recommended where available.
+   authenticated. **v1 implements this with forward auth**: the app platform
+   (Traefik ForwardAuth / oauth2-proxy / Authelia / a hola app's SSO) terminates
+   sign-on and injects a trusted identity header; remo-web reads that header and
+   mints a code only when it is present. This keeps remo-web a thin
+   header-consumer with no new dependency and no runtime coupling to an identity
+   provider. The gate is structured as a pluggable **provider seam** so a future
+   in-app **OIDC** verifier (validate a signed token via JWKS +
+   issuer/audience/expiry — stronger, boundary-independent) can be added without
+   touching the pairing core; OIDC-in-app is deferred (see Out of Scope) because
+   it requires remo-web to implement and maintain token verification itself.
    Either way the service has positive proof the operator is logged in — not
    merely that they can reach the page.
 
@@ -77,12 +80,14 @@ Scope) — clipboard copy of the code is the v1 delivery mechanism.
   operator, rather than anyone who can reach the service? → A: Operator
   authentication, required to mint. Reachability alone is never sufficient in the
   gated posture.
-- Q: Forward auth or OIDC for that operator authentication? → A: Support both
-  (the app platform offers both); the operator picks one via configuration.
-  Forward auth is simplest (trusted proxy-injected header); OIDC is strongest
-  (the service verifies a signed token via JWKS + issuer/audience/expiry, so it
-  does not rely on a network boundary for header trust) and is recommended where
-  available.
+- Q: Forward auth or OIDC for that operator authentication? → A: Forward auth for
+  v1. OIDC would require remo-web to implement token verification itself (a JWT
+  dependency + JWKS fetch/caching + signature/issuer/audience/expiry validation +
+  ongoing maintenance and a runtime coupling to the IdP), whereas forward auth
+  keeps remo-web a thin consumer of a trusted proxy-injected header while the
+  platform (which supports both) does the SSO. OIDC-in-app is deferred to future
+  work behind a pluggable provider seam, to be built only if a deployment cannot
+  place a forward-auth proxy in front.
 - Q: Is the pairing code shown as a scannable QR? → A: Not in v1 — copy button
   only. QR (for cross-device pairing) is deferred.
 - Q: Does the CLI change? → A: Minimally. The CLI still sends whatever code it is
@@ -153,36 +158,32 @@ session (expiry or completion) and assert `404` again.
 3. **Given** adoption completed, **When** the setup surface is probed, **Then**
    it is dormant (404) — the code that drove the adoption no longer works.
 
-### User Story 3 - Operator authentication gates code minting (Priority: P1)
+### User Story 3 - Forward auth gates code minting (Priority: P1)
 
-The service is configured with an operator-authentication provider — either a
-trusted forward-auth identity header, or OIDC token verification. A request to
-mint a pairing code that lacks a valid authenticated identity is refused; a
-request carrying one succeeds. The operator's authenticated identity is recorded
-in the pairing session and in audit logs (never the code).
+The service is configured to require a trusted, proxy-injected identity header to
+mint a pairing code. A request to mint that lacks the trusted header is refused; a
+request carrying it succeeds. The operator's authenticated identity is recorded in
+the pairing session and in audit logs (never the code). The check sits behind a
+pluggable provider seam so an OIDC verifier can be added later without changing
+this behavior.
 
 **Why this priority**: Operator authentication is what turns "anyone who can
 reach the page" into "an authenticated operator," and is the precondition that
 makes minting safe. It is a P1 security control, not an enhancement.
 
-**Independent Test**: For each provider, attempt to mint a code with no
-credential (refused), with an invalid credential (a client-spoofed header the
-proxy would have stripped / a token failing signature/issuer/audience/expiry —
-refused), and with a valid credential (succeeds); confirm the audit log names the
-identity and never the code.
+**Independent Test**: Behind a stub proxy, attempt to mint a code with no identity
+header (refused), with a client-supplied header the proxy is configured to strip
+(refused per trust rules), and with a valid proxy-injected header (succeeds);
+confirm the audit log names the identity and never the code.
 
 **Acceptance Scenarios**:
 
-1. **Given** forward auth is the configured provider, **When** a mint request
-   arrives without a trusted identity header, **Then** minting is refused and no
-   session is created.
-2. **Given** OIDC is the configured provider, **When** a mint request presents a
-   token that fails verification (bad signature, wrong issuer/audience, or
-   expired), **Then** minting is refused and no session is created.
-3. **Given** either provider, **When** a mint request carries a valid credential,
-   **Then** a code is minted and the session records the verified authenticated
-   identity.
-4. **Given** a deployment in the network-restricted posture (no provider
+1. **Given** forward auth is required, **When** a mint request arrives without the
+   trusted identity header, **Then** minting is refused and no session is created.
+2. **Given** forward auth is required, **When** a mint request carries a valid
+   proxy-injected identity header, **Then** a code is minted and the session
+   records the authenticated identity.
+3. **Given** a deployment in the network-restricted posture (no provider
    configured, explicitly opted into), **When** a mint request arrives, **Then**
    minting proceeds without a credential, and startup/logs clearly record that
    the weaker posture is active.
@@ -268,33 +269,31 @@ after the affordance closes.
 
 #### Operator-authentication gating (User Story 3)
 
-- **FR-009**: The service MUST support requiring operator authentication to mint
-  a pairing code, via a configurable provider. At least two providers MUST be
-  supported: **forward auth** (a trusted proxy-injected identity header, e.g.
-  `X-Forwarded-User` / `Remote-User`, with a configurable header name) and
-  **OIDC** (a token presented to the service).
-- **FR-010**: For the OIDC provider, the service MUST **cryptographically
-  verify** the presented token before minting: signature against the IdP's
-  published keys (JWKS, discovered via the issuer's well-known configuration),
-  plus issuer, audience, and expiry/not-before checks with a bounded clock-skew
-  allowance. A token failing any check MUST be treated as no credential.
+- **FR-009**: The service MUST support requiring **forward auth** to mint a
+  pairing code: minting is permitted only for a request carrying a trusted,
+  proxy-injected identity header (configurable header name, e.g.
+  `X-Forwarded-User` / `Remote-User`).
+- **FR-010**: The operator-authentication check MUST be implemented behind a
+  pluggable **provider seam** so additional providers (notably an in-app OIDC
+  token verifier — deferred, see Out of Scope) can be added without changing the
+  pairing-session or dormancy behavior. v1 ships exactly one provider (forward
+  auth) plus the network-restricted posture of FR-013.
 - **FR-011**: When operator authentication is required and no valid credential is
   present, the mint request MUST be refused and no session created; the refusal
   MUST be observable in logs with request context and MUST NOT create or reveal a
-  code. Verification failures MUST NOT leak token contents into logs.
-- **FR-012**: The service MUST record the verified authenticated identity that
-  minted a session (in the session and in audit logs) and MUST associate
-  adoption/push actions with it; the pairing code itself MUST never be logged.
+  code.
+- **FR-012**: The service MUST record the authenticated identity that minted a
+  session (in the session and in audit logs) and MUST associate adoption/push
+  actions with it; the pairing code itself MUST never be logged.
 - **FR-013**: The service MUST support an explicit, clearly-logged
   **network-restricted** posture in which no operator-authentication provider is
   configured (for loopback/private/dev deployments). This posture MUST be opt-in
   and MUST be surfaced at startup and in readiness/diagnostics as the weaker
   posture, so it is never entered silently.
-- **FR-014**: The service MUST treat a forward-auth identity header as
+- **FR-014**: The service MUST treat the forward-auth identity header as
   trustworthy only under the documented trust boundary (proxy in front, direct
-  client access to the app prevented). Both providers' configuration — including
-  the hola-app setup for each — MUST be documented for operators, noting OIDC as
-  the stronger option where available.
+  client access to the app prevented); this boundary — including the hola-app
+  forward-auth configuration — MUST be documented for operators.
 
 #### Pairing code delivery (User Story 1, 4)
 
@@ -327,8 +326,7 @@ after the affordance closes.
   for it MUST NOT grant setup access. Its removal MUST be documented as a
   breaking change from 011, with the pairing flow as the replacement.
 - **FR-022**: The compose example and hola/app documentation MUST be updated to
-  the pairing model (operator-auth front door — forward auth or OIDC; no static
-  token secret to manage).
+  the pairing model (forward-auth front door; no static token secret to manage).
 
 ### Key Entities
 
@@ -338,12 +336,11 @@ after the affordance closes.
   re-sync). At most one live session (most-recent-wins). Never persisted.
 - **Pairing code**: the high-entropy bearer the operator copies into the CLI.
   Exists only in memory and transiently on the operator's clipboard.
-- **Operator-auth provider**: the configured mechanism that authenticates the
-  minting request — either **forward auth** (a trusted proxy-injected identity
-  header) or **OIDC** (a token the service verifies via JWKS +
-  issuer/audience/expiry). Yields the **authenticated operator identity** stored
-  on the session; establishes that the minting request is an authenticated
-  operator, not merely a reachable client.
+- **Operator-auth provider**: the pluggable mechanism that authenticates the
+  minting request. v1 provides **forward auth** (a trusted proxy-injected identity
+  header); the seam allows a future **OIDC** verifier. Yields the **authenticated
+  operator identity** stored on the session; establishes that the minting request
+  is an authenticated operator, not merely a reachable client.
 
 ## Success Criteria *(mandatory)*
 
@@ -356,10 +353,9 @@ after the affordance closes.
 - **SC-003**: A pairing code survives an adoption that idles on an interactive
   prompt for at least the configured idle window, provided setup calls continue,
   and expires within that idle window after activity stops.
-- **SC-004**: With an operator-auth provider required (forward auth or OIDC), a
-  mint request without a valid credential never yields a working code (0%
-  success), while one with a valid credential (trusted header / verified token)
-  succeeds.
+- **SC-004**: With forward auth required, a mint request without the trusted
+  identity header never yields a working code (0% success), while one with a
+  valid proxy-injected header succeeds.
 - **SC-005**: Reopening the adopt page invalidates the previously minted code in
   100% of cases (rotation on open).
 - **SC-006**: The pairing code appears in zero log lines, zero error payloads,
@@ -372,14 +368,14 @@ after the affordance closes.
 
 ## Assumptions
 
-- The service is deployed with an operator-authentication provider in front:
-  either a reverse proxy performing forward auth (injecting a trusted identity
-  header, with direct client access to the app prevented so the header cannot be
-  spoofed), or OIDC (the service verifies a signed token). This is the
-  recommended posture and the one the security model relies on. The app platform
-  (hola) supports both; OIDC is stronger where available because verification is
-  cryptographic rather than boundary-dependent. (A network-restricted posture
-  with no provider is supported but explicitly weaker — FR-013.)
+- The service is deployed behind a reverse proxy performing forward auth: it
+  injects a trusted identity header and prevents direct client access to the app
+  so the header cannot be spoofed. This is the recommended posture and the one the
+  v1 security model relies on. The app platform (hola) can terminate SSO and
+  inject that header, so remo-web needs no in-app identity-provider integration.
+  (A network-restricted posture with no provider is supported but explicitly
+  weaker — FR-013. In-app OIDC verification is deferred future work — Out of
+  Scope.)
 - The operator's browser and workstation may be the same machine or different
   machines; v1 delivery is clipboard copy, so cross-device pairing (QR) is a
   later enhancement.
@@ -399,9 +395,13 @@ after the affordance closes.
 - **Changes to what adoption/push do** once authorized (registry mirror, host-key
   verification, key authorization, verification pass) — all inherited unchanged
   from 011.
+- **In-app OIDC token verification** (JWT dependency, JWKS fetch/caching,
+  signature/issuer/audience/expiry validation). Deferred future work behind the
+  FR-010 provider seam; built only if a deployment cannot place a forward-auth
+  proxy in front. v1 is forward-auth-only.
 - **Building the reverse proxy / IdP / SSO itself** — the service *consumes* a
-  forward-auth header or *verifies* an OIDC token; standing up the proxy or
-  identity provider is the operator's/platform's job.
+  forward-auth header; standing up the proxy or identity provider is the
+  operator's/platform's job.
 - **Acting as a full OIDC relying party** (interactive redirect/callback/cookie
-  login flow implemented by the service). v1 verifies a presented token; it does
-  not run the browser authorization-code dance itself (the platform/proxy does).
+  login flow implemented by the service) — not in v1, and not implied by the
+  deferred OIDC-verifier enhancement above.
