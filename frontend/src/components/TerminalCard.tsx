@@ -19,6 +19,7 @@ import {
   type SettingsState,
   type TerminalFontOptions,
 } from "../state/settings";
+import { removeLatency, reportLatency } from "../state/latency";
 import type { RendererAdapter } from "../terminal/RendererAdapter";
 import { createDefaultRenderer } from "../terminal/defaultRenderer";
 import { TerminalConnection, type TerminalConnectionState } from "../terminal/TerminalConnection";
@@ -244,7 +245,12 @@ export function TerminalCard({
       onStateChange: (state) => {
         setConnectionState(state);
         setNeedsManualReconnect(connectionRef.current?.needsManualReconnect ?? false);
+        // Only a connected terminal contributes to the header latency median.
+        if (state !== "ready") {
+          removeLatency(target.id);
+        }
       },
+      onLatency: (rttMs) => reportLatency(target.id, rttMs),
     });
     connectionRef.current = connection;
 
@@ -272,6 +278,7 @@ export function TerminalCard({
         fitRafRef.current = null;
       }
       lastSentDimsRef.current = null;
+      removeLatency(target.id);
       unsubscribeInput();
       unsubscribeSelection();
       resizeObserver.disconnect();
