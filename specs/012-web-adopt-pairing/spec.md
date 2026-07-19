@@ -88,6 +88,25 @@ Scope) — clipboard copy of the code is the v1 delivery mechanism.
   platform (which supports both) does the SSO. OIDC-in-app is deferred to future
   work behind a pluggable provider seam, to be built only if a deployment cannot
   place a forward-auth proxy in front.
+- Q: Where should the forward-auth boundary sit, given the CLI cannot complete an
+  SSO challenge but must call the setup API? → A: Forward auth gates only the
+  browser-facing **mint** endpoint. `/api/v1/setup/*` passes through the proxy and
+  is authenticated solely by the ephemeral pairing code the CLI carries; the code
+  is the CLI's credential and was itself minted by an authenticated operator, so
+  the chain of trust holds without the CLI performing SSO.
+- Q: Keep the no-forward-auth "network-restricted" posture, or always require
+  forward auth? → A: Keep it, but only as an explicit, loudly-logged opt-in that
+  is never the default and is surfaced in readiness/diagnostics as the weaker
+  mode — so local `remo web serve` and single-machine loopback runs work without a
+  proxy, while insecurity can never be entered silently (FR-013).
+- Q: What is the default sliding idle-TTL for a pairing session? → A: 15 minutes
+  (configurable). It covers mint→first-CLI-call latency and pauses on the
+  interactive fingerprint prompt, while an abandoned code expires within 15 min of
+  inactivity (FR-002).
+- Q: Should the trusted forward-auth header name have a baked-in default? → A: No
+  default — the header name MUST be configured explicitly when forward auth is
+  enabled, and enabling it without a name is a fail-fast config error, so the
+  service never trusts a header the operator's proxy does not set/strip (FR-009).
 - Q: Is the pairing code shown as a scannable QR? → A: Not in v1 — copy button
   only. QR (for cross-device pairing) is deferred.
 - Q: Does the CLI change? → A: Minimally. The CLI still sends whatever code it is
@@ -247,7 +266,8 @@ after the affordance closes.
   with a single pairing **session**.
 - **FR-002**: A pairing session MUST have a **sliding idle TTL**: it expires a
   configurable idle interval after the last successful authenticated setup call
-  (default on the order of 15 minutes), measured against a monotonic clock.
+  (default **15 minutes**), measured against a monotonic clock. The window also
+  covers the initial gap between minting a code and the CLI's first setup call.
 - **FR-003**: Opening/mounting the adopt page (or the re-sync affordance) MUST
   mint a fresh code and invalidate any prior live session (rotation on open,
   most-recent-wins).
@@ -271,8 +291,16 @@ after the affordance closes.
 
 - **FR-009**: The service MUST support requiring **forward auth** to mint a
   pairing code: minting is permitted only for a request carrying a trusted,
-  proxy-injected identity header (configurable header name, e.g.
-  `X-Forwarded-User` / `Remote-User`).
+  proxy-injected identity header. The trusted header name MUST be configured
+  explicitly (no baked-in default, since it varies by proxy — e.g.
+  `X-Forwarded-User`, `Remote-User`); enabling forward auth without naming a
+  header MUST be a fail-fast configuration error, so the service never trusts a
+  header the proxy does not set and strip. The forward-auth boundary applies ONLY to
+  the browser-facing **mint** endpoint; the `/api/v1/setup/*` routes the CLI calls
+  MUST NOT require forward auth — they are authenticated solely by the live
+  pairing code (FR-005/FR-006). The deployment's proxy MUST therefore gate the
+  mint path while passing the setup API through, and this split MUST be documented
+  (including the hola-app configuration, FR-022).
 - **FR-010**: The operator-authentication check MUST be implemented behind a
   pluggable **provider seam** so additional providers (notably an in-app OIDC
   token verifier — deferred, see Out of Scope) can be added without changing the
