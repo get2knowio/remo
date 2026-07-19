@@ -69,6 +69,10 @@ export const MAX_TERM_SIZE = 18;
 export const MIN_RAIL_WIDTH = 262;
 export const MAX_RAIL_WIDTH = 520;
 const DEFAULT_RAIL_WIDTH = 320;
+/** Focus-follows-mouse dwell (ms): 0 = instant, higher = calmer. */
+export const MIN_FOCUS_DWELL_MS = 0;
+export const MAX_FOCUS_DWELL_MS = 1000;
+const DEFAULT_FOCUS_DWELL_MS = 220;
 
 export interface SettingsState {
   accent: string;
@@ -83,6 +87,8 @@ export interface SettingsState {
   nerdFontName: string | null;
   /** Browser terminal engine to back each terminal. */
   renderer: RendererChoice;
+  /** Focus-follows-mouse dwell in ms (how long the pointer rests before focus). */
+  focusDwellMs: number;
 }
 
 export interface TerminalFontOptions {
@@ -101,6 +107,7 @@ const DEFAULTS: SettingsState = {
   railCollapsed: false,
   nerdFontName: null,
   renderer: "xterm",
+  focusDwellMs: DEFAULT_FOCUS_DWELL_MS,
 };
 
 function clamp(n: number, lo: number, hi: number): number {
@@ -137,6 +144,10 @@ function loadPersisted(): SettingsState {
       railCollapsed: typeof c.railCollapsed === "boolean" ? c.railCollapsed : DEFAULTS.railCollapsed,
       nerdFontName: typeof c.nerdFontName === "string" ? c.nerdFontName : null,
       renderer: c.renderer === "ghostty" || c.renderer === "xterm" ? c.renderer : DEFAULTS.renderer,
+      focusDwellMs:
+        typeof c.focusDwellMs === "number"
+          ? clamp(Math.round(c.focusDwellMs), MIN_FOCUS_DWELL_MS, MAX_FOCUS_DWELL_MS)
+          : DEFAULTS.focusDwellMs,
     };
   } catch (error) {
     console.error("settings: failed to restore from localStorage", error);
@@ -214,6 +225,10 @@ export const settingsActions = {
   toggleRailCollapsed: () => setState({ railCollapsed: !state.railCollapsed }),
   setNerdFontName: (nerdFontName: string | null) => setState({ nerdFontName }),
   setRenderer: (renderer: RendererChoice) => setState({ renderer }),
+  setFocusDwell: (focusDwellMs: number) =>
+    setState({
+      focusDwellMs: clamp(Math.round(focusDwellMs), MIN_FOCUS_DWELL_MS, MAX_FOCUS_DWELL_MS),
+    }),
 };
 
 export function useSettings(): SettingsState {

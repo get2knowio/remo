@@ -2,7 +2,6 @@
 // health indicator, refresh, settings, and shortcuts.
 
 import type { HealthStatus } from "../state/health";
-import { PairToSync } from "./PairToSync";
 import "./TopBar.css";
 
 // "unconfigured" is included for Record exhaustiveness, but in practice the
@@ -90,8 +89,6 @@ export function TopBar({
       <button type="button" className="topbar-btn" onClick={onRefresh} data-testid="refresh-button">
         <span className={refreshing ? "rail-spin" : undefined}>⟳</span> Refresh
       </button>
-
-      <PairToSync />
 
       <button
         type="button"
