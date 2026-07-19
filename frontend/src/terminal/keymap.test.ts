@@ -32,9 +32,12 @@ describe("inputForKeyEvent", () => {
 });
 
 describe("isCopyChord", () => {
-  it("recognizes ⌘C and Ctrl+Shift+C", () => {
-    expect(isCopyChord(key({ key: "c", metaKey: true }))).toBe(true);
+  it("recognizes Ctrl+Shift+C", () => {
     expect(isCopyChord(key({ key: "C", ctrlKey: true, shiftKey: true }))).toBe(true);
+  });
+
+  it("does NOT match ⌘C — that goes through the native copy event", () => {
+    expect(isCopyChord(key({ key: "c", metaKey: true }))).toBe(false);
   });
 
   it("leaves bare Ctrl+C alone (stays SIGINT)", () => {
@@ -42,8 +45,8 @@ describe("isCopyChord", () => {
   });
 
   it("ignores other keys, plain c, and non-keydown events", () => {
-    expect(isCopyChord(key({ key: "v", metaKey: true }))).toBe(false);
+    expect(isCopyChord(key({ key: "v", ctrlKey: true, shiftKey: true }))).toBe(false);
     expect(isCopyChord(key({ key: "c" }))).toBe(false);
-    expect(isCopyChord(key({ key: "c", metaKey: true, type: "keyup" }))).toBe(false);
+    expect(isCopyChord(key({ key: "c", ctrlKey: true, shiftKey: true, type: "keyup" }))).toBe(false);
   });
 });

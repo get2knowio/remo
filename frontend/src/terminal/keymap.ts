@@ -27,16 +27,15 @@ export function inputForKeyEvent(e: KeyboardEvent): string | null {
 }
 
 /**
- * Whether a key event is the "copy the selection" chord: **Cmd+C** (macOS) or
- * **Ctrl+Shift+C** (Linux/Windows). Bare `Ctrl+C` is deliberately excluded so it
- * stays SIGINT. The renderer only copies when there is actually a selection —
- * otherwise the chord is left alone.
+ * Whether a key event is the **Ctrl+Shift+C** explicit-copy chord (Linux/Windows).
+ * Bare `Ctrl+C` is excluded so it stays SIGINT. **⌘C on macOS is intentionally
+ * NOT handled here** — it fires the browser's native `copy` event, which the
+ * renderer handles via `clipboardData` (synchronous, and reliable in Safari,
+ * unlike an async `navigator.clipboard.writeText()` off a preventDefault'd key).
  */
 export function isCopyChord(e: KeyboardEvent): boolean {
   if (e.type !== "keydown" || (e.key !== "c" && e.key !== "C")) {
     return false;
   }
-  const cmdC = e.metaKey && !e.ctrlKey && !e.altKey; // macOS ⌘C
-  const ctrlShiftC = e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey; // Linux/Win
-  return cmdC || ctrlShiftC;
+  return e.ctrlKey && e.shiftKey && !e.metaKey && !e.altKey;
 }
