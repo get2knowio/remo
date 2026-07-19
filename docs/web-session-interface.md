@@ -102,9 +102,10 @@ The SPA is a two-pane **web console**:
   row (or its `+` button) **adds** it to a responsive grid (1/2/3 columns by count). In a grid, **drag
   a tile's header onto another to swap their positions** — a window outline follows the cursor and the
   swap target shows a dashed outline (mouse or touch press-and-hold; keyboard-accessible via the
-  handle); the arrangement persists until the grid is rebuilt. In a grid, **hovering a tile focuses it**
-  (focus-follows-mouse) so keystrokes go where the pointer is — no click needed. The **◻** control solos
-  a tile; **Esc** collapses the grid back to the focused terminal;
+  handle); the arrangement persists until the grid is rebuilt. In a grid, **resting the pointer on a
+  tile focuses it** (focus-follows-mouse, with a short dwell so passing through tiles doesn't steal
+  focus) — keystrokes go where the pointer is, no click needed. The **◻** control solos a tile; **Esc**
+  collapses the grid back to the focused terminal;
   number keys **1–9** jump to the numbered sessions (⌘ 1–9 add to the grid). Hidden terminals stay
   connected and keep their scrollback. Each terminal header shows `provider · instance · region`
   (doubling as the drag handle), connection state, and a

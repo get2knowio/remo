@@ -28,6 +28,9 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 /** How much to shrink the terminal font in a grid tile when "scale to fit". */
 const GRID_FIT_SCALE = 0.8;
+/** Focus-follows-mouse dwell: the pointer must REST on a tile this long before
+ * it takes focus, so passing through tiles (or a small drift) doesn't steal it. */
+const HOVER_FOCUS_DELAY_MS = 220;
 
 const STATE_LABELS: Record<TerminalConnectionState, string> = {
   connecting: "Connecting…",
@@ -119,6 +122,8 @@ export function TerminalCard({
   // (to skip redundant resize frames).
   const fitRafRef = useRef<number | null>(null);
   const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null);
+  // Pending focus-follows-mouse dwell timer (cleared if the pointer leaves first).
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("connecting");
   const [needsManualReconnect, setNeedsManualReconnect] = useState(false);
@@ -306,6 +311,29 @@ export function TerminalCard({
     onFocusRequest?.();
   }, [onFocusRequest]);
 
+  const clearHoverTimer = useCallback(() => {
+    if (hoverTimerRef.current !== null) {
+      clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }, []);
+
+  // Focus-follows-mouse with a dwell delay: arm a timer on enter, fire only if
+  // the pointer is still resting here after HOVER_FOCUS_DELAY_MS.
+  const handleMouseEnter = useCallback(() => {
+    if (!onHoverFocus) {
+      return;
+    }
+    clearHoverTimer();
+    hoverTimerRef.current = setTimeout(() => {
+      hoverTimerRef.current = null;
+      onHoverFocus();
+    }, HOVER_FOCUS_DELAY_MS);
+  }, [onHoverFocus, clearHoverTimer]);
+
+  // Cancel a pending dwell when the pointer leaves or the card unmounts.
+  useEffect(() => clearHoverTimer, [clearHoverTimer]);
+
   const prov = providerMeta(target.instance_type);
   const badge = [prov.label, target.instance_name, region].filter(Boolean).join(" · ");
 
@@ -322,7 +350,8 @@ export function TerminalCard({
       data-focused={isFocused}
       data-connection-state={connectionState}
       style={{ display: isVisible ? undefined : "none" }}
-      onMouseEnter={onHoverFocus}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={clearHoverTimer}
     >
       <header className="terminal-card-header">
         {/* The header (left of the controls) is the drag handle for reordering
