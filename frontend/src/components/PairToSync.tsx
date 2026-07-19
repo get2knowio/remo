@@ -1,10 +1,11 @@
-// Dashboard "Pair CLI to sync" affordance (012-web-adopt-pairing, US4 / FR-017).
+// "Pair CLI to sync" affordance (012-web-adopt-pairing, US4 / FR-017), shown in
+// Settings once the service has been adopted.
 //
 // Mints a fresh pairing code (origin="resync") through the same lifecycle and
 // operator-auth gate as the awaiting-adoption page, and offers a Copy button.
 // The code value is held only in a ref and is NEVER rendered into the DOM
-// (FR-015/FR-016); opening the popover mints, closing it ends the session
-// best-effort (the idle TTL is the backstop).
+// (FR-015/FR-016); opening mints, closing (or unmounting, e.g. leaving Settings)
+// ends the session best-effort (the idle TTL is the backstop).
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, endPairing, mintPairingCode } from "../api/client";
@@ -19,6 +20,9 @@ export function PairToSync(): JSX.Element {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const codeRef = useRef<string | null>(null);
   const copyResetHandle = useRef<ReturnType<typeof setTimeout>>();
+  // Track "open" for the unmount cleanup below without stale-closure issues.
+  const openRef = useRef(false);
+  openRef.current = open;
 
   const close = useCallback(() => {
     setOpen(false);
@@ -46,6 +50,12 @@ export function PairToSync(): JSX.Element {
   }, []);
 
   useEffect(() => () => clearTimeout(copyResetHandle.current), []);
+  // End the pairing session if Settings is closed with a code still live.
+  useEffect(() => () => {
+    if (openRef.current) {
+      endPairing();
+    }
+  }, []);
 
   const onCopy = useCallback(() => {
     const code = codeRef.current;
@@ -64,12 +74,12 @@ export function PairToSync(): JSX.Element {
     <div className="pairsync">
       <button
         type="button"
-        className="topbar-btn"
+        className="pairsync-btn"
         onClick={open ? close : openAndMint}
         data-testid="pair-to-sync"
         title="Mint a pairing code to run `remo web push` from your workstation"
       >
-        Pair CLI to sync
+        {open ? "Cancel" : "Mint pairing code"}
       </button>
 
       {open && (
@@ -88,7 +98,7 @@ export function PairToSync(): JSX.Element {
           ) : (
             <button
               type="button"
-              className="topbar-btn"
+              className="pairsync-btn"
               onClick={onCopy}
               disabled={mintState !== "ready"}
               data-testid="pairsync-copy"

@@ -14,6 +14,7 @@ import {
   useSettings,
   type FontOption,
 } from "../state/settings";
+import { PairToSync } from "./PairToSync";
 import "./SettingsPage.css";
 
 interface SettingsPageProps {
@@ -243,6 +244,17 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
                 );
               })}
             </div>
+          </section>
+
+          {/* Pair CLI to sync (post-adoption re-sync) */}
+          <section>
+            <div className="settings-heading">Pair CLI to sync</div>
+            <p className="settings-sub">
+              Mint a one-time code to run <code>remo web push &lt;url&gt;</code> from your
+              workstation and push registry / host-key updates to this service. The code is copied
+              to your clipboard — it is never shown.
+            </p>
+            <PairToSync />
           </section>
         </div>
       </div>

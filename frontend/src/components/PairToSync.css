@@ -1,33 +1,51 @@
+/* "Pair CLI to sync" — rendered inline inside a Settings section (no longer a
+ * top-bar popover), so the minted-code panel expands in place below the button. */
 .pairsync {
-  position: relative;
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.pairsync-btn {
+  padding: 7px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong, #444);
+  background: var(--bg-btn, #24262c);
+  color: var(--text-1, #e6e8ec);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.pairsync-btn:hover {
+  background: var(--bg-btn-hover, #2c2f36);
+}
+.pairsync-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 
 .pairsync-popover {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 50;
-  width: 280px;
+  width: 100%;
+  max-width: 380px;
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: var(--panel, #1b1d22);
-  border: 1px solid var(--border, #333);
+  background: var(--bg-header, #1b1d22);
+  border: 1px solid var(--border-soft, #333);
   border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .pairsync-body {
   margin: 0;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-muted, #b8bcc4);
+  color: var(--text-dim, #b8bcc4);
 }
 
 .pairsync-body code {
-  font-family: var(--mono, monospace);
+  font-family: var(--font-mono, monospace);
   color: var(--text, #e6e8ec);
 }
 
@@ -42,7 +60,7 @@
   align-self: flex-end;
   background: none;
   border: none;
-  color: var(--text-muted, #b8bcc4);
+  color: var(--text-dim, #b8bcc4);
   font-size: 12px;
   cursor: pointer;
   padding: 2px 4px;
