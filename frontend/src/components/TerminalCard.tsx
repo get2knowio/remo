@@ -257,6 +257,18 @@ export function TerminalCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [target.id, settings.renderer]);
 
+  // Move DOM keyboard focus into the terminal whenever this card becomes the
+  // focused, visible one — e.g. after clicking a rail row (selectOnly) or a
+  // number-key jump. Without this the card is "focused" in workspace state (our
+  // input gate opens) but the xterm textarea has no DOM focus, so keystrokes go
+  // nowhere until the user clicks into the surface. Guarded on isVisible: a
+  // hidden card must never steal focus.
+  useEffect(() => {
+    if (isFocused && isVisible) {
+      adapterRef.current?.focus();
+    }
+  }, [isFocused, isVisible]);
+
   const handleReconnect = useCallback(() => {
     setError(null);
     void connectionRef.current?.reconnect();
