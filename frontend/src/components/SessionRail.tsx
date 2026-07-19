@@ -228,7 +228,6 @@ function RailInstance({
         <RailSessionRow
           key={row.target.id}
           target={row.target}
-          num={row.num}
           providerColor={meta.color}
           attached={attached.includes(row.target.id)}
           visible={visible.includes(row.target.id)}
@@ -243,7 +242,6 @@ function RailInstance({
 
 interface RailSessionRowProps {
   target: SessionTarget;
-  num: number | null;
   providerColor: string;
   attached: boolean;
   visible: boolean;
@@ -254,7 +252,6 @@ interface RailSessionRowProps {
 
 function RailSessionRow({
   target,
-  num,
   attached,
   visible,
   focused,
@@ -282,7 +279,6 @@ function RailSessionRow({
       onClick={(e) => onSelect(target, e)}
     >
       <span className="rail-row-mark">{mark}</span>
-      <span className="rail-row-num">{num ?? ""}</span>
       <span className="rail-row-name">{target.project}</span>
       <span className="rail-row-glyphs">
         {target.git_dirty && (

@@ -63,8 +63,6 @@ interface TerminalCardProps {
   isVisible: boolean;
   /** Whether this card currently receives keyboard input + the focus ring. */
   isFocused: boolean;
-  /** 1-based position label shown on a grid tile. */
-  num?: number;
   /** The display mode this card is currently in (window-control cluster state). */
   viewState: TerminalViewState;
   onClose: () => void;
@@ -100,7 +98,6 @@ export function TerminalCard({
   mode,
   isVisible,
   isFocused,
-  num,
   viewState,
   onClose,
   reorder,
@@ -335,9 +332,6 @@ export function TerminalCard({
           }
           onDragEnd={reorder ? () => reorder.onDragEnd() : undefined}
         >
-          {mode === "grid" && num !== undefined && (
-            <span className="terminal-card-num">{num}</span>
-          )}
           <span className="terminal-card-provider-dot" style={{ background: prov.color }} />
           <div className="terminal-card-identity">
             <span className="terminal-card-project">{target.project}</span>
