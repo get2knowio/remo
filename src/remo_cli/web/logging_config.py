@@ -57,6 +57,13 @@ _AUTHORIZATION_HEADER_RE = re.compile(
 #: length keeps prose like "bearer of" from being mangled.
 _BEARER_TOKEN_RE = re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._~+/=-]{8,}")
 
+#: Pairing-code values (012-web-adopt-pairing, FR-016) appearing in a `code`
+#: key/assignment context, e.g. a naively logged mint response
+#: (`{"code": "xY9...">`, `code=xY9...`). The 16-char minimum keeps ordinary
+#: prose containing the word "code" from being mangled; a real pairing code is
+#: `secrets.token_urlsafe(24)` (~32 url-safe chars).
+_PAIRING_CODE_RE = re.compile(r"(?i)\b(code)\b[\"']?\s*[=:]\s*[\"']?[A-Za-z0-9_-]{16,}")
+
 #: PEM-encoded private key material, any key type, whole block.
 _PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----"
@@ -85,6 +92,7 @@ class RedactingFilter(logging.Filter):
         redacted = _PROXY_COMMAND_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", redacted)
         redacted = _AUTHORIZATION_HEADER_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", redacted)
         redacted = _BEARER_TOKEN_RE.sub(lambda m: f"{m.group(1)} {_REDACTED}", redacted)
+        redacted = _PAIRING_CODE_RE.sub(lambda m: f"{m.group(1)}={_REDACTED}", redacted)
         redacted = _PRIVATE_KEY_RE.sub(_REDACTED, redacted)
 
         if redacted != message:

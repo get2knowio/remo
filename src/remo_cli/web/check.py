@@ -50,6 +50,7 @@ from remo_cli.core.ssh import build_ssh_base_cmd
 from remo_cli.models.host import KnownHost
 from remo_cli.web import health
 from remo_cli.web.config import WebSettings
+from remo_cli.web.operator_auth import OperatorAuthConfigError, build_operator_auth_provider
 from remo_cli.web.state import ConfigurationState, detect_state
 from remo_cli.web.discovery import (
     _classify_ssh_transport,
@@ -135,6 +136,48 @@ def _configuration_check(state: ConfigurationState) -> CheckResult:
         False,
         "configuration present but unusable (broken)",
         _REMEDIATE_BROKEN,
+    )
+
+
+def _operator_auth_check(settings: WebSettings) -> CheckResult:
+    """Report the operator-authentication posture that gates pairing-code minting.
+
+    (012-web-adopt-pairing, FR-013): forward auth is the recommended posture;
+    network-restricted is a valid but weaker opt-in (flagged); unconfigured means
+    minting is disabled (no adoption possible until a provider is set — a warning,
+    not a hard failure of the startup gate). Forward auth enabled without a header
+    name is a fail-fast config error and FAILS here.
+    """
+    try:
+        provider = build_operator_auth_provider(settings)
+    except OperatorAuthConfigError as exc:
+        return CheckResult(
+            "operator_auth",
+            False,
+            str(exc),
+            "Set REMO_WEB_FORWARD_AUTH_HEADER, or REMO_WEB_OPERATOR_AUTH=none for "
+            "the network-restricted posture.",
+        )
+    if provider is None:
+        return CheckResult(
+            "operator_auth",
+            True,
+            "not configured — pairing-code minting is DISABLED (no adoption "
+            "possible until a provider is set)",
+            "Set REMO_WEB_OPERATOR_AUTH=forward (with REMO_WEB_FORWARD_AUTH_HEADER) "
+            "for a proxy front door, or =none for loopback/dev.",
+        )
+    if provider.posture == "network-restricted":
+        return CheckResult(
+            "operator_auth",
+            True,
+            "network-restricted — codes minted WITHOUT operator auth (weaker; "
+            "use only for loopback/private deployments)",
+        )
+    return CheckResult(
+        "operator_auth",
+        True,
+        f"forward auth (trusted header {settings.forward_auth_header!r})",
     )
 
 
@@ -264,6 +307,7 @@ def run_checks(
     if state is ConfigurationState.UNCONFIGURED:
         return [
             _configuration_check(state),
+            _operator_auth_check(settings),
             _runtime_dir_check(settings.ssh_control_dir),
             _executable_check("ssh", "ssh"),
         ]
@@ -272,6 +316,7 @@ def run_checks(
 
     results = [
         _configuration_check(state),
+        _operator_auth_check(settings),
         _registry_check(hosts),
         _ssh_identity_check(settings),
         _runtime_dir_check(settings.ssh_control_dir),

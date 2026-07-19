@@ -1,0 +1,53 @@
+.pairsync {
+  position: relative;
+  display: inline-flex;
+}
+
+.pairsync-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 280px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel, #1b1d22);
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.pairsync-body {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted, #b8bcc4);
+}
+
+.pairsync-body code {
+  font-family: var(--mono, monospace);
+  color: var(--text, #e6e8ec);
+}
+
+.pairsync-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--danger, #e06c6c);
+}
+
+.pairsync-close {
+  align-self: flex-end;
+  background: none;
+  border: none;
+  color: var(--text-muted, #b8bcc4);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.pairsync-close:hover {
+  color: var(--text, #e6e8ec);
+}

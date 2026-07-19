@@ -285,8 +285,14 @@ class TestResolvedSshSettings:
         assert settings.ssh_identity_file is None
         assert settings.ssh_known_hosts_file is None
 
-    def test_api_token_from_env(self, state_dir, monkeypatch):
-        monkeypatch.setenv("REMO_WEB_API_TOKEN", "  sekrit-token  ")
-        assert state_dir.settings().api_token == "sekrit-token"
-        monkeypatch.setenv("REMO_WEB_API_TOKEN", "")
-        assert state_dir.settings().api_token == ""
+    def test_pairing_config_from_env(self, state_dir, monkeypatch):
+        # 012: the static REMO_WEB_API_TOKEN field is gone; pairing config
+        # replaces it.
+        assert not hasattr(state_dir.settings(), "api_token")
+        monkeypatch.setenv("REMO_WEB_PAIRING_TTL_S", "300")
+        monkeypatch.setenv("REMO_WEB_OPERATOR_AUTH", "  forward  ")
+        monkeypatch.setenv("REMO_WEB_FORWARD_AUTH_HEADER", "  X-Forwarded-User  ")
+        settings = state_dir.settings()
+        assert settings.pairing_ttl_s == 300.0
+        assert settings.operator_auth == "forward"
+        assert settings.forward_auth_header == "X-Forwarded-User"

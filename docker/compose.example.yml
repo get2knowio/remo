@@ -139,10 +139,31 @@ services:
   #
   #       remo web adopt http://<docker-host>:8080
   #
-  #     which pushes your registry + instance host keys and authorizes the
-  #     service's OWN public key on each instance — your personal private key
-  #     never leaves the workstation. Later registry changes are re-pushed
-  #     with `remo web push`.
+  #     Open http://<docker-host>:8080 in a browser (through your forward-auth
+  #     proxy, see below), click "Copy pairing code", run the command above, and
+  #     paste the code when prompted. It pushes your registry + instance host
+  #     keys and authorizes the service's OWN public key on each instance — your
+  #     personal private key never leaves the workstation. Later registry changes
+  #     are re-pushed with `remo web push` (open the dashboard's "Pair CLI to
+  #     sync" affordance for a fresh code).
+  #
+  # Setup authorization (012-web-adopt-pairing): there is NO static token. The
+  # awaiting-adoption page mints a short-lived, single-use PAIRING CODE; the
+  # /api/v1/setup/* surface is dormant (404) unless a pairing session is live.
+  # Minting a code is gated by OPERATOR AUTHENTICATION:
+  #
+  #   - Recommended: put a forward-auth reverse proxy (Traefik ForwardAuth /
+  #     oauth2-proxy / Authelia / a hola app's SSO) in front. It must (a) gate
+  #     the browser-facing POST /api/v1/pairing/mint so only an authenticated
+  #     operator can mint, while (b) PASSING THROUGH /api/v1/setup/* unchanged
+  #     (the CLI cannot do SSO — it authenticates with the pairing code alone).
+  #     Set REMO_WEB_OPERATOR_AUTH=forward and REMO_WEB_FORWARD_AUTH_HEADER to
+  #     the trusted identity header your proxy injects (e.g. X-Forwarded-User).
+  #     The proxy MUST strip that header from inbound client requests.
+  #
+  #   - Loopback/dev only: REMO_WEB_OPERATOR_AUTH=none mints WITHOUT operator
+  #     auth (a loud, weaker posture surfaced in readiness). Use only when the
+  #     port is loopback-bound or otherwise network-restricted.
   #
   # This service carries `profiles: ["adopted"]` so a plain `docker compose
   # up` still starts only the bind-mount service above. Start this one with:
@@ -154,25 +175,29 @@ services:
     # above — the mode is chosen purely by what is mounted, not by the image.
     image: ghcr.io/get2knowio/remo-web:latest
     ports:
-      # Adoption traffic (the token-gated /api/v1/setup/* calls made by
-      # `remo web adopt`) arrives over this same port. Loopback-only means
-      # the workstation running the CLI must be the Docker host itself —
-      # otherwise bind a LAN IP here deliberately, or keep loopback and run
-      # `remo web adopt --via <docker-host>` to tunnel over SSH.
+      # Adoption traffic (the pairing-code-authenticated /api/v1/setup/* calls
+      # made by `remo web adopt`) arrives over this same port. Loopback-only
+      # means the workstation running the CLI must be the Docker host itself —
+      # otherwise bind a LAN IP here deliberately (behind your forward-auth
+      # proxy), or keep loopback and run `remo web adopt --via <docker-host>`
+      # to tunnel over SSH.
       - "127.0.0.1:8080:8080"
     environment:
-      # REQUIRED for adopted mode: while this is unset/empty the setup API
-      # does not exist at all (every /api/v1/setup/* request gets a plain
-      # 404), so adoption is impossible. Generate a strong random value,
-      # e.g.:
+      # Operator-authentication posture for pairing-code minting (see the notes
+      # above). Choose ONE:
       #
-      #   openssl rand -hex 24
+      #   Forward auth (recommended, behind an SSO proxy):
+      #     - "REMO_WEB_OPERATOR_AUTH=forward"
+      #     - "REMO_WEB_FORWARD_AUTH_HEADER=X-Forwarded-User"
+      #   (Enabling forward auth without a header name is a fail-fast error.)
       #
-      # and pass the same value to the CLI via $REMO_API_TOKEN (or the
-      # interactive prompt) when running `remo web adopt`.
-      - "REMO_WEB_API_TOKEN=replace-me--generate-with--openssl-rand-hex-24"
+      #   Network-restricted (loopback/dev only — weaker, loudly logged):
+      - "REMO_WEB_OPERATOR_AUTH=none"
+      #
+      # There is NO REMO_WEB_API_TOKEN anymore — a value set for it is ignored.
       # The REMO_WEB_ALLOWED_HOSTS / REMO_WEB_ALLOWED_ORIGINS notes on the
-      # service above apply here unchanged.
+      # service above apply here unchanged (the mint endpoint needs the page's
+      # Origin allowlisted; the default 127.0.0.1:8080 origin covers loopback).
     volumes:
       # A writable named state volume at REMO_HOME — the ONLY volume in this
       # mode (no registry mount, no ~/.ssh mounts; presence of those is what

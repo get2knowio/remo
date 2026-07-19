@@ -46,14 +46,32 @@ class _NoopDiscovery:
         return None
 
 
-def _client(state_dir, *, token: str = _TOKEN) -> TestClient:
+def _inject_session(application, code: str = _TOKEN) -> None:
+    """Directly install a live pairing session with a KNOWN code (012).
+
+    Reaches into the in-memory manager so the many ``_AUTH`` (Bearer _TOKEN)
+    call sites below keep working without minting a random code per test. The
+    huge ttl means it never idle-expires mid-test.
+    """
+    import time
+
+    from remo_cli.web.pairing import PairingSession
+
+    application.state.pairing_manager._session = PairingSession(
+        code=code, identity=None, origin="adopt", last_activity=time.monotonic(), ttl_s=1e9
+    )
+
+
+def _client(state_dir, *, live: bool = True) -> TestClient:
     settings = state_dir.settings(
         allowed_hosts=["testserver", "localhost", "127.0.0.1"],
         allowed_origins=[_ORIGIN],
-        api_token=token,
+        operator_auth="none",
     )
     application = app_module.create_app(settings)
     application.state.discovery_service = _NoopDiscovery()
+    if live:
+        _inject_session(application)
     return TestClient(application, base_url=_ORIGIN)
 
 
@@ -250,6 +268,7 @@ def test_put_registry_happy_path_applies_mirror_and_flips_to_adopted(state_dir):
         assert _service_known_hosts(state_dir).read_text() == _VALID_KEY_LINE + "\n"
         assert state_dir.registry_path.read_text() == _EXPECTED_REGISTRY_TEXT
 
+        # The PUT does not end the session (verify is the terminal step, FR-007).
         status = client.get("/api/v1/setup/status", headers=_AUTH).json()
     assert status["state"] == "adopted"
     assert status["registry_instances"] == 2
@@ -375,7 +394,9 @@ def test_put_registry_mid_apply_failure_is_safe_and_converges(state_dir, monkeyp
         assert not state_dir.registry_path.exists()
         assert _service_known_hosts(state_dir).read_text() == _VALID_KEY_LINE + "\n"
 
-        # A subsequent successful push converges to the full mirror.
+        # A subsequent successful push converges to the full mirror. (The
+        # first PUT failed inside _apply_payload, before end(), so the session
+        # is still live here.)
         fail_registry_write["active"] = False
         resp = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
         assert resp.status_code == 200
@@ -452,7 +473,7 @@ def test_verify_all_passed_true_when_every_check_passes(state_dir, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Auth inheritance (dedicated exhaustive matrix lives in a later task)
+# Pairing gate inheritance (dormancy matrix lives in test_setup_dormancy.py)
 # ---------------------------------------------------------------------------
 
 
@@ -464,21 +485,22 @@ def _request(client: TestClient, method: str, path: str, headers: dict[str, str]
 
 
 @pytest.mark.parametrize(("method", "path"), _SETUP_ROUTES)
-def test_setup_routes_are_404_when_token_unset(state_dir, method, path):
+def test_setup_routes_are_404_when_no_live_session(state_dir, method, path):
     state_dir.unconfigured()
-    with _client(state_dir, token="") as client:
+    with _client(state_dir, live=False) as client:
         resp = _request(client, method, path, {"Origin": _ORIGIN})
     assert resp.status_code == 404
-    # Fail closed: indistinguishable from an unknown route.
+    # Fail closed: indistinguishable from an unknown route (FR-005).
     assert resp.json() == {"detail": "Not Found"}
 
 
 @pytest.mark.parametrize(("method", "path"), _SETUP_ROUTES)
-def test_setup_routes_are_401_on_wrong_token(state_dir, method, path):
+def test_setup_routes_are_dormant_404_on_wrong_code(state_dir, method, path):
     state_dir.unconfigured()
-    with _client(state_dir) as client:
+    with _client(state_dir) as client:  # a live session exists, but the code is wrong
         resp = _request(
-            client, method, path, {"Authorization": "Bearer wrong-token", "Origin": _ORIGIN}
+            client, method, path, {"Authorization": "Bearer wrong-code", "Origin": _ORIGIN}
         )
-    assert resp.status_code == 401
-    assert resp.json() == {"detail": "unauthorized"}
+    # FR-006: a wrong-but-present code is the SAME dormant 404, never a 401.
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not Found"}
