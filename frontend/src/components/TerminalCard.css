@@ -53,20 +53,54 @@
 .terminal-card--grid .terminal-card-grip {
   gap: 8px;
 }
-.terminal-card-grip[draggable="true"] {
+.terminal-card-grip--handle {
   cursor: grab;
+  touch-action: none; /* let the TouchSensor own press-and-hold drags */
 }
-.terminal-card-grip[draggable="true"]:active {
+.terminal-card-grip--handle:active {
   cursor: grabbing;
 }
 
-/* Reorder drag feedback. */
+/* Reorder drag feedback. The source tile dims; the tile the drop will land on
+ * (swap target) gets a bold dashed outline showing where the window will go. */
 .terminal-card--dragging {
-  opacity: 0.5;
+  opacity: 0.4;
 }
 .terminal-card--drop-target {
-  border-color: color-mix(in oklch, var(--accent) 65%, var(--border));
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
+  outline: 2px dashed color-mix(in oklch, var(--accent) 85%, white);
+  outline-offset: -3px;
+  background: color-mix(in oklch, var(--accent) 12%, var(--bg-term));
+}
+
+/* The floating window-outline ghost rendered in the dnd-kit DragOverlay while
+ * dragging. Fills the overlay box (sized to the dragged tile), so it reads as
+ * the window itself following the cursor. */
+.terminal-drag-ghost {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  border-radius: var(--radius-lg);
+  border: 2px dashed color-mix(in oklch, var(--accent) 80%, white);
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+  box-shadow: 0 12px 30px oklch(0 0 0 / 0.35);
+  cursor: grabbing;
+  overflow: hidden;
+}
+.terminal-drag-ghost-title {
+  margin: 8px 12px;
+  padding: 3px 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+  background: color-mix(in oklch, var(--bg-header) 85%, transparent);
+  border-radius: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: calc(100% - 24px);
 }
 
 .terminal-card-provider-dot {

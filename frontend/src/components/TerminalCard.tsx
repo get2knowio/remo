@@ -10,6 +10,7 @@
 // terminal surface (which would tear down the live connection).
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { SessionTarget, TypedError } from "../api/client";
 import { providerMeta } from "./providerMeta";
 import {
@@ -42,18 +43,6 @@ export type TerminalCardMode = "single" | "grid";
  * Drives the window-control cluster's active/disabled state. */
 export type TerminalViewState = "normal" | "grid" | "fullscreen";
 
-/** Drag-to-reorder wiring for a grid tile. Present only when reordering is
- * possible (a grid of two-plus); the header acts as the drag handle and the
- * whole tile is a drop target — dropping swaps the two tiles' positions. */
-export interface TerminalReorder {
-  isDragging: boolean;
-  isDropTarget: boolean;
-  onDragStart: () => void;
-  onDragEnter: () => void;
-  onDrop: () => void;
-  onDragEnd: () => void;
-}
-
 interface TerminalCardProps {
   target: SessionTarget;
   /** Registry region for this target's instance (badge only). */
@@ -66,8 +55,9 @@ interface TerminalCardProps {
   /** The display mode this card is currently in (window-control cluster state). */
   viewState: TerminalViewState;
   onClose: () => void;
-  /** Drag-to-reorder wiring; present only for a reorderable grid tile. */
-  reorder?: TerminalReorder;
+  /** When true, the header acts as a dnd-kit drag handle and the tile is a drop
+   * target (grid reorder). The DndContext + swap live in WorkspacePane. */
+  reorderEnabled?: boolean;
   /** Window-control "Normal": solo this terminal into the single view. */
   onNormal: () => void;
   /** Window-control "Grid": show the grid — omitted when none is available. */
@@ -76,6 +66,9 @@ interface TerminalCardProps {
   onToggleFullscreen: () => void;
   /** Called when the user clicks into the surface (focus this terminal). */
   onFocusRequest?: () => void;
+  /** Focus-follows-mouse: called when the pointer enters this tile (grid only),
+   * so hovering changes focus without a click. No-op'd mid-drag by the caller. */
+  onHoverFocus?: () => void;
   /** Called when output arrives while this card is hidden (rail activity dot). */
   onActivity?: () => void;
   /** Called when the remote process exits (session may have ended) or the
@@ -100,11 +93,12 @@ export function TerminalCard({
   isFocused,
   viewState,
   onClose,
-  reorder,
+  reorderEnabled,
   onNormal,
   onGrid,
   onToggleFullscreen,
   onFocusRequest,
+  onHoverFocus,
   onActivity,
   onEnded,
 }: TerminalCardProps): JSX.Element {
@@ -129,6 +123,22 @@ export function TerminalCard({
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("connecting");
   const [needsManualReconnect, setNeedsManualReconnect] = useState(false);
   const [error, setError] = useState<TypedError | null>(null);
+
+  // dnd-kit reorder: the tile is both a draggable (handle = header grip, below)
+  // and a droppable (swap target). Disabled outside a reorderable grid. We use
+  // the DragOverlay pattern (WorkspacePane), so the source stays put (dimmed)
+  // and we never apply `draggable.transform`.
+  const draggable = useDraggable({ id: target.id, disabled: !reorderEnabled });
+  const droppable = useDroppable({ id: target.id, disabled: !reorderEnabled });
+  const setDraggableRef = draggable.setNodeRef;
+  const setDroppableRef = droppable.setNodeRef;
+  const setTileRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      setDraggableRef(node);
+      setDroppableRef(node);
+    },
+    [setDraggableRef, setDroppableRef],
+  );
 
   useEffect(() => {
     isFocusedRef.current = isFocused;
@@ -299,38 +309,29 @@ export function TerminalCard({
   const prov = providerMeta(target.instance_type);
   const badge = [prov.label, target.instance_name, region].filter(Boolean).join(" · ");
 
-  const dragClasses = reorder
-    ? `${reorder.isDragging ? " terminal-card--dragging" : ""}${reorder.isDropTarget ? " terminal-card--drop-target" : ""}`
-    : "";
+  const isDragging = draggable.isDragging;
+  // Highlight the tile the drop will land on (swap target) — but not the source.
+  const isDropTarget = Boolean(reorderEnabled) && droppable.isOver && !isDragging;
+  const dragClasses = `${isDragging ? " terminal-card--dragging" : ""}${isDropTarget ? " terminal-card--drop-target" : ""}`;
 
   return (
     <div
+      ref={setTileRef}
       className={`terminal-card terminal-card--${mode}${isFocused ? " terminal-card--focused" : ""}${dragClasses}`}
       data-testid={`terminal-card-${target.id}`}
       data-focused={isFocused}
       data-connection-state={connectionState}
       style={{ display: isVisible ? undefined : "none" }}
-      // Whole tile is the drop target for a reorder drag (see the header grip).
-      onDragOver={reorder ? (e) => e.preventDefault() : undefined}
-      onDragEnter={reorder ? (e) => { e.preventDefault(); reorder.onDragEnter(); } : undefined}
-      onDrop={reorder ? (e) => { e.preventDefault(); reorder.onDrop(); } : undefined}
+      onMouseEnter={onHoverFocus}
     >
       <header className="terminal-card-header">
         {/* The header (left of the controls) is the drag handle for reordering
          * grid tiles; it no longer solos on click — the ◻ control does that. */}
         <div
-          className="terminal-card-grip"
-          draggable={reorder ? true : undefined}
-          onDragStart={
-            reorder
-              ? (e) => {
-                  e.dataTransfer.setData("text/plain", target.id);
-                  e.dataTransfer.effectAllowed = "move";
-                  reorder.onDragStart();
-                }
-              : undefined
-          }
-          onDragEnd={reorder ? () => reorder.onDragEnd() : undefined}
+          ref={reorderEnabled ? draggable.setActivatorNodeRef : undefined}
+          className={`terminal-card-grip${reorderEnabled ? " terminal-card-grip--handle" : ""}`}
+          {...(reorderEnabled ? draggable.listeners : {})}
+          {...(reorderEnabled ? draggable.attributes : {})}
         >
           <span className="terminal-card-provider-dot" style={{ background: prov.color }} />
           <div className="terminal-card-identity">

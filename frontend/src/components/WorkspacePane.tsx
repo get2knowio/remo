@@ -3,6 +3,18 @@
 // laid out as a single view (one visible) or a responsive grid (two-plus).
 
 import { useMemo, useState } from "react";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import type { SessionTarget } from "../api/client";
 import { requestBrowserFullscreen } from "../lib/fullscreen";
 import { useWorkspace } from "../state/workspace";
@@ -46,10 +58,16 @@ export function WorkspacePane({
   const workspace = useWorkspace();
   const { attached, visible, focusedId, prevGrid, maximizedId } = workspace;
 
-  // Transient drag-to-reorder state (which tile is being dragged, and which it's
-  // hovering over). Not persisted — only the resulting order (`visible`) is.
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [overId, setOverId] = useState<string | null>(null);
+  // dnd-kit reorder: `activeId` is the tile currently being dragged (drives the
+  // floating DragOverlay ghost). Only the resulting order (`visible`) persists.
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const sensors = useSensors(
+    // A small move starts a drag, so plain clicks (buttons, focus) still work.
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    // Touch: a short press-and-hold starts a drag, leaving taps/scroll intact.
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(KeyboardSensor),
+  );
 
   // Render visible tiles in `visible` order (so the grid layout follows the
   // reorderable order + the number badges), then the hidden-but-attached cards
@@ -111,69 +129,85 @@ export function WorkspacePane({
 
   // Reordering is possible only within a real grid (two-plus visible tiles).
   const reorderable = !maximized && mode === "grid" && visible.length > 1;
-  const clearDrag = (): void => {
-    setDragId(null);
-    setOverId(null);
+  const activeTarget = activeId ? targetsById.get(activeId) : undefined;
+
+  const onDragStart = (e: DragStartEvent): void => setActiveId(String(e.active.id));
+  const onDragEnd = (e: DragEndEvent): void => {
+    const { active, over } = e;
+    setActiveId(null);
+    if (over && active.id !== over.id) {
+      workspace.swapVisible(String(active.id), String(over.id));
+    }
   };
 
   return (
     <main className="workspace" data-testid="workspace">
-      <div
-        className={`workspace-body workspace-body--${mode}${maximized ? " workspace-body--maximized" : ""}`}
-        style={
-          mode === "grid"
-            ? {
-                gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-                gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-              }
-            : undefined
-        }
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={onDragStart}
+        onDragEnd={onDragEnd}
+        onDragCancel={() => setActiveId(null)}
       >
-        {orderedTargets.map((target) => {
-          const id = target.id;
-          const isVisible = maximized ? id === maximized : visible.includes(id);
-          const viewState = maximized === id ? "fullscreen" : mode === "grid" ? "grid" : "normal";
-          const reorder =
-            reorderable && isVisible
+        <div
+          className={`workspace-body workspace-body--${mode}${maximized ? " workspace-body--maximized" : ""}`}
+          style={
+            mode === "grid"
               ? {
-                  isDragging: dragId === id,
-                  isDropTarget: overId === id && dragId !== null && dragId !== id,
-                  onDragStart: () => setDragId(id),
-                  onDragEnter: () => {
-                    if (dragId && dragId !== id) {
-                      setOverId(id);
-                    }
-                  },
-                  onDrop: () => {
-                    if (dragId && dragId !== id) {
-                      workspace.swapVisible(dragId, id);
-                    }
-                    clearDrag();
-                  },
-                  onDragEnd: clearDrag,
+                  gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+                  gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
                 }
-              : undefined;
-          return (
-            <TerminalCard
-              key={id}
-              target={target}
-              region={regionByKey.get(`${target.instance_type}::${target.instance_name}`)}
-              mode={mode}
-              isVisible={isVisible}
-              isFocused={focusedId === id}
-              viewState={viewState}
-              reorder={reorder}
-              onClose={() => workspace.closeTerm(id)}
-              onNormal={() => workspace.soloTile(id)}
-              onGrid={canGrid ? workspace.backToGrid : undefined}
-              onToggleFullscreen={() => toggleFullscreen(id)}
-              onFocusRequest={() => workspace.setFocused(id)}
-              onActivity={() => workspace.markUnread(id)}
-              onEnded={() => onTerminalEnded(target)}
-            />
-          );
-        })}
-      </div>
+              : undefined
+          }
+        >
+          {orderedTargets.map((target) => {
+            const id = target.id;
+            const isVisible = maximized ? id === maximized : visible.includes(id);
+            const viewState =
+              maximized === id ? "fullscreen" : mode === "grid" ? "grid" : "normal";
+            return (
+              <TerminalCard
+                key={id}
+                target={target}
+                region={regionByKey.get(`${target.instance_type}::${target.instance_name}`)}
+                mode={mode}
+                isVisible={isVisible}
+                isFocused={focusedId === id}
+                viewState={viewState}
+                reorderEnabled={reorderable && isVisible}
+                onClose={() => workspace.closeTerm(id)}
+                onNormal={() => workspace.soloTile(id)}
+                onGrid={canGrid ? workspace.backToGrid : undefined}
+                onToggleFullscreen={() => toggleFullscreen(id)}
+                onFocusRequest={() => workspace.setFocused(id)}
+                onHoverFocus={
+                  mode === "grid" && !maximized
+                    ? () => {
+                        // Focus-follows-mouse: hovering a grid tile focuses it,
+                        // but never while dragging (would fight the reorder).
+                        if (!activeId && focusedId !== id) {
+                          workspace.setFocused(id);
+                        }
+                      }
+                    : undefined
+                }
+                onActivity={() => workspace.markUnread(id)}
+                onEnded={() => onTerminalEnded(target)}
+              />
+            );
+          })}
+        </div>
+
+        {/* Floating "window outline" ghost that follows the cursor while dragging
+         * a grid tile. dropAnimation off — the tiles swap instantly on drop. */}
+        <DragOverlay dropAnimation={null}>
+          {activeTarget ? (
+            <div className="terminal-drag-ghost" aria-hidden="true">
+              <span className="terminal-drag-ghost-title">{activeTarget.project}</span>
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
     </main>
   );
 }
