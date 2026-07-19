@@ -70,6 +70,10 @@ export const TESTID = {
   terminalSurface: (targetId: string) => `terminal-surface-${targetId}`,
   terminalReconnect: (targetId: string) => `terminal-reconnect-${targetId}`,
   terminalClose: (targetId: string) => `terminal-close-${targetId}`,
+  // Window-control cluster (display modes).
+  terminalNormal: (targetId: string) => `terminal-normal-${targetId}`,
+  terminalGrid: (targetId: string) => `terminal-grid-${targetId}`,
+  terminalFullscreen: (targetId: string) => `terminal-fullscreen-${targetId}`,
 } as const;
 
 /** Seeds the browser-local settings store so the console boots with a specific

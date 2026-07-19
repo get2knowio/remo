@@ -15,9 +15,8 @@
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 12%, transparent);
 }
 
-/* Grid tile: compact, clickable to solo. */
+/* Grid tile: compact. Reorder by dragging its header; the ◻ control solos it. */
 .terminal-card--grid {
-  cursor: pointer;
   border-color: var(--border);
 }
 
@@ -40,6 +39,34 @@
 .terminal-card--grid .terminal-card-header {
   padding: 7px 10px;
   gap: 8px;
+}
+
+/* Left portion of the header: the identity cluster, doubling as the drag handle
+ * for reordering grid tiles. flex:1 makes it a generously large grab target. */
+.terminal-card-grip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  flex: 1;
+}
+.terminal-card--grid .terminal-card-grip {
+  gap: 8px;
+}
+.terminal-card-grip[draggable="true"] {
+  cursor: grab;
+}
+.terminal-card-grip[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+/* Reorder drag feedback. */
+.terminal-card--dragging {
+  opacity: 0.5;
+}
+.terminal-card--drop-target {
+  border-color: color-mix(in oklch, var(--accent) 65%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
 }
 
 .terminal-card-num {

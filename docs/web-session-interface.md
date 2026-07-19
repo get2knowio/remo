@@ -99,10 +99,12 @@ The SPA is a two-pane **web console**:
   chips, and an "⚡ Active only" toggle narrow the list; "⊞ Open all · N" opens every available
   target as a grid.
 - **Terminal pane** (right). Clicking a row opens that target **solo** (single view); ⌘/Ctrl-click a
-  row (or its `+` button) **adds** it to a responsive grid (1/2/3 columns by count). Clicking a grid
-  tile solos it; **Esc** collapses the grid back to the focused terminal; number keys **1–9** jump to
-  the numbered sessions (⌘ 1–9 add to the grid). Hidden terminals stay connected and keep their
-  scrollback. Each terminal header shows `provider · instance · region`, connection state, and a
+  row (or its `+` button) **adds** it to a responsive grid (1/2/3 columns by count). In a grid, **drag
+  a tile's header onto another to swap their positions** (the arrangement persists until the grid is
+  rebuilt); the **◻** control solos a tile; **Esc** collapses the grid back to the focused terminal;
+  number keys **1–9** jump to the numbered sessions (⌘ 1–9 add to the grid). Hidden terminals stay
+  connected and keep their scrollback. Each terminal header shows `provider · instance · region`
+  (doubling as the drag handle), connection state, and a
   window-control cluster of the display modes, ordered by how much space they take: **⊞ Grid** (smaller —
   a tile in the grid, when one is available), **◻ Normal** (fills the app's main pane — single view),
   **⤢ Fullscreen** (the terminal fills the whole window — shell chrome hidden, plus best-effort browser

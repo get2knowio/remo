@@ -42,6 +42,18 @@ export type TerminalCardMode = "single" | "grid";
  * Drives the window-control cluster's active/disabled state. */
 export type TerminalViewState = "normal" | "grid" | "fullscreen";
 
+/** Drag-to-reorder wiring for a grid tile. Present only when reordering is
+ * possible (a grid of two-plus); the header acts as the drag handle and the
+ * whole tile is a drop target — dropping swaps the two tiles' positions. */
+export interface TerminalReorder {
+  isDragging: boolean;
+  isDropTarget: boolean;
+  onDragStart: () => void;
+  onDragEnter: () => void;
+  onDrop: () => void;
+  onDragEnd: () => void;
+}
+
 interface TerminalCardProps {
   target: SessionTarget;
   /** Registry region for this target's instance (badge only). */
@@ -56,8 +68,8 @@ interface TerminalCardProps {
   /** The display mode this card is currently in (window-control cluster state). */
   viewState: TerminalViewState;
   onClose: () => void;
-  /** Grid tile clicked → solo it (single view). */
-  onSolo?: () => void;
+  /** Drag-to-reorder wiring; present only for a reorderable grid tile. */
+  reorder?: TerminalReorder;
   /** Window-control "Normal": solo this terminal into the single view. */
   onNormal: () => void;
   /** Window-control "Grid": show the grid — omitted when none is available. */
@@ -91,7 +103,7 @@ export function TerminalCard({
   num,
   viewState,
   onClose,
-  onSolo,
+  reorder,
   onNormal,
   onGrid,
   onToggleFullscreen,
@@ -290,30 +302,51 @@ export function TerminalCard({
   const prov = providerMeta(target.instance_type);
   const badge = [prov.label, target.instance_name, region].filter(Boolean).join(" · ");
 
-  // Grid tile: clicking anywhere on the tile (outside the buttons) solos it.
-  const handleTileClick = mode === "grid" ? onSolo : undefined;
+  const dragClasses = reorder
+    ? `${reorder.isDragging ? " terminal-card--dragging" : ""}${reorder.isDropTarget ? " terminal-card--drop-target" : ""}`
+    : "";
 
   return (
     <div
-      className={`terminal-card terminal-card--${mode}${isFocused ? " terminal-card--focused" : ""}`}
+      className={`terminal-card terminal-card--${mode}${isFocused ? " terminal-card--focused" : ""}${dragClasses}`}
       data-testid={`terminal-card-${target.id}`}
       data-focused={isFocused}
       data-connection-state={connectionState}
       style={{ display: isVisible ? undefined : "none" }}
-      onClick={handleTileClick}
+      // Whole tile is the drop target for a reorder drag (see the header grip).
+      onDragOver={reorder ? (e) => e.preventDefault() : undefined}
+      onDragEnter={reorder ? (e) => { e.preventDefault(); reorder.onDragEnter(); } : undefined}
+      onDrop={reorder ? (e) => { e.preventDefault(); reorder.onDrop(); } : undefined}
     >
       <header className="terminal-card-header">
-        {mode === "grid" && num !== undefined && (
-          <span className="terminal-card-num">{num}</span>
-        )}
-        <span className="terminal-card-provider-dot" style={{ background: prov.color }} />
-        <div className="terminal-card-identity">
-          <span className="terminal-card-project">{target.project}</span>
-          {mode === "single" ? (
-            <span className="terminal-card-badge">{badge}</span>
-          ) : (
-            <span className="terminal-card-instance">{target.instance_name}</span>
+        {/* The header (left of the controls) is the drag handle for reordering
+         * grid tiles; it no longer solos on click — the ◻ control does that. */}
+        <div
+          className="terminal-card-grip"
+          draggable={reorder ? true : undefined}
+          onDragStart={
+            reorder
+              ? (e) => {
+                  e.dataTransfer.setData("text/plain", target.id);
+                  e.dataTransfer.effectAllowed = "move";
+                  reorder.onDragStart();
+                }
+              : undefined
+          }
+          onDragEnd={reorder ? () => reorder.onDragEnd() : undefined}
+        >
+          {mode === "grid" && num !== undefined && (
+            <span className="terminal-card-num">{num}</span>
           )}
+          <span className="terminal-card-provider-dot" style={{ background: prov.color }} />
+          <div className="terminal-card-identity">
+            <span className="terminal-card-project">{target.project}</span>
+            {mode === "single" ? (
+              <span className="terminal-card-badge">{badge}</span>
+            ) : (
+              <span className="terminal-card-instance">{target.instance_name}</span>
+            )}
+          </div>
         </div>
         <span
           className={`terminal-card-state terminal-card-state--${connectionState}`}
