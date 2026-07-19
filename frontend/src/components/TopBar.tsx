@@ -31,9 +31,22 @@ interface TopBarProps {
   health: HealthStatus;
   healthDetail: string | null;
   refreshing: boolean;
+  /** Median WS round-trip latency (ms) across open terminals, or null if none. */
+  latencyMs: number | null;
   onRefresh: () => void;
   onSettings: () => void;
   onShortcuts: () => void;
+}
+
+/** Latency → dot color: good (green) / so-so (yellow) / poor (red). */
+function latencyColor(ms: number): string {
+  if (ms < 100) {
+    return "var(--ok)";
+  }
+  if (ms < 300) {
+    return "var(--warn)";
+  }
+  return "var(--danger)";
 }
 
 export function TopBar({
@@ -44,10 +57,19 @@ export function TopBar({
   health,
   healthDetail,
   refreshing,
+  latencyMs,
   onRefresh,
   onSettings,
   onShortcuts,
 }: TopBarProps): JSX.Element {
+  // Prefer live WS latency (the real data-path measure); fall back to the
+  // health status when no terminal is connected to measure.
+  const showLatency = latencyMs != null;
+  const dotColor = showLatency ? latencyColor(latencyMs) : HEALTH_COLOR[health];
+  const statusLabel = showLatency ? `${Math.round(latencyMs)} ms` : HEALTH_LABEL[health];
+  const statusTitle = showLatency
+    ? "WebSocket round-trip latency (median across open terminals)"
+    : (healthDetail ?? HEALTH_LABEL[health]);
   return (
     <header className="topbar">
       {showRailToggle && (
@@ -81,9 +103,9 @@ export function TopBar({
         {openCount} open
       </span>
 
-      <span className="topbar-health" title={healthDetail ?? HEALTH_LABEL[health]}>
-        <span className="topbar-health-dot" style={{ background: HEALTH_COLOR[health] }} />
-        <span>{HEALTH_LABEL[health]}</span>
+      <span className="topbar-health" title={statusTitle} data-testid="topbar-status">
+        <span className="topbar-health-dot" style={{ background: dotColor }} />
+        <span>{statusLabel}</span>
       </span>
 
       <button type="button" className="topbar-btn" onClick={onRefresh} data-testid="refresh-button">

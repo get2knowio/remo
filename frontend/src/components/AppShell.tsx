@@ -8,6 +8,7 @@ import type { SessionTarget } from "../api/client";
 import { exitBrowserFullscreen } from "../lib/fullscreen";
 import { useDiscovery } from "../state/discovery";
 import { useHealth } from "../state/health";
+import { useLatency } from "../state/latency";
 import { settingsActions, useSettings } from "../state/settings";
 import { useConsoleKeyboard } from "../state/useConsoleKeyboard";
 import { useWorkspace } from "../state/workspace";
@@ -25,6 +26,7 @@ const NARROW_BREAKPOINT = 820;
 export function AppShell(): JSX.Element {
   const discovery = useDiscovery();
   const health = useHealth();
+  const latency = useLatency();
   const settings = useSettings();
   const workspace = useWorkspace();
 
@@ -192,6 +194,7 @@ export function AppShell(): JSX.Element {
         openCount={workspace.attached.length}
         health={health.status}
         healthDetail={health.detail}
+        latencyMs={latency.rttMs}
         refreshing={discovery.isRefreshing}
         onRefresh={() => void discovery.refresh()}
         onSettings={() => setSettingsOpen(true)}

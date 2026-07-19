@@ -137,13 +137,16 @@ they can be stale until something else fetches. Git glyphs only appear on instan
 `remo-host` new enough to report git status; see [Upgrade compatibility](#upgrade-compatibility).
 
 **Settings** (⚙, top bar; stored in this browser only, FR-034): accent color, terminal font, font
-size, program ligatures, grid display mode (actual-size vs scale-to-fit), and a **Nerd Font uploader**.
-Because a browser can't read fonts installed on the instance, uploading a patched Nerd Font once
-registers it via the `FontFace` API (persisted in IndexedDB) and offers it as a terminal font — that's
-how Powerline/Git/devicon glyphs in a prompt or Zellij status bar render. Font changes apply live to
-every open terminal. The top bar also shows a health indicator (from `GET /api/v1/ready`) and an
-offline overlay if the service becomes unreachable (terminals reattach automatically when it returns).
-Press **?** for the keyboard-shortcut reference.
+size, program ligatures, grid display mode (actual-size vs scale-to-fit), **focus dwell** (how long the
+pointer rests before focus-follows-mouse fires), terminal engine, a **Nerd Font uploader**, and **Pair
+CLI to sync** (mint a re-sync pairing code). Because a browser can't read fonts installed on the
+instance, uploading a patched Nerd Font once registers it via the `FontFace` API (persisted in
+IndexedDB) and offers it as a terminal font — that's how Powerline/Git/devicon glyphs in a prompt or
+Zellij status bar render. Font changes apply live to every open terminal. The top bar shows the
+**WebSocket round-trip latency** (median across open terminals, with the dot green/yellow/red by
+latency), falling back to the service health status when no terminal is connected; an offline overlay
+appears if the service becomes unreachable (terminals reattach automatically when it returns). Press
+**?** for the keyboard-shortcut reference.
 
 All fonts are self-hosted (bundled `@fontsource` assets), never fetched from a CDN, so the restrictive
 same-origin CSP (`default-src 'self'`) is satisfied.

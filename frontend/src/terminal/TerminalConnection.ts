@@ -38,6 +38,8 @@ interface ControlMessage {
 
 const MAX_AUTO_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BACKOFF_MS = [500, 1500, 3500];
+/** How often to ping the WS to measure round-trip latency (also a keepalive). */
+const PING_INTERVAL_MS = 4000;
 
 export interface TerminalConnectionCallbacks {
   onData?: (data: Uint8Array) => void;
@@ -45,6 +47,8 @@ export interface TerminalConnectionCallbacks {
   onExit?: (code: number) => void;
   onError?: (error: TypedError) => void;
   onStateChange?: (state: TerminalConnectionState) => void;
+  /** WS round-trip time in ms, from each ping→pong while connected. */
+  onLatency?: (rttMs: number) => void;
 }
 
 /**
@@ -72,6 +76,9 @@ export class TerminalConnection {
   /** Bumped each attach() so a slow, superseded attach can't assign a socket. */
   private attachGen = 0;
   private wakeListenersBound = false;
+  private pingTimer: ReturnType<typeof setInterval> | undefined;
+  /** performance.now() when the outstanding ping was sent (null if none). */
+  private pingSentAt: number | null = null;
 
   constructor(
     sessionTargetId: string,
@@ -130,6 +137,7 @@ export class TerminalConnection {
   async close(): Promise<void> {
     this.clientInitiatedClose = true;
     this.removeWakeListeners();
+    this.stopPinging();
     this.clearReconnectTimer();
     const socket = this.socket;
     const terminalId = this.terminalId;
@@ -278,12 +286,35 @@ export class TerminalConnection {
 
     socket.onclose = (event: CloseEvent) => {
       this.socket = null;
+      this.stopPinging();
       if (this.clientInitiatedClose || event.code === 1000) {
         this.setState("closed");
         return;
       }
       void this.handleUnexpectedClose();
     };
+  }
+
+  /** Begin (or restart) the latency ping loop; call once per fresh connection. */
+  private startPinging(): void {
+    this.stopPinging();
+    const sendMeasuredPing = (): void => {
+      if (this.socket?.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      this.pingSentAt = performance.now();
+      this.sendPing();
+    };
+    sendMeasuredPing(); // one immediately, for a fast first sample
+    this.pingTimer = setInterval(sendMeasuredPing, PING_INTERVAL_MS);
+  }
+
+  private stopPinging(): void {
+    if (this.pingTimer !== undefined) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = undefined;
+    }
+    this.pingSentAt = null;
   }
 
   private handleControlMessage(raw: string): void {
@@ -306,6 +337,7 @@ export class TerminalConnection {
         // so re-send them now to size the remote terminal to the real surface.
         this.sendControl({ v: 1, type: "resize", cols: this.cols, rows: this.rows });
         this.callbacks.onReady?.();
+        this.startPinging();
         break;
       case "exit":
         this.callbacks.onExit?.(message.code ?? 0);
@@ -320,6 +352,11 @@ export class TerminalConnection {
         this.setState("error");
         break;
       case "pong":
+        if (this.pingSentAt !== null) {
+          const rtt = performance.now() - this.pingSentAt;
+          this.pingSentAt = null;
+          this.callbacks.onLatency?.(rtt);
+        }
         break;
     }
   }
