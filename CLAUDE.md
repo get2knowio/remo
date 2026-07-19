@@ -170,6 +170,8 @@ uv run remo web serve             # Run the browser terminal broker locally
 cd frontend && npm ci
 npm run build                     # tsc -b && vite build -> frontend/dist
 npm run lint                      # tsc --noEmit
+npm run test                      # Vitest unit/component suite (jsdom, no backend)
+npm run test:e2e                  # Playwright (needs REMO_E2E_BASE_URL -> live remo web serve)
 ```
 
 ## Architecture (Three-Layer)

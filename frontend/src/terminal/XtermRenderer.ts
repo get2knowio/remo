@@ -23,6 +23,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 // xterm ships its own stylesheet; without it the terminal renders with broken
 // cell sizing/positioning. Bundled here so it loads whenever this renderer is.
 import "@xterm/xterm/css/xterm.css";
+import { inputForKeyEvent } from "./keymap";
 import type {
   RendererAdapter,
   TerminalDimensions,
@@ -79,14 +80,15 @@ export class XtermRenderer implements RendererAdapter {
   }
 
   private handleKeyEvent(e: KeyboardEvent): boolean {
-    if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-      if (e.type === "keydown") {
-        // preventDefault stops the browser from also inserting a newline into
-        // xterm's hidden textarea (which would double-send via its input event).
-        e.preventDefault();
-        this.emit("\x1b\r");
-      }
-      return false; // suppress xterm's default CR (which would submit the line)
+    const seq = inputForKeyEvent(e);
+    if (seq !== null) {
+      // preventDefault stops the browser from also inserting a newline into
+      // xterm's hidden textarea (which would double-send via its input event);
+      // it also cancels the keypress. Returning false suppresses xterm's own
+      // handling of this keydown (its default CR that would submit the line).
+      e.preventDefault();
+      this.emit(seq);
+      return false;
     }
     return true;
   }
