@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "remo-cli"
-version = "2.2.0rc3"
+version = "2.2.0rc4"
 description = "Remote development environment CLI"
 readme = "README.md"
 license = "MIT"
