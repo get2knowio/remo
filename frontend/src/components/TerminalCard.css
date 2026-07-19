@@ -69,12 +69,6 @@
   box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 22%, transparent);
 }
 
-.terminal-card-num {
-  font-family: var(--font-mono);
-  font-size: 9px;
-  color: var(--text-faint);
-}
-
 .terminal-card-provider-dot {
   width: 10px;
   height: 10px;

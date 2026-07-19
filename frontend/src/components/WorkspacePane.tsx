@@ -99,9 +99,6 @@ export function WorkspacePane({
     visible.filter((id) => attached.includes(id)).length > 1 ||
     (prevGrid ?? []).filter((id) => attached.includes(id)).length > 1;
 
-  // 1-based position for each visible id (grid tile number badge).
-  const visibleIndex = new Map(visible.map((id, i) => [id, i + 1]));
-
   const toggleFullscreen = (id: string): void => {
     if (maximized === id) {
       workspace.restore();
@@ -164,7 +161,6 @@ export function WorkspacePane({
               mode={mode}
               isVisible={isVisible}
               isFocused={focusedId === id}
-              num={visibleIndex.get(id)}
               viewState={viewState}
               reorder={reorder}
               onClose={() => workspace.closeTerm(id)}

@@ -244,14 +244,6 @@
   color: var(--accent);
   flex: none;
 }
-.rail-row-num {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-faint);
-  width: 12px;
-  text-align: right;
-  flex: none;
-}
 .rail-row-name {
   font-family: var(--font-mono);
   font-size: 12.5px;
