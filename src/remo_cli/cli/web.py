@@ -84,6 +84,16 @@ def serve(bind_host: str | None, bind_port: int | None) -> None:
     if bind_port:
         settings.bind_port = bind_port
 
+    # Local convenience (012-web-adopt-pairing, research R5): when serving on a
+    # loopback interface with no operator-auth provider configured, default to
+    # the network-restricted posture so single-machine `remo web serve` can
+    # mint pairing codes without a proxy. The service still logs this weaker
+    # posture loudly (FR-013); a non-loopback bind is left untouched so a real
+    # deployment must configure forward auth explicitly.
+    _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+    if not settings.operator_auth and settings.bind_host in _LOOPBACK:
+        settings.operator_auth = "none"
+
     # Ensure the ControlMaster socket dir is usable (create it, or fall back to
     # a per-user dir for local runs where the container's /run/remo-ssh tmpfs
     # doesn't exist). Do this BEFORE exporting REMO_SSH_CONTROL_DIR / building
@@ -102,7 +112,16 @@ def serve(bind_host: str | None, bind_port: int | None) -> None:
     # instead of an explicit control_dir=.
     os.environ["REMO_SSH_CONTROL_DIR"] = settings.ssh_control_dir
 
-    app = create_app(settings)
+    # create_app fail-fasts on an invalid operator-auth posture (forward auth
+    # enabled without REMO_WEB_FORWARD_AUTH_HEADER); surface it as a clean
+    # error instead of a raw traceback (Constitution IV, fail fast with a clear
+    # message).
+    from remo_cli.web.operator_auth import OperatorAuthConfigError  # noqa: PLC0415
+
+    try:
+        app = create_app(settings)
+    except OperatorAuthConfigError as e:
+        raise SystemExit(f"Configuration error: {e}") from e
 
     # "logs a ready readiness state" (quickstart.md section A): this line,
     # combined with uvicorn's own "Application startup complete" log emitted
@@ -170,7 +189,7 @@ def check(skip_instance_checks: bool) -> None:
 @click.option(
     "--token",
     default=None,
-    help="Setup API token (falls back to REMO_API_TOKEN, then a hidden prompt).",
+    help="Pairing code (falls back to REMO_API_TOKEN, then a hidden prompt).",
 )
 @click.option(
     "--via",
@@ -196,15 +215,8 @@ def check(skip_instance_checks: bool) -> None:
     default=False,
     help=(
         "Non-interactive: skip fingerprint prompts (unverified instances are "
-        "reported as skipped_no_trust) and never prompt to save credentials."
+        "reported as skipped_no_trust)."
     ),
-)
-@click.option(
-    "--save",
-    "save_credentials_flag",
-    is_flag=True,
-    default=False,
-    help="Save the service URL and token to ~/.config/remo/web-service.json (0600) on success.",
 )
 def adopt(
     url: str | None,
@@ -212,21 +224,23 @@ def adopt(
     via_host: str | None,
     allow_empty: bool,
     assume_yes: bool,
-    save_credentials_flag: bool,
 ) -> None:
     """Adopt a running remo web service from this workstation.
 
-    Pushes the local registry (full mirror) plus verified SSH host keys to the
-    service and authorizes the service's SSH key on each reachable
-    direct-access instance, then runs a service-side verification pass.
+    Open the service's awaiting-adoption page in a browser, click "Copy pairing
+    code", then run this command and paste the code when prompted. It pushes the
+    local registry (full mirror) plus verified SSH host keys to the service and
+    authorizes the service's SSH key on each reachable direct-access instance,
+    then runs a service-side verification pass.
 
     URL resolution: argument, then $REMO_API_URL, then an interactive prompt.
-    Token resolution: --token, then $REMO_API_TOKEN, then a hidden prompt.
+    Pairing code: --token, then $REMO_API_TOKEN, then a hidden prompt. Nothing
+    is saved — a later `remo web push` gets a fresh code the same way.
 
     Exits 0 when the flow completes (per-instance skips/flags are reported in
-    the summary, not fatal); exits 1 on hard failure (auth, mount-configured
-    deployment, empty registry without --allow-empty, tunnel failure, payload
-    rejected).
+    the summary, not fatal); exits 1 on hard failure (dormant setup surface,
+    mount-configured deployment, empty registry without --allow-empty, tunnel
+    failure, payload rejected).
     """
     # Deliberately imports only remo_cli.core.* — `remo web adopt` must work
     # without the `web` extra installed (stdlib HTTP only, research R9).
@@ -234,18 +248,17 @@ def adopt(
     from remo_cli.core.web_adopt import AdoptError, run_adopt  # noqa: PLC0415
 
     resolved_url = url or os.environ.get("REMO_API_URL") or click.prompt("Service URL")
-    resolved_token = (
-        token or os.environ.get("REMO_API_TOKEN") or click.prompt("API token", hide_input=True)
+    resolved_code = (
+        token or os.environ.get("REMO_API_TOKEN") or click.prompt("Pairing code", hide_input=True)
     )
 
     try:
         run_adopt(
             resolved_url,
-            resolved_token,
+            resolved_code,
             via=via_host,
             allow_empty=allow_empty,
             assume_yes=assume_yes,
-            save=save_credentials_flag,
         )
     except AdoptError as e:
         print_error(str(e))
@@ -253,6 +266,22 @@ def adopt(
 
 
 @web.command()
+@click.argument("url", required=False, default=None)
+@click.option(
+    "--token",
+    default=None,
+    help="Pairing code (falls back to REMO_API_TOKEN, then a hidden prompt).",
+)
+@click.option(
+    "--via",
+    "via_host",
+    default=None,
+    metavar="HOST",
+    help=(
+        "SSH host to tunnel through (see `remo web adopt --via`). Requires "
+        "127.0.0.1 in the service's REMO_WEB_ALLOWED_HOSTS."
+    ),
+)
 @click.option(
     "--allow-empty",
     is_flag=True,
@@ -269,49 +298,45 @@ def adopt(
         "(unverified instances are reported as skipped_no_trust)."
     ),
 )
-def push(allow_empty: bool, assume_yes: bool) -> None:
-    """Re-sync the local registry to the adopted remo web service.
+def push(
+    url: str | None,
+    token: str | None,
+    via_host: str | None,
+    allow_empty: bool,
+    assume_yes: bool,
+) -> None:
+    """Re-sync the local registry to an adopted remo web service.
 
-    Zero-argument push (uses the URL/token saved by `remo web adopt`):
-    updates the service's registry (full mirror — removals propagate), pushes
-    host keys, and authorizes the service's identity on new or changed
-    direct-access instances. Instances unchanged since the last push skip the
-    keyscan/authorize work and are reported as `unchanged`.
+    Open the dashboard's "Pair CLI to sync" affordance, click to copy a fresh
+    pairing code, then run this command and paste it. It updates the service's
+    registry (full mirror — removals propagate), pushes host keys, and authorizes
+    the service's identity on new or changed direct-access instances. Instances
+    unchanged since the last push skip the keyscan/authorize work and are
+    reported as `unchanged`.
 
-    When no credentials were saved, falls back to the first-time adopt flow
-    (URL from $REMO_API_URL or a prompt, token from $REMO_API_TOKEN or a
-    hidden prompt, including the save offer). A saved token the service now
-    rejects, or a changed service identity, exits 1 with re-adopt guidance.
+    URL resolution: argument, then $REMO_API_URL, then an interactive prompt.
+    Pairing code: --token, then $REMO_API_TOKEN, then a hidden prompt. Nothing
+    is saved between runs — every push gets a fresh code from the page.
 
     Exits 0 when the flow completes (per-instance skips/flags are reported in
-    the summary, not fatal); exits 1 on hard failure.
+    the summary, not fatal); exits 1 on hard failure (dormant setup surface,
+    mount-configured deployment, empty registry without --allow-empty).
     """
     # Deliberately imports only remo_cli.core.* — `remo web push` must work
     # without the `web` extra installed (stdlib HTTP only, research R9).
-    from remo_cli.core.output import print_error, print_info  # noqa: PLC0415
-    from remo_cli.core.web_adopt import (  # noqa: PLC0415
-        AdoptError,
-        MissingCredentialsError,
-        run_adopt,
-        run_push,
+    from remo_cli.core.output import print_error  # noqa: PLC0415
+    from remo_cli.core.web_adopt import AdoptError, run_push  # noqa: PLC0415
+
+    resolved_url = url or os.environ.get("REMO_API_URL") or click.prompt("Service URL")
+    resolved_code = (
+        token or os.environ.get("REMO_API_TOKEN") or click.prompt("Pairing code", hide_input=True)
     )
 
     try:
-        try:
-            run_push(allow_empty=allow_empty, assume_yes=assume_yes)
-            return
-        except MissingCredentialsError as e:
-            # US4 scenario 4: no saved credentials -> behave like first-time
-            # adopt, prompting for URL/token and offering to save on success.
-            print_info(f"{e} Running the first-time adopt flow instead.")
-
-        resolved_url = os.environ.get("REMO_API_URL") or click.prompt("Service URL")
-        resolved_token = os.environ.get("REMO_API_TOKEN") or click.prompt(
-            "API token", hide_input=True
-        )
-        run_adopt(
+        run_push(
             resolved_url,
-            resolved_token,
+            resolved_code,
+            via=via_host,
             allow_empty=allow_empty,
             assume_yes=assume_yes,
         )

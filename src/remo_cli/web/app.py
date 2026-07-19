@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,12 +23,15 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from remo_cli.web.api.hosts import router as hosts_router
+from remo_cli.web.api.pairing import router as pairing_router
 from remo_cli.web.api.setup import router as setup_router
 from remo_cli.web.api.terminals import router as terminals_router
 from remo_cli.web.config import WebSettings
 from remo_cli.web.discovery import DiscoveryService
 from remo_cli.web.health import router as health_router
 from remo_cli.web.logging_config import configure_logging
+from remo_cli.web.operator_auth import build_operator_auth_provider
+from remo_cli.web.pairing import PairingSessionManager
 from remo_cli.web.ssh_master import stale_socket_cleanup
 from remo_cli.web.state import (
     ConfigurationState,
@@ -100,6 +104,38 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     # module docstring for what this does and does not guarantee.
     configure_logging()
 
+    # --- Ephemeral pairing (012-web-adopt-pairing) ------------------------
+    # Construct the operator-auth provider FAIL-FAST at app-build time (FR-009):
+    # forward auth without a header name raises here and aborts `remo web serve`
+    # before the socket is bound. `None` means minting is disabled (fail closed).
+    operator_auth_provider = build_operator_auth_provider(settings)
+    if os.environ.get("REMO_WEB_API_TOKEN"):
+        # 011's static token gate is removed (FR-021); a stale value is inert.
+        logger.info(
+            "REMO_WEB_API_TOKEN is set but is now ignored; the setup surface is "
+            "authorized by ephemeral pairing codes (see docs)."
+        )
+    if operator_auth_provider is None:
+        logger.info(
+            "operator authentication is not configured: pairing-code minting is "
+            "disabled. Set REMO_WEB_OPERATOR_AUTH=forward (with "
+            "REMO_WEB_FORWARD_AUTH_HEADER) for a proxy front door, or =none for "
+            "the network-restricted posture."
+        )
+    elif operator_auth_provider.posture == "network-restricted":
+        # FR-013: the weaker posture is never entered silently.
+        logger.warning(
+            "operator authentication is in the NETWORK-RESTRICTED posture: "
+            "pairing codes are minted WITHOUT operator authentication. Use this "
+            "only for loopback/private deployments; put a forward-auth proxy in "
+            "front for anything reachable by others."
+        )
+    else:
+        logger.info(
+            "operator authentication: forward auth (trusted header %r).",
+            settings.forward_auth_header,
+        )
+
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Startup (011-web-adopt T030/FR-002, research R3): mint the service
@@ -152,6 +188,8 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.shutting_down = False
     app.state.discovery_service = DiscoveryService(settings)
     app.state.terminal_registry = TerminalRegistry(settings)
+    app.state.pairing_manager = PairingSessionManager(ttl_s=settings.pairing_ttl_s)
+    app.state.operator_auth_provider = operator_auth_provider
 
     # --- Host allowlist (FR-048) -----------------------------------------
     # settings.allowed_hosts is never empty (WebSettings defaults to
@@ -204,6 +242,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.include_router(hosts_router, prefix="/api/v1")
     app.include_router(terminals_router, prefix="/api/v1")
     app.include_router(setup_router, prefix="/api/v1")
+    app.include_router(pairing_router, prefix="/api/v1")
 
     # --- Same-origin frontend static files (FR-038, no CDN) -----------------
     # The built frontend won't exist until the Docker image build stage (or a

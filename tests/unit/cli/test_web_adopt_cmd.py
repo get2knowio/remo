@@ -32,7 +32,7 @@ from remo_cli.core.web_adopt import (
     EmptyRegistryError,
     InstanceOutcome,
     MountConfiguredError,
-    SetupAuthError,
+    SetupNotFoundError,
     TunnelError,
 )
 from remo_cli.models.host import KnownHost
@@ -115,7 +115,7 @@ class TestUrlResolutionOrder:
 
 
 class TestTokenResolutionOrder:
-    """API token: --token -> REMO_API_TOKEN -> hidden prompt."""
+    """Pairing code: --token -> REMO_API_TOKEN -> hidden prompt."""
 
     def test_token_option_beats_env(self, runner, mock_run_adopt):
         result = runner.invoke(
@@ -136,21 +136,21 @@ class TestTokenResolutionOrder:
 
         assert result.exit_code == 0
         assert mock_run_adopt.call_args[0][1] == "from-env"
-        assert "API token" not in result.output
+        assert "Pairing code" not in result.output
 
     def test_hidden_prompt_when_no_option_and_no_env(self, runner, mock_run_adopt):
         result = runner.invoke(
             adopt,
             ["http://svc:8080"],
             env=_CLEAN_ENV,
-            input="sekrit-token\n",
+            input="sekrit-code\n",
         )
 
         assert result.exit_code == 0
-        assert "API token" in result.output
-        assert mock_run_adopt.call_args[0][1] == "sekrit-token"
-        # hide_input=True: the typed token must never be echoed back.
-        assert "sekrit-token" not in result.output
+        assert "Pairing code" in result.output
+        assert mock_run_adopt.call_args[0][1] == "sekrit-code"
+        # hide_input=True: the typed code must never be echoed back.
+        assert "sekrit-code" not in result.output
 
 
 class TestExitCodes:
@@ -181,19 +181,21 @@ class TestExitCodes:
         assert "read-only mounts" in result.output
         assert "adoption does not apply" in result.output
 
-    def test_auth_failure_exits_one_with_token_message(self, runner, mock_run_adopt):
-        mock_run_adopt.side_effect = SetupAuthError(
-            "the service rejected the API token (HTTP 401). Check the token "
-            "against the service's REMO_WEB_API_TOKEN and try again.",
-            status=401,
+    def test_dormant_surface_exits_one_with_reopen_message(self, runner, mock_run_adopt):
+        mock_run_adopt.side_effect = SetupNotFoundError(
+            "the pairing code is no longer valid — the setup surface at "
+            "http://svc:8080 is dormant (HTTP 404). Reopen the adopt page to mint "
+            "a fresh code, then retry.",
+            status=404,
         )
 
         result = runner.invoke(
-            adopt, ["http://svc:8080", "--token", "bad-token"], env=_CLEAN_ENV
+            adopt, ["http://svc:8080", "--token", "stale-code"], env=_CLEAN_ENV
         )
 
         assert result.exit_code == 1
-        assert "rejected the API token" in result.output
+        assert "dormant" in result.output
+        assert "fresh code" in result.output
 
     def test_empty_registry_exits_one_and_names_allow_empty(
         self, runner, mock_run_adopt
@@ -236,7 +238,7 @@ class TestExitCodes:
 
 
 class TestFlagPassThrough:
-    """--via/--allow-empty/--yes/--save must reach run_adopt unchanged."""
+    """--via/--allow-empty/--yes must reach run_adopt unchanged (no more --save)."""
 
     def test_all_flags_forwarded(self, runner, mock_run_adopt):
         result = runner.invoke(
@@ -249,7 +251,6 @@ class TestFlagPassThrough:
                 "jumphost",
                 "--allow-empty",
                 "--yes",
-                "--save",
             ],
             env=_CLEAN_ENV,
         )
@@ -261,7 +262,6 @@ class TestFlagPassThrough:
             "via": "jumphost",
             "allow_empty": True,
             "assume_yes": True,
-            "save": True,
         }
 
     def test_defaults_forwarded_when_flags_omitted(self, runner, mock_run_adopt):
@@ -275,7 +275,6 @@ class TestFlagPassThrough:
             "via": None,
             "allow_empty": False,
             "assume_yes": False,
-            "save": False,
         }
 
 

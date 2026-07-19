@@ -180,30 +180,47 @@ instance — your own LAN, your own tailnet, or behind a reverse proxy you contr
 
 ### Reverse proxies, SSO, and the setup surface
 
-There is exactly one authenticated surface in the service: the **setup API** (`/api/v1/setup/*`) used
-by `remo web adopt`/`remo web push`, gated by a bearer token (`REMO_WEB_API_TOKEN` — see
-[CLI-to-web adoption](#cli-to-web-adoption)). Everything above about the *browser* surface remains
-true regardless of deployment mode:
+> **Breaking change (012-web-adopt-pairing):** the static `REMO_WEB_API_TOKEN` gate is **removed**. A
+> value set for that variable is now ignored. Setup access is authorized by an **ephemeral pairing
+> code** minted from the awaiting-adoption page, not a long-lived secret.
 
-- **A reverse proxy without SSO does not change the trust model.** Putting the service behind a
-  TLS-terminating proxy (e.g. an hola app behind Traefik) encrypts the transport, but the dashboard
-  and terminals still have no login — the browser surface still needs proxy-level protection
-  (network boundary, allowlisted client IPs, or proxy auth) exactly as described above.
-- **A future forward-auth deployment needs a bypass rule scoped to `/api/v1/setup/*`.** The
-  workstation CLI authenticates with the `Authorization: Bearer` token, not with a browser SSO
-  session, so an SSO/forward-auth layer in front of the service would block adoption unless setup
-  routes are exempted from it. That bypass is defensible because the application itself enforces the
-  bearer token on every setup route — the surface is never unauthenticated. (Documentation-only
-  guidance; no proxy/SSO integration ships with the service.)
-- **Origin-less requests to the setup surface bypass the Origin allowlist — deliberately and
-  safely.** The Origin allowlist is a browser-CSRF defense, and the setup API is bearer-token-only
-  with no ambient credentials: a cross-origin browser request cannot attach an `Authorization`
-  header, and a genuine browser CSRF attempt always carries an `Origin` header — which is still
-  enforced (a present-but-disallowed `Origin` is rejected). This scoped exemption is what lets the
-  Origin-less CLI client reach the setup API, including `--via` tunnels whose
-  `127.0.0.1:<random-port>` origin could never be allowlisted. See the auth section of
-  [`setup-api.md`](../specs/011-web-adopt/contracts/setup-api.md) and the middleware in
-  `src/remo_cli/web/app.py`.
+The setup API (`/api/v1/setup/*`) used by `remo web adopt`/`remo web push` is **dormant** — every
+route returns `404`, byte-identical to an unknown route — unless a **pairing session** is live. A
+session exists only while an operator is on the awaiting-adoption page (or the dashboard's re-sync
+affordance): opening the page mints a short-lived, single-use pairing code (sliding idle TTL, default
+15 min), the operator copies it to their workstation and pastes it into the CLI, and the code
+authenticates that one adoption/push. See [CLI-to-web adoption](#cli-to-web-adoption).
+
+Two properties make this safe:
+
+- **Minting a code is gated by operator authentication.** The browser-facing
+  `POST /api/v1/pairing/mint` endpoint only mints for an authenticated operator. v1 implements this
+  with **forward auth**: put a proxy (Traefik ForwardAuth / oauth2-proxy / Authelia / a hola app's
+  SSO) in front that terminates sign-on and injects a trusted identity header, and set
+  `REMO_WEB_OPERATOR_AUTH=forward` + `REMO_WEB_FORWARD_AUTH_HEADER=<that header>` (e.g.
+  `X-Forwarded-User`). Enabling forward auth without naming a header is a **fail-fast** startup error.
+  A loopback/dev deployment may instead set `REMO_WEB_OPERATOR_AUTH=none` (network-restricted — mints
+  without operator auth; a loud, weaker posture surfaced in readiness). The check sits behind a
+  pluggable provider seam so an in-app OIDC verifier can be added later.
+- **The proxy must split the two paths.** Forward auth applies **only** to `POST /api/v1/pairing/mint`
+  — the CLI cannot complete an SSO challenge, so the proxy MUST **pass `/api/v1/setup/*` through**
+  unauthenticated at the proxy layer; those routes are authenticated by the pairing code alone. In
+  short: gate `/api/v1/pairing/mint` with SSO, pass `/api/v1/setup/*` through.
+
+**Forward-auth trust boundary.** The service trusts the identity header only because the deployment
+guarantees the proxy sits in front and **sets/strips** that header — so a client cannot reach the app
+directly and spoof it. This is the standard forward-auth boundary; a deployment that exposes the app
+directly (no proxy) MUST use `REMO_WEB_OPERATOR_AUTH=none` and accept the weaker posture.
+
+**Origin-less requests to the setup surface bypass the Origin allowlist — deliberately and safely.**
+The Origin allowlist is a browser-CSRF defense, and the setup API carries no ambient credentials: a
+cross-origin browser request cannot attach an `Authorization` header, and a genuine browser CSRF
+attempt always carries an `Origin` (still enforced). This scoped exemption lets the Origin-less CLI
+reach the setup API, including `--via` tunnels whose `127.0.0.1:<random-port>` origin could never be
+allowlisted. The browser-only `POST /api/v1/pairing/mint` is **not** exempt — it is held to the Origin
+check. See [`setup-api.md`](../specs/012-web-adopt-pairing/contracts/setup-api.md),
+[`pairing-api.md`](../specs/012-web-adopt-pairing/contracts/pairing-api.md), and the middleware in
+`src/remo_cli/web/app.py`.
 
 ## Deployment modes: mounts vs adoption
 
@@ -217,7 +234,7 @@ var that can drift out of sync with reality):
 | SSH identity | **Your personal private key** bind-mounted read-only | A **service-scoped keypair** the container generates itself on first boot (`web-identity/id_ed25519`, comment `remo-web@<deployment-id>`) |
 | Instance host keys | Your `~/.ssh/known_hosts` bind-mounted read-only | Verified host keys pushed by the CLI (`web-identity/known_hosts`) |
 | Volumes | Several read-only bind mounts | **One** writable named volume at `REMO_HOME` (`/home/remo/.config/remo`) — no registry mount, no `~/.ssh` mounts |
-| Required env | — | `REMO_WEB_API_TOKEN` (enables the token-gated setup API; without it adoption is impossible) |
+| Required env | — | `REMO_WEB_OPERATOR_AUTH` (`forward` + `REMO_WEB_FORWARD_AUTH_HEADER`, or `none` for loopback/dev) — gates pairing-code minting; without a provider, minting is disabled and adoption is impossible |
 | Runs where? | Effectively the same machine as your CLI config | Any host — nothing from the workstation is mounted |
 | Registry updates | Edit/sync locally; the mount hot-reloads | `remo web push` after local changes |
 
@@ -235,7 +252,7 @@ From these artifacts the service derives one of four states:
 
 | State | Derivation | `remo web check` | `GET /api/v1/ready` | Browser |
 |---|---|---|---|---|
-| `unconfigured` | `REMO_HOME` writable, no registry (service keypair may already exist — generated, awaiting first push) | PASS: `unconfigured — awaiting adoption; run 'remo web adopt <service-url>' from a workstation` | **`200`** `{"status": "unconfigured", ...}` — healthy-and-waiting must not fail the compose healthcheck or crash-loop `restart: unless-stopped` | "Awaiting adoption" page: explains the state, shows a copy-pastable `remo web adopt <origin>` command, and flips to the dashboard automatically once adoption completes. No instance data, no terminals, no public-key display. |
+| `unconfigured` | `REMO_HOME` writable, no registry (service keypair may already exist — generated, awaiting first push) | PASS: `unconfigured — awaiting adoption; run 'remo web adopt <service-url>' from a workstation` | **`200`** `{"status": "unconfigured", ...}` — healthy-and-waiting must not fail the compose healthcheck or crash-loop `restart: unless-stopped` | "Awaiting adoption" page: explains the state, shows the `remo web adopt <origin>` command, and a **Copy pairing code** button (the code itself is never displayed). Flips to the dashboard automatically once adoption completes. No instance data, no terminals, no public-key display. |
 | `adopted` | `REMO_HOME` writable + service keypair + registry present | PASS: `adopted — configured via 'remo web adopt' (service identity in web-identity/)` | `200` `{"status": "ready", ...}` | Normal dashboard |
 | `mount_configured` | Registry present **and** (`REMO_HOME` not writable — the `:ro` bind mount — or a user SSH identity resolves via `REMO_WEB_SSH_IDENTITY_FILE`/`~/.ssh/id_*`). Explicit mounts are the operator's stated intent, so this wins even if a service keypair also exists. | PASS: `mount_configured — configured via read-only mounts` | `200` `{"status": "ready", ...}` | Normal dashboard |
 | `broken` | Any required artifact present but unreadable, a half-pair service keypair, a registry on a writable volume with nothing able to authenticate, or a missing runtime prerequisite | FAIL with per-check remediation | `503` `{"status": "not_ready", ...}` with actionable detail — unchanged from today | Offline/error indicator |
@@ -270,9 +287,9 @@ The file defines **both deployment modes as alternative services** — run one o
 
   Its differences from `remo-web`: **no bind mounts at all** — a single writable named volume
   (`remo-web-state:/home/remo/.config/remo`) holds the pushed registry, per-instance host keys, and
-  the service identity keypair — plus a required `REMO_WEB_API_TOKEN` environment variable (generate
-  one with `openssl rand -hex 24`). Hardening flags are identical. See
-  [CLI-to-web adoption](#cli-to-web-adoption) for what happens after `up`.
+  the service identity keypair — plus a `REMO_WEB_OPERATOR_AUTH` setting (`forward` behind an SSO
+  proxy, or `none` for loopback/dev) that gates pairing-code minting. Hardening flags are identical.
+  See [CLI-to-web adoption](#cli-to-web-adoption) for what happens after `up`.
 
 ### The published image
 
@@ -377,39 +394,38 @@ Both commands live in the base CLI (`src/remo_cli/cli/web.py` → `src/remo_cli/
 stdlib HTTP only) — the `web` extra is **not** required on the workstation:
 
 ```text
-remo web adopt [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes] [--save]
-remo web push [--allow-empty] [--yes]
+remo web adopt [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes]
+remo web push  [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes]
 ```
+
+`--token` carries the **pairing code** (the option name is kept for
+compatibility). Nothing is saved between runs — each adopt/push obtains a fresh
+code from the page.
 
 ### First-time adoption walkthrough
 
 **1. Deploy the container.** Via Compose (`docker compose --profile adopted up -d`, see
-[Docker Compose deployment](#docker-compose-deployment)) or as an **hola app** — the hola app
-manifest prompts for or generates the admin token at install time and supplies it to the container
-as `REMO_WEB_API_TOKEN`; either way the operator's job is the same: a writable state volume plus the
-token. Within ~30 seconds the container is up in the `unconfigured` state, has minted its
-service-scoped keypair, and the browser shows the "awaiting adoption" page with the exact command to
-run.
+[Docker Compose deployment](#docker-compose-deployment)) or as an **hola app** — set
+`REMO_WEB_OPERATOR_AUTH` (`forward` behind the hola app's SSO, plus `REMO_WEB_FORWARD_AUTH_HEADER`;
+or `none` for a loopback/dev deployment) so the page can mint pairing codes. Within ~30 seconds the
+container is up in the `unconfigured` state, has minted its service-scoped keypair, and the browser
+shows the "awaiting adoption" page.
 
-**2. Run `remo web adopt` on the workstation.** Inputs resolve in this order:
+**2. Copy the pairing code and run `remo web adopt`.** On the awaiting-adoption page (reached through
+your SSO proxy), click **Copy pairing code** — the code lands on your clipboard and is never
+displayed. On the workstation, inputs resolve in this order:
 
 | Input | Resolution order |
 |---|---|
 | Service URL | argument → `REMO_API_URL` env var → interactive prompt |
-| API token | `--token` → `REMO_API_TOKEN` env var → interactive prompt (hidden input) |
-
-`REMO_API_URL`/`REMO_API_TOKEN` are the workstation-side counterparts of the service's
-`REMO_WEB_API_TOKEN` — set them (e.g. exported by your shell profile, or handed out by the hola app
-install output) and the command runs prompt-free:
+| Pairing code | `--token` → `REMO_API_TOKEN` env var → interactive prompt (hidden input) |
 
 ```bash
-export REMO_API_URL=http://docker-host.lan:8080
-export REMO_API_TOKEN=<the value you set as REMO_WEB_API_TOKEN>
-remo web adopt
+remo web adopt http://docker-host.lan:8080    # paste the code at the prompt
 ```
 
 The flow then: checks the service's state (aborting clearly if the target is mount-configured or the
-token is rejected), fetches the service's public key and deployment id, and — per direct-access
+code is no longer valid), fetches the service's public key and deployment id, and — per direct-access
 instance, with a bounded per-instance time budget so one slow instance delays only itself —
 `ssh-keyscan`s the host, verifies the scanned key against your own trusted `~/.ssh/known_hosts`
 record (`ssh-keygen -F`, so hashed known_hosts files work; the service itself **never** makes a
@@ -437,52 +453,50 @@ asymmetric-network case (e.g. the instance is only reachable via workstation-spe
 config such as ProxyJump, or a firewall between the container host and the instance), not an
 adoption failure.
 
-**5. Saved credentials (explicit consent).** On success the CLI offers to save the service URL and
-token to `~/.config/remo/web-service.json` (written atomically, mode `0600`) so that later
-`remo web push` runs are zero-argument. Saving requires explicit consent — an interactive yes, or
-the `--save` flag; `--yes` alone never saves. v1 stores a single default deployment. The file also
-records the service's `deployment_id` and a per-instance push cache (see below).
+**5. No saved credentials.** Nothing durable is saved (there is no long-lived secret to save). A later
+`remo web push` obtains a fresh pairing code the same way. The workstation keeps only a **non-secret**
+push cache at `~/.config/remo/web-service.json` (mode `0600`): the service `deployment_id` mapped to
+per-instance host-key fingerprints, used to skip re-keyscanning unchanged instances. No URL and no
+code are ever stored.
 
 The command exits `0` when the flow completes — per-instance skips/flags are reported in the
-summary, not fatal — and `1` only on hard failure (auth rejection, mount-configured target, empty
-registry without `--allow-empty`, tunnel failure, payload rejected). Re-running adopt is idempotent:
-same summary, zero changes, still exactly one `remo-web@` line per instance.
+summary, not fatal — and `1` only on hard failure (dormant setup surface / expired code,
+mount-configured target, empty registry without `--allow-empty`, tunnel failure, payload rejected).
+Re-running adopt (with a fresh code) is idempotent: same summary, zero changes, still exactly one
+`remo-web@` line per instance.
 
-### The setup API and `REMO_WEB_API_TOKEN`
+### The setup API and pairing codes
 
-The CLI talks to four token-gated endpoints under `/api/v1/setup/*`
-([`setup-api.md`](../specs/011-web-adopt/contracts/setup-api.md)): `GET /status`, `GET /identity`,
-`PUT /registry`, `POST /verify`. Every route requires `Authorization: Bearer <REMO_WEB_API_TOKEN>`,
-compared in constant time:
+The CLI talks to four endpoints under `/api/v1/setup/*`
+([`setup-api.md`](../specs/012-web-adopt-pairing/contracts/setup-api.md)): `GET /status`,
+`GET /identity`, `PUT /registry`, `POST /verify`. The surface is **dormant** unless a pairing session
+is live; each route requires `Authorization: Bearer <pairing-code>`, compared in constant time:
 
-- **Unset/empty token → the setup surface does not exist.** Every `/api/v1/setup/*` request gets a
-  plain `404`, indistinguishable from an absent feature — fail closed, never open. All other
-  functionality (dashboard, terminals, health) is unaffected. A bind-mount deployment that never
-  sets the token therefore exposes no setup surface at all.
-- **Wrong/missing header → `401`** with no further detail; the attempt is logged without the
-  presented credential. The token value and `Authorization` headers are covered by the service's
-  existing log redaction (`src/remo_cli/web/logging_config.py`).
-- **Rotation = redeploy with a new value.** The token is deploy-time configuration; change it in the
-  Compose file or hola app settings and restart, then re-run `remo web adopt` with the new token
-  (saved workstation credentials with the old token fail with a clear re-auth message).
+- **No live session → the setup surface does not exist.** Every `/api/v1/setup/*` request gets a plain
+  `404`, indistinguishable from an absent feature — fail closed. A session is live only while an
+  operator is on the awaiting-adoption page (or the dashboard re-sync affordance).
+- **Wrong/missing/expired code → the same dormant `404`** — never a distinguishable `401` that would
+  reveal a session exists. The attempt is logged without the presented code; codes and `Authorization`
+  headers are covered by the service's log redaction (`src/remo_cli/web/logging_config.py`).
+- **The session ends when the flow completes** (on the terminal `POST /verify`), and a code is
+  single-use per handoff — reopening the page mints a fresh one and invalidates the prior. There is no
+  rotation to manage: codes are ephemeral by construction.
 
 ### Ongoing pushes: `remo web push`
 
 After the initial adoption, local registry changes (a `remo <provider> sync`, a new `create`, a
-removal) are re-synced with a zero-argument push:
+removal) are re-synced. Open the dashboard's **Pair CLI to sync** affordance, copy a fresh code, then:
 
 ```bash
-remo incus sync my-incus-host    # e.g. registers a new instance locally
-remo web push                    # re-sync it to the adopted service
+remo incus sync my-incus-host                   # e.g. registers a new instance locally
+remo web push http://docker-host.lan:8080       # paste the code; re-sync to the service
 ```
 
-`remo web push` loads the saved credentials, verifies the service still has the same
-`deployment_id` (a mismatch means the state volume was reset — it aborts with re-adopt guidance),
-then runs the adopt flow with **delta behavior**: only new or changed instances are re-keyscanned
-and re-authorized; instances unchanged since the last successful push skip that work entirely and
-are reported as `unchanged` (their previously verified host keys are reused, since every push
-replaces the service's host-keys file wholesale). If no credentials were saved, `push` behaves
-exactly like first-time `adopt`, prompting for URL and token.
+`remo web push` resolves URL + code the same way `adopt` does (every run), reads the service's
+`deployment_id`, and runs the adopt flow with **delta behavior**: only new or changed instances are
+re-keyscanned and re-authorized; instances unchanged since the last successful push (per the non-secret
+push cache for that `deployment_id`) skip that work and are reported as `unchanged` (their previously
+verified host keys are reused, since every push replaces the service's host-keys file wholesale).
 
 **Mirror semantics — removals propagate, authorization does not.** The push is an exact mirror: the
 workstation registry is the source of truth, so an instance you removed locally disappears from the
@@ -623,12 +637,13 @@ interactive session (only `remo-host capabilities` is invoked, never `sessions a
 
 | Failure | What it means | Fix |
 |---|---|---|
-| `/api/v1/setup/*` returns `404` for everything | `REMO_WEB_API_TOKEN` is unset or empty — the setup surface is disabled entirely (fail closed). | Set `REMO_WEB_API_TOKEN` in the deployment (Compose `environment:` / hola app setting) and restart. |
-| `remo web adopt` fails with an auth error (`401`) | The token you supplied doesn't match the service's `REMO_WEB_API_TOKEN`. | Re-check `REMO_API_TOKEN`/`--token` against the deployed value; after a token rotation, re-run adopt with the new value. |
+| `/api/v1/setup/*` returns `404` for everything | No pairing session is live — the surface is dormant (fail closed). | Open the awaiting-adoption page (through your SSO proxy) to mint a code; if the page can't mint, set `REMO_WEB_OPERATOR_AUTH` (`forward` + header, or `none` for loopback). |
+| `remo web adopt`/`push` fails: "pairing code is no longer valid … dormant" | The code expired (idle TTL), was rotated by reopening the page, or was already used. | Reopen the adopt page (or the dashboard's "Pair CLI to sync" affordance) for a fresh code and retry. |
+| Mint page shows "you are not signed in" / `POST /pairing/mint` returns `403` | Forward auth is required but the request reached the service without the trusted identity header. | Ensure the request goes through the SSO proxy that injects `REMO_WEB_FORWARD_AUTH_HEADER`; verify the proxy sets and strips it. |
 | adopt fails: deployment "configured via read-only mounts" | The target is a bind-mount deployment (`mount_configured`) — its configuration is operator-provided and read-only, so adoption does not apply. | Update the mounted files instead, or deploy the adopted-mode service (writable state volume, no mounts) if you want adoption. |
 | adopt refuses: empty registry | Your local registry has no instances — pushing would wipe a previously adopted service (a classic wrong-workstation accident). | Register/sync instances first, or pass `--allow-empty` if wiping is intentional. |
 | `--via` fails naming `REMO_WEB_ALLOWED_HOSTS` | Tunneled requests arrive with a `127.0.0.1` Host header, which the service's Host allowlist rejects. | Add `127.0.0.1` to `REMO_WEB_ALLOWED_HOSTS` (the default includes it). |
-| `remo web push` aborts: service identity changed | The saved `deployment_id` no longer matches the service — its state volume was reset and it minted a new identity. | Re-run `remo web adopt` (this replaces the stale `remo-web@` entries on your instances with the new key). |
+| After a service state-volume reset, instances keep a stale `remo-web@` line | The reset service minted a new identity; a fresh `remo web adopt` authorizes the new key but does not remove the old line. | Re-run `remo web adopt`, then delete the stale `remo-web@<old-id>` line from each instance's `~/.ssh/authorized_keys`. |
 | Summary line `security_flagged` (potential MITM warning) | The instance's scanned host key doesn't match your workstation's trusted record; nothing was pushed for it. | Investigate before trusting. If the instance was legitimately rebuilt: `ssh-keygen -R <host>`, reconnect once to re-trust, re-run adopt. |
 | Verify report: "reachable from workstation but not from the service" | Asymmetric reachability — the CLI reached the instance but the container cannot (DNS, routing, firewall, or workstation-only SSH config like ProxyJump). | Fix the network path from the container host to the instance; the adoption itself succeeded. |
 
@@ -688,7 +703,10 @@ locally with zero configuration; a container overrides everything via env alone.
 | `REMO_WEB_SSH_CONTROL_DIR` | `/run/remo-ssh` | Writable directory for SSH ControlMaster sockets (must be tmpfs or otherwise writable under a read-only rootfs). |
 | `REMO_WEB_FRONTEND_DIST_DIR` | `<repo_root>/frontend/dist` (resolved relative to the installed package) | Directory the built frontend SPA is served from. The Docker image overrides this to `/app/frontend-dist`, matching where the multi-stage build actually copies the built assets. |
 | `REMO_WEB_SSH_IDENTITY_FILE` | *(unset — falls back to the service keypair under `web-identity/`, then `~/.ssh/id_ed25519`/`id_ecdsa`/`id_rsa`/`id_dsa`)* | Explicit path to the SSH private key used for readiness/`remo web check`'s identity check, when it isn't one of the conventional filenames. |
-| `REMO_WEB_API_TOKEN` | *(unset)* | Admin bearer token for the setup API (`/api/v1/setup/*`) used by `remo web adopt`/`remo web push`. **Fail-closed**: while unset or empty, the setup surface is disabled entirely — every setup route returns a plain `404` — and adoption is impossible; all other functionality is unaffected. Verified with a constant-time comparison and covered by log redaction. Rotation = redeploy with a new value (then re-run `remo web adopt` with it). Generate with e.g. `openssl rand -hex 24`. |
+| `REMO_WEB_OPERATOR_AUTH` | *(unset — minting disabled)* | Operator-authentication posture gating pairing-code minting (`POST /api/v1/pairing/mint`). `forward` requires a trusted proxy-injected identity header (`REMO_WEB_FORWARD_AUTH_HEADER`); `none` mints without operator auth (network-restricted — a loud, weaker posture for loopback/dev). While unset, minting is disabled and adoption is impossible (fail closed). |
+| `REMO_WEB_FORWARD_AUTH_HEADER` | *(unset)* | Name of the trusted identity header your forward-auth proxy injects (e.g. `X-Forwarded-User`, `Remote-User`). **Required** when `REMO_WEB_OPERATOR_AUTH=forward`; enabling forward auth without it is a fail-fast startup error. The proxy MUST set and strip this header. |
+| `REMO_WEB_PAIRING_TTL_S` | `900.0` | Sliding idle TTL (seconds) for a pairing session — it expires this long after the last successful setup call (default 15 min). |
+| `REMO_WEB_API_TOKEN` | *(removed — ignored)* | **Removed in 012.** The static setup-API token is gone; a value set here is ignored (a one-line "now ignored" note is logged at startup). Setup access is authorized by ephemeral pairing codes. |
 
 `remo web serve --host`/`--port` are convenience overrides for local runs; every other setting is env-var-only.
 
@@ -700,4 +718,4 @@ Two variables configure the **CLI** (not the service — hence no `REMO_WEB_` pr
 | Variable | Used as |
 |---|---|
 | `REMO_API_URL` | Service URL fallback when no URL argument is given (before falling back to an interactive prompt). |
-| `REMO_API_TOKEN` | API token fallback when `--token` is not given (before falling back to a hidden interactive prompt). Set it to the same value as the service's `REMO_WEB_API_TOKEN`. |
+| `REMO_API_TOKEN` | Pairing-code fallback when `--token` is not given (before falling back to a hidden interactive prompt). Set it to a code freshly minted from the adopt page. |

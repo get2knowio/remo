@@ -121,10 +121,30 @@ class WebSettings:
     # Directory the built frontend SPA is served from (same-origin, FR-038).
     frontend_dist_dir: Path = field(default_factory=_default_frontend_dist_dir)
 
-    # Setup API bearer token (011-web-adopt, FR-020/FR-021). Unset or empty
-    # means "not configured": the entire /api/v1/setup surface is disabled
-    # (404 on every setup route -- fail closed, see web/api/setup.py).
-    api_token: str = field(default_factory=lambda: _env_str("API_TOKEN", "").strip())
+    # -- Ephemeral device pairing (012-web-adopt-pairing) -------------------
+    #
+    # The static REMO_WEB_API_TOKEN gate of 011 is removed (FR-021). The
+    # /api/v1/setup surface is now dormant (404) unless a live pairing session
+    # exists; a session is minted from the adopt page and gated by operator
+    # authentication (see web/pairing.py + web/operator_auth.py).
+
+    # Sliding idle TTL for a pairing session, seconds (FR-002, default 15 min).
+    pairing_ttl_s: float = field(default_factory=lambda: _env_float("PAIRING_TTL_S", 900.0))
+
+    # Operator-authentication mode gating the browser mint endpoint (FR-009):
+    #   "forward" -> require a trusted proxy-injected identity header
+    #                (forward_auth_header MUST be set; fail-fast otherwise).
+    #   "none"    -> network-restricted posture: mint without a credential
+    #                (loud, explicit opt-in for loopback/dev, FR-013).
+    #   ""        -> unset: minting is disabled (mint returns 403; fail closed).
+    operator_auth: str = field(default_factory=lambda: _env_str("OPERATOR_AUTH", "").strip())
+
+    # Trusted forward-auth identity header name (FR-009). No baked-in default:
+    # it varies by proxy (X-Forwarded-User, Remote-User, ...) and enabling
+    # forward auth without naming it is a fail-fast config error.
+    forward_auth_header: str = field(
+        default_factory=lambda: _env_str("FORWARD_AUTH_HEADER", "").strip()
+    )
 
     # Service identity state directory (011-web-adopt, research R1).
     # Everything the adopted service owns lives under

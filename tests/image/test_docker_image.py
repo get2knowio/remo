@@ -42,9 +42,9 @@ tests (skip honestly rather than fail when infra isn't available):
 the container's REMO_HOME and no registry/SSH mounts at all, then assert the
 service reaches its "awaiting adoption" state (ready 200 `unconfigured`)
 within 30s, generates a persistent service identity (same fingerprint across
-a container restart, FR-002), and token-gates the setup API (404 when
-`REMO_WEB_API_TOKEN` is unset, FR-021). The pre-existing RO-mount tests
-above are intentionally untouched — them still passing IS SC-005.
+a container restart, FR-002), and pairing-gates the setup API (012: dormant
+404 with no live session; reachable behind a minted code). The pre-existing
+RO-mount tests above are intentionally untouched — them still passing IS SC-005.
 
 A fourth group covers the self-healing permissions model: the image starts
 as root and its entrypoint chowns a ROOT-OWNED (bind-mounted) config dir and
@@ -748,7 +748,6 @@ def test_build_and_run_arm64(tmp_path):
 
 _CONTAINER_REMO_HOME = "/home/remo/.config/remo"
 _IDENTITY_DIR = f"{_CONTAINER_REMO_HOME}/web-identity"
-_SETUP_TOKEN = "image-test-token-123"
 _SETUP_STATUS_URL = "http://127.0.0.1:8080/api/v1/setup/status"
 
 
@@ -791,7 +790,7 @@ def empty_state_dir(tmp_path, amd64_image):
 
 
 def _run_unconfigured_container(
-    image: str, name: str, state_dir: Path, *, token: str | None
+    image: str, name: str, state_dir: Path, *, operator_auth: str | None = None
 ) -> None:
     """`docker run` with compose.example.yml's hardening flags, an empty
     writable state volume at REMO_HOME, and NO registry/SSH mounts.
@@ -802,6 +801,9 @@ def _run_unconfigured_container(
     make the runtime-dir check fail on the second boot of the FR-002
     restart test below. `rw,mode=1777` pins Docker's own first-boot default
     so every (re)mount is identical.
+
+    ``operator_auth`` sets ``REMO_WEB_OPERATOR_AUTH`` (012): pass ``"none"``
+    (network-restricted) so the container can mint a pairing code over HTTP.
     """
     cmd = [
         "docker",
@@ -817,11 +819,31 @@ def _run_unconfigured_container(
         "-v",
         f"{state_dir}:{_CONTAINER_REMO_HOME}",
     ]
-    if token is not None:
-        cmd += ["-e", f"REMO_WEB_API_TOKEN={token}"]
+    if operator_auth is not None:
+        cmd += ["-e", f"REMO_WEB_OPERATOR_AUTH={operator_auth}"]
     cmd.append(image)
     run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     assert run.returncode == 0, run.stderr
+
+
+def _mint_code_in_container(name: str) -> str:
+    """Mint a pairing code via `POST /pairing/mint` inside the container.
+
+    Requires the network-restricted posture (REMO_WEB_OPERATOR_AUTH=none). The
+    Origin header must be an allowed origin (127.0.0.1:8080 is a default).
+    """
+    result = subprocess.run(
+        [
+            "docker", "exec", name, "curl", "-s",
+            "-H", "Origin: http://127.0.0.1:8080",
+            "-X", "POST", "http://127.0.0.1:8080/api/v1/pairing/mint",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return json.loads(result.stdout)["code"]
 
 
 def _wait_for_ready_payload(name: str, timeout_s: float = 30.0) -> dict:
@@ -891,7 +913,7 @@ def test_amd64_unconfigured_boot_reports_unconfigured_and_generates_identity(
     must have generated the service identity into the state volume."""
     name = f"remo-web-test-unconf-{uuid.uuid4().hex[:8]}"
     try:
-        _run_unconfigured_container(amd64_image, name, empty_state_dir, token=_SETUP_TOKEN)
+        _run_unconfigured_container(amd64_image, name, empty_state_dir)
         payload = _wait_for_ready_payload(name)
         assert payload["status"] == "unconfigured"
 
@@ -931,7 +953,7 @@ def test_amd64_service_identity_survives_container_restart(amd64_image, empty_st
     key files exist — a restart must come back with the same fingerprint."""
     name = f"remo-web-test-restart-{uuid.uuid4().hex[:8]}"
     try:
-        _run_unconfigured_container(amd64_image, name, empty_state_dir, token=_SETUP_TOKEN)
+        _run_unconfigured_container(amd64_image, name, empty_state_dir)
         assert _wait_for_ready_payload(name)["status"] == "unconfigured"
         fingerprint_before = _service_key_fingerprint(name)
 
@@ -947,41 +969,46 @@ def test_amd64_service_identity_survives_container_restart(amd64_image, empty_st
 
 
 @requires_image_build
-def test_amd64_setup_status_token_gated(amd64_image, empty_state_dir):
-    """With REMO_WEB_API_TOKEN set: the right bearer token sees the setup
-    surface (state `unconfigured`); a wrong token gets 401 (SC-004)."""
+def test_amd64_setup_status_pairing_gated(amd64_image, empty_state_dir):
+    """012: with a minted pairing code the setup surface is reachable (state
+    `unconfigured`); a wrong code gets the dormant 404, never a 401 (SC-004)."""
     name = f"remo-web-test-setup-{uuid.uuid4().hex[:8]}"
     try:
-        _run_unconfigured_container(amd64_image, name, empty_state_dir, token=_SETUP_TOKEN)
+        # Network-restricted posture so the container can mint over HTTP.
+        _run_unconfigured_container(amd64_image, name, empty_state_dir, operator_auth="none")
         _wait_for_ready_payload(name)
 
+        code = _mint_code_in_container(name)
         status, payload = _curl_status_and_json(
-            name, _SETUP_STATUS_URL, headers=(f"Authorization: Bearer {_SETUP_TOKEN}",)
+            name, _SETUP_STATUS_URL, headers=(f"Authorization: Bearer {code}",)
         )
         assert status == "200", payload
         assert payload["state"] == "unconfigured"
         assert payload["public_key_available"] is True
         assert payload["registry_instances"] == 0
 
-        status, payload = _curl_status_and_json(
-            name, _SETUP_STATUS_URL, headers=("Authorization: Bearer wrong-token",)
+        # A wrong code is the dormant 404 (FR-006), never a distinguishable 401.
+        status, body = _curl_status_and_json(
+            name, _SETUP_STATUS_URL, headers=("Authorization: Bearer wrong-code",)
         )
-        assert status == "401", payload
+        assert status == "404", body
+        assert body == {"detail": "Not Found"}
     finally:
         _docker_rm(name)
 
 
 @requires_image_build
-def test_amd64_setup_routes_hidden_without_token_env(amd64_image, empty_state_dir):
-    """With REMO_WEB_API_TOKEN entirely unset the setup surface must not
-    exist (404, indistinguishable from an unknown route — FR-021) while the
-    service still boots and reports `unconfigured` on ready."""
-    name = f"remo-web-test-notoken-{uuid.uuid4().hex[:8]}"
+def test_amd64_setup_routes_dormant_without_session(amd64_image, empty_state_dir):
+    """012: with no live pairing session the setup surface must not exist
+    (404, indistinguishable from an unknown route — FR-005) while the service
+    still boots and reports `unconfigured` on ready."""
+    name = f"remo-web-test-dormant-{uuid.uuid4().hex[:8]}"
     try:
-        _run_unconfigured_container(amd64_image, name, empty_state_dir, token=None)
+        _run_unconfigured_container(amd64_image, name, empty_state_dir, operator_auth="none")
         payload = _wait_for_ready_payload(name)
         assert payload["status"] == "unconfigured"
 
+        # No mint -> dormant.
         status, body = _curl_status_and_json(name, _SETUP_STATUS_URL)
         assert status == "404", body
         assert body == {"detail": "Not Found"}
@@ -1070,7 +1097,6 @@ def test_amd64_root_owned_bind_dir_self_heals_and_app_runs_non_root(
         cmd += _HEAL_RUN_FLAGS
         cmd += [
             "-v", f"{root_owned_state_dir}:{_CONTAINER_REMO_HOME}",
-            "-e", f"REMO_WEB_API_TOKEN={_SETUP_TOKEN}",
             amd64_image,
         ]
         run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -1108,7 +1134,6 @@ def test_amd64_bare_tmpfs_survives_restart_via_reheal(amd64_image, root_owned_st
         cmd += _HEAL_RUN_FLAGS
         cmd += [
             "-v", f"{root_owned_state_dir}:{_CONTAINER_REMO_HOME}",
-            "-e", f"REMO_WEB_API_TOKEN={_SETUP_TOKEN}",
             amd64_image,
         ]
         run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -1152,7 +1177,6 @@ def test_amd64_explicit_non_root_user_still_boots(amd64_image, empty_state_dir):
         cmd += _HEAL_RUN_FLAGS
         cmd += [
             "-v", f"{empty_state_dir}:{_CONTAINER_REMO_HOME}",
-            "-e", f"REMO_WEB_API_TOKEN={_SETUP_TOKEN}",
             amd64_image,
         ]
         run = subprocess.run(cmd, capture_output=True, text=True, timeout=30)

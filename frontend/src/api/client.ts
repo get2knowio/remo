@@ -220,6 +220,81 @@ export async function getReady(): Promise<ReadinessResponse> {
   };
 }
 
+// ---- Pairing (012-web-adopt-pairing) ----
+//
+// The awaiting-adoption page (and the dashboard re-sync affordance) mints an
+// ephemeral pairing code on open, which the operator copies to the clipboard
+// and pastes into `remo web adopt` / `remo web push`. The code is returned only
+// by mintPairingCode() at runtime — never embedded in the bundle (FR-016) — and
+// the caller MUST hold it out of the DOM (copy-only, never displayed).
+
+export interface MintPairingResponse {
+  code: string;
+  expires_in: number;
+}
+
+/**
+ * `POST /api/v1/pairing/mint` — mint a fresh code (rotation-on-open, FR-003).
+ * `origin` distinguishes the adopt page from the dashboard re-sync affordance.
+ * A `403` means operator authentication is required/not configured (the page is
+ * reached through a forward-auth proxy in the gated posture) — surfaced via
+ * ApiError so the page can show guidance rather than a code.
+ */
+export async function mintPairingCode(
+  origin: "adopt" | "resync" = "adopt",
+): Promise<MintPairingResponse> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/v1/pairing/mint?origin=${encodeURIComponent(origin)}`, {
+      method: "POST",
+    });
+  } catch (cause) {
+    throw new ApiError({
+      code: "network_error",
+      message: cause instanceof Error ? cause.message : "Network request failed",
+      retryable: true,
+      remediation: "Check that the Remo web service is reachable.",
+    });
+  }
+  if (response.status === 403) {
+    // Operator authentication required / not configured — surface a distinct
+    // code so the adopt page can prompt to sign in rather than showing a code.
+    throw new ApiError({
+      code: "forbidden",
+      message: "Operator authentication is required to mint a pairing code.",
+      retryable: false,
+      remediation: "Sign in through your access proxy, then reload this page.",
+    });
+  }
+  if (!response.ok) {
+    throw new ApiError({
+      code: "unknown",
+      message: `Mint failed with status ${response.status}`,
+      retryable: true,
+      remediation: "Reload this page to try again.",
+    });
+  }
+  return (await response.json()) as MintPairingResponse;
+}
+
+/**
+ * `POST /api/v1/pairing/end` — best-effort session end (page-hide, FR-004).
+ * Uses `navigator.sendBeacon` when available so it survives page unload; the
+ * server treats it as idempotent and the idle TTL is the authoritative backstop.
+ */
+export function endPairing(): void {
+  const path = "/api/v1/pairing/end";
+  try {
+    if (navigator.sendBeacon?.(path)) {
+      return;
+    }
+  } catch {
+    // fall through to fetch
+  }
+  // keepalive lets the request outlive the page during unload.
+  void fetch(path, { method: "POST", keepalive: true }).catch(() => undefined);
+}
+
 // ---- Terminals (T041, US2) ----
 //
 // Per contracts/rest-api.md and contracts/terminal-websocket.md. The token

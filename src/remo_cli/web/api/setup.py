@@ -1,18 +1,20 @@
-"""Token-gated setup API router (`/api/v1/setup/*`, 011-web-adopt T008).
+"""Pairing-gated setup API router (`/api/v1/setup/*`).
 
-Authentication contract (contracts/setup-api.md, FR-020/FR-021/FR-024),
-enforced for every route on this router by the `require_setup_token`
-dependency:
+011 gated this surface with a static `REMO_WEB_API_TOKEN` bearer. 012
+(web-adopt-pairing) replaces that with an ephemeral **pairing code**: the
+surface is **dormant** (`404`) unless a live pairing session exists, and it is
+authenticated solely by the live code the CLI carries. Enforced for every route
+on this router by the `require_pairing_code` dependency (contracts/setup-api.md,
+FR-005/FR-006):
 
-- token NOT configured (``REMO_WEB_API_TOKEN`` unset/empty) -> ``404`` on
-  every setup route. Fail closed: the surface is disabled and the response
-  is indistinguishable from an unknown route (same body FastAPI returns for
-  a path that does not exist).
-- token configured + correct ``Authorization: Bearer <token>`` -> the route
-  handles the request. Comparison is constant-time (`hmac.compare_digest`).
-- token configured + missing/wrong header -> ``401 {"detail":
-  "unauthorized"}`` with no further detail; the attempt is logged WITHOUT
-  the presented credential.
+- no live pairing session -> ``404 {"detail": "Not Found"}`` on every setup
+  route, byte-identical to an unknown route (dormant surface, fail closed).
+- live session + correct ``Authorization: Bearer <code>`` -> the route handles
+  the request and the session is touched (sliding idle TTL reset). Comparison
+  is constant-time (`hmac.compare_digest`, inside the manager).
+- live session + absent/wrong/expired-or-rotated code -> the SAME dormant
+  ``404`` (never a distinguishable ``401`` that would reveal a session exists,
+  FR-006). The presented code is NEVER logged (FR-016).
 
 Business endpoints (contracts/setup-api.md is the normative wire contract;
 T011/T012/T013), all inheriting the router-level token dependency:
@@ -33,7 +35,6 @@ T011/T012/T013), all inheriting the router-level token dependency:
 
 from __future__ import annotations
 
-import hmac
 import logging
 import re
 from typing import Any
@@ -63,34 +64,42 @@ def _get_settings(request: Request) -> WebSettings:
     return getattr(request.app.state, "settings", None) or WebSettings()
 
 
-async def require_setup_token(request: Request) -> None:
-    """Bearer-token gate shared by every setup route (research R4)."""
-    configured = _get_settings(request).api_token.strip()
-    if not configured:
-        # No token configured: the setup surface does not exist. Mirror
-        # FastAPI's default unknown-route response exactly (FR-021).
-        raise HTTPException(status_code=404, detail="Not Found")
+def _dormant() -> HTTPException:
+    """The dormant response — byte-identical to FastAPI's default unknown-route
+    404 (FR-005/FR-006). A fresh instance per raise (never a shared singleton,
+    which would accumulate traceback/context state)."""
+    return HTTPException(status_code=404, detail="Not Found")
+
+
+async def require_pairing_code(request: Request) -> None:
+    """Pairing-code gate shared by every setup route (FR-005/FR-006).
+
+    Dormant ``404`` unless a live pairing session exists AND the bearer matches
+    the live code. A missing/wrong/expired code is indistinguishable from a
+    dormant surface (same ``404``, never a ``401``). On success the session's
+    sliding idle TTL is reset. The presented code is never logged (FR-016).
+    """
+    manager = request.app.state.pairing_manager
+    if not manager.is_live():
+        raise _dormant()
 
     header = request.headers.get("authorization", "")
     scheme, _, presented = header.partition(" ")
-    if scheme.lower() == "bearer" and hmac.compare_digest(
-        presented.strip().encode(), configured.encode()
-    ):
+    if scheme.lower() == "bearer" and manager.authenticate(presented.strip()) is not None:
         return
 
-    # Log the failure with route/method context, never the presented
-    # credential (FR-024).
+    # Log the failure with route/method context, never the presented credential.
     client = request.client.host if request.client else "unknown"
     logger.warning(
-        "setup API authentication failure from %s: %s %s",
+        "setup API request against no valid pairing code from %s: %s %s",
         client,
         request.method,
         request.url.path,
     )
-    raise HTTPException(status_code=401, detail="unauthorized")
+    raise _dormant()
 
 
-router = APIRouter(prefix="/setup", dependencies=[Depends(require_setup_token)])
+router = APIRouter(prefix="/setup", dependencies=[Depends(require_pairing_code)])
 
 
 # ---------------------------------------------------------------------------
@@ -380,6 +389,15 @@ def post_verify(request: Request) -> VerifyResponse:
     """
     settings = _get_settings(request)
     results = web_check.run_checks(settings, include_instances=True)
+
+    # The verification pass is the terminal authenticated step of both the
+    # adopt and push flows (status -> identity -> registry -> verify). Ending
+    # the session here returns the setup surface to dormant once the flow
+    # completes (FR-007) without severing the in-flight verify call that ending
+    # on the registry PUT would have broken. If a client skips verify, the idle
+    # TTL / page-hide beacon remain the backstop.
+    request.app.state.pairing_manager.end()
+
     return VerifyResponse(
         results=[
             VerifyCheckOut(

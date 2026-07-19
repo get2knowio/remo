@@ -121,15 +121,16 @@ def test_originless_setup_request_bypasses_origin_check(tmp_path, monkeypatch):
     # the route: with a token configured and presented, the request reaches
     # domain validation (422 for a garbage body), never 403.
     settings = _settings()
-    settings.api_token = "csp-test-token"
+    settings.operator_auth = "none"
     settings.web_identity_dir = tmp_path / "web-identity"
     monkeypatch.setenv("REMO_HOME", str(tmp_path))
     application = app_module.create_app(settings)
     with TestClient(application, base_url=_ORIGIN) as client:
+        code, _ = application.state.pairing_manager.mint(None)
         resp = client.put(
             "/api/v1/setup/registry",
             json={},
-            headers={"Authorization": "Bearer csp-test-token"},
+            headers={"Authorization": f"Bearer {code}"},
         )
     assert resp.status_code == 422
 
@@ -138,14 +139,15 @@ def test_setup_request_with_disallowed_origin_still_rejected():
     # A present-but-disallowed Origin on a setup route is still a 403 — only
     # the Origin-less (non-browser) case is exempt.
     settings = _settings()
-    settings.api_token = "csp-test-token"
+    settings.operator_auth = "none"
     application = app_module.create_app(settings)
     with TestClient(application, base_url=_ORIGIN) as client:
+        code, _ = application.state.pairing_manager.mint(None)
         resp = client.put(
             "/api/v1/setup/registry",
             json={},
             headers={
-                "Authorization": "Bearer csp-test-token",
+                "Authorization": f"Bearer {code}",
                 "Origin": "http://evil.example",
             },
         )

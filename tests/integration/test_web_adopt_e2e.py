@@ -1,14 +1,20 @@
-"""End-to-end integration test for CLI-to-Web adoption (011-web-adopt, T026/T043).
+"""End-to-end integration test for CLI-to-Web adoption (012-web-adopt-pairing).
 
-Proves quickstart.md scenarios C (first-time adoption, SC-001/SC-002), D
-(idempotence, FR-015/SC-003), and E (`remo web push` after adoption,
-FR-025/FR-026/FR-027) against a LIVE local service: a real uvicorn
-subprocess serving `create_app()` on an ephemeral 127.0.0.1 port, with
-`REMO_WEB_API_TOKEN` set and its own writable service-side `REMO_HOME`
-(distinct from the workstation-side temp `REMO_HOME`/`$HOME` the adopt flow
-runs under in the test process). The service subprocess and the test process
+Proves quickstart.md scenarios B (first-time adoption via a page-minted pairing
+code), idempotent re-run, and E (`remo web push` after adoption) against a LIVE
+local service: a real uvicorn subprocess serving `create_app()` on an ephemeral
+127.0.0.1 port, in the **network-restricted** operator-auth posture
+(`REMO_WEB_OPERATOR_AUTH=none`) so the test can mint a pairing code over HTTP
+without a forward-auth proxy, with its own writable service-side `REMO_HOME`
+(distinct from the workstation-side temp `REMO_HOME`/`$HOME` the adopt flow runs
+under in the test process). The service subprocess and the test process
 therefore see genuinely different registries/homes, exactly like a real
 workstation adopting a real container.
+
+Each adopt/push obtains a FRESH pairing code (minted via
+`POST /api/v1/pairing/mint`); the code authenticates the whole flow and the
+service ends the session on the terminal `POST /setup/verify` (FR-007), so a
+subsequent probe re-mints.
 
 No real SSH instances exist here, so the workstation-side per-instance SSH
 work is selectively substituted (see `adoption_ssh_mocks`):
@@ -21,9 +27,10 @@ work is selectively substituted (see `adoption_ssh_mocks`):
 * the SSM entry never reaches SSH at all (`skipped_by_design`, FR-012).
 
 The origin-allowlist middleware exempts Origin-less requests to
-/api/v1/setup/* (bearer-token-only surface, no ambient credentials -- see
+/api/v1/setup/* (code-authenticated surface, no ambient credentials -- see
 web/app.py), which is what lets the Origin-less `SetupApiClient` used here
-talk to the live service exactly like the real CLI does.
+talk to the live service exactly like the real CLI does. The browser-facing
+`POST /pairing/mint` DOES require an allowed Origin, which the mint helper sets.
 """
 
 from __future__ import annotations
@@ -67,8 +74,6 @@ requires_live_web = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 # Registry fixture data
 # ---------------------------------------------------------------------------
-
-_TOKEN = "e2e-test-token-123"
 
 #: RFC 5737 TEST-NET-1 -- guaranteed non-routable, so the service-side verify
 #: round-trip to this "instance" fails within its own bounded 5s timeout.
@@ -143,7 +148,6 @@ uvicorn.run(
 class LiveService:
     url: str
     port: int
-    token: str
     remo_home: Path  # service-side state dir (the container's ~/.config/remo)
 
     @property
@@ -153,6 +157,20 @@ class LiveService:
     @property
     def registry_path(self) -> Path:
         return self.remo_home / "known_hosts"
+
+    def mint(self) -> str:
+        """Mint a fresh pairing code over HTTP (network-restricted posture)."""
+        status, body = _http_json(
+            "POST", f"{self.url}/api/v1/pairing/mint", headers={"Origin": self.url}
+        )
+        assert status == 200, (status, body)
+        return str(body["code"])
+
+    def setup_status(self) -> tuple[int, dict]:
+        """GET /setup/status behind a freshly minted code (probe helper)."""
+        return _http_json(
+            "GET", f"{self.url}/api/v1/setup/status", token=self.mint()
+        )
 
 
 def _free_port() -> int:
@@ -210,9 +228,11 @@ def service(tmp_path: Path) -> LiveService:
         {
             "HOME": str(fake_home),
             "REMO_HOME": str(remo_home),
-            "REMO_WEB_API_TOKEN": _TOKEN,
+            # Network-restricted posture: mint a pairing code over HTTP without a
+            # forward-auth proxy (loud-opt-in, FR-013).
+            "REMO_WEB_OPERATOR_AUTH": "none",
             "REMO_WEB_SSH_CONTROL_DIR": str(control_dir),
-            # The Origin value the workaround fixture injects must be allowed.
+            # The Origin the mint helper sets must be allowed.
             "REMO_WEB_ALLOWED_ORIGINS": url,
         }
     )
@@ -244,7 +264,7 @@ def service(tmp_path: Path) -> LiveService:
                 )
             time.sleep(0.2)
 
-        yield LiveService(url=url, port=port, token=_TOKEN, remo_home=remo_home)
+        yield LiveService(url=url, port=port, remo_home=remo_home)
     finally:
         proc.terminate()
         try:
@@ -336,9 +356,7 @@ def test_fresh_boot_is_unconfigured_with_generated_identity(service: LiveService
     public_key = (service.identity_dir / "id_ed25519.pub").read_text().strip()
     assert public_key.endswith(f"remo-web@{state['deployment_id']}")
 
-    status, setup = _http_json(
-        "GET", f"{service.url}/api/v1/setup/status", token=service.token
-    )
+    status, setup = service.setup_status()
     assert status == 200
     assert setup == {
         "state": "unconfigured",
@@ -364,8 +382,8 @@ def test_full_adopt_then_idempotent_rerun(
     status, ready = _http_json("GET", f"{service.url}/api/v1/ready")
     assert (status, ready["status"]) == (200, "unconfigured")
 
-    # ---- First adoption (scenario C) ------------------------------------
-    result = web_adopt.run_adopt(service.url, service.token, interactive=False)
+    # ---- First adoption (scenario B) ------------------------------------
+    result = web_adopt.run_adopt(service.url, service.mint(), interactive=False)
 
     outcomes = {o.host.name: o.outcome for o in result.outcomes}
     assert outcomes == {
@@ -413,20 +431,18 @@ def test_full_adopt_then_idempotent_rerun(
     # Readiness flips off "unconfigured"; setup state is now "adopted".
     status, ready = _http_json("GET", f"{service.url}/api/v1/ready")
     assert (status, ready["status"]) == (200, "ready")
-    status, setup = _http_json(
-        "GET", f"{service.url}/api/v1/setup/status", token=service.token
-    )
+    status, setup = service.setup_status()
     assert status == 200
     assert setup["state"] == "adopted"
     assert setup["registry_instances"] == 3
     assert setup["deployment_id"] == result.deployment_id
 
-    # ---- Second, identical run (scenario D / FR-015) ---------------------
+    # ---- Second, identical run (idempotence / FR-015) -------------------
     registry_bytes = service.registry_path.read_bytes()
     known_hosts_bytes = service_known_hosts.read_bytes()
     state_bytes = (service.identity_dir / "state.json").read_bytes()
 
-    rerun = web_adopt.run_adopt(service.url, service.token, interactive=False)
+    rerun = web_adopt.run_adopt(service.url, service.mint(), interactive=False)
 
     assert {o.host.name: o.outcome for o in rerun.outcomes} == outcomes
     assert rerun.applied == result.applied
@@ -468,7 +484,10 @@ def test_registry_put_preserves_established_sessions(
     the service-side registry (standing in for an established session's held
     resources) and a live keep-alive HTTP connection spanning the PUT.
     """
-    client = web_adopt.SetupApiClient(service.url, service.token)
+    # One minted code drives every call here: the flow never calls /verify, so
+    # the session stays live across both PUTs (it would end only on verify).
+    code = service.mint()
+    client = web_adopt.SetupApiClient(service.url, code)
 
     # Adopt the service (fast path: direct PUT of the same mirror payload the
     # adopt flow builds; no per-instance SSH or verify round-trips needed).
@@ -478,7 +497,7 @@ def test_registry_put_preserves_established_sessions(
     applied = client.put_registry(payload)
     assert applied["applied"] is True
     status, setup = _http_json(
-        "GET", f"{service.url}/api/v1/setup/status", token=service.token
+        "GET", f"{service.url}/api/v1/setup/status", token=code
     )
     assert (status, setup["state"]) == (200, "adopted")
 
@@ -526,53 +545,8 @@ def test_registry_put_preserves_established_sessions(
 
 
 # ---------------------------------------------------------------------------
-# 5-7. T043: push after adoption (US4; quickstart scenario E;
-# FR-025/FR-026/FR-027) against the live service
+# 5. Push after adoption (US4; quickstart scenario E) against the live service
 # ---------------------------------------------------------------------------
-
-
-def _fast_adopt_and_save(service: LiveService) -> web_adopt.SavedCredentials:
-    """Establish the adopted + credentials-saved state on the cheap.
-
-    Direct PUT of the same mirror payload the adopt flow builds (as in the
-    session-continuity test: no per-instance SSH, no verify round-trips)
-    plus `save_credentials()` with the service's REAL identity and the same
-    seeded push cache `run_adopt(save=True)` leaves behind. Used by the
-    failure-path push tests, where re-running the whole adopt flow would
-    only add runtime.
-    """
-    client = web_adopt.SetupApiClient(service.url, service.token)
-    identity = client.get_identity()
-    applied = client.put_registry(
-        web_adopt.build_adoption_payload(
-            _HOSTS, {_DIRECT.name: list(_CANNED_HOST_KEY_LINES)}
-        )
-    )
-    assert applied["applied"] is True
-
-    credentials = web_adopt.SavedCredentials(
-        url=service.url,
-        token=service.token,
-        deployment_id=str(identity["deployment_id"]),
-        push_cache={
-            _DIRECT.name: web_adopt.CachedInstance(
-                fingerprint=web_adopt.instance_fingerprint(_DIRECT),
-                host_keys=list(_CANNED_HOST_KEY_LINES),
-            )
-        },
-    )
-    web_adopt.save_credentials(credentials)
-    return credentials
-
-
-def _corrupt_saved_credentials(ws_remo: Path, **overrides: str) -> Path:
-    """Rewrite fields of the saved web-service.json in place (simulating a
-    service-side token rotation / state-volume reset without a restart)."""
-    path = ws_remo / "web-service.json"
-    data = json.loads(path.read_text())
-    data.update(overrides)
-    path.write_text(json.dumps(data))
-    return path
 
 
 @requires_live_web
@@ -581,28 +555,29 @@ def test_push_after_adopt_processes_only_the_new_instance(
     workstation: Path,
     adoption_ssh_mocks: dict,
 ):
-    """Scenario E happy path: adopt + save, register a new direct-access
-    instance workstation-side, `run_push()` -- only the new instance gets
-    keyscan+authorize; the original is `unchanged` from the delta cache but
-    still contributes its cached host-key lines to the full mirror PUT."""
-    # ---- Adopt with explicit credential save (FR-025) --------------------
-    result = web_adopt.run_adopt(
-        service.url, service.token, interactive=False, save=True
-    )
+    """Scenario E happy path: adopt (auto-seeds the non-secret push cache),
+    register a new direct-access instance workstation-side, `run_push()` with a
+    fresh code -- only the new instance gets keyscan+authorize; the original is
+    `unchanged` from the delta cache but still contributes its cached host-key
+    lines to the full mirror PUT."""
+    # ---- Adopt (auto-seeds the deployment-keyed push cache, no secret) ---
+    result = web_adopt.run_adopt(service.url, service.mint(), interactive=False)
     assert {o.host.name: o.outcome for o in result.outcomes} == {
         "webbox": web_adopt.OUTCOME_ADOPTED,
         "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
         "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
     }
 
-    creds_path = workstation / "web-service.json"
-    assert creds_path.stat().st_mode & 0o777 == 0o600
-    saved = json.loads(creds_path.read_text())
-    assert saved["url"] == service.url
-    assert saved["deployment_id"] == result.deployment_id
-    # Delta cache seeded with exactly the adopted instance + its pushed lines.
-    assert set(saved["push_cache"]) == {"webbox"}
-    assert saved["push_cache"]["webbox"]["host_keys"] == _CANNED_HOST_KEY_LINES
+    cache_path = workstation / "web-service.json"
+    assert cache_path.stat().st_mode & 0o777 == 0o600
+    saved = json.loads(cache_path.read_text())
+    # No secret is persisted (FR-019): no url, no token/code, no top-level id.
+    assert set(saved) == {"push_cache"}
+    dep = result.deployment_id
+    # Delta cache is deployment-keyed and seeded with the adopted instance.
+    assert set(saved["push_cache"]) == {dep}
+    assert set(saved["push_cache"][dep]) == {"webbox"}
+    assert saved["push_cache"][dep]["webbox"]["host_keys"] == _CANNED_HOST_KEY_LINES
 
     adoption_ssh_mocks["scanned"].clear()
     adoption_ssh_mocks["authorized"].clear()
@@ -611,8 +586,8 @@ def test_push_after_adopt_processes_only_the_new_instance(
     registry = workstation / "known_hosts"
     registry.write_text(registry.read_text() + _NEW_DIRECT.to_line() + "\n")
 
-    # ---- Zero-argument push (FR-026) -------------------------------------
-    push = web_adopt.run_push(interactive=False)
+    # ---- Push with a freshly minted code (FR-018/FR-019) -----------------
+    push = web_adopt.run_push(service.url, service.mint(), interactive=False)
 
     assert {o.host.name: o.outcome for o in push.outcomes} == {
         "webbox": web_adopt.OUTCOME_UNCHANGED,
@@ -653,84 +628,44 @@ def test_push_after_adopt_processes_only_the_new_instance(
         line + "\n" for line in _NEW_CANNED_HOST_KEY_LINES
     )
 
-    status, setup = _http_json(
-        "GET", f"{service.url}/api/v1/setup/status", token=service.token
-    )
+    status, setup = service.setup_status()
     assert status == 200
     assert setup["state"] == "adopted"
     assert setup["registry_instances"] == 4
 
     # The delta cache was rewritten after the successful PUT: both adopted
-    # instances now present, so the NEXT push would skip newbox too.
-    resaved = json.loads(creds_path.read_text())
-    assert set(resaved["push_cache"]) == {"webbox", "newbox"}
-    assert resaved["push_cache"]["newbox"]["host_keys"] == _NEW_CANNED_HOST_KEY_LINES
-    assert resaved["push_cache"]["webbox"] == saved["push_cache"]["webbox"]
+    # instances now present under the same deployment key, so the NEXT push
+    # would skip newbox too.
+    resaved = json.loads(cache_path.read_text())
+    assert set(resaved["push_cache"][dep]) == {"webbox", "newbox"}
+    assert resaved["push_cache"][dep]["newbox"]["host_keys"] == _NEW_CANNED_HOST_KEY_LINES
+    assert resaved["push_cache"][dep]["webbox"] == saved["push_cache"][dep]["webbox"]
 
 
 @requires_live_web
-def test_push_with_rotated_token_fails_with_reauth_guidance(
+def test_push_with_dormant_code_fails_with_reopen_guidance(
     service: LiveService,
     workstation: Path,
     adoption_ssh_mocks: dict,
 ):
-    """FR-027: a saved token the service no longer accepts (token rotation,
-    simulated by corrupting web-service.json) must fail with clear re-adopt
-    guidance -- before any per-instance work or registry PUT."""
-    _fast_adopt_and_save(service)
-    _corrupt_saved_credentials(workstation, token="rotated-away-token")
-
+    """A stale/dormant code (never minted, or already used) makes every setup
+    call return the dormant 404, which the CLI maps to reopen-the-page guidance
+    -- before any per-instance work or registry PUT."""
+    # Adopt once so there is a registry to (not) disturb.
+    web_adopt.run_adopt(service.url, service.mint(), interactive=False)
+    adoption_ssh_mocks["scanned"].clear()
+    adoption_ssh_mocks["authorized"].clear()
     registry_before = service.registry_path.read_bytes()
-    with pytest.raises(web_adopt.SetupAuthError) as excinfo:
-        web_adopt.run_push(interactive=False)
 
-    assert excinfo.value.status == 401
+    # A code that was never minted -> the surface is dormant for it.
+    with pytest.raises(web_adopt.SetupNotFoundError) as excinfo:
+        web_adopt.run_push(service.url, "never-minted-code", interactive=False)
+
     message = str(excinfo.value)
-    assert "rejected the saved API token" in message
-    assert "remo web adopt" in message  # the documented re-auth remediation
+    assert "dormant" in message
+    assert "fresh code" in message  # reopen-the-page remediation
 
-    # Failed at the identity precheck: no instance was touched, no PUT.
+    # Failed at the first setup call: no instance touched, no PUT.
     assert adoption_ssh_mocks["scanned"] == []
     assert adoption_ssh_mocks["authorized"] == []
     assert service.registry_path.read_bytes() == registry_before
-
-
-@requires_live_web
-def test_push_with_stale_deployment_id_fails_without_put(
-    service: LiveService,
-    workstation: Path,
-    adoption_ssh_mocks: dict,
-):
-    """A deployment_id mismatch (service state volume reset since the save)
-    must abort the push with re-adopt guidance BEFORE any PUT, leaving the
-    service registry, known_hosts, and workstation credentials untouched."""
-    _fast_adopt_and_save(service)
-    creds_path = _corrupt_saved_credentials(
-        workstation, deployment_id="00000000-stale-deployment-id"
-    )
-
-    registry_before = service.registry_path.read_bytes()
-    known_hosts_before = (service.identity_dir / "known_hosts").read_bytes()
-
-    with pytest.raises(web_adopt.AdoptError) as excinfo:
-        web_adopt.run_push(interactive=False)
-
-    message = str(excinfo.value)
-    assert "service identity changed" in message
-    assert "00000000-stale-deployment-id" in message
-    assert "re-adopt" in message  # remediation: run `remo web adopt` again
-    # A mismatch is a local trust decision, not an HTTP failure.
-    assert not isinstance(excinfo.value, web_adopt.SetupApiError)
-
-    # No PUT happened: service-side files are byte-identical, no instance
-    # was scanned or authorized, and the saved credentials (including the
-    # corrupted deployment_id) were not rewritten -- the cache rewrite only
-    # ever follows a successful PUT.
-    assert adoption_ssh_mocks["scanned"] == []
-    assert adoption_ssh_mocks["authorized"] == []
-    assert service.registry_path.read_bytes() == registry_before
-    assert (service.identity_dir / "known_hosts").read_bytes() == known_hosts_before
-    assert (
-        json.loads(creds_path.read_text())["deployment_id"]
-        == "00000000-stale-deployment-id"
-    )

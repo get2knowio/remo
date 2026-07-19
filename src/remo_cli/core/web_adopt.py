@@ -11,32 +11,42 @@ Implements the CLI half of specs/011-web-adopt/contracts/cli-web-adopt.md:
 * Idempotent ``authorized_keys`` management on instances (research R7, FR-011).
 * ``--via`` SSH local-forward tunnel helper (research R9, FR-018).
 * Adopt orchestration (contract flow steps 1-7, FR-013/FR-014/FR-015/FR-017).
-* Saved-credentials read/write (research R10, FR-025) — reused by
-  ``remo web push`` (US4).
-* Push orchestration (``run_push``, US4 / FR-026 / FR-027).
+* Non-secret push cache read/write (012 R10) — reused by ``remo web push``.
+* Push orchestration (``run_push``, US4).
 
-Push delta-cache design (FR-026)
---------------------------------
+Credential model (012-web-adopt-pairing)
+----------------------------------------
 
-The service has no registry-read endpoint, so "unchanged since the last
-push" is decided workstation-side: the saved-credentials file
-(``~/.config/remo/web-service.json``) carries a backward-compatible
-``push_cache`` field mapping each successfully adopted instance *name* to
+011 sent a static ``REMO_WEB_API_TOKEN`` and saved it (with the URL) for later
+``remo web push``. 012 replaces that with an **ephemeral pairing code** minted
+by the adopt page: the CLI sends whatever code it is handed as the bearer, and
+**nothing durable is persisted** (FR-018/FR-019). Both ``adopt`` and ``push``
+resolve URL + code the same way every time (option / env / prompt). When a
+setup call returns the dormant ``404`` (the code expired or was rotated by a
+page reopen), the CLI tells the operator to reopen the page for a fresh code
+(FR-020).
 
-* a ``fingerprint`` — SHA256 over the canonical registry-entry fields
-  (type/name/host/user/instance_id/access_mode/region), and
-* the verified ``host_keys`` lines that were pushed for it.
+Push delta-cache design (non-secret optimization)
+-------------------------------------------------
 
-On ``remo web push``, a direct-access instance whose current fingerprint
-matches the cache skips keyscan + authorize (reported as ``unchanged``) and
-its cached host-key lines are reused in the payload — necessary because
-``PUT /setup/registry`` replaces the service's known_hosts wholesale, so
-every mirrored instance must contribute its lines on every push. New or
-changed instances get the full adopt treatment. The full registry mirror is
-always PUT regardless (clarification Q1: removals propagate; the service
-identity is NOT auto-de-authorized on removed instances — that stays a
-manual, documented action). The cache is rewritten atomically (0600) only
-after a successful PUT.
+The service has no registry-read endpoint, so "unchanged since the last push"
+is decided workstation-side by a **non-secret** cache
+(``~/.config/remo/web-service.json``) mapping each service ``deployment_id`` to
+``{instance name -> {fingerprint, host_keys}}`` — no URL and no code are ever
+stored. The ``fingerprint`` is a SHA256 over the canonical registry-entry fields
+(type/name/host/user/instance_id/access_mode/region) and ``host_keys`` are the
+verified known_hosts lines pushed for that instance.
+
+On ``remo web push``, a direct-access instance whose current fingerprint matches
+the cache for the service's ``deployment_id`` skips keyscan + authorize
+(reported as ``unchanged``) and its cached host-key lines are reused in the
+payload — necessary because ``PUT /setup/registry`` replaces the service's
+known_hosts wholesale, so every mirrored instance must contribute its lines on
+every push. New or changed instances get the full adopt treatment. The full
+registry mirror is always PUT regardless (removals propagate; the service
+identity is NOT auto-de-authorized on removed instances — that stays a manual,
+documented action). The cache is rewritten atomically (0600) only after a
+successful PUT.
 """
 
 from __future__ import annotations
@@ -128,11 +138,11 @@ class SetupApiError(AdoptError):
 
 
 class SetupAuthError(SetupApiError):
-    """401 — the service rejected the API token."""
+    """401 — legacy auth rejection (012: the setup surface returns 404 instead)."""
 
 
 class SetupNotFoundError(SetupApiError):
-    """404 — setup surface disabled (no token configured) or wrong URL."""
+    """404 — dormant setup surface (code expired/rotated / no live session) or wrong URL."""
 
 
 class MountConfiguredError(SetupApiError):
@@ -157,14 +167,6 @@ class EmptyRegistryError(AdoptError):
 
 class TunnelError(AdoptError):
     """The --via SSH tunnel could not be established (FR-018)."""
-
-
-class MissingCredentialsError(AdoptError):
-    """`remo web push` found no saved credentials (US4 scenario 4 / FR-027).
-
-    The CLI catches this specifically and falls back to the first-time adopt
-    flow (URL/token prompts + save offer) instead of exiting 1.
-    """
 
 
 # ---------------------------------------------------------------------------
@@ -272,15 +274,18 @@ class SetupApiClient:
 
         if status == 401:
             return SetupAuthError(
-                "the service rejected the API token (HTTP 401). Check the token "
-                "against the service's REMO_WEB_API_TOKEN and try again.",
+                "the service returned HTTP 401. Reopen the adopt page (or the "
+                "dashboard's re-sync affordance) to mint a fresh pairing code, "
+                "then retry.",
                 status=401,
             )
         if status == 404:
             return SetupNotFoundError(
-                f"setup API not found at {self.base_url} (HTTP 404). Either the URL "
-                "is wrong, or the service has no REMO_WEB_API_TOKEN configured — "
-                "without a token the setup surface is disabled.",
+                f"the pairing code is no longer valid — the setup surface at "
+                f"{self.base_url} is dormant (HTTP 404). The code may have expired "
+                "or been rotated by a page reopen (or the URL is wrong). Reopen "
+                "the adopt page (or the dashboard's re-sync affordance) to mint a "
+                "fresh code, then retry.",
                 status=404,
             )
         if status == 409:
@@ -701,31 +706,22 @@ def open_via_tunnel(
 
 
 # ---------------------------------------------------------------------------
-# Saved adoption credentials (research R10, FR-025) — used at the end of a
-# successful adopt and by `remo web push` (US4).
+# Non-secret push cache (012 R10) — accelerates re-push by skipping keyscan/
+# authorize for unchanged instances. Keyed by the service deployment_id; holds
+# NO url and NO pairing code (nothing durable is persisted, FR-019).
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class CachedInstance:
-    """Per-instance delta-cache entry from the last successful push (FR-026)."""
+    """Per-instance delta-cache entry from the last successful push."""
 
     fingerprint: str
     host_keys: list[str] = field(default_factory=list)
 
 
-@dataclass
-class SavedCredentials:
-    url: str
-    token: str
-    deployment_id: str
-    #: Delta cache keyed by registry entry name (see module docstring).
-    #: Backward-compatible: absent/malformed in the file -> empty dict.
-    push_cache: dict[str, CachedInstance] = field(default_factory=dict)
-
-
 def instance_fingerprint(host: KnownHost) -> str:
-    """SHA256 over the canonical registry-entry fields of *host* (FR-026).
+    """SHA256 over the canonical registry-entry fields of *host*.
 
     Any change to the fields the service mirrors (host, user, access mode, …)
     changes the fingerprint, forcing the full keyscan+authorize treatment on
@@ -735,16 +731,20 @@ def instance_fingerprint(host: KnownHost) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def credentials_path() -> Path:
-    """Path of the saved-credentials file (``~/.config/remo/web-service.json``)."""
+#: Push cache shape: deployment_id -> {instance name -> CachedInstance}.
+PushCache = dict[str, dict[str, "CachedInstance"]]
+
+
+def push_cache_path() -> Path:
+    """Path of the non-secret push cache (``~/.config/remo/web-service.json``)."""
     return get_remo_home_readonly() / "web-service.json"
 
 
-def _parse_push_cache(raw: object) -> dict[str, CachedInstance]:
-    """Leniently parse the optional ``push_cache`` field; junk -> dropped."""
-    cache: dict[str, CachedInstance] = {}
+def _parse_instances(raw: object) -> dict[str, CachedInstance]:
+    """Leniently parse one deployment's ``{name -> {fingerprint, host_keys}}``."""
+    instances: dict[str, CachedInstance] = {}
     if not isinstance(raw, dict):
-        return cache
+        return instances
     for name, entry in raw.items():
         if not (isinstance(name, str) and isinstance(entry, dict)):
             continue
@@ -754,57 +754,55 @@ def _parse_push_cache(raw: object) -> dict[str, CachedInstance]:
             continue
         if not (isinstance(host_keys, list) and all(isinstance(k, str) for k in host_keys)):
             host_keys = []
-        cache[name] = CachedInstance(fingerprint=fingerprint, host_keys=list(host_keys))
-    return cache
+        instances[name] = CachedInstance(fingerprint=fingerprint, host_keys=list(host_keys))
+    return instances
 
 
-def load_saved_credentials() -> SavedCredentials | None:
-    """Load saved credentials, or None when absent/unreadable/malformed.
+def load_push_cache() -> PushCache:
+    """Load the deployment-keyed push cache, or ``{}`` when absent/unreadable.
 
-    Files written before the push delta cache existed (no ``push_cache``
-    field) load fine with an empty cache.
+    Files written by the 011 credential format (top-level ``url``/``token`` +
+    name-keyed ``push_cache``) do not match the deployment-keyed shape and are
+    ignored (they parse to an empty cache), so the next push simply retries in
+    full and the next save overwrites the stale file — no secret is ever read.
     """
-    path = credentials_path()
+    path = push_cache_path()
     try:
         parsed = json.loads(path.read_text())
     except (OSError, json.JSONDecodeError):
-        return None
+        return {}
     if not isinstance(parsed, dict):
-        return None
-    url = parsed.get("url")
-    token = parsed.get("token")
-    deployment_id = parsed.get("deployment_id")
-    if not (isinstance(url, str) and isinstance(token, str) and isinstance(deployment_id, str)):
-        return None
-    return SavedCredentials(
-        url=url,
-        token=token,
-        deployment_id=deployment_id,
-        push_cache=_parse_push_cache(parsed.get("push_cache")),
-    )
+        return {}
+    raw_cache = parsed.get("push_cache")
+    if not isinstance(raw_cache, dict):
+        return {}
+    cache: PushCache = {}
+    for deployment_id, instances in raw_cache.items():
+        if not isinstance(deployment_id, str):
+            continue
+        parsed_instances = _parse_instances(instances)
+        if parsed_instances:
+            cache[deployment_id] = parsed_instances
+    return cache
 
 
-def save_credentials(credentials: SavedCredentials) -> Path:
-    """Write credentials to ``credentials_path()`` atomically with 0600 perms.
+def save_push_cache(cache: PushCache) -> Path:
+    """Write the push cache to ``push_cache_path()`` atomically with 0600 perms.
 
-    Creating the file requires explicit consent (``--save`` or an interactive
-    yes) — FR-025; the caller enforces that. Rewriting an existing file (e.g.
-    the push delta-cache update) needs no new consent. Written via temp-file
-    + ``os.replace`` in the same directory so a crash never leaves a partial
-    or world-readable file; 0600 is enforced even when overwriting a file
-    that pre-existed with wider permissions.
+    The cache holds no secret (no url, no code), but it is written 0600 anyway
+    via temp-file + ``os.replace`` so a crash never leaves a partial file.
     """
-    path = credentials_path()
+    path = push_cache_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(
         {
-            "url": credentials.url,
-            "token": credentials.token,
-            "deployment_id": credentials.deployment_id,
             "push_cache": {
-                name: {"fingerprint": c.fingerprint, "host_keys": c.host_keys}
-                for name, c in credentials.push_cache.items()
-            },
+                deployment_id: {
+                    name: {"fingerprint": c.fingerprint, "host_keys": c.host_keys}
+                    for name, c in instances.items()
+                }
+                for deployment_id, instances in cache.items()
+            }
         },
         indent=2,
     )
@@ -820,7 +818,7 @@ def save_credentials(credentials: SavedCredentials) -> Path:
         except OSError:
             pass
         raise
-    os.chmod(path, 0o600)  # replace preserves the temp perms; belt-and-braces
+    os.chmod(path, 0o600)
     return path
 
 
@@ -969,6 +967,20 @@ def _cache_from_outcomes(
     return cache
 
 
+def _update_push_cache(deployment_id: str, instances: dict[str, CachedInstance]) -> None:
+    """Merge one deployment's entry into the on-disk push cache (best-effort).
+
+    A write failure is non-fatal: the cache is only an optimization, so a push
+    that cannot persist it still succeeds and simply retries in full next time.
+    """
+    try:
+        cache = load_push_cache()
+        cache[deployment_id] = instances
+        save_push_cache(cache)
+    except OSError as e:
+        print_warning(f"could not update the push cache ({push_cache_path()}): {e}")
+
+
 def render_summary(outcomes: list[InstanceOutcome]) -> None:
     """Render the per-instance summary table (contract output contract)."""
     print()
@@ -1034,6 +1046,33 @@ def render_verification(verify: dict[str, Any], outcomes: list[InstanceOutcome])
         print_warning("Some service-side checks failed (see above).")
 
 
+def _run_flow_maybe_tunneled(
+    url: str,
+    token: str,
+    via: str | None,
+    verb: str,
+    flow: Callable[[SetupApiClient], AdoptResult],
+) -> AdoptResult:
+    """Run *flow* against a `SetupApiClient`, optionally through a `--via` SSH
+    tunnel. A 400/403 seen through the tunnel is remapped to Host-allowlist
+    guidance (FR-018); *verb* ("adopting"/"pushing") tailors that message."""
+    if via:
+        print_info(f"Opening SSH tunnel via {via}...")
+        with open_via_tunnel(via, url) as tunneled_url:
+            try:
+                return flow(SetupApiClient(tunneled_url, token))
+            except SetupApiError as e:
+                if e.status in (400, 403):
+                    raise AdoptError(
+                        f"the service rejected the tunneled request (HTTP {e.status}) "
+                        f"— most likely its Host allowlist. When {verb} through "
+                        "--via, the service's REMO_WEB_ALLOWED_HOSTS must include "
+                        "127.0.0.1."
+                    ) from e
+                raise
+    return flow(SetupApiClient(url, token))
+
+
 def run_adopt(
     url: str,
     token: str,
@@ -1041,54 +1080,27 @@ def run_adopt(
     via: str | None = None,
     allow_empty: bool = False,
     assume_yes: bool = False,
-    save: bool = False,
     interactive: bool | None = None,
 ) -> AdoptResult:
-    """Run the full adopt flow (contract steps 1-7). Raises AdoptError on hard
-    failure; returns an AdoptResult when the flow completed (CLI exit 0, even
-    with per-instance skips/flags)."""
+    """Run the full adopt flow (contract steps 1-7). ``token`` is the pairing
+    code. Raises AdoptError on hard failure; returns an AdoptResult when the
+    flow completed (CLI exit 0, even with per-instance skips/flags)."""
     if interactive is None:
         interactive = sys.stdin.isatty() and not assume_yes
-
-    if via:
-        print_info(f"Opening SSH tunnel via {via}...")
-        with open_via_tunnel(via, url) as tunneled_url:
-            client = SetupApiClient(tunneled_url, token)
-            try:
-                return _adopt_flow(
-                    client,
-                    original_url=url,
-                    allow_empty=allow_empty,
-                    interactive=interactive,
-                    save=save,
-                )
-            except SetupApiError as e:
-                if e.status in (400, 403):
-                    raise AdoptError(
-                        f"the service rejected the tunneled request (HTTP {e.status}) "
-                        "— most likely its Host allowlist. When adopting through "
-                        "--via, the service's REMO_WEB_ALLOWED_HOSTS must include "
-                        "127.0.0.1."
-                    ) from e
-                raise
-
-    client = SetupApiClient(url, token)
-    return _adopt_flow(
-        client,
-        original_url=url,
-        allow_empty=allow_empty,
-        interactive=interactive,
-        save=save,
+    return _run_flow_maybe_tunneled(
+        url,
+        token,
+        via,
+        "adopting",
+        lambda client: _adopt_flow(client, allow_empty=allow_empty, interactive=interactive),
     )
 
 
 def _adopt_flow(
     client: SetupApiClient,
     *,
-    original_url: str,
     allow_empty: bool,
     interactive: bool,
-    save: bool,
 ) -> AdoptResult:
     # Step 1: status precheck (FR-017).
     status = client.get_status()
@@ -1146,27 +1158,12 @@ def _adopt_flow(
     render_summary(outcomes)
     render_verification(verify, outcomes)
 
-    # Step 7: saved-credentials offer (FR-025). --save is explicit consent;
-    # an interactive yes is explicit consent; --yes alone never saves.
-    should_save = save or (
-        interactive
-        and confirm(
-            f"Save service URL and token to {credentials_path()} for `remo web push`?"
-        )
-    )
-    if should_save:
-        # Seed the push delta cache from this run's outcomes so the first
-        # `remo web push` after adoption already skips unchanged instances
-        # (FR-026, module docstring design).
-        saved_path = save_credentials(
-            SavedCredentials(
-                url=original_url,
-                token=client.token,
-                deployment_id=deployment_id,
-                push_cache=_cache_from_outcomes(outcomes, host_keys),
-            )
-        )
-        print_success(f"Credentials saved to {saved_path} (mode 0600).")
+    # Step 7: seed the non-secret push cache from this run's outcomes so the
+    # first `remo web push` after adoption already skips unchanged instances
+    # (012 R10). No consent needed — no url or code is stored (FR-019), only
+    # per-instance fingerprints keyed by the service deployment_id.
+    if deployment_id:
+        _update_push_cache(deployment_id, _cache_from_outcomes(outcomes, host_keys))
 
     return AdoptResult(
         outcomes=outcomes,
@@ -1182,95 +1179,75 @@ def _adopt_flow(
 
 
 def run_push(
+    url: str,
+    token: str,
     *,
+    via: str | None = None,
     allow_empty: bool = False,
     assume_yes: bool = False,
     interactive: bool | None = None,
 ) -> AdoptResult:
-    """Run the zero-argument re-sync flow (`remo web push`, US4).
+    """Run the re-sync flow (`remo web push`, US4). ``token`` is a pairing code.
 
-    Loads saved credentials (absent/unreadable -> MissingCredentialsError, which
-    the CLI maps to the first-time adopt fallback), verifies the service still
-    has the adopted identity, then re-runs the adopt flow with the delta cache
-    applied: instances whose registry entry matches the last successful push
-    skip keyscan/authorize (``unchanged``) and reuse their cached host-key
-    lines; new/changed instances get the full per-instance treatment. The full
-    registry mirror is always PUT (removals propagate — clarification Q1).
-    Raises AdoptError on hard failure; returns AdoptResult on completion.
+    URL + code are supplied every time (option / env / prompt) — nothing durable
+    is saved (FR-018/FR-019). The service's ``deployment_id`` (read from the
+    setup API) selects the matching entry in the non-secret push cache: instances
+    whose registry entry matches the last successful push skip keyscan/authorize
+    (``unchanged``) and reuse their cached host-key lines; new/changed instances
+    get the full per-instance treatment. The full registry mirror is always PUT
+    (removals propagate). Raises AdoptError on hard failure; returns AdoptResult
+    on completion.
     """
-    credentials = load_saved_credentials()
-    if credentials is None:
-        raise MissingCredentialsError(
-            f"no saved service credentials found at {credentials_path()} "
-            "(none were saved during adoption, or the file is unreadable)."
-        )
     if interactive is None:
         interactive = sys.stdin.isatty() and not assume_yes
-
-    client = SetupApiClient(credentials.url, credentials.token)
-    return _push_flow(
-        client, credentials, allow_empty=allow_empty, interactive=interactive
+    return _run_flow_maybe_tunneled(
+        url,
+        token,
+        via,
+        "pushing",
+        lambda client: _push_flow(client, allow_empty=allow_empty, interactive=interactive),
     )
 
 
 def _push_flow(
     client: SetupApiClient,
-    credentials: SavedCredentials,
     *,
     allow_empty: bool,
     interactive: bool,
 ) -> AdoptResult:
-    print_info(f"Using saved credentials from {credentials_path()} ({client.base_url}).")
+    # Step 1: status precheck (FR-017) — a mount-configured service is read-only.
+    status = client.get_status()
+    if str(status.get("state", "unknown")) == "mount_configured":
+        raise MountConfiguredError(_MOUNT_CONFIGURED_MSG)
 
-    # Step 1: identity check — the saved deployment_id must still be the one
-    # running, otherwise the state volume was reset and the saved trust in it
-    # (and every authorized_keys entry the old identity had) is stale.
-    try:
-        identity = client.get_identity()
-    except SetupAuthError as e:
-        # FR-027: rejected saved token -> exit 1 with re-adopt guidance.
-        raise SetupAuthError(
-            f"the service at {client.base_url} rejected the saved API token "
-            "(HTTP 401) — it was probably rotated on the service. Re-run "
-            "`remo web adopt` with the current token to re-authenticate and "
-            "refresh the saved credentials.",
-            status=401,
-        ) from e
-
+    # Step 2: service identity + the push cache entry for this deployment.
+    identity = client.get_identity()
     deployment_id = str(identity.get("deployment_id") or "")
     public_key = str(identity.get("public_key") or "")
-    if deployment_id != credentials.deployment_id:
-        raise AdoptError(
-            "service identity changed (saved deployment_id "
-            f"{credentials.deployment_id or 'unknown'}, service reports "
-            f"{deployment_id or 'unknown'}) — the state volume was reset; "
-            "run `remo web adopt` to re-adopt the service with its new identity."
-        )
     if not public_key:
         raise AdoptError(
             "the service returned no public key, so it cannot be authorized on "
             "any instance. The service identity may be missing — check the "
             "service's state volume and logs."
         )
-    print_info(
-        f"Service identity: remo-web@{deployment_id or 'unknown'} "
-        "(matches saved credentials)"
-    )
+    print_info(f"Service identity: remo-web@{deployment_id or 'unknown'}")
 
-    # Step 2: build the mirror from the local registry (FR-008/FR-016).
+    cached_instances = load_push_cache().get(deployment_id, {})
+
+    # Step 3: build the mirror from the local registry (FR-008/FR-016).
     hosts = get_known_hosts()
     if not hosts and not allow_empty:
         raise EmptyRegistryError(_empty_registry_message())
 
-    # Step 3: per-instance loop with delta detection (FR-026). An instance
-    # whose fingerprint matches the cache skips keyscan/authorize but its
-    # cached host-key lines are REUSED in the payload: PUT /setup/registry
-    # replaces the service's known_hosts wholesale, so every mirrored
-    # direct-access instance must contribute lines on every push.
+    # Step 4: per-instance loop with delta detection. An instance whose
+    # fingerprint matches the cache skips keyscan/authorize but its cached
+    # host-key lines are REUSED in the payload: PUT /setup/registry replaces the
+    # service's known_hosts wholesale, so every mirrored direct-access instance
+    # must contribute lines on every push.
     outcomes: list[InstanceOutcome] = []
     host_keys: dict[str, list[str]] = {}
     for host in hosts:
-        cached = credentials.push_cache.get(host.name)
+        cached = cached_instances.get(host.name)
         if (
             is_direct_access(host)
             and cached is not None
@@ -1296,11 +1273,11 @@ def _push_flow(
             )
         )
 
-    # Instances the last push knew but the mirror no longer contains
-    # (clarification Q1: they drop off the service, revocation stays manual).
-    removed = sorted(set(credentials.push_cache) - {h.name for h in hosts})
+    # Instances the last push knew but the mirror no longer contains (they drop
+    # off the service; revocation stays a manual, documented action).
+    removed = sorted(set(cached_instances) - {h.name for h in hosts})
 
-    # Step 4: always PUT the full mirror (removals propagate).
+    # Step 5: always PUT the full mirror (removals propagate).
     payload = build_adoption_payload(hosts, host_keys, allow_empty=True)
     applied = client.put_registry(payload, allow_empty=allow_empty)
     print_success(
@@ -1308,15 +1285,13 @@ def _push_flow(
         f"host keys for {applied.get('host_key_instances', len(host_keys))}."
     )
 
-    # Step 5: only after a successful PUT, rewrite the delta cache (removed
-    # instances drop out; skipped/flagged instances get no entry so the next
-    # push retries them in full). Rewriting the existing file needs no new
-    # consent (FR-025 covers creation).
-    credentials.push_cache = _cache_from_outcomes(outcomes, host_keys)
-    credentials.deployment_id = deployment_id
-    save_credentials(credentials)
+    # Step 6: only after a successful PUT, rewrite the delta cache for this
+    # deployment (removed instances drop out; skipped/flagged instances get no
+    # entry so the next push retries them in full).
+    if deployment_id:
+        _update_push_cache(deployment_id, _cache_from_outcomes(outcomes, host_keys))
 
-    # Step 6: service-side verification (FR-014), same as adopt.
+    # Step 7: service-side verification (FR-014), same as adopt.
     print_info("Running service-side verification...")
     verify = client.post_verify()
 

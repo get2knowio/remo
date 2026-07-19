@@ -75,6 +75,12 @@ async def ready(request: Request) -> JSONResponse:
         "ssh": ssh_status,
         "aws_cli": aws_cli_status,
         "ssm_plugin": ssm_plugin_status,
+        # Additive operator-auth posture (012-web-adopt-pairing, FR-013): a
+        # constant diagnostic that surfaces the weaker network-restricted mode.
+        # It is independent of pairing-session state (dormant/live/post-adoption)
+        # so readiness output stays byte-stable across those states (SC-008),
+        # and it never gates readiness (not read by required_ok below).
+        "operator_auth": _operator_auth_posture(settings),
     }
 
     # Unconfigured is a *healthy* 200 state (research R11): the container is
@@ -133,6 +139,23 @@ async def ready(request: Request) -> JSONResponse:
             "detail": detail,
         },
     )
+
+
+def _operator_auth_posture(settings: WebSettings) -> str:
+    """Label the operator-auth posture for readiness diagnostics (FR-013).
+
+    Derived directly from config (never raises) so readiness is robust: the
+    fail-fast for forward-auth-without-a-header lives in app startup, so a
+    running service is always in a valid posture.
+    """
+    mode = settings.operator_auth.strip().lower()
+    if mode == "forward":
+        return "forward"
+    if mode == "none":
+        return "network-restricted"
+    if mode == "":
+        return "unconfigured"
+    return "unknown"
 
 
 def _check_registry() -> str:
