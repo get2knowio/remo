@@ -65,6 +65,13 @@ export class TerminalConnection {
   private reconnectAttempts = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private _needsManualReconnect = false;
+  /** True while an attach() is between requesting a fresh terminal and having a
+   * socket assigned — serializes the burst of wake events (visibilitychange +
+   * focus + online all fire near-simultaneously on resume). */
+  private attaching = false;
+  /** Bumped each attach() so a slow, superseded attach can't assign a socket. */
+  private attachGen = 0;
+  private wakeListenersBound = false;
 
   constructor(
     sessionTargetId: string,
@@ -88,6 +95,7 @@ export class TerminalConnection {
 
   /** Starts the initial connection. Call once after construction. */
   async connect(): Promise<void> {
+    this.addWakeListeners();
     await this.attach("connecting");
   }
 
@@ -121,6 +129,7 @@ export class TerminalConnection {
   /** Client-initiated clean close (WS code 1000) plus server-side cleanup. */
   async close(): Promise<void> {
     this.clientInitiatedClose = true;
+    this.removeWakeListeners();
     this.clearReconnectTimer();
     const socket = this.socket;
     const terminalId = this.terminalId;
@@ -157,8 +166,70 @@ export class TerminalConnection {
     }
   }
 
+  private addWakeListeners(): void {
+    if (this.wakeListenersBound) {
+      return;
+    }
+    this.wakeListenersBound = true;
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", this.onWake);
+      window.addEventListener("focus", this.onWake);
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.onWake);
+    }
+  }
+
+  private removeWakeListeners(): void {
+    if (!this.wakeListenersBound) {
+      return;
+    }
+    this.wakeListenersBound = false;
+    if (typeof window !== "undefined") {
+      window.removeEventListener("online", this.onWake);
+      window.removeEventListener("focus", this.onWake);
+    }
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.onWake);
+    }
+  }
+
+  // Regaining focus/visibility/connectivity (e.g. reopening a slept laptop lid)
+  // is our cue that a socket that died while backgrounded should recover NOW,
+  // rather than waiting out a backoff that may have already been exhausted while
+  // hidden. Reset the auto-retry budget and force a fresh attach.
+  private readonly onWake = (): void => {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      return; // visibilitychange firing on the way OUT — ignore.
+    }
+    if (this.clientInitiatedClose || this.state === "closed" || this.attaching) {
+      return;
+    }
+    const readyState = this.socket?.readyState;
+    if (readyState === WebSocket.OPEN) {
+      // Looks alive; prod it so a silently-dead (post-sleep) socket surfaces an
+      // onclose and takes the reconnect path. Best-effort — a throw here just
+      // means the close is imminent anyway.
+      try {
+        this.sendPing();
+      } catch {
+        /* dead socket; onclose will drive the reconnect */
+      }
+      return;
+    }
+    if (readyState === WebSocket.CONNECTING) {
+      return; // a handshake is already in flight.
+    }
+    this._needsManualReconnect = false;
+    this.reconnectAttempts = 0;
+    this.clearReconnectTimer();
+    void this.attach("reconnecting");
+  };
+
   /** Creates a fresh terminal_id + token and opens a new WS to it. */
   private async attach(nextState: "connecting" | "reconnecting"): Promise<void> {
+    const gen = ++this.attachGen;
+    this.attaching = true;
     this.clientInitiatedClose = false;
     this.setState(nextState);
 
@@ -166,7 +237,17 @@ export class TerminalConnection {
     try {
       created = await createTerminal(this.sessionTargetId, this.cols, this.rows);
     } catch (error) {
-      this.handleFatalError(error);
+      this.attaching = false;
+      // A newer attach (e.g. a wake-triggered one) has superseded this; stay quiet.
+      if (gen === this.attachGen) {
+        this.handleFatalError(error);
+      }
+      return;
+    }
+
+    // Superseded while awaiting the fresh terminal — don't open a second socket.
+    if (gen !== this.attachGen) {
+      this.attaching = false;
       return;
     }
 
@@ -174,6 +255,7 @@ export class TerminalConnection {
     const socket = openTerminalSocket(created.terminal_id, created.ws_token);
     socket.binaryType = "arraybuffer";
     this.socket = socket;
+    this.attaching = false;
 
     socket.onopen = () => {
       // Server confirms readiness via the `ready` control frame, not onopen.
@@ -274,7 +356,8 @@ export class TerminalConnection {
       this.reconnectTimer = setTimeout(resolve, delay);
     });
 
-    if (this.clientInitiatedClose) {
+    if (this.clientInitiatedClose || this.attaching || this.socket) {
+      // A wake-triggered reconnect already took over while we were backing off.
       return;
     }
     await this.attach("reconnecting");

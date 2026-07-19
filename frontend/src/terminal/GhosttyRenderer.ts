@@ -33,6 +33,9 @@ export class GhosttyRenderer implements RendererAdapter {
   private readonly terminal: Terminal;
   private container: HTMLElement | null = null;
   private font: TerminalFontOptions;
+  /** Input subscribers — see XtermRenderer for the rationale (fan real input in,
+   * plus synthesize Shift+Enter, through one path). */
+  private readonly dataHandlers = new Set<(data: Uint8Array | string) => void>();
 
   constructor(font: TerminalFontOptions = DEFAULT_FONT) {
     this.font = font;
@@ -42,6 +45,31 @@ export class GhosttyRenderer implements RendererAdapter {
       fontFamily: font.fontFamily,
       fontSize: font.fontSize,
     });
+    this.terminal.onData((data: string | Uint8Array) => this.emit(data));
+    // Best-effort Shift+Enter → ESC+CR (newline), matching XtermRenderer. Guarded
+    // because ghostty-web's custom-key-handler API is unconfirmed at 0.4.0; if
+    // absent this is a no-op and Shift+Enter falls back to the engine default.
+    const t = this.terminal as unknown as {
+      attachCustomKeyEventHandler?: (h: (e: KeyboardEvent) => boolean) => void;
+    };
+    t.attachCustomKeyEventHandler?.((e) => this.handleKeyEvent(e));
+  }
+
+  private emit(data: Uint8Array | string): void {
+    for (const handler of this.dataHandlers) {
+      handler(data);
+    }
+  }
+
+  private handleKeyEvent(e: KeyboardEvent): boolean {
+    if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.type === "keydown") {
+        e.preventDefault();
+        this.emit("\x1b\r");
+      }
+      return false;
+    }
+    return true;
   }
 
   open(container: HTMLElement): void {
@@ -54,10 +82,8 @@ export class GhosttyRenderer implements RendererAdapter {
   }
 
   onData(handler: (data: Uint8Array | string) => void): () => void {
-    const disposable = this.terminal.onData((data: string | Uint8Array) => handler(data)) as
-      | Disposable
-      | undefined;
-    return () => disposable?.dispose();
+    this.dataHandlers.add(handler);
+    return () => this.dataHandlers.delete(handler);
   }
 
   fit(): TerminalDimensions {

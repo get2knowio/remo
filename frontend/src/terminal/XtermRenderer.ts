@@ -44,6 +44,10 @@ export class XtermRenderer implements RendererAdapter {
   /** Desired ligature state; the addon is only actually (un)loaded after
    * open() since it registers a character joiner that needs an opened terminal. */
   private ligaturesEnabled = false;
+  /** Input subscribers. We fan xterm's own onData into these AND synthesize
+   * input for keys xterm doesn't distinguish (Shift+Enter), so both reach the
+   * remote PTY through the same path. */
+  private readonly dataHandlers = new Set<(data: Uint8Array | string) => void>();
 
   constructor(font: TerminalFontOptions = DEFAULT_FONT) {
     this.terminal = new Terminal({
@@ -58,7 +62,33 @@ export class XtermRenderer implements RendererAdapter {
     });
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
+    // Real typed input flows through here to every subscriber.
+    this.terminal.onData((data: string) => this.emit(data));
+    // Distinguish Shift+Enter from Enter: xterm sends a plain CR for both, but
+    // Claude Code and other TUIs expect Shift+Enter to insert a newline. Emit
+    // ESC+CR (what `claude /terminal-setup` configures desktop terminals to
+    // send) and suppress xterm's default CR so it isn't ALSO submitted.
+    this.terminal.attachCustomKeyEventHandler((e) => this.handleKeyEvent(e));
     this.applyLigatures(font.ligatures);
+  }
+
+  private emit(data: Uint8Array | string): void {
+    for (const handler of this.dataHandlers) {
+      handler(data);
+    }
+  }
+
+  private handleKeyEvent(e: KeyboardEvent): boolean {
+    if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.type === "keydown") {
+        // preventDefault stops the browser from also inserting a newline into
+        // xterm's hidden textarea (which would double-send via its input event).
+        e.preventDefault();
+        this.emit("\x1b\r");
+      }
+      return false; // suppress xterm's default CR (which would submit the line)
+    }
+    return true;
   }
 
   private applyLigatures(enabled: boolean): void {
@@ -110,8 +140,8 @@ export class XtermRenderer implements RendererAdapter {
   }
 
   onData(handler: (data: Uint8Array | string) => void): () => void {
-    const disposable = this.terminal.onData((data: string) => handler(data));
-    return () => disposable.dispose();
+    this.dataHandlers.add(handler);
+    return () => this.dataHandlers.delete(handler);
   }
 
   fit(): TerminalDimensions {
