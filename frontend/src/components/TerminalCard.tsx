@@ -66,6 +66,9 @@ interface TerminalCardProps {
   onToggleFullscreen: () => void;
   /** Called when the user clicks into the surface (focus this terminal). */
   onFocusRequest?: () => void;
+  /** Focus-follows-mouse: called when the pointer enters this tile (grid only),
+   * so hovering changes focus without a click. No-op'd mid-drag by the caller. */
+  onHoverFocus?: () => void;
   /** Called when output arrives while this card is hidden (rail activity dot). */
   onActivity?: () => void;
   /** Called when the remote process exits (session may have ended) or the
@@ -95,6 +98,7 @@ export function TerminalCard({
   onGrid,
   onToggleFullscreen,
   onFocusRequest,
+  onHoverFocus,
   onActivity,
   onEnded,
 }: TerminalCardProps): JSX.Element {
@@ -318,6 +322,7 @@ export function TerminalCard({
       data-focused={isFocused}
       data-connection-state={connectionState}
       style={{ display: isVisible ? undefined : "none" }}
+      onMouseEnter={onHoverFocus}
     >
       <header className="terminal-card-header">
         {/* The header (left of the controls) is the drag handle for reordering

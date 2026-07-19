@@ -180,6 +180,17 @@ export function WorkspacePane({
                 onGrid={canGrid ? workspace.backToGrid : undefined}
                 onToggleFullscreen={() => toggleFullscreen(id)}
                 onFocusRequest={() => workspace.setFocused(id)}
+                onHoverFocus={
+                  mode === "grid" && !maximized
+                    ? () => {
+                        // Focus-follows-mouse: hovering a grid tile focuses it,
+                        // but never while dragging (would fight the reorder).
+                        if (!activeId && focusedId !== id) {
+                          workspace.setFocused(id);
+                        }
+                      }
+                    : undefined
+                }
                 onActivity={() => workspace.markUnread(id)}
                 onEnded={() => onTerminalEnded(target)}
               />
