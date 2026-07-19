@@ -93,6 +93,12 @@ export interface RendererAdapter {
   /** Returns the currently selected text, or `null` if nothing is selected. */
   getSelection(): string | null;
 
+  /**
+   * Copies the current selection to the system clipboard (best-effort; needs a
+   * secure context). Returns true if there was a selection that was copied.
+   */
+  copySelection(): Promise<boolean>;
+
   /** Tears down the renderer and releases all resources/listeners. */
   dispose(): void;
 }
