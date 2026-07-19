@@ -20,15 +20,29 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { LigaturesAddon } from "@xterm/addon-ligatures";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import { ClipboardAddon, type IClipboardProvider } from "@xterm/addon-clipboard";
 // xterm ships its own stylesheet; without it the terminal renders with broken
 // cell sizing/positioning. Bundled here so it loads whenever this renderer is.
 import "@xterm/xterm/css/xterm.css";
-import { inputForKeyEvent } from "./keymap";
+import { copyText } from "../lib/clipboard";
+import { inputForKeyEvent, isCopyChord } from "./keymap";
 import type {
   RendererAdapter,
   TerminalDimensions,
   TerminalFontOptions,
 } from "./RendererAdapter";
+
+// OSC 52 handling: WRITE lets a remote app (e.g. Claude Code's copy-on-select)
+// push text to the browser clipboard; READ is denied so a remote app can never
+// exfiltrate the operator's clipboard. Best-effort — an escape-sequence write
+// has no user gesture, so some browsers may reject it.
+const _osc52Provider: IClipboardProvider = {
+  readText: async () => "",
+  writeText: async (_selection, text) => {
+    await copyText(text);
+  },
+};
 
 const DEFAULT_FONT: TerminalFontOptions = {
   fontFamily: "Menlo, Consolas, 'DejaVu Sans Mono', monospace",
@@ -80,6 +94,13 @@ export class XtermRenderer implements RendererAdapter {
   }
 
   private handleKeyEvent(e: KeyboardEvent): boolean {
+    // Copy the selection on ⌘C / Ctrl+Shift+C — but only when something is
+    // selected, so bare Ctrl+C still reaches the shell as SIGINT.
+    if (isCopyChord(e) && this.terminal.hasSelection()) {
+      e.preventDefault();
+      void this.copySelection();
+      return false;
+    }
     const seq = inputForKeyEvent(e);
     if (seq !== null) {
       // preventDefault stops the browser from also inserting a newline into
@@ -116,6 +137,12 @@ export class XtermRenderer implements RendererAdapter {
     this.enableWebgl();
     // Now that the terminal is attached, load the ligatures addon if wanted.
     this.applyLigatures(this.ligaturesEnabled);
+    // Clickable http(s) links — open in a new tab, severing opener access.
+    this.terminal.loadAddon(
+      new WebLinksAddon((_event, uri) => window.open(uri, "_blank", "noopener,noreferrer")),
+    );
+    // OSC 52 (remote-app clipboard writes, e.g. Claude Code copy-on-select).
+    this.terminal.loadAddon(new ClipboardAddon(_osc52Provider));
   }
 
   // GPU-accelerated rendering. Must run after open(). Best-effort: a failed
@@ -183,6 +210,14 @@ export class XtermRenderer implements RendererAdapter {
   getSelection(): string | null {
     const selection = this.terminal.getSelection();
     return selection.length > 0 ? selection : null;
+  }
+
+  async copySelection(): Promise<boolean> {
+    const selection = this.getSelection();
+    if (!selection) {
+      return false;
+    }
+    return copyText(selection);
   }
 
   dispose(): void {

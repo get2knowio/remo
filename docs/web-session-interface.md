@@ -116,6 +116,13 @@ The SPA is a two-pane **web console**:
   toggle fullscreen on the focused terminal; **Esc** exits it. Fullscreen is a presentation overlay: it
   never disturbs the single/grid layout underneath, so exiting returns to exactly where you were.
 
+**Clipboard & links.** Select text and press **⌘C** (macOS) / **Ctrl+Shift+C** (Linux/Windows), or click
+the **⧉ Copy** button that appears on selection, to copy to the system clipboard; bare **Ctrl+C** stays
+SIGINT. **Paste** with ⌘V / Ctrl+V. **http(s) URLs are clickable** and open in a new tab. Remote apps that
+emit **OSC 52** (e.g. Claude Code's copy-on-select) can write to the browser clipboard — best-effort: it
+must traverse Zellij and the browser must permit a gesture-less clipboard write. OSC 52 *reads* are denied
+(a remote app can never read your clipboard). Clipboard access needs a secure context (HTTPS or localhost).
+
 **Session-row glyphs** (also shown in the rail legend):
 
 | Glyph | Meaning |

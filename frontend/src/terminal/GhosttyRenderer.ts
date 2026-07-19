@@ -10,7 +10,8 @@
 // configured font/size so the cell grid stays correct after a font change.
 
 import { Terminal } from "ghostty-web";
-import { inputForKeyEvent } from "./keymap";
+import { copyText } from "../lib/clipboard";
+import { inputForKeyEvent, isCopyChord } from "./keymap";
 import type {
   RendererAdapter,
   TerminalDimensions,
@@ -63,6 +64,11 @@ export class GhosttyRenderer implements RendererAdapter {
   }
 
   private handleKeyEvent(e: KeyboardEvent): boolean {
+    if (isCopyChord(e) && this.getSelection()) {
+      e.preventDefault();
+      void this.copySelection();
+      return false;
+    }
     const seq = inputForKeyEvent(e);
     if (seq !== null) {
       e.preventDefault();
@@ -132,6 +138,14 @@ export class GhosttyRenderer implements RendererAdapter {
   getSelection(): string | null {
     const selection = this.terminal.getSelection();
     return selection && selection.length > 0 ? selection : null;
+  }
+
+  async copySelection(): Promise<boolean> {
+    const selection = this.getSelection();
+    if (!selection) {
+      return false;
+    }
+    return copyText(selection);
   }
 
   dispose(): void {

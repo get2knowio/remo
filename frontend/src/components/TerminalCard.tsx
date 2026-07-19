@@ -128,6 +128,8 @@ export function TerminalCard({
   const [connectionState, setConnectionState] = useState<TerminalConnectionState>("connecting");
   const [needsManualReconnect, setNeedsManualReconnect] = useState(false);
   const [error, setError] = useState<TypedError | null>(null);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // dnd-kit reorder: the tile is both a draggable (handle = header grip, below)
   // and a droppable (swap target). Disabled outside a reorderable grid. We use
@@ -252,6 +254,9 @@ export function TerminalCard({
       }
     });
 
+    // Show/hide the Copy affordance as the terminal selection changes.
+    const unsubscribeSelection = adapter.onSelectionChange((has) => setHasSelection(has));
+
     // Reflow on every container size change (window resize, rail drag, grid
     // <-> single, tile show/hide). scheduleFit coalesces bursts to one fit per
     // frame and skips the hidden-0x0 case.
@@ -268,6 +273,7 @@ export function TerminalCard({
       }
       lastSentDimsRef.current = null;
       unsubscribeInput();
+      unsubscribeSelection();
       resizeObserver.disconnect();
       void connection.close();
       adapter.dispose();
@@ -310,6 +316,15 @@ export function TerminalCard({
     adapterRef.current?.focus();
     onFocusRequest?.();
   }, [onFocusRequest]);
+
+  const handleCopy = useCallback(() => {
+    void adapterRef.current?.copySelection().then((ok) => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1200);
+      }
+    });
+  }, []);
 
   const clearHoverTimer = useCallback(() => {
     if (hoverTimerRef.current !== null) {
@@ -379,6 +394,20 @@ export function TerminalCard({
           {STATE_LABELS[connectionState]}
         </span>
         <div className="terminal-card-controls">
+          {hasSelection && (
+            <button
+              type="button"
+              className="tc-btn"
+              data-testid={`terminal-copy-${target.id}`}
+              title="Copy selection (⌘C / Ctrl+Shift+C)"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopy();
+              }}
+            >
+              {copied ? "✓ Copied" : "⧉ Copy"}
+            </button>
+          )}
           {needsManualReconnect && (
             <button
               type="button"
