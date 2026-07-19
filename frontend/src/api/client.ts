@@ -101,11 +101,82 @@ interface ErrorEnvelope {
   error: TypedError;
 }
 
+// ---- Forward-auth (SSO proxy) re-authentication ----
+//
+// When remo-web is deployed behind a whole-app forward-auth proxy (Traefik
+// ForwardAuth + an OIDC IdP such as Authentik — e.g. a Hola app), an
+// unauthenticated or expired-session request is answered with a 302 to the
+// cross-origin IdP (`https://auth.example.com/application/o/authorize/...`). A
+// same-origin `fetch()` cannot complete that SSO round-trip, and remo-web's
+// strict `connect-src 'self'` CSP blocks following the redirect at all — so the
+// only way to restore the session is a TOP-LEVEL navigation, which re-triggers
+// the proxy's SSO flow (the browser CAN follow it through the IdP and back).
+//
+// `request()` uses `redirect: "manual"` so such a redirect surfaces as an opaque
+// response (`response.type === "opaqueredirect"`, status 0) instead of throwing
+// on the blocked cross-origin follow; we then reload the document to re-auth. A
+// sessionStorage cooldown prevents a reload loop when auth genuinely can't
+// complete. With no proxy (REMO_WEB_OPERATOR_AUTH=none) there are no redirects,
+// so this path never fires.
+
+const _REAUTH_KEY = "remo:last-reauth";
+const _REAUTH_COOLDOWN_MS = 10_000;
+
+/**
+ * Handle a forward-auth challenge on an XHR by re-authenticating through a
+ * top-level navigation. Never returns normally: it either navigates the whole
+ * document (throwing to halt the caller before the navigation lands) or, if we
+ * already tried to re-auth within the cooldown, throws a clear `auth_required`
+ * ApiError instead of looping.
+ */
+function reauthenticate(): never {
+  let last = 0;
+  try {
+    last = Number(sessionStorage.getItem(_REAUTH_KEY) ?? 0) || 0;
+  } catch {
+    last = 0;
+  }
+  const now = Date.now();
+  if (now - last < _REAUTH_COOLDOWN_MS) {
+    // We just reloaded to re-auth and are being challenged again — the SSO
+    // round-trip isn't restoring a usable session. Stop reloading; surface a
+    // clear error rather than looping.
+    throw new ApiError({
+      code: "auth_required",
+      message: "Sign-in is required, but the access proxy did not restore a session.",
+      retryable: false,
+      remediation:
+        "Sign in through your access proxy and reload. If this repeats, the " +
+        "forward-auth proxy may be misconfigured (its session cookie is not reaching this app).",
+    });
+  }
+  try {
+    sessionStorage.setItem(_REAUTH_KEY, String(now));
+  } catch {
+    // sessionStorage unavailable — navigate anyway.
+  }
+  // A full document request re-runs the proxy's SSO redirect chain (IdP round
+  // trip), unlike a fetch which cannot. The SPA reloads authenticated and
+  // subsequent XHRs return 200.
+  window.location.assign(window.location.href);
+  // location.assign() schedules the navigation asynchronously and lets sync
+  // code keep running; throw so the caller never treats this as data.
+  throw new ApiError({
+    code: "auth_challenge",
+    message: "Re-authenticating…",
+    retryable: false,
+    remediation: "",
+  });
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
   try {
     response = await fetch(path, {
       ...init,
+      // Catch a forward-auth proxy's cross-origin SSO redirect as an opaque
+      // response instead of a thrown CSP-blocked follow (see reauthenticate()).
+      redirect: "manual",
       headers: {
         "Content-Type": "application/json",
         ...(init?.headers ?? {}),
@@ -121,6 +192,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       retryable: true,
       remediation: "Check your network connection and that the Remo web service is reachable.",
     });
+  }
+
+  // A forward-auth session lapse: the proxy answered with a cross-origin 3xx,
+  // now an opaque redirect. Re-authenticate via a top-level navigation rather
+  // than surfacing a bogus "network_error"/CSP failure. The API itself never
+  // issues same-origin redirects, so this is unambiguously a proxy challenge.
+  if (response.type === "opaqueredirect") {
+    reauthenticate();
   }
 
   if (!response.ok) {
@@ -355,6 +434,12 @@ export async function closeTerminal(terminalId: string): Promise<void> {
  *
  * This function only constructs and returns the socket; connection-lifecycle
  * and control-frame handling live in `terminal/TerminalConnection.ts`.
+ *
+ * Forward-auth note: a raw WebSocket upgrade cannot itself distinguish a proxy
+ * SSO redirect/401 from an ordinary failure. It does not need to — every attach
+ * (and reconnect) first calls `createTerminal()`, which goes through
+ * `request()` and so triggers the top-level SSO re-auth (see `reauthenticate`)
+ * whenever the session has lapsed, before/at the point the socket is opened.
  */
 export function openTerminalSocket(terminalId: string, token: string): WebSocket {
   const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
