@@ -4,6 +4,7 @@
 
 import { useMemo } from "react";
 import type { SessionTarget } from "../api/client";
+import { requestBrowserFullscreen } from "../lib/fullscreen";
 import { useWorkspace } from "../state/workspace";
 import { TerminalCard } from "./TerminalCard";
 import "./WorkspacePane.css";
@@ -43,7 +44,7 @@ export function WorkspacePane({
   narrow,
 }: WorkspacePaneProps): JSX.Element {
   const workspace = useWorkspace();
-  const { attached, visible, focusedId, prevGrid } = workspace;
+  const { attached, visible, focusedId, prevGrid, maximizedId } = workspace;
 
   // Only attached ids that still resolve to a live target get a card.
   const attachedTargets = useMemo(
@@ -70,18 +71,40 @@ export function WorkspacePane({
     );
   }
 
-  const mode = visible.length <= 1 ? "single" : "grid";
+  // Fullscreen is an orthogonal overlay: it only takes effect when it still
+  // resolves to an attached card. When active, that one card fills the pane and
+  // the single↔grid layout underneath is left untouched (so exiting restores it).
+  const maximized =
+    maximizedId !== null && attached.includes(maximizedId) ? maximizedId : null;
+
+  // Cards render as single (full-bleed) while a card is maximized; otherwise the
+  // usual single↔grid split by how many are visible.
+  const mode = maximized || visible.length <= 1 ? "single" : "grid";
   const cols = gridColumns(visible.length, narrow);
   const rows = Math.max(1, Math.ceil(visible.length / cols));
-  const canBackToGrid = (prevGrid ?? []).filter((id) => attached.includes(id)).length > 1;
+  // The Grid control is available when a grid can be shown — either the visible
+  // set is already a grid (fullscreen opened over one) or a grid was remembered.
+  const canGrid =
+    visible.filter((id) => attached.includes(id)).length > 1 ||
+    (prevGrid ?? []).filter((id) => attached.includes(id)).length > 1;
 
   // 1-based position for each visible id (grid tile number badge).
   const visibleIndex = new Map(visible.map((id, i) => [id, i + 1]));
 
+  const toggleFullscreen = (id: string): void => {
+    if (maximized === id) {
+      workspace.restore();
+    } else {
+      workspace.maximize(id);
+      // Request from within this click gesture so the browser allows it.
+      requestBrowserFullscreen();
+    }
+  };
+
   return (
     <main className="workspace" data-testid="workspace">
       <div
-        className={`workspace-body workspace-body--${mode}`}
+        className={`workspace-body workspace-body--${mode}${maximized ? " workspace-body--maximized" : ""}`}
         style={
           mode === "grid"
             ? {
@@ -92,7 +115,8 @@ export function WorkspacePane({
         }
       >
         {attachedTargets.map((target) => {
-          const isVisible = visible.includes(target.id);
+          const isVisible = maximized ? target.id === maximized : visible.includes(target.id);
+          const viewState = maximized === target.id ? "fullscreen" : mode === "grid" ? "grid" : "normal";
           return (
             <TerminalCard
               key={target.id}
@@ -102,9 +126,12 @@ export function WorkspacePane({
               isVisible={isVisible}
               isFocused={focusedId === target.id}
               num={visibleIndex.get(target.id)}
+              viewState={viewState}
               onClose={() => workspace.closeTerm(target.id)}
               onSolo={mode === "grid" ? () => workspace.soloTile(target.id) : undefined}
-              onBackToGrid={mode === "single" && canBackToGrid ? workspace.backToGrid : undefined}
+              onNormal={() => workspace.soloTile(target.id)}
+              onGrid={canGrid ? workspace.backToGrid : undefined}
+              onToggleFullscreen={() => toggleFullscreen(target.id)}
               onFocusRequest={() => workspace.setFocused(target.id)}
               onActivity={() => workspace.markUnread(target.id)}
               onEnded={() => onTerminalEnded(target)}

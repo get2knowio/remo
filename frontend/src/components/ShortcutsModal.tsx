@@ -9,7 +9,8 @@ interface ShortcutsModalProps {
 const SHORTCUTS: { desc: string; key: string }[] = [
   { desc: "Open session 1–9 (single)", key: "1 – 9" },
   { desc: "Add session to grid", key: "⌘ 1–9" },
-  { desc: "Collapse grid to focused", key: "esc" },
+  { desc: "Fullscreen focused terminal", key: "f" },
+  { desc: "Exit fullscreen / collapse grid", key: "esc" },
   { desc: "Show this panel", key: "?" },
 ];
 

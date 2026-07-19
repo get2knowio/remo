@@ -102,8 +102,12 @@ The SPA is a two-pane **web console**:
   row (or its `+` button) **adds** it to a responsive grid (1/2/3 columns by count). Clicking a grid
   tile solos it; **Esc** collapses the grid back to the focused terminal; number keys **1–9** jump to
   the numbered sessions (⌘ 1–9 add to the grid). Hidden terminals stay connected and keep their
-  scrollback. Each terminal header shows `provider · instance · region`, connection state, and
-  reconnect/close controls.
+  scrollback. Each terminal header shows `provider · instance · region`, connection state, and a
+  window-control cluster of the display modes — **▭ Normal** (single view), **⊞ Grid** (the grid, when
+  one is available), **⤢ Fullscreen** (the terminal fills the whole window — shell chrome hidden, plus
+  best-effort browser fullscreen), and **✕ Close** — with the current mode shown active. Press **f** to
+  toggle fullscreen on the focused terminal; **Esc** exits it. Fullscreen is a presentation overlay: it
+  never disturbs the single/grid layout underneath, so exiting returns to exactly where you were.
 
 **Session-row glyphs** (also shown in the rail legend):
 

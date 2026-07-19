@@ -14,6 +14,13 @@
 //                 can restore it.
 //   - `unread`    attached-but-hidden ids that produced output since last seen
 //                 (drives the rail's activity marker). Not persisted.
+//   - `maximizedId`  the terminal currently shown fullscreen, or null. This is
+//                 an ORTHOGONAL presentation overlay, NOT a third value on the
+//                 single↔grid axis: it never mutates `visible`/`prevGrid`, so
+//                 exiting fullscreen restores the exact single-or-grid layout
+//                 underneath. Any explicit layout change (solo, grid, select,
+//                 open-many) clears it. Not persisted (like `prevGrid`/`unread`);
+//                 a reload returns to the normal shell.
 //
 // This store owns only IDs and layout intent; each `TerminalCard` still owns
 // its own terminal_id/WebSocket lifecycle. Only `attached`/`visible`/
@@ -35,6 +42,7 @@ interface PersistedWorkspaceState {
 interface WorkspaceState extends PersistedWorkspaceState {
   prevGrid: string[] | null;
   unread: string[];
+  maximizedId: string | null;
 }
 
 function loadPersisted(): WorkspaceState {
@@ -44,6 +52,7 @@ function loadPersisted(): WorkspaceState {
     focusedId: null,
     prevGrid: null,
     unread: [],
+    maximizedId: null,
   };
 
   if (typeof window === "undefined" || !window.localStorage) {
@@ -66,7 +75,7 @@ function loadPersisted(): WorkspaceState {
     const visible = asStrings(c.visible).filter((id) => attached.includes(id));
     const focusedId =
       typeof c.focusedId === "string" && visible.includes(c.focusedId) ? c.focusedId : (visible[0] ?? null);
-    return { attached, visible, focusedId, prevGrid: null, unread: [] };
+    return { attached, visible, focusedId, prevGrid: null, unread: [], maximizedId: null };
   } catch (error) {
     console.error("workspace: failed to restore from localStorage", error);
     return fallback;
@@ -127,6 +136,7 @@ function selectOnly(target: SessionTarget): void {
     focusedId: target.id,
     prevGrid: null,
     unread: clearUnread(target.id),
+    maximizedId: null,
   });
 }
 
@@ -141,7 +151,7 @@ function addSession(target: SessionTarget): void {
       ? state.focusedId
       : (visible[visible.length - 1] ?? null)
     : id;
-  setState({ attached, visible, focusedId, unread: clearUnread(id) });
+  setState({ attached, visible, focusedId, unread: clearUnread(id), maximizedId: null });
 }
 
 /** Solo a grid tile into the single view, remembering the grid to return to. */
@@ -151,18 +161,23 @@ function soloTile(id: string): void {
     visible: [id],
     focusedId: id,
     unread: clearUnread(id),
+    maximizedId: null,
   });
 }
 
-/** Return from a soloed single view to the remembered grid. */
+/** Show the grid, from any state. Prefers the currently-visible set when it is
+ * already a grid (e.g. exiting fullscreen opened over a grid), else the grid
+ * remembered from soloing a tile. Also clears any fullscreen overlay. */
 function backToGrid(): void {
-  const grid = (state.prevGrid ?? []).filter((id) => state.attached.includes(id));
-  if (grid.length === 0) {
-    setState({ prevGrid: null });
+  const current = state.visible.filter((id) => state.attached.includes(id));
+  const grid =
+    current.length > 1 ? current : (state.prevGrid ?? []).filter((id) => state.attached.includes(id));
+  if (grid.length <= 1) {
+    setState({ prevGrid: null, maximizedId: null });
     return;
   }
   const focusedId = grid.includes(state.focusedId ?? "") ? state.focusedId : grid[grid.length - 1];
-  setState({ visible: grid, focusedId, prevGrid: null });
+  setState({ visible: grid, focusedId, prevGrid: null, maximizedId: null });
 }
 
 /** Open several targets at once as a grid (open-all). */
@@ -177,7 +192,7 @@ function openMany(targets: SessionTarget[]): void {
     }
   }
   const visible = targets.map((t) => t.id);
-  setState({ attached, visible, focusedId: visible[0], prevGrid: null });
+  setState({ attached, visible, focusedId: visible[0], prevGrid: null, maximizedId: null });
 }
 
 /** Close a terminal: reap it and re-pick focus / restore grid if soloed. */
@@ -192,7 +207,35 @@ function closeTerm(id: string): void {
   const focusedId = visible.includes(state.focusedId ?? "")
     ? state.focusedId
     : (visible[visible.length - 1] ?? null);
-  setState({ attached, visible, focusedId, prevGrid: null, unread: clearUnread(id) });
+  setState({
+    attached,
+    visible,
+    focusedId,
+    prevGrid: null,
+    unread: clearUnread(id),
+    // Closing the fullscreen terminal exits fullscreen (AppShell's effect then
+    // leaves browser fullscreen); closing any other card leaves it untouched.
+    maximizedId: state.maximizedId === id ? null : state.maximizedId,
+  });
+}
+
+/** Show a terminal fullscreen (chrome hidden). Orthogonal overlay: leaves
+ * `visible`/`prevGrid` intact so `restore()` returns to the layout underneath. */
+function maximize(id: string): void {
+  setState({
+    attached: ensureAttached(id),
+    focusedId: id,
+    unread: clearUnread(id),
+    maximizedId: id,
+  });
+}
+
+/** Exit fullscreen, revealing the single-or-grid layout that was underneath. */
+function restore(): void {
+  if (state.maximizedId === null) {
+    return;
+  }
+  setState({ maximizedId: null });
 }
 
 function setFocused(id: string | null): void {
@@ -213,12 +256,15 @@ export interface UseWorkspaceResult {
   focusedId: string | null;
   prevGrid: string[] | null;
   unread: string[];
+  maximizedId: string | null;
   selectOnly: (target: SessionTarget) => void;
   addSession: (target: SessionTarget) => void;
   soloTile: (id: string) => void;
   backToGrid: () => void;
   openMany: (targets: SessionTarget[]) => void;
   closeTerm: (id: string) => void;
+  maximize: (id: string) => void;
+  restore: () => void;
   setFocused: (id: string | null) => void;
   markUnread: (id: string) => void;
 }
@@ -231,12 +277,15 @@ export function useWorkspace(): UseWorkspaceResult {
     focusedId: snapshot.focusedId,
     prevGrid: snapshot.prevGrid,
     unread: snapshot.unread,
+    maximizedId: snapshot.maximizedId,
     selectOnly,
     addSession,
     soloTile,
     backToGrid,
     openMany,
     closeTerm,
+    maximize,
+    restore,
     setFocused,
     markUnread,
   };
