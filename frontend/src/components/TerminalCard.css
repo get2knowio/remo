@@ -141,11 +141,49 @@
   background: var(--bg-btn-hover);
 }
 
-.terminal-card--grid .tc-btn--close {
+/* Window-control cluster: a tight row of square, icon-only mode buttons. */
+.tc-winctl {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tc-btn--icon {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.terminal-card--grid .tc-btn--icon {
   width: 22px;
   height: 22px;
-  padding: 0;
-  font-size: 10px;
+  font-size: 11px;
+}
+
+/* Current display mode: highlighted (and disabled — you can't re-enter it). */
+.tc-btn--active {
+  border-color: color-mix(in oklch, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in oklch, var(--accent) 18%, transparent);
+  color: color-mix(in oklch, var(--accent) 82%, white);
+}
+
+/* Unavailable modes (e.g. Grid with no grid to show) read as inert. */
+.tc-btn--icon:disabled {
+  cursor: default;
+}
+.tc-btn--icon:disabled:not(.tc-btn--active) {
+  opacity: 0.4;
+}
+.tc-btn--icon:disabled:hover {
+  background: var(--bg-btn);
+}
+.tc-btn--active:disabled:hover {
+  background: color-mix(in oklch, var(--accent) 18%, transparent);
 }
 
 .tc-btn--accent {
@@ -193,9 +231,14 @@
     padding: 8px 13px;
     font-size: 13px;
   }
-  .terminal-card--grid .tc-btn--close {
-    width: 32px;
-    height: 32px;
-    font-size: 13px;
+  .tc-btn--icon,
+  .terminal-card--grid .tc-btn--icon {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    font-size: 15px;
+  }
+  .tc-winctl {
+    gap: 7px;
   }
 }

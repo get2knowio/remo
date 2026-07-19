@@ -32,6 +32,13 @@
   display: flex;
 }
 
+/* Fullscreen terminal: the shell collapses to just the pane. The rail/divider/
+ * backbar are already withheld from render (see AppShell); here we drop the top
+ * bar so the maximized terminal fills the whole viewport. */
+.app-shell--maximized .topbar {
+  display: none;
+}
+
 .app-rail {
   flex: none;
   flex-direction: column;

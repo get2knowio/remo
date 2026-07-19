@@ -38,6 +38,9 @@ const STATE_LABELS: Record<TerminalConnectionState, string> = {
 };
 
 export type TerminalCardMode = "single" | "grid";
+/** Which of the mutually-exclusive display modes this card is currently in.
+ * Drives the window-control cluster's active/disabled state. */
+export type TerminalViewState = "normal" | "grid" | "fullscreen";
 
 interface TerminalCardProps {
   target: SessionTarget;
@@ -50,11 +53,17 @@ interface TerminalCardProps {
   isFocused: boolean;
   /** 1-based position label shown on a grid tile. */
   num?: number;
+  /** The display mode this card is currently in (window-control cluster state). */
+  viewState: TerminalViewState;
   onClose: () => void;
   /** Grid tile clicked → solo it (single view). */
   onSolo?: () => void;
-  /** Single view "Back to grid" — omitted when there's no grid to return to. */
-  onBackToGrid?: () => void;
+  /** Window-control "Normal": solo this terminal into the single view. */
+  onNormal: () => void;
+  /** Window-control "Grid": show the grid — omitted when none is available. */
+  onGrid?: () => void;
+  /** Window-control "Fullscreen": enter fullscreen, or exit if already in it. */
+  onToggleFullscreen: () => void;
   /** Called when the user clicks into the surface (focus this terminal). */
   onFocusRequest?: () => void;
   /** Called when output arrives while this card is hidden (rail activity dot). */
@@ -80,9 +89,12 @@ export function TerminalCard({
   isVisible,
   isFocused,
   num,
+  viewState,
   onClose,
   onSolo,
-  onBackToGrid,
+  onNormal,
+  onGrid,
+  onToggleFullscreen,
   onFocusRequest,
   onActivity,
   onEnded,
@@ -298,19 +310,6 @@ export function TerminalCard({
           {STATE_LABELS[connectionState]}
         </span>
         <div className="terminal-card-controls">
-          {mode === "single" && onBackToGrid && (
-            <button
-              type="button"
-              className="tc-btn"
-              title="Return to the grid you came from"
-              onClick={(e) => {
-                e.stopPropagation();
-                onBackToGrid();
-              }}
-            >
-              ⊞ Grid
-            </button>
-          )}
           {needsManualReconnect && (
             <button
               type="button"
@@ -324,18 +323,68 @@ export function TerminalCard({
               ↻ Reconnect
             </button>
           )}
-          <button
-            type="button"
-            className="tc-btn tc-btn--close"
-            data-testid={`terminal-close-${target.id}`}
-            title="Close terminal — remote Zellij session stays alive"
-            onClick={(e) => {
-              e.stopPropagation();
-              handleClose();
-            }}
-          >
-            {mode === "grid" ? "✕" : "Close"}
-          </button>
+          {/* Window-control cluster: mutually-exclusive display modes (the
+           * current one shown active + disabled) plus close. Fullscreen toggles.
+           * Icons only; the label is the tooltip. */}
+          <div className="tc-winctl" role="group" aria-label="Terminal display mode">
+            <button
+              type="button"
+              className={`tc-btn tc-btn--icon${viewState === "normal" ? " tc-btn--active" : ""}`}
+              data-testid={`terminal-normal-${target.id}`}
+              title="Normal (single view)"
+              aria-label="Normal view"
+              aria-pressed={viewState === "normal"}
+              disabled={viewState === "normal"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onNormal();
+              }}
+            >
+              ▭
+            </button>
+            <button
+              type="button"
+              className={`tc-btn tc-btn--icon${viewState === "grid" ? " tc-btn--active" : ""}`}
+              data-testid={`terminal-grid-${target.id}`}
+              title="Grid view"
+              aria-label="Grid view"
+              aria-pressed={viewState === "grid"}
+              disabled={viewState === "grid" || !onGrid}
+              onClick={(e) => {
+                e.stopPropagation();
+                onGrid?.();
+              }}
+            >
+              ⊞
+            </button>
+            <button
+              type="button"
+              className={`tc-btn tc-btn--icon${viewState === "fullscreen" ? " tc-btn--active" : ""}`}
+              data-testid={`terminal-fullscreen-${target.id}`}
+              title={viewState === "fullscreen" ? "Exit fullscreen" : "Fullscreen"}
+              aria-label={viewState === "fullscreen" ? "Exit fullscreen" : "Fullscreen"}
+              aria-pressed={viewState === "fullscreen"}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleFullscreen();
+              }}
+            >
+              {viewState === "fullscreen" ? "⤡" : "⤢"}
+            </button>
+            <button
+              type="button"
+              className="tc-btn tc-btn--icon tc-btn--close"
+              data-testid={`terminal-close-${target.id}`}
+              title="Close terminal — remote Zellij session stays alive"
+              aria-label="Close terminal"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleClose();
+              }}
+            >
+              ✕
+            </button>
+          </div>
         </div>
       </header>
 

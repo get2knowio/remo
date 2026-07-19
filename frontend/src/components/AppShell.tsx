@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type PointerEvent } from "react";
 import type { SessionTarget } from "../api/client";
+import { exitBrowserFullscreen } from "../lib/fullscreen";
 import { useDiscovery } from "../state/discovery";
 import { useHealth } from "../state/health";
 import { settingsActions, useSettings } from "../state/settings";
@@ -41,6 +42,36 @@ export function AppShell(): JSX.Element {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
+
+  // A terminal is fullscreen when the overlay id still resolves to an attached
+  // card; that both hides the shell chrome (class below) and drives browser
+  // fullscreen. Entering browser fullscreen is requested from the click/keypress
+  // gesture (WorkspacePane / keyboard); here we own the two exit paths:
+  //   (a) whenever the overlay clears through ANY path, leave browser fullscreen;
+  //   (b) when the user leaves browser fullscreen natively (Esc/F11), clear the
+  //       overlay so the shell chrome comes back.
+  const maximized =
+    workspace.maximizedId !== null && workspace.attached.includes(workspace.maximizedId);
+  const restore = workspace.restore;
+
+  useEffect(() => {
+    if (!maximized) {
+      exitBrowserFullscreen();
+    }
+  }, [maximized]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+    const onChange = (): void => {
+      if (!document.fullscreenElement && maximized) {
+        restore();
+      }
+    };
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, [maximized, restore]);
 
   const filters: RailFilters = useMemo(
     () => ({ search, providerFilter, sessionOnly }),
@@ -136,9 +167,11 @@ export function AppShell(): JSX.Element {
   );
 
   const paneHasContent = workspace.attached.length > 0;
-  const railHidden = narrow ? paneHasContent : settings.railCollapsed;
+  // Fullscreen collapses the shell to just the maximized terminal: rail and
+  // divider gone, top bar hidden by the .app-shell--maximized class.
+  const railHidden = maximized || (narrow ? paneHasContent : settings.railCollapsed);
   const paneHidden = narrow && !paneHasContent;
-  const showDivider = !narrow && !settings.railCollapsed;
+  const showDivider = !narrow && !settings.railCollapsed && !maximized;
 
   // "Loading" until the first discovery has produced instances — either before
   // the first poll (lastRefreshedAt null) or while a refresh is still in flight
@@ -151,7 +184,7 @@ export function AppShell(): JSX.Element {
   const noCredentials = health.checks.ssh_identity === "missing";
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${maximized ? " app-shell--maximized" : ""}`}>
       <TopBar
         showRailToggle={!narrow}
         railCollapsed={settings.railCollapsed}
@@ -165,7 +198,7 @@ export function AppShell(): JSX.Element {
         onShortcuts={onToggleShortcuts}
       />
 
-      {discovery.isRefreshing && (
+      {discovery.isRefreshing && !maximized && (
         <div className="app-refresh-bar">
           <div className="app-refresh-bar-fill" />
         </div>
@@ -203,7 +236,7 @@ export function AppShell(): JSX.Element {
         )}
 
         <div className="app-pane" style={{ display: paneHidden ? "none" : "flex" }}>
-          {narrow && paneHasContent && (
+          {narrow && paneHasContent && !maximized && (
             <div className="app-backbar">
               <button
                 type="button"

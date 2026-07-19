@@ -2,14 +2,16 @@
 //
 //   1–9            open that numbered session solo (single view)
 //   ⌘/Ctrl/Shift 1–9  add/toggle that session in the grid
-//   Esc            close an open overlay, else collapse the grid to the
-//                  focused terminal
+//   f              toggle fullscreen on the focused terminal
+//   Esc            close an open overlay, else exit fullscreen, else collapse
+//                  the grid to the focused terminal
 //   ?              toggle the shortcuts panel
 //
 // Ignored while typing in an <input>/<textarea> (e.g. the rail search).
 
 import { useEffect } from "react";
 import type { SessionTarget } from "../api/client";
+import { requestBrowserFullscreen } from "../lib/fullscreen";
 import type { UseWorkspaceResult } from "./workspace";
 
 export interface ConsoleKeyboardConfig {
@@ -45,9 +47,31 @@ export function useConsoleKeyboard(config: ConsoleKeyboardConfig): void {
         if (onEscapeOverlay()) {
           return;
         }
+        // Exit fullscreen before touching the single/grid layout.
+        if (workspace.maximizedId) {
+          workspace.restore();
+          return;
+        }
         // Collapse a grid to just the focused terminal.
         if (workspace.visible.length > 1 && workspace.focusedId) {
           workspace.soloTile(workspace.focusedId);
+        }
+        return;
+      }
+
+      // Fullscreen the focused terminal (toggle). Requesting browser fullscreen
+      // here works because a keydown is a user gesture.
+      if (e.key === "f" || e.key === "F") {
+        const id = workspace.focusedId;
+        if (!id) {
+          return;
+        }
+        e.preventDefault();
+        if (workspace.maximizedId === id) {
+          workspace.restore();
+        } else {
+          workspace.maximize(id);
+          requestBrowserFullscreen();
         }
         return;
       }
