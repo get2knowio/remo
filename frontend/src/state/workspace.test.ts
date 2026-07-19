@@ -66,3 +66,33 @@ describe("workspace fullscreen overlay", () => {
     expect(result.current.visible).toEqual(["b"]);
   });
 });
+
+describe("workspace grid reorder (swapVisible)", () => {
+  it("swaps two tiles' positions in the grid order", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b"), target("c")]));
+    expect(result.current.visible).toEqual(["a", "b", "c"]);
+
+    act(() => result.current.swapVisible("a", "c"));
+    expect(result.current.visible).toEqual(["c", "b", "a"]);
+  });
+
+  it("is a no-op when an id isn't visible or both are the same", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b")]));
+    act(() => result.current.swapVisible("a", "zzz")); // zzz not visible
+    expect(result.current.visible).toEqual(["a", "b"]);
+    act(() => result.current.swapVisible("a", "a"));
+    expect(result.current.visible).toEqual(["a", "b"]);
+  });
+
+  it("rebuilding the grid (open-many) discards a custom order", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b")]));
+    act(() => result.current.swapVisible("a", "b"));
+    expect(result.current.visible).toEqual(["b", "a"]);
+    // The grid "goes away" and is rebuilt fresh.
+    act(() => result.current.openMany([target("a"), target("b")]));
+    expect(result.current.visible).toEqual(["a", "b"]);
+  });
+});

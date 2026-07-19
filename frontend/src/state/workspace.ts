@@ -195,6 +195,20 @@ function openMany(targets: SessionTarget[]): void {
   setState({ attached, visible, focusedId: visible[0], prevGrid: null, maximizedId: null });
 }
 
+/** Swap two tiles' positions in the grid. The order lives in `visible` (which is
+ * persisted), so a custom arrangement survives until the grid is rebuilt by a
+ * solo/select/open-many. No-op if either id isn't currently visible. */
+function swapVisible(a: string, b: string): void {
+  const i = state.visible.indexOf(a);
+  const j = state.visible.indexOf(b);
+  if (i === -1 || j === -1 || i === j) {
+    return;
+  }
+  const visible = [...state.visible];
+  [visible[i], visible[j]] = [visible[j], visible[i]];
+  setState({ visible });
+}
+
 /** Close a terminal: reap it and re-pick focus / restore grid if soloed. */
 function closeTerm(id: string): void {
   const attached = state.attached.filter((a) => a !== id);
@@ -263,6 +277,7 @@ export interface UseWorkspaceResult {
   backToGrid: () => void;
   openMany: (targets: SessionTarget[]) => void;
   closeTerm: (id: string) => void;
+  swapVisible: (a: string, b: string) => void;
   maximize: (id: string) => void;
   restore: () => void;
   setFocused: (id: string | null) => void;
@@ -284,6 +299,7 @@ export function useWorkspace(): UseWorkspaceResult {
     backToGrid,
     openMany,
     closeTerm,
+    swapVisible,
     maximize,
     restore,
     setFocused,

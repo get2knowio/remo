@@ -2,7 +2,7 @@
 // terminal (each mounted for its lifetime so hidden ones stay connected),
 // laid out as a single view (one visible) or a responsive grid (two-plus).
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { SessionTarget } from "../api/client";
 import { requestBrowserFullscreen } from "../lib/fullscreen";
 import { useWorkspace } from "../state/workspace";
@@ -46,16 +46,27 @@ export function WorkspacePane({
   const workspace = useWorkspace();
   const { attached, visible, focusedId, prevGrid, maximizedId } = workspace;
 
-  // Only attached ids that still resolve to a live target get a card.
-  const attachedTargets = useMemo(
-    () =>
-      attached
-        .map((id) => targetsById.get(id))
-        .filter((t): t is SessionTarget => t !== undefined),
-    [attached, targetsById],
-  );
+  // Transient drag-to-reorder state (which tile is being dragged, and which it's
+  // hovering over). Not persisted — only the resulting order (`visible`) is.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
 
-  if (attachedTargets.length === 0) {
+  // Render visible tiles in `visible` order (so the grid layout follows the
+  // reorderable order + the number badges), then the hidden-but-attached cards
+  // (kept mounted for their live connections; display:none, order irrelevant).
+  const orderedTargets = useMemo(() => {
+    const visibleSet = new Set(visible);
+    const inGridOrder = visible
+      .map((id) => targetsById.get(id))
+      .filter((t): t is SessionTarget => t !== undefined);
+    const hidden = attached
+      .filter((id) => !visibleSet.has(id))
+      .map((id) => targetsById.get(id))
+      .filter((t): t is SessionTarget => t !== undefined);
+    return [...inGridOrder, ...hidden];
+  }, [visible, attached, targetsById]);
+
+  if (orderedTargets.length === 0) {
     return (
       <main className="workspace" data-testid="workspace">
         <div className="workspace-empty">
@@ -101,6 +112,13 @@ export function WorkspacePane({
     }
   };
 
+  // Reordering is possible only within a real grid (two-plus visible tiles).
+  const reorderable = !maximized && mode === "grid" && visible.length > 1;
+  const clearDrag = (): void => {
+    setDragId(null);
+    setOverId(null);
+  };
+
   return (
     <main className="workspace" data-testid="workspace">
       <div
@@ -114,26 +132,47 @@ export function WorkspacePane({
             : undefined
         }
       >
-        {attachedTargets.map((target) => {
-          const isVisible = maximized ? target.id === maximized : visible.includes(target.id);
-          const viewState = maximized === target.id ? "fullscreen" : mode === "grid" ? "grid" : "normal";
+        {orderedTargets.map((target) => {
+          const id = target.id;
+          const isVisible = maximized ? id === maximized : visible.includes(id);
+          const viewState = maximized === id ? "fullscreen" : mode === "grid" ? "grid" : "normal";
+          const reorder =
+            reorderable && isVisible
+              ? {
+                  isDragging: dragId === id,
+                  isDropTarget: overId === id && dragId !== null && dragId !== id,
+                  onDragStart: () => setDragId(id),
+                  onDragEnter: () => {
+                    if (dragId && dragId !== id) {
+                      setOverId(id);
+                    }
+                  },
+                  onDrop: () => {
+                    if (dragId && dragId !== id) {
+                      workspace.swapVisible(dragId, id);
+                    }
+                    clearDrag();
+                  },
+                  onDragEnd: clearDrag,
+                }
+              : undefined;
           return (
             <TerminalCard
-              key={target.id}
+              key={id}
               target={target}
               region={regionByKey.get(`${target.instance_type}::${target.instance_name}`)}
               mode={mode}
               isVisible={isVisible}
-              isFocused={focusedId === target.id}
-              num={visibleIndex.get(target.id)}
+              isFocused={focusedId === id}
+              num={visibleIndex.get(id)}
               viewState={viewState}
-              onClose={() => workspace.closeTerm(target.id)}
-              onSolo={mode === "grid" ? () => workspace.soloTile(target.id) : undefined}
-              onNormal={() => workspace.soloTile(target.id)}
+              reorder={reorder}
+              onClose={() => workspace.closeTerm(id)}
+              onNormal={() => workspace.soloTile(id)}
               onGrid={canGrid ? workspace.backToGrid : undefined}
-              onToggleFullscreen={() => toggleFullscreen(target.id)}
-              onFocusRequest={() => workspace.setFocused(target.id)}
-              onActivity={() => workspace.markUnread(target.id)}
+              onToggleFullscreen={() => toggleFullscreen(id)}
+              onFocusRequest={() => workspace.setFocused(id)}
+              onActivity={() => workspace.markUnread(id)}
               onEnded={() => onTerminalEnded(target)}
             />
           );

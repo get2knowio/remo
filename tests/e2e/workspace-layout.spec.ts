@@ -53,15 +53,16 @@ test.describe("workspace layout", () => {
     }
   });
 
-  test("clicking a grid tile solos it; Esc returns to the grid", async ({ page }) => {
+  test("the ◻ control solos a grid tile; Esc returns to the grid", async ({ page }) => {
     const discoveredIds = await waitForDiscoveredTargets(page);
     expect(discoveredIds.length).toBeGreaterThan(1);
     await page.getByTestId(TESTID.openAll).click();
     const openIds = await openTerminalCardIds(page);
     const [firstId, secondId] = openIds;
 
-    // Solo the first tile — only it is visible, the rest stay mounted+hidden.
-    await page.getByTestId(TESTID.terminalCard(firstId)).click();
+    // Solo the first tile via its "fill the main pane" control (the header is a
+    // drag handle now, not a click-to-solo target). Only it stays visible.
+    await page.getByTestId(TESTID.terminalNormal(firstId)).click();
     await expect(page.getByTestId(TESTID.terminalCard(firstId))).toBeVisible();
     await expect(page.getByTestId(TESTID.terminalCard(secondId))).toBeHidden();
     // Hidden card keeps its live connection (US3 scenario 3).
