@@ -144,26 +144,38 @@ def _apply_managed_marker(host: str, user: str, vmid: str) -> tuple[bool, str]:
 def _read_tags_by_vmid(host: str, user: str) -> dict[str, set[str]]:
     """Return ``{vmid: {tags}}`` for every LXC on *host* in one bulk query.
 
-    Runs a single ``grep -H '^tags:' /etc/pve/lxc/*.conf`` (FR-013) — no
-    per-container ``pct config`` round-trip. A vmid whose conf has no ``tags:``
-    line is simply absent from the map and is treated as unmarked by callers.
+    Dumps every ``/etc/pve/lxc/*.conf`` in a single round-trip (FR-013) and
+    reads only each container's *current* tags — the ``tags:`` line above the
+    first ``[snapshot]`` section. Snapshot sections carry their own ``tags:``
+    lines (a copy of the config at snapshot time), so a naive
+    ``grep '^tags:'`` would let an old snapshot's tags shadow the live tags and
+    mis-classify a container. A vmid with no current ``tags:`` line is absent
+    from the map and treated as unmarked by callers.
     """
     result = _run_on_node(
-        host, user, "grep -H '^tags:' /etc/pve/lxc/*.conf 2>/dev/null"
+        host,
+        user,
+        'for f in /etc/pve/lxc/*.conf; do echo "@@@$f"; cat "$f"; done 2>/dev/null',
     )
-    # grep exits 1 when there are no matches; that is not an error here.
     mapping: dict[str, set[str]] = {}
+    vmid: str | None = None
+    in_snapshot_section = False
     for line in result.stdout.splitlines():
-        path, sep, rest = line.partition(":")
-        if not sep:
+        if line.startswith("@@@"):
+            m = re.search(r"/(\d+)\.conf$", line)
+            vmid = m.group(1) if m else None
+            in_snapshot_section = False
             continue
-        m = re.search(r"/(\d+)\.conf$", path)
-        if not m:
+        if vmid is None or in_snapshot_section:
             continue
-        _, _, tag_values = rest.partition(":")  # strip the leading "tags"
-        mapping[m.group(1)] = {
-            t for t in re.split(r"[;, ]+", tag_values.strip()) if t
-        }
+        if line.startswith("["):
+            in_snapshot_section = True  # entering a snapshot's stored config
+            continue
+        if line.startswith("tags:"):
+            _, _, tag_values = line.partition(":")
+            mapping[vmid] = {
+                t for t in re.split(r"[;, ]+", tag_values.strip()) if t
+            }
     return mapping
 
 

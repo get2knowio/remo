@@ -65,20 +65,45 @@ class TestApplyMarker:
 
 
 class TestReadTags:
-    def test_parses_grep_output(self, mocker):
+    def test_parses_conf_dump(self, mocker):
         node = mocker.patch(
             "remo_cli.providers.proxmox._run_on_node", autospec=True
         )
         node.return_value = _completed(
             0,
             stdout=(
-                "/etc/pve/lxc/100.conf:tags: remo\n"
-                "/etc/pve/lxc/101.conf:tags: media;plex\n"
+                "@@@/etc/pve/lxc/100.conf\n"
+                "arch: amd64\n"
+                "tags: remo\n"
+                "@@@/etc/pve/lxc/101.conf\n"
+                "tags: media;plex\n"
             ),
         )
         mapping = providers_proxmox._read_tags_by_vmid("h", "u")
         assert mapping == {"100": {"remo"}, "101": {"media", "plex"}}
         assert node.call_count == 1  # FR-013
+
+    def test_ignores_snapshot_section_tags(self, mocker):
+        # A snapshot section's tags: line must NOT shadow the live tags —
+        # regression for the grep-last-wins mis-classification bug.
+        node = mocker.patch(
+            "remo_cli.providers.proxmox._run_on_node", autospec=True
+        )
+        node.return_value = _completed(
+            0,
+            stdout=(
+                "@@@/etc/pve/lxc/100.conf\n"
+                "tags: media;remo\n"        # current: marked
+                "[pre-upgrade]\n"
+                "tags: media\n"             # old snapshot: no remo
+                "@@@/etc/pve/lxc/101.conf\n"
+                "tags: media\n"             # current: unmarked
+                "[snap]\n"
+                "tags: media;remo\n"        # old snapshot: had remo
+            ),
+        )
+        mapping = providers_proxmox._read_tags_by_vmid("h", "u")
+        assert mapping == {"100": {"media", "remo"}, "101": {"media"}}
 
 
 # ---------------------------------------------------------------------------
@@ -152,12 +177,14 @@ def patch_registry(mocker):
 
 class TestSyncFiltering:
     def _wire_ssh(self, mocker):
-        """Route `pct list` and the bulk grep through _ssh_run."""
+        """Route `pct list` and the bulk conf dump through _ssh_run."""
         def side_effect(host, user, cmd):
             if cmd == "pct list":
                 return _completed(0, stdout=_PCT_LIST)
-            if cmd.startswith("grep -H '^tags:'"):
-                return _completed(0, stdout="/etc/pve/lxc/100.conf:tags: remo\n")
+            if cmd.startswith("for f in /etc/pve/lxc/"):
+                return _completed(
+                    0, stdout="@@@/etc/pve/lxc/100.conf\ntags: remo\n"
+                )
             return _completed(0)
 
         return mocker.patch(

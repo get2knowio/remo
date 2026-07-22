@@ -177,7 +177,9 @@ class TestSyncFiltering:
         saved = sorted(c.args[0].name for c in patch_registry.call_args_list)
         assert saved == ["h/dev1", "h/plex"]
         warn_text = " ".join(str(c.args[0]) for c in warn.call_args_list)
-        assert "plex" in warn_text and "not\nremo-created" not in warn_text
+        assert "plex" in warn_text
+        # The adopted-unmarked summary must actually be emitted (FR-009).
+        assert "not remo-created" in warn_text
 
     def test_sync_is_read_only_and_bounded(self, patch_host, patch_registry, mocker):
         patch_host.return_value = _completed(0, stdout="dev1,true\nplex,\n")
