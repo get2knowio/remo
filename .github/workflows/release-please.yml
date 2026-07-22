@@ -1,0 +1,41 @@
+name: release-please
+
+# Automates STABLE releases from Conventional Commits.
+#
+# On every push to main, release-please maintains a "release PR" that bumps the
+# version in pyproject.toml and updates CHANGELOG.md. Merging that PR creates the
+# `vX.Y.Z` tag and a GitHub release — which in turn triggers the existing
+# tag-driven `release.yml` (PyPI + Docker image).
+#
+# RCs / pre-releases are NOT handled here: cut those with a manual `vX.Y.Z-rcN`
+# tag (see CONTRIBUTING.md → Release Process), which `release.yml` publishes as a
+# prerelease. release-please stays out of the RC lane.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      # NOTE: SHA-pin this to match the repo's action-pinning convention once the
+      # v4 commit SHA is available (e.g. `@<sha> # v4`). Left as a floating tag
+      # here because the SHA can't be resolved offline.
+      - uses: googleapis/release-please-action@v4
+        with:
+          # IMPORTANT: a PAT with `contents` + `pull-requests` write is required
+          # so the tag release-please creates on merge is authored by a real
+          # token and therefore triggers the tag-driven `release.yml` (the PyPI +
+          # Docker publish). A tag created with the default GITHUB_TOKEN does NOT
+          # fire `on: push: tags`, so without this secret the release PR and tag
+          # are still created but nothing publishes until a maintainer re-pushes
+          # the tag. Store the PAT as the `RELEASE_PLEASE_TOKEN` repo secret.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
