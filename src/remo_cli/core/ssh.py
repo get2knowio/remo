@@ -10,6 +10,7 @@ import sys
 import termios
 from pathlib import Path
 
+from remo_cli.core.config import DEFAULT_SSH_PORT
 from remo_cli.core.known_hosts import get_aws_region, get_known_hosts, resolve_remo_host_by_name
 from remo_cli.core.output import print_info
 from remo_cli.core.picker import pick_environment
@@ -125,13 +126,23 @@ def build_ssh_opts(
         ssh_target = f"{host.user}@{host.instance_id}"
     else:
         ssh_target = f"{host.user}@{host.host}"
+        # Manually-added SSH host (feature 014, type=ssh): apply a non-default
+        # port stored in KnownHost.instance_id. Gated on the ssh type so a
+        # provider's numeric instance_id (e.g. a Proxmox vmid) is never read
+        # as a port and every other provider's argv is unchanged.
+        if host.type == "ssh" and host.ssh_port != DEFAULT_SSH_PORT:
+            ssh_opts += ["-o", f"Port={host.ssh_port}"]
 
     # ------------------------------------------------------------------
-    # Explicit identity / known-hosts (adopted-mode web service, R6)
+    # Explicit identity / known-hosts (adopted-mode web service R6; added-host
+    # stored identity, feature 014). An explicit identity_file argument always
+    # wins; otherwise an added (ssh-type) host's stored identity is used
+    # (``ssh_identity`` is None for every other type, so their argv is unchanged).
     # ------------------------------------------------------------------
-    if identity_file is not None:
+    effective_identity = identity_file if identity_file is not None else host.ssh_identity
+    if effective_identity is not None:
         ssh_opts += [
-            "-o", f"IdentityFile={identity_file}",
+            "-o", f"IdentityFile={effective_identity}",
             "-o", "IdentitiesOnly=yes",
         ]
     if known_hosts_file is not None:

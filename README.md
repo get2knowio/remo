@@ -205,6 +205,54 @@ The `destroy` command on each provider checks for existing snapshots first and
 offers to clean them up. Decline and the snapshots remain (you'll be warned
 they continue to incur storage costs on AWS/Hetzner).
 
+---
+
+## Register an SSH-reachable host
+
+Already have SSH access to a box — a VM, a bare-metal server, someone else's
+container — but no hypervisor host access, cloud credentials, or API token?
+`remo add` registers it directly into your registry. Provider `sync` is bulk
+discovery that needs provider/host access; `add` is a single manual
+registration that needs only SSH reachability.
+
+```bash
+remo add NAME TARGET [--user USER] [--port PORT] [--identity PATH] [--verify] [--yes]
+```
+
+`TARGET` is `[user@]host[:port]`. `--user`, `--port`, and `--identity` override
+(or fill in) the corresponding parts of `TARGET`. When no user is given, the
+default SSH user is `remo` (reported back to you); the default port is `22`.
+
+- **`--identity PATH`** records a private key that is persisted and passed to
+  `ssh -i` on connect — no `~/.ssh/config` editing needed for a host that
+  requires a non-default key.
+- **`--verify`** does an opt-in, fail-closed SSH reachability check *before*
+  registering: on failure it surfaces the SSH error, writes nothing, and exits
+  non-zero. Without `--verify` there is no network round-trip at all.
+- **Re-running `add`** with an existing added-host name and a changed target
+  updates it in place (confirm unless `--yes`) — it never creates a duplicate.
+  It refuses to overwrite a provider-managed entry (incus/proxmox/aws/hetzner)
+  of the same name.
+- **IPv6:** un-bracketed IPv6 literals are rejected — use a hostname or an
+  `~/.ssh/config` alias instead (bracketed `[::1]:22` is not supported in this
+  release).
+
+Once added, `remo shell NAME` and `remo cp` work over the same direct SSH path
+as any other host.
+
+```bash
+remo add mybox 10.0.0.5 --port 2222 --identity ~/.ssh/mybox_ed25519 --verify
+remo shell mybox                    # open a shell over direct SSH
+remo cp ./deploy.sh mybox:/tmp/     # copy a file up
+remo remove mybox                   # deregister when you're done
+```
+
+`remo remove NAME [--yes]` deregisters an added host by deleting **only** the
+local registry entry — it makes no connection to and no change on the remote
+environment (unlike a provider `destroy`, which tears down infrastructure). It
+refuses to act on a provider-managed host and points you at that provider's
+`destroy` instead.
+
 ## CLI Reference
 
 ```bash
@@ -228,6 +276,13 @@ remo cp --progress big.tar :/tmp/   # Show progress
 
 # Setup
 remo init                           # Install Ansible collections
+
+# Register an SSH-reachable host (provider-neutral; needs only SSH access)
+remo add NAME [user@]host[:port]    # Register a single SSH host
+remo add NAME host --port 2222 --identity ~/.ssh/key   # Custom port + key
+remo add NAME host --verify         # Fail-closed SSH reachability check first
+remo add NAME host --user alice     # Override default SSH user (default: remo)
+remo remove NAME [--yes]            # Deregister an added host (local-only)
 
 # Hetzner Cloud
 remo hetzner create                 # Provision VM

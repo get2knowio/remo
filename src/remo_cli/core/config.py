@@ -18,6 +18,20 @@ INCUS_MANAGED_CONFIG_KEY = "user.remo"
 INCUS_MANAGED_CONFIG_VALUE = "true"
 PROXMOX_MANAGED_TAG = "remo"
 
+# ---------------------------------------------------------------------------
+# Manually-added SSH host (feature 014-register-ssh-host)
+#
+# Fixed, built-in constants for the provider-neutral ``remo add`` command, which
+# registers a single SSH-reachable environment as a new registry ``type`` with
+# ``access_mode = direct``. The SSH port and identity are stored in the existing
+# KnownHost positional fields (see models/host.py: instance_id=port,
+# region=identity), so no registry format change is needed.
+# ---------------------------------------------------------------------------
+
+ADDED_HOST_TYPE = "ssh"
+DEFAULT_ADDED_HOST_USER = "remo"
+DEFAULT_SSH_PORT = 22
+
 
 def _resolve_remo_home() -> Path:
     """Resolve the remo config directory path with no filesystem side effects.

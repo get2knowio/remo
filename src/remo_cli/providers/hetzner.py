@@ -20,6 +20,7 @@ from remo_cli.core.ansible_runner import run_playbook
 from remo_cli.core.known_hosts import (
     clear_known_hosts_by_type,
     get_known_hosts,
+    guard_not_added_ssh_host,
     remove_known_host,
     save_known_host,
 )
@@ -179,6 +180,7 @@ def destroy(
         validate_name(name, "server name")
 
     server_name = name or "remo"
+    guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
 
     if remove_volume:
         print_warning(
@@ -249,6 +251,7 @@ def update(
     volume_size = parse_volume_size(volume_size)
 
     server_name = name or "remo"
+    guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
 
     # Get server address from known_hosts.
     server_host = _lookup_hetzner_host(server_name)
@@ -554,6 +557,7 @@ def snapshot_create(
 
     Returns 0 once the provider accepts the request (no polling — per FR-004).
     """
+    guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
     validate_snapshot_name(snap_name)
 
     try:
@@ -623,6 +627,7 @@ def snapshot_restore(
     IP are preserved (FR-013). We poll the rebuild action until success.
     Returns 0 on success, 1 on any failure.
     """
+    guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
     try:
         server = _get_server_by_name(server_name)
     except RuntimeError as e:
@@ -697,6 +702,7 @@ def snapshot_delete(
     server_name: str, snap_name: str, auto_confirm: bool = False
 ) -> int:
     """Delete the remo-managed Hetzner snapshot image *snap_name*."""
+    guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
     try:
         server = _get_server_by_name(server_name)
     except RuntimeError as e:

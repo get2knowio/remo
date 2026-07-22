@@ -82,6 +82,8 @@ class TestSubcommandRegistration:
     EXPECTED_COMMANDS = [
         "shell",
         "cp",
+        "add",
+        "remove",
         "incus",
         "proxmox",
         "hetzner",

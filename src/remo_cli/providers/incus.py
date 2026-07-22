@@ -22,6 +22,7 @@ from remo_cli.core.config import (
 from remo_cli.core.known_hosts import (
     clear_known_hosts_by_prefix,
     get_known_hosts,
+    guard_not_added_ssh_host,
     remove_known_host,
     save_known_host,
 )
@@ -322,6 +323,7 @@ def destroy(
     Returns the ansible-playbook exit code (0 on success).
     """
     validate_name(name, "container name")
+    guard_not_added_ssh_host(name, "incus")  # FR-012
 
     # If --host not specified, look up container in known_hosts.
     if not host:
@@ -407,6 +409,7 @@ def update(
     Returns the ansible-playbook exit code (0 on success).
     """
     validate_name(name, "container name")
+    guard_not_added_ssh_host(name, "incus")  # FR-012
     volume_size = parse_volume_size(volume_size)
 
     # If --host not specified, look up container in known_hosts.
@@ -809,6 +812,7 @@ def snapshot_create(
     (per FR-006). The snapshot name must already have been validated via
     :func:`core.snapshot.validate_name` by the CLI layer.
     """
+    guard_not_added_ssh_host(container, "incus")  # FR-012
     validate_snapshot_name(snap_name)  # belt-and-suspenders
 
     try:
@@ -893,6 +897,7 @@ def snapshot_restore(
     container ends up reachable in whatever state it was before (FR-013).
     Returns 0 on success, 1 on any failure.
     """
+    guard_not_added_ssh_host(container, "incus")  # FR-012
     try:
         existing = _list_snapshots_for_container(host, container, user)
     except RuntimeError as e:
@@ -980,6 +985,7 @@ def snapshot_delete(
     auto_confirm: bool = False,
 ) -> int:
     """Delete a snapshot of *container*."""
+    guard_not_added_ssh_host(container, "incus")  # FR-012
     try:
         existing = _list_snapshots_for_container(host, container, user)
     except RuntimeError as e:

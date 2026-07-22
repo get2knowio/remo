@@ -37,6 +37,15 @@ reachability. It establishes a clean division of the mental model:
 (The error message in `resolve_remo_host_by_name` already tells users to
 "Use 'remo add' to register an environment" — this feature makes that real.)
 
+## Clarifications
+
+### Session 2026-07-22
+
+- Q: On `remo add --verify`, when the SSH reachability check fails, decline or register-with-warning? → A: Decline (fail-closed) — surface the SSH error, write no registry entry, exit non-zero.
+- Q: How is a custom SSH private key for an added host supported? → A: A persisted `--identity <path>` registry field, passed to `ssh -i` on connect (no `~/.ssh/config` editing required).
+- Q: How are raw IPv6 literal targets handled? → A: Reject un-bracketed IPv6 literals with guidance to use a hostname or `~/.ssh/config` alias; never store a malformed line.
+- Q: What command deregisters an added host? → A: A new top-level, provider-neutral `remo remove <name>` command (mirrors `remo add`).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Register a host I can already SSH to (Priority: P1)
@@ -89,8 +98,8 @@ rots. Necessary for the feature to be usable over time, but secondary to being
 able to add at all.
 
 **Independent Test**: Add a host, re-run `add` with a changed target, confirm
-the entry reflects the new target; then remove it and confirm it is gone from
-the registry and the picker.
+the entry reflects the new target; then run `remo remove <name>` and confirm it
+is gone from the registry and the picker.
 
 **Acceptance Scenarios**:
 
@@ -98,11 +107,11 @@ the registry and the picker.
    the same name and a different target, **Then** the entry is updated in place
    (after confirming, unless a bypass flag is given), and no duplicate is
    created.
-2. **Given** an existing added host, **When** the user runs the remove command
+2. **Given** an existing added host, **When** the user runs `remo remove <name>`
    for it, **Then** the registry entry is deleted and the host no longer appears
    in `remo shell` or the picker. No connection to the remote environment is
    made and nothing on the remote side is changed.
-3. **Given** the remove command targets an added host, **When** it runs, **Then**
+3. **Given** `remo remove` targets an added host, **When** it runs, **Then**
    it only deregisters; it never attempts to destroy, stop, or otherwise mutate
    the remote environment (unlike provider `destroy`).
 
@@ -119,8 +128,8 @@ fully usable without it (the first `remo shell` would reveal a bad target), so
 it is lowest priority.
 
 **Independent Test**: Run `remo add` against an unreachable target with the
-verify option and confirm the command reports the failure clearly and does not
-silently register a broken entry (or registers it with a visible warning).
+verify option and confirm the command reports the failure clearly, writes no
+registry entry, and exits non-zero.
 
 **Acceptance Scenarios**:
 
@@ -129,8 +138,8 @@ silently register a broken entry (or registers it with a visible warning).
    and reports success before registering.
 2. **Given** an unreachable or auth-failing target, **When** the user runs
    `remo add` with the verify option, **Then** the command surfaces the SSH
-   error and either declines to register or registers with an explicit warning
-   (behavior chosen consistently and documented), exiting non-zero on failure.
+   error, declines to register (no registry entry is written), and exits
+   non-zero (fail-closed).
 3. **Given** the verify option is not used, **When** the user runs `remo add`,
    **Then** no connectivity check is performed and the entry is registered
    immediately (today's low-friction default for other registry writes).
@@ -152,13 +161,15 @@ silently register a broken entry (or registers it with a visible warning).
   round-trips correctly through save → load → connect).
 - **IPv6 literal targets**: A raw IPv6 address contains colons and collides with
   both the `host:port` syntax and the colon-delimited registry format. The
-  command MUST either support a documented bracketed form (`[::1]:22`) or clearly
-  reject IPv6 literals with guidance to use a hostname/alias — it MUST NOT store
-  a malformed entry that breaks registry parsing.
+  command MUST reject un-bracketed IPv6 literals with a clear message directing
+  the user to a hostname or an `~/.ssh/config` alias. It MUST NOT store a
+  malformed entry that breaks registry parsing. (A bracketed `[::1]:22` form is
+  out of scope for this feature and may be a future enhancement.)
 - **Custom identity file / SSH key**: Users whose target needs a specific private
-  key MUST have a way to record that (an identity option), or a documented
-  reliance on their `~/.ssh/config`. A target that only works with a non-default
-  key MUST be connectable after `add` without hand-editing.
+  key record it with an explicit `--identity <path>` option, which is persisted
+  and passed to `ssh -i` on connect. A target that only works with a non-default
+  key MUST be connectable after `add` without hand-editing the registry or
+  `~/.ssh/config`.
 - **Host key trust on first connect**: `remo add` does not pre-seed the local
   SSH `known_hosts`. The first `remo shell` to an added host follows normal SSH
   host-key behavior (prompt/accept), consistent with existing `direct`-mode
@@ -191,10 +202,11 @@ silently register a broken entry (or registers it with a visible warning).
 - **FR-003**: When no user is given, the command MUST apply a documented default
   SSH user and report the effective user back to the caller. When no port is
   given, the standard SSH port MUST be used.
-- **FR-004**: The command MUST allow the user to record an explicit SSH identity
-  (private key) for the host, or MUST document that connection relies on the
-  user's `~/.ssh/config`, such that an added host requiring a non-default key is
-  connectable without manual registry or config edits after `add`.
+- **FR-004**: The command MUST provide an explicit `--identity <path>` option that
+  records the SSH private key for the host; the identity MUST be persisted in the
+  registry and supplied to SSH (`ssh -i`) on connect, so that an added host
+  requiring a non-default key is connectable after `add` without manual edits to
+  the registry or `~/.ssh/config`.
 - **FR-005**: A registered added host MUST be connectable via `remo shell` and
   usable with `remo cp` through the existing `direct`-mode SSH connection path,
   with no special-casing required from the user.
@@ -206,10 +218,11 @@ silently register a broken entry (or registers it with a visible warning).
 - **FR-007**: Re-running the add command with an existing added host's name and a
   changed target MUST update that entry in place (guarded by a confirmation
   prompt unless a bypass flag is supplied) rather than creating a duplicate.
-- **FR-008**: `remo` MUST provide a way to remove/deregister an added host that
-  deletes only the local registry entry and performs no action against the
+- **FR-008**: `remo` MUST provide a top-level, provider-neutral `remo remove
+  <name>` command (mirroring `remo add`) that deregisters an added host by
+  deleting only the local registry entry and performing no action against the
   remote environment (no destroy, stop, or mutation).
-- **FR-009**: The remove path MUST refuse (or clearly distinguish itself) when
+- **FR-009**: `remo remove` MUST refuse (or clearly distinguish itself) when
   asked to act on a provider-managed host, so that a user cannot mistake
   "deregister my manually-added SSH host" for "destroy my provider instance."
 
@@ -228,16 +241,17 @@ silently register a broken entry (or registers it with a visible warning).
   infrastructure.
 - **FR-013**: The command MUST validate the supplied name against the same rules
   used for other registry names, and MUST validate/parse the target so that a
-  malformed target (including an un-bracketed IPv6 literal, per Edge Cases) is
-  rejected with a clear message rather than persisted as a broken registry line.
+  malformed target is rejected with a clear message rather than persisted as a
+  broken registry line. Un-bracketed IPv6 literals MUST be rejected with guidance
+  to use a hostname or `~/.ssh/config` alias (per Edge Cases).
 
 **Optional verification**
 
-- **FR-014**: The command SHOULD offer an opt-in reachability check that performs
-  a lightweight SSH connection test at add time; on failure it MUST surface the
-  SSH error and exit non-zero (declining to register, or registering only with an
-  explicit warning — chosen consistently and documented). When the check is not
-  requested, registration MUST proceed without any network round-trip.
+- **FR-014**: The command MUST offer an opt-in `--verify` reachability check that
+  performs a lightweight SSH connection test at add time; on failure it MUST
+  surface the SSH error, decline to register (write no registry entry), and exit
+  non-zero (fail-closed). When the check is not requested, registration MUST
+  proceed without any network round-trip.
 
 ### Out of Scope
 

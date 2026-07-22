@@ -22,6 +22,7 @@ from remo_cli.core.known_hosts import (
     clear_known_hosts_by_type,
     get_aws_region,
     get_known_hosts,
+    guard_not_added_ssh_host,
     remove_known_host,
     save_known_host,
 )
@@ -518,6 +519,7 @@ def destroy(
         )
 
     resource_name = name or os.environ.get("USER", "remo")
+    guard_not_added_ssh_host(resource_name, "aws")  # FR-012
     region = get_aws_region(resource_name)
 
     # FR-020 through FR-023: surface remo-managed EBS snapshots before destroy.
@@ -594,6 +596,7 @@ def update(
     volume_size = parse_volume_size(volume_size)
 
     resource_name = name or os.environ.get("USER", "remo")
+    guard_not_added_ssh_host(resource_name, "aws")  # FR-012
     region = get_aws_region(resource_name)
 
     # Query boto3 for running instance info.
@@ -1172,6 +1175,7 @@ def snapshot_create(
     Returns 0 after the provider accepts the request (no polling — per
     FR-004 / Q1).
     """
+    guard_not_added_ssh_host(instance_name, "aws")  # FR-012
     validate_snapshot_name(snap_name)
 
     region = get_aws_region(instance_name) if not region else region
@@ -1277,6 +1281,7 @@ def snapshot_restore(
       8. Start instance → wait running.
       9. Tag old volume ``remo-restore-orphan=<timestamp>`` and keep it (FR-030).
     """
+    guard_not_added_ssh_host(instance_name, "aws")  # FR-012
     region = get_aws_region(instance_name) if not region else region
 
     # We need the instance even if it's stopped; describe directly.
@@ -1472,6 +1477,7 @@ def snapshot_delete(
     auto_confirm: bool = False,
 ) -> int:
     """Delete a remo-managed AWS snapshot by its user-facing name."""
+    guard_not_added_ssh_host(instance_name, "aws")  # FR-012
     region = get_aws_region(instance_name) if not region else region
     session = _boto3_session(region)
     ec2 = session.client("ec2")
