@@ -20,6 +20,7 @@ import sys
 from datetime import datetime, timezone
 
 from remo_cli.core.ansible_runner import run_playbook
+from remo_cli.core.config import PROXMOX_MANAGED_TAG
 from remo_cli.core.known_hosts import (
     clear_known_hosts_by_prefix,
     get_known_hosts,
@@ -78,6 +79,104 @@ def _ssh_run(host: str, user: str, command: str) -> subprocess.CompletedProcess[
         capture_output=True,
         text=True,
     )
+
+
+def _run_on_node(
+    host: str, user: str, command: str
+) -> subprocess.CompletedProcess[str]:
+    """Run *command* on the Proxmox node — locally when ``host == 'localhost'``,
+    otherwise over SSH. Used by marker apply/read so both paths behave the same.
+    """
+    if host == "localhost":
+        return subprocess.run(
+            ["bash", "-c", command], capture_output=True, text=True
+        )
+    return _ssh_run(host, user, command)
+
+
+# ---------------------------------------------------------------------------
+# Managed marker (feature 013-managed-instance-tags)
+# ---------------------------------------------------------------------------
+
+
+def _parse_container_tags(config_text: str) -> list[str]:
+    """Return the ordered guest tags from the ``tags:`` line of ``pct config``.
+
+    Proxmox stores tags separated by ``;`` (and accepts ``;``, ``,`` or space
+    on input); returns ``[]`` when the container has no tags.
+    """
+    line = _parse_pct_config_field(config_text, "tags")
+    if not line:
+        return []
+    return [t for t in re.split(r"[;, ]+", line.strip()) if t]
+
+
+def _apply_managed_marker(host: str, user: str, vmid: str) -> tuple[bool, str]:
+    """Apply the remo managed tag to Proxmox LXC *vmid* (host-side).
+
+    Reads the current tag set from ``pct config <vmid>`` and, only when the
+    ``remo`` tag is absent, writes the union back with ``pct set <vmid> --tags``
+    (FR-003: existing tags preserved and not reordered; the new tag is
+    appended). When ``remo`` is already present this is a strict no-op (FR-002,
+    SC-005). Returns ``(ok, err)``; a failure warns but does not fail the
+    enclosing command on its own (FR-005).
+    """
+    if not vmid:
+        return False, "VMID could not be resolved"
+
+    cfg = _run_on_node(host, user, f"pct config {shlex.quote(vmid)}")
+    if cfg.returncode != 0:
+        return False, (cfg.stderr.strip() or cfg.stdout.strip())
+
+    tags = _parse_container_tags(cfg.stdout)
+    if PROXMOX_MANAGED_TAG in tags:
+        return True, ""  # already marked — no-op, no reorder
+
+    joined = ";".join([*tags, PROXMOX_MANAGED_TAG])
+    res = _run_on_node(
+        host, user, f"pct set {shlex.quote(vmid)} --tags {shlex.quote(joined)}"
+    )
+    if res.returncode != 0:
+        return False, (res.stderr.strip() or res.stdout.strip())
+    return True, ""
+
+
+def _read_tags_by_vmid(host: str, user: str) -> dict[str, set[str]]:
+    """Return ``{vmid: {tags}}`` for every LXC on *host* in one bulk query.
+
+    Dumps every ``/etc/pve/lxc/*.conf`` in a single round-trip (FR-013) and
+    reads only each container's *current* tags — the ``tags:`` line above the
+    first ``[snapshot]`` section. Snapshot sections carry their own ``tags:``
+    lines (a copy of the config at snapshot time), so a naive
+    ``grep '^tags:'`` would let an old snapshot's tags shadow the live tags and
+    mis-classify a container. A vmid with no current ``tags:`` line is absent
+    from the map and treated as unmarked by callers.
+    """
+    result = _run_on_node(
+        host,
+        user,
+        'for f in /etc/pve/lxc/*.conf; do echo "@@@$f"; cat "$f"; done 2>/dev/null',
+    )
+    mapping: dict[str, set[str]] = {}
+    vmid: str | None = None
+    in_snapshot_section = False
+    for line in result.stdout.splitlines():
+        if line.startswith("@@@"):
+            m = re.search(r"/(\d+)\.conf$", line)
+            vmid = m.group(1) if m else None
+            in_snapshot_section = False
+            continue
+        if vmid is None or in_snapshot_section:
+            continue
+        if line.startswith("["):
+            in_snapshot_section = True  # entering a snapshot's stored config
+            continue
+        if line.startswith("tags:"):
+            _, _, tag_values = line.partition(":")
+            mapping[vmid] = {
+                t for t in re.split(r"[;, ]+", tag_values.strip()) if t
+            }
+    return mapping
 
 
 def _resolve_vmid(name: str, host: str, user: str) -> str:
@@ -274,6 +373,23 @@ def create(
             )
         )
 
+        # FR-001: mark the container as remo-managed. FR-005: a marking failure
+        # (including an unresolved VMID) warns but does not fail create.
+        if vmid:
+            ok, err = _apply_managed_marker(host, user, vmid)
+            if not ok:
+                print_warning(
+                    f"Container '{name}' was created but could not be marked "
+                    f"as remo-managed ({err}); a default `remo proxmox sync` "
+                    f"will skip it (use `--all` or `remo proxmox update`)."
+                )
+        else:
+            print_warning(
+                f"Container '{name}' was created but its VMID could not be "
+                f"resolved, so it was not marked as remo-managed; run "
+                f"`remo proxmox update --name {name} --host {host}` to mark it."
+            )
+
         # If the container already existed, site.yml skipped pct create and
         # did not apply the requested resource values. Run the resize
         # playbook as a follow-up; idempotent (no-op when values match).
@@ -415,6 +531,24 @@ def update(
 
     if not user:
         user = "root"
+
+    # FR-004: `update` is the backfill path — ensure the managed marker is
+    # present (idempotent, preserving existing tags). FR-005: warn on failure
+    # but do not fail update. Resolve the VMID if the registry did not have it.
+    if not vmid:
+        vmid = _resolve_vmid(name, host, user)
+    if vmid:
+        ok, err = _apply_managed_marker(host, user, vmid)
+        if not ok:
+            print_warning(
+                f"Could not mark container '{name}' as remo-managed ({err}); "
+                f"it may not be picked up by a default `remo proxmox sync`."
+            )
+    else:
+        print_warning(
+            f"Could not resolve a VMID for '{name}'; it was not marked as "
+            f"remo-managed."
+        )
 
     if volume_size or cores or memory:
         bits: list[str] = []
@@ -591,14 +725,24 @@ def _parse_pct_config_field(config_text: str, field: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def sync(host: str, user: str = "", use_ip: bool = False) -> None:
+def sync(
+    host: str,
+    user: str = "",
+    use_ip: bool = False,
+    include_all: bool = False,
+) -> None:
     """Discover Proxmox LXC containers on *host* and register them.
 
-    Runs ``pct list`` over SSH (or locally if host == "localhost"),
-    parses the output, then queries each container for its VMID. When
-    *use_ip* is true, each container's eth0 IP is also resolved and stored
-    as the ``host`` field; otherwise the container name itself is stored
-    (and relies on DNS/MagicDNS for resolution at connect time).
+    Runs ``pct list`` for the vmid/name inventory and one bulk
+    ``grep '^tags:' /etc/pve/lxc/*.conf`` to read every container's tags in a
+    single round-trip (FR-013). By default (``include_all=False``) only
+    containers carrying the ``remo`` managed tag are registered (FR-006), and
+    skipped unmarked containers are named in a hint (FR-008). With
+    ``include_all=True`` every container is registered — the pre-feature
+    behavior (FR-007) — and unmarked adoptions are called out (FR-009).
+
+    This function never mutates container state (FR-010). When *use_ip* is true,
+    each container's eth0 IP is resolved and stored as the ``host`` field.
 
     Existing entries with the host prefix are cleared first.
     """
@@ -632,9 +776,20 @@ def sync(host: str, user: str = "", use_ip: bool = False) -> None:
         hostname = parts[-1]
         containers.append((vmid, hostname))
 
+    tags_by_vmid = _read_tags_by_vmid(host, user)
+
     clear_known_hosts_by_prefix("proxmox", f"{host}/")
 
+    registered = 0
+    skipped: list[str] = []
+    adopted_unmarked: list[str] = []
     for vmid, hostname in containers:
+        marked = PROXMOX_MANAGED_TAG in tags_by_vmid.get(vmid, set())
+        if not include_all and not marked:
+            skipped.append(hostname)
+            continue
+        if include_all and not marked:
+            adopted_unmarked.append(hostname)
         if use_ip:
             container_host = _resolve_container_ip(hostname, host, user, vmid=vmid) or hostname
         else:
@@ -650,8 +805,30 @@ def sync(host: str, user: str = "", use_ip: bool = False) -> None:
                 region=user or "root",
             )
         )
+        registered += 1
 
-    print_info(f"Synced {len(containers)} container(s) from '{host}'.")
+    print_info(f"Synced {registered} container(s) from '{host}'.")
+
+    if not include_all and skipped:
+        print_warning(
+            f"Skipped {len(skipped)} unmarked container(s): {', '.join(skipped)}"
+        )
+        print_info(
+            f"  • Adopt all this run:      remo proxmox sync --host {host} --all"
+        )
+        print_info(
+            "  • Mark one permanently:    remo proxmox update --name <name> "
+            f"--host {host}"
+        )
+
+    if include_all and adopted_unmarked:
+        print_warning(
+            f"{len(adopted_unmarked)} of the registered container(s) are not "
+            f"remo-created (adopted via --all): {', '.join(adopted_unmarked)}"
+        )
+        print_info(
+            "Note: a later default `sync` will drop those unmarked one(s) again."
+        )
 
 
 def bootstrap(

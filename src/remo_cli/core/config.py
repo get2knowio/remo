@@ -5,6 +5,19 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# Managed-instance marker (feature 013-managed-instance-tags)
+#
+# Fixed, built-in constants — NOT user-configurable. These are the hypervisor
+# analog of the AWS ``remo=true`` tag and the Hetzner ``remo`` label, applied to
+# remo-created Incus/Proxmox containers so ``sync`` can filter on them by
+# default. The single definition site keeps both providers consistent.
+# ---------------------------------------------------------------------------
+
+INCUS_MANAGED_CONFIG_KEY = "user.remo"
+INCUS_MANAGED_CONFIG_VALUE = "true"
+PROXMOX_MANAGED_TAG = "remo"
+
 
 def _resolve_remo_home() -> Path:
     """Resolve the remo config directory path with no filesystem side effects.

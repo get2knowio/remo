@@ -15,6 +15,10 @@ import sys
 from datetime import datetime, timezone
 
 from remo_cli.core.ansible_runner import run_playbook
+from remo_cli.core.config import (
+    INCUS_MANAGED_CONFIG_KEY,
+    INCUS_MANAGED_CONFIG_VALUE,
+)
 from remo_cli.core.known_hosts import (
     clear_known_hosts_by_prefix,
     get_known_hosts,
@@ -125,6 +129,57 @@ def _extract_eth0_ip(incus_output: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Managed marker (feature 013-managed-instance-tags)
+# ---------------------------------------------------------------------------
+
+
+def _apply_managed_marker(host: str, user: str, name: str) -> tuple[bool, str]:
+    """Apply the remo managed marker to Incus container *name* (host-side).
+
+    Runs ``incus config set <name> user.remo=true`` on the Incus host (or
+    locally when ``host == "localhost"``). Setting an already-present identical
+    key is a no-op, so this is idempotent (FR-002). Returns ``(ok, err)`` where
+    *err* is a short message on failure — callers warn but do not fail the whole
+    command on this alone (FR-005).
+    """
+    cmd = (
+        f"incus config set {shlex.quote(name)} "
+        f"{INCUS_MANAGED_CONFIG_KEY}={INCUS_MANAGED_CONFIG_VALUE}"
+    )
+    result = _ssh_run_on_incus_host(host, user, cmd)
+    if result.returncode != 0:
+        return False, (result.stderr.strip() or result.stdout.strip())
+    return True, ""
+
+
+def _list_containers_with_marker(host: str, user: str) -> list[tuple[str, bool]]:
+    """Return ``[(name, marked), ...]`` for every container on *host*.
+
+    Uses a single bulk query ``incus list -f csv -c n,<marker-key>`` (FR-013):
+    the second CSV column holds the marker value, so no per-container round-trip
+    is needed. Raises :class:`RuntimeError` if the ``incus list`` call fails so
+    the caller can surface it.
+    """
+    cmd = f"incus list -f csv -c n,{INCUS_MANAGED_CONFIG_KEY}"
+    result = _ssh_run_on_incus_host(host, user, cmd)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+
+    rows: list[tuple[str, bool]] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(",")
+        cname = parts[0].strip()
+        if not cname:
+            continue
+        marker = parts[1].strip() if len(parts) > 1 else ""
+        rows.append((cname, marker == INCUS_MANAGED_CONFIG_VALUE))
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -229,6 +284,16 @@ def create(
                 access_mode="direct",
             )
         )
+
+        # FR-001: mark the container as remo-managed so a default `sync` picks
+        # it up. FR-005: a marking failure warns but does not fail create.
+        ok, err = _apply_managed_marker(host, user, name)
+        if not ok:
+            print_warning(
+                f"Container '{name}' was created but could not be marked as "
+                f"remo-managed ({err}). A default `remo incus sync` will skip "
+                f"it; use `--all` or re-run `remo incus update` to include it."
+            )
 
         if volume_size or cores or memory:
             rc = _run_resize_playbook(
@@ -349,6 +414,15 @@ def update(
         host, looked_up_user = _lookup_incus_host(name)
         if not user and looked_up_user:
             user = looked_up_user
+
+    # FR-004: `update` doubles as the backfill path — ensure the managed marker
+    # is present (idempotent). FR-005: warn on failure but do not fail update.
+    ok, err = _apply_managed_marker(host, user, name)
+    if not ok:
+        print_warning(
+            f"Could not mark container '{name}' as remo-managed ({err}); "
+            f"it may not be picked up by a default `remo incus sync`."
+        )
 
     if volume_size or cores or memory:
         bits: list[str] = []
@@ -520,50 +594,44 @@ def info(name: str, host: str = "", user: str = "") -> int:
     return 0
 
 
-def sync(host: str = "localhost", user: str = "", use_ip: bool = False) -> None:
+def sync(
+    host: str = "localhost",
+    user: str = "",
+    use_ip: bool = False,
+    include_all: bool = False,
+) -> None:
     """Discover Incus containers on *host* and register them in known-hosts.
 
-    For localhost, runs ``incus list -f csv -c n`` directly.  For remote hosts,
-    the same command is executed over SSH.  All previously registered entries
-    for the given host prefix are cleared before the newly discovered
-    containers are saved.
+    Uses a single ``incus list -f csv -c n,user.remo`` query (locally when
+    ``host == "localhost"``, else over SSH) that returns each container's name
+    and managed-marker value (FR-013). By default (``include_all=False``) only
+    marker-bearing containers are registered (FR-006) and any skipped unmarked
+    containers are named in a hint (FR-008). With ``include_all=True`` every
+    container is registered — the pre-feature behavior (FR-007) — and unmarked
+    adoptions are called out in the summary (FR-009).
 
-    When *use_ip* is true, each container's eth0 IP is resolved and stored as
-    the ``host`` field; otherwise the container name itself is stored (and
-    relies on DNS/MagicDNS for resolution at connect time).
+    This function never mutates container state: it applies/removes no marker
+    (FR-010). When *use_ip* is true, each container's eth0 IP is resolved and
+    stored as the ``host`` field; otherwise the container name is stored.
     """
-    if host == "localhost":
-        result = subprocess.run(
-            ["incus", "list", "-f", "csv", "-c", "n"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print_error(f"Failed to list containers: {result.stderr.strip()}")
-            sys.exit(1)
-    else:
-        ssh_target = f"{user}@{host}" if user else host
-        result = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=10", ssh_target,
-             "incus list -f csv -c n"],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print_error(
-                f"Failed to list containers on '{host}': "
-                f"{result.stderr.strip()}"
-            )
-            sys.exit(1)
-
-    containers = [
-        line.strip() for line in result.stdout.splitlines() if line.strip()
-    ]
+    try:
+        discovered = _list_containers_with_marker(host, user)
+    except RuntimeError as e:
+        print_error(f"Failed to list containers on '{host}': {e}")
+        sys.exit(1)
 
     # Clear existing entries for this host before re-populating.
     clear_known_hosts_by_prefix("incus", f"{host}/")
 
-    for name in containers:
+    registered = 0
+    skipped: list[str] = []
+    adopted_unmarked: list[str] = []
+    for name, marked in discovered:
+        if not include_all and not marked:
+            skipped.append(name)
+            continue
+        if include_all and not marked:
+            adopted_unmarked.append(name)
         if use_ip:
             container_host = _resolve_container_ip(name, host, user) or name
         else:
@@ -578,8 +646,30 @@ def sync(host: str = "localhost", user: str = "", use_ip: bool = False) -> None:
                 access_mode="direct",
             )
         )
+        registered += 1
 
-    print_info(f"Synced {len(containers)} container(s) from '{host}'.")
+    print_info(f"Synced {registered} container(s) from '{host}'.")
+
+    if not include_all and skipped:
+        print_warning(
+            f"Skipped {len(skipped)} unmarked container(s): {', '.join(skipped)}"
+        )
+        print_info(
+            f"  • Adopt all this run:      remo incus sync --host {host} --all"
+        )
+        print_info(
+            "  • Mark one permanently:    remo incus update --name <name> "
+            f"--host {host}"
+        )
+
+    if include_all and adopted_unmarked:
+        print_warning(
+            f"{len(adopted_unmarked)} of the registered container(s) are not "
+            f"remo-created (adopted via --all): {', '.join(adopted_unmarked)}"
+        )
+        print_info(
+            "Note: a later default `sync` will drop those unmarked one(s) again."
+        )
 
 
 def bootstrap(

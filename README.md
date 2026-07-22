@@ -255,8 +255,9 @@ remo aws info [--name N]            # Show type, cores, memory, EBS size
 remo incus create --name <n> [--host H]  # Create container
 remo incus list                     # List registered containers
 remo incus info --name <n>          # Show cores, memory, root size
-remo incus sync [--host H]          # Discover existing containers
-remo incus update --name <n>        # Update dev tools
+remo incus sync [--host H]          # Discover remo-managed containers
+remo incus sync [--host H] --all    # Also adopt non-remo containers on the host
+remo incus update --name <n>        # Update dev tools (also marks as remo-managed)
 remo incus update --name <n> --volume-size 40 --cores 4 --memory 4096
 remo incus destroy --name <n> [--yes]    # Destroy container
 remo incus bootstrap                # Initialize Incus on host
@@ -265,8 +266,9 @@ remo incus bootstrap                # Initialize Incus on host
 remo proxmox create --name <n> --host <node>  # Create LXC container
 remo proxmox list                   # List registered containers
 remo proxmox info --name <n>        # Show cores, memory, rootfs size
-remo proxmox sync --host <node>     # Discover existing containers
-remo proxmox update --name <n>      # Update dev tools
+remo proxmox sync --host <node>     # Discover remo-managed containers
+remo proxmox sync --host <node> --all   # Also adopt non-remo containers on the node
+remo proxmox update --name <n>      # Update dev tools (also marks as remo-managed)
 remo proxmox update --name <n> --volume-size 40 --cores 4 --memory 4096
 remo proxmox destroy --name <n> [--yes] [--purge]   # Destroy container
 remo proxmox bootstrap --host <node>  # Verify node + download LXC template
@@ -353,9 +355,18 @@ discovery states, terminal limits, troubleshooting, and upgrade notes:
 ```bash
 remo aws sync                          # Discover AWS instances with 'remo' tag
 remo hetzner sync                      # Discover Hetzner VMs with 'remo' label
-remo incus sync                        # Discover Incus containers
-remo proxmox sync --host <node>        # Discover Proxmox LXC containers
+remo incus sync                        # Discover remo-managed Incus containers
+remo proxmox sync --host <node>        # Discover remo-managed Proxmox LXC containers
 ```
+
+All four providers now filter `sync` to the containers/instances **remo created**.
+On Incus/Proxmox, `remo`-created containers are marked at provision time (an Incus
+`user.remo=true` config key or a Proxmox `remo` guest tag), and a default `sync`
+registers only those. To adopt containers `remo` did not create, use
+`sync --all` (a one-time, unmarked adoption) or `remo <provider> update <name>`
+(permanently marks one). Containers created before this feature are unmarked;
+the first default `sync` after upgrading names them and prints both remedies
+rather than silently dropping or re-marking them.
 
 **SSH connection fails?**
 ```bash
