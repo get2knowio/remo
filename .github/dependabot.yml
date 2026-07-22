@@ -7,6 +7,10 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # Let a new release settle before we bump to it, so we don't chase
+    # immediately-yanked or regression releases.
+    cooldown:
+      default-days: 7
     groups:
       # One PR per week with all minor/patch production deps bumped together.
       production-minor-patch:
@@ -29,6 +33,8 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
       actions:
         update-types:

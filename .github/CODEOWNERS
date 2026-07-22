@@ -1,0 +1,5 @@
+# Code owners for remo.
+# These owners are the default reviewers for every pull request in this repo.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+*       @pofallon
