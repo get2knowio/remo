@@ -219,9 +219,15 @@ def info(name: str, host: str, user: str) -> None:
     is_flag=True,
     help="Store each container's IP address in known_hosts instead of its name (for setups without DNS/MagicDNS).",
 )
-def sync(host: str, user: str, use_ip: bool) -> None:
+@click.option(
+    "--all",
+    "include_all",
+    is_flag=True,
+    help="Register every container on the host, including those without the remo managed marker (pre-feature behavior).",
+)
+def sync(host: str, user: str, use_ip: bool, include_all: bool) -> None:
     """Discover containers from a Proxmox host."""
-    providers_proxmox.sync(host=host, user=user, use_ip=use_ip)
+    providers_proxmox.sync(host=host, user=user, use_ip=use_ip, include_all=include_all)
 
 
 @proxmox.command()
