@@ -63,6 +63,20 @@ class TestParseTarget:
         with pytest.raises(ValueError):
             added.parse_ssh_target("@host")
 
+    def test_user_with_colon_rejected(self) -> None:
+        # A ':' in the user would shift every later registry field on reload.
+        with pytest.raises(ValueError, match="user must not contain"):
+            added.parse_ssh_target("host", user_override="ev:il")
+
+    def test_user_with_newline_rejected(self) -> None:
+        # A newline would inject a second registry line.
+        with pytest.raises(ValueError, match="control"):
+            added.parse_ssh_target("host", user_override="ev\nil")
+
+    def test_host_with_control_char_rejected(self) -> None:
+        with pytest.raises(ValueError, match="control"):
+            added.parse_ssh_target("ho\tst")
+
 
 # ---------------------------------------------------------------------------
 # add() — create
@@ -124,6 +138,17 @@ class TestAddCreate:
         assert rc == 2
         save.assert_not_called()
         assert err.called
+
+    def test_identity_with_newline_rejected_no_write(self, mocker) -> None:
+        # A newline in the identity would inject a forged registry line.
+        mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[])
+        save = mocker.patch("remo_cli.providers.added.save_known_host")
+        mocker.patch("remo_cli.providers.added.print_error")
+
+        rc = added.add(name="box", target="dev@host", identity="/k/id\nssh:evil:h:u")
+
+        assert rc == 2
+        save.assert_not_called()
 
     def test_malformed_target_rejected_no_write(self, mocker) -> None:
         mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[])

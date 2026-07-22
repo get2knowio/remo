@@ -111,3 +111,14 @@ class TestVerifyReachable:
         argv = run.call_args.args[0]
         # Port 2222 flows through build_ssh_opts into the probe argv.
         assert "Port=2222" in argv
+
+    def test_probe_relaxes_host_key_check(self, mocker) -> None:
+        # A reachable but never-before-seen host must pass the probe rather than
+        # fail "Host key verification failed" under BatchMode.
+        run = mocker.patch(
+            "remo_cli.providers.added.subprocess.run", return_value=_completed(0)
+        )
+        added.verify_reachable(self._host())
+        argv = run.call_args.args[0]
+        assert "StrictHostKeyChecking=no" in argv
+        assert "UserKnownHostsFile=/dev/null" in argv

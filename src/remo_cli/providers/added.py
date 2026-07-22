@@ -34,9 +34,19 @@ from remo_cli.core.output import (
 )
 from remo_cli.models.host import KnownHost
 
-# Registry types backed by managed infrastructure — never overwritten by `add`
-# and never removed by `remove` (they have a provider `destroy`).
-PROVIDER_TYPES = frozenset({"incus", "proxmox", "aws", "hetzner"})
+
+def _reject_unsafe_field(label: str, value: str) -> None:
+    """Reject a registry field that would corrupt the colon-delimited line.
+
+    The known-hosts store is both ``:``-delimited and newline-delimited, so a
+    field containing ``:`` shifts every later field on reload and a control
+    character (newline/tab/…) can inject or truncate a line. Neither must ever
+    be persisted (FR-013).
+    """
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
+        raise ValueError(f"{label} contains control characters")
+    if ":" in value:
+        raise ValueError(f"{label} must not contain ':'")
 
 
 def _find_name_conflict(name: str) -> KnownHost | None:
@@ -135,6 +145,11 @@ def parse_ssh_target(
     if not (1 <= port <= 65535):
         raise ValueError(f"port {port} is out of range (1-65535)")
 
+    # The user (from --user or user@) and host become colon-delimited registry
+    # fields; reject anything that would shift fields or inject a line (FR-013).
+    _reject_unsafe_field("user", user)
+    _reject_unsafe_field("host", host_part)
+
     return user, host_part, port
 
 
@@ -150,6 +165,13 @@ def verify_reachable(host: KnownHost, timeout: int = 10) -> tuple[bool, str | No
     added host's port and stored identity are honored, then runs ``ssh … true``
     with ``BatchMode=yes`` (no password prompt). Returns ``(True, None)`` on
     success or ``(False, error)`` on any SSH failure.
+
+    Host-key checking is disabled for the probe (``StrictHostKeyChecking=no`` +
+    ``UserKnownHostsFile=/dev/null``): this is a *reachability/auth* check, and
+    with ``BatchMode=yes`` an unknown host key would otherwise fail with "Host
+    key verification failed" — wrongly reporting a reachable, never-before-seen
+    host as unreachable. It deliberately does not pre-seed ``~/.ssh/known_hosts``
+    (the first real ``remo shell`` still follows normal host-key behavior).
     """
     from remo_cli.core.ssh import build_ssh_opts
 
@@ -161,6 +183,10 @@ def verify_reachable(host: KnownHost, timeout: int = 10) -> tuple[bool, str | No
         f"ConnectTimeout={timeout}",
         "-o",
         "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
         ssh_target,
         "true",
     ]
@@ -208,13 +234,16 @@ def add(
         print_error(f"Invalid target: {e}")
         return 2
 
-    if identity is not None and ":" in identity:
-        print_error(
-            "Invalid --identity: the path must not contain ':' "
-            "(it would corrupt the colon-delimited registry line). "
-            "Use an '~/.ssh/config' IdentityFile entry for such a key."
-        )
-        return 2
+    if identity is not None:
+        try:
+            _reject_unsafe_field("identity path", identity)
+        except ValueError:
+            print_error(
+                "Invalid --identity: the path must not contain ':' or control "
+                "characters (they would corrupt the colon-delimited registry "
+                "line). Use an '~/.ssh/config' IdentityFile entry for such a key."
+            )
+            return 2
 
     # Whole-registry name-collision check: the registry only dedupes within
     # (type, name), so a cross-type collision must be caught here (FR-010).
