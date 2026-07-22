@@ -94,6 +94,39 @@ class KnownHost:
         )
 
     # ------------------------------------------------------------------
+    # Manually-added SSH host accessors (feature 014-register-ssh-host)
+    #
+    # For the ``ssh`` type, ``remo add`` stores the SSH port in ``instance_id``
+    # and the optional identity path in ``region`` (access_mode is ``direct``).
+    # These type-gated readers localize that field-overloading so the rest of
+    # the codebase never reinterprets provider slots: for every non-``ssh``
+    # type they return neutral values, leaving all other providers untouched.
+    # ------------------------------------------------------------------
+
+    @property
+    def ssh_port(self) -> int:
+        """SSH port for an added (``ssh``-type) host; ``22`` otherwise/default.
+
+        Non-``ssh`` types return the default so a provider's ``instance_id``
+        (e.g. a Proxmox vmid or an AWS instance id) is never read as a port.
+        """
+        from remo_cli.core.config import DEFAULT_SSH_PORT
+
+        if self.type == "ssh" and self.instance_id:
+            try:
+                return int(self.instance_id)
+            except ValueError:
+                return DEFAULT_SSH_PORT
+        return DEFAULT_SSH_PORT
+
+    @property
+    def ssh_identity(self) -> str | None:
+        """Stored SSH identity path for an added (``ssh``-type) host, else ``None``."""
+        if self.type == "ssh" and self.region:
+            return self.region
+        return None
+
+    # ------------------------------------------------------------------
     # Display
     # ------------------------------------------------------------------
 

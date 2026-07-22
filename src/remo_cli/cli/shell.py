@@ -96,8 +96,14 @@ def shell(
     # Auto-start stopped AWS instances before connecting
     host = auto_start_aws_if_stopped(host)
 
-    # Pre-shell remote version check
-    if not no_update_check:
+    # Pre-shell remote version check.
+    #
+    # Skip entirely for manually-added SSH hosts (feature 014, type="ssh"):
+    # they have no remo-managed tooling, so a missing `remo-host`/version marker
+    # is "unknown/unmanaged", not a prompt to run a (nonexistent) provider
+    # update. This lets `remo shell` drop straight into a plain login shell
+    # (FR-011).
+    if not no_update_check and host.type != "ssh":
         local_version = get_current_version()
         if local_version != "unknown":
             remote_version, remote_err = check_remote_version(host)

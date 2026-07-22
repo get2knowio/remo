@@ -79,6 +79,7 @@ def _register_commands() -> None:
     # when only --version or --help is requested.
     from remo_cli.cli.shell import shell  # noqa: F811
     from remo_cli.cli.cp import cp  # noqa: F811
+    from remo_cli.cli.added import add, remove  # noqa: F811
     from remo_cli.cli.providers.incus import incus  # noqa: F811
     from remo_cli.cli.providers.proxmox import proxmox  # noqa: F811
     from remo_cli.cli.providers.hetzner import hetzner  # noqa: F811
@@ -87,6 +88,8 @@ def _register_commands() -> None:
 
     cli.add_command(shell)
     cli.add_command(cp)
+    cli.add_command(add)
+    cli.add_command(remove)
     cli.add_command(incus)
     cli.add_command(proxmox)
     cli.add_command(hetzner)

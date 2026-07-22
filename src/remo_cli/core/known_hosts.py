@@ -188,6 +188,44 @@ def get_aws_region(name: str) -> str:
     )
 
 
+def guard_not_added_ssh_host(name: str, provider: str) -> None:
+    """FR-012: fail clearly when *name* is a manually-registered SSH host.
+
+    Provider lifecycle operations (``destroy``, ``snapshot`` create/restore/
+    delete, resize via ``update``) resolve a host by *name* within their own
+    inventory. A ``type="ssh"`` host added via ``remo add`` has no managed
+    *provider* infrastructure, so such an operation would otherwise silently
+    mis-target (e.g. an Incus teardown against ``localhost``) or emit an opaque
+    "not found" / "run sync" error that never tells the user what is wrong.
+
+    When *name* matches an added SSH host — and no host of *provider*'s own type
+    also matches it — exit with a clear message pointing the user at
+    ``remo remove``. When a same-type managed host also matches (e.g. an Incus
+    container that happens to share the name), the operation legitimately
+    targets that instance and is allowed through.
+    """
+    all_hosts = get_known_hosts()
+
+    if not any(h.type == "ssh" and h.name == name for h in all_hosts):
+        return
+
+    for host in all_hosts:
+        if host.type != provider:
+            continue
+        if host.name == name:
+            return
+        # incus/proxmox short-name match (container part of "host/container").
+        if provider in {"incus", "proxmox"} and "/" in host.name:
+            if host.name.split("/", maxsplit=1)[1] == name:
+                return
+
+    sys.exit(
+        f"Error: '{name}' is a manually-registered SSH host (added via "
+        f"'remo add') with no managed {provider} infrastructure. "
+        f"Use 'remo remove {name}' to deregister it."
+    )
+
+
 def resolve_remo_host_by_name(name: str) -> KnownHost:
     """Find a registered host by name, matching across all types.
 

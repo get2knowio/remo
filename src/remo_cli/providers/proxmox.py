@@ -24,6 +24,7 @@ from remo_cli.core.config import PROXMOX_MANAGED_TAG
 from remo_cli.core.known_hosts import (
     clear_known_hosts_by_prefix,
     get_known_hosts,
+    guard_not_added_ssh_host,
     remove_known_host,
     save_known_host,
 )
@@ -421,6 +422,7 @@ def destroy(
     Returns the ansible-playbook exit code (0 on success).
     """
     validate_name(name, "container name")
+    guard_not_added_ssh_host(name, "proxmox")  # FR-012
 
     vmid = ""
     if not host:
@@ -514,6 +516,7 @@ def update(
     Returns the ansible-playbook exit code (0 on success).
     """
     validate_name(name, "container name")
+    guard_not_added_ssh_host(name, "proxmox")  # FR-012
     volume_size = parse_volume_size(volume_size)
 
     vmid = ""
@@ -1012,6 +1015,7 @@ def snapshot_create(
     Pre-flight checks snapshot-capable storage (FR-005) and duplicate
     name (FR-006).  Returns 0 on success, 1 on any failure.
     """
+    guard_not_added_ssh_host(container, "proxmox")  # FR-012
     validate_snapshot_name(snap_name)
 
     supported, storage_type = _detect_snapshot_capable_storage(host, user, vmid)
@@ -1086,6 +1090,7 @@ def snapshot_restore(
     operation; we restart it afterwards if it was running pre-rollback
     (FR-013).  Returns 0 on success, 1 on any failure.
     """
+    guard_not_added_ssh_host(container, "proxmox")  # FR-012
     try:
         existing = _list_snapshots_for_vmid(host, user, vmid, container)
     except RuntimeError as e:
@@ -1153,6 +1158,7 @@ def snapshot_delete(
     auto_confirm: bool = False,
 ) -> int:
     """Delete a snapshot of LXC *vmid*."""
+    guard_not_added_ssh_host(container, "proxmox")  # FR-012
     try:
         existing = _list_snapshots_for_vmid(host, user, vmid, container)
     except RuntimeError as e:
