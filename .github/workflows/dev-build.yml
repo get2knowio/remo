@@ -1,0 +1,78 @@
+name: dev-build
+
+# Build an installable wheel and upload it as a run artifact you can download and
+# test on ANY machine — no git tag, no PyPI, no version reserved.
+#
+# The stamped version always carries a PEP 440 *local* segment (`+g<shortsha>`),
+# which PyPI rejects outright — so a dev build can never leak to PyPI, and every
+# build is uniquely identifiable.
+#
+# Trigger manually:
+#   gh workflow run dev-build.yml                     # -> 2.2.0.dev<run>+g<sha>
+#   gh workflow run dev-build.yml -f version=2.3.0rc1 # -> 2.3.0rc1+g<sha>
+#
+# Then, on any machine:
+#   gh run download <run-id> -n remo-wheel -D ./dl
+#   uv tool install --force ./dl/remo_cli-*.whl
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Full base version to stamp (e.g. 2.3.0rc1, 2.3.0). Blank = auto dev version from pyproject. A +g<sha> local segment is always appended."
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Compute dev version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          SHA=$(git rev-parse --short HEAD)
+          if [ -n "$INPUT_VERSION" ]; then
+            BASE="$INPUT_VERSION"
+          else
+            # Core X.Y.Z from pyproject, plus a per-run .dev segment.
+            CORE=$(grep -m1 '^version = ' pyproject.toml \
+              | sed -E 's/version = "([0-9]+\.[0-9]+\.[0-9]+).*"/\1/')
+            BASE="${CORE}.dev${GITHUB_RUN_NUMBER}"
+          fi
+          # Always append the local segment: unique + un-uploadable to PyPI.
+          VERSION="${BASE}+g${SHA}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Stamp version into pyproject.toml
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          sed -i -E "0,/^version = \".*\"/s//version = \"${VERSION}\"/" pyproject.toml
+          grep -m1 '^version = ' pyproject.toml
+
+      - name: Build wheel + sdist
+        run: uv build
+
+      - name: Upload artifact
+        # NOTE: SHA-pin to match the repo's action-pinning convention once the
+        # v4 commit SHA is available (e.g. `@<sha> # v4`).
+        uses: actions/upload-artifact@v4
+        with:
+          name: remo-wheel
+          path: dist/*
+          retention-days: 30
+          if-no-files-found: error

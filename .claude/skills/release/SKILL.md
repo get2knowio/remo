@@ -84,6 +84,17 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
      (`dist/*.whl`) or the git-install one-liner
      (`uv tool install --force "git+https://github.com/get2knowio/remo.git@<branch>"`).
      Nothing is committed, tagged, or published.
+   - **CI dev build for cross-machine testing (no PyPI):** trigger the
+     `dev-build.yml` workflow, which builds the wheel in clean CI and uploads it
+     as a run artifact. The stamped version carries a `+g<sha>` local segment, so
+     it is unique and can never reach PyPI. Nothing is committed or tagged.
+     ```bash
+     gh workflow run dev-build.yml -f version=X.Y.ZrcN   # omit -f for an auto dev version
+     gh run watch                                        # wait for it to finish
+     # then, on ANY machine:
+     gh run download <run-id> -n remo-wheel -D ./dl
+     uv tool install --force ./dl/remo_cli-*.whl
+     ```
    - **Publish a prerelease (only on explicit approval):**
      ```bash
      git commit -am "chore(release): X.Y.ZrcN"
