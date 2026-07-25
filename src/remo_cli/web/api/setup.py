@@ -20,14 +20,18 @@ Business endpoints (contracts/setup-api.md is the normative wire contract;
 T011/T012/T013), all inheriting the router-level token dependency:
 
 - ``GET /status`` -- configuration state + identity presence; cheap, pollable.
+  Also advertises ``payload_versions`` (specs/015-registry-v2/contracts/
+  mirror-payload-v2.md §1) so the workstation can fail fast on version skew.
 - ``GET /identity`` -- deployment id + public key; generates the service
   identity on first call when unconfigured (idempotent, FR-002); ``409
   {"reason": "mount_configured"}`` when the deployment is mount-configured.
-- ``PUT /registry`` -- the `AdoptionPayload` mirror. Validates EVERYTHING
-  before writing anything (FR-019), then applies atomically: service
-  known_hosts file first, registry file last (research R5), each via
-  temp-file + ``os.replace``. Live terminal sessions are never touched --
-  they hold their own SSH processes; this is file replacement only.
+- ``PUT /registry`` -- the `AdoptionPayload` mirror. Accepts payload v1 (legacy
+  colon-shaped fields) AND v2 (registry-file-v2.md hostEntry shape); v1 entries
+  are mapped through the same legacy->v2 mapper the CLI migration uses
+  (specs/015-registry-v2/contracts/mirror-payload-v2.md §2). Validates
+  EVERYTHING before writing anything (FR-019), then applies atomically:
+  service known_hosts file first, registry.json (v2) second, any stale legacy
+  mirror file removed last (research R9).
 - ``POST /verify`` -- JSON wrapper around `web.check.run_checks()` with
   instance checks included (sync route: FastAPI runs it in a threadpool, so
   the ~5s-per-unreachable-instance round-trips never block the event loop).
@@ -36,15 +40,18 @@ T011/T012/T013), all inheriting the router-level token dependency:
 from __future__ import annotations
 
 import logging
+import os
 import re
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from remo_cli.core.config import get_known_hosts_path, get_known_hosts_path_readonly
-from remo_cli.core.known_hosts import _write_lines_atomically
+from remo_cli.core import registry
+from remo_cli.core.config import get_known_hosts_path
 from remo_cli.models.host import KnownHost
 from remo_cli.web import check as web_check
 from remo_cli.web.config import WebSettings
@@ -57,6 +64,8 @@ from remo_cli.web.state import (
 )
 
 logger = logging.getLogger("remo_cli.web.setup")
+
+SUPPORTED_PAYLOAD_VERSIONS: list[int] = [1, 2]
 
 
 def _get_settings(request: Request) -> WebSettings:
@@ -103,7 +112,7 @@ router = APIRouter(prefix="/setup", dependencies=[Depends(require_pairing_code)]
 
 
 # ---------------------------------------------------------------------------
-# Request/response models (contracts/setup-api.md shapes)
+# Request/response models (contracts/setup-api.md, mirror-payload-v2.md shapes)
 # ---------------------------------------------------------------------------
 
 
@@ -112,6 +121,7 @@ class SetupStatusResponse(BaseModel):
     deployment_id: str | None
     public_key_available: bool
     registry_instances: int
+    payload_versions: list[int] = Field(default_factory=lambda: list(SUPPORTED_PAYLOAD_VERSIONS))
 
 
 class IdentityResponse(BaseModel):
@@ -119,8 +129,8 @@ class IdentityResponse(BaseModel):
     public_key: str
 
 
-class RegistryEntryIn(BaseModel):
-    """One `AdoptionPayload.registry` entry -- mirrors `models/host.py:KnownHost`."""
+class RegistryEntryV1In(BaseModel):
+    """One v1 `AdoptionPayload.registry` entry -- the legacy colon-shaped fields."""
 
     type: str
     name: str
@@ -131,11 +141,36 @@ class RegistryEntryIn(BaseModel):
     region: str = ""
 
 
-class AdoptionPayloadIn(BaseModel):
-    """`PUT /registry` body (data-model.md AdoptionPayload) -- a full mirror."""
+class AdoptionPayloadV1In(BaseModel):
+    """v1 `PUT /registry` body (accepted for backward compatibility, FR-022)."""
 
     version: int
-    registry: list[RegistryEntryIn]
+    registry: list[RegistryEntryV1In]
+    host_keys: dict[str, list[str]] = Field(default_factory=dict)
+
+
+class RegistryEntryV2In(BaseModel):
+    """One v2 hostEntry -- exact schema from registry-file-v2.md.
+
+    ``extra="allow"`` so the per-type nested object (``incus``/``proxmox``/
+    ``aws``/``ssh``, keyed by ``type``) round-trips without a dedicated
+    sub-model per type; shape is validated by :func:`registry.entry_to_known_host`.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    name: str
+    host: str
+    user: str
+    access: str
+
+
+class AdoptionPayloadV2In(BaseModel):
+    """v2 `PUT /registry` body (canonical; what an upgraded CLI sends)."""
+
+    version: int
+    registry: list[RegistryEntryV2In]
     host_keys: dict[str, list[str]] = Field(default_factory=dict)
 
 
@@ -162,22 +197,24 @@ class VerifyResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _read_registry_readonly() -> list[KnownHost]:
-    """Parse the registry with no mkdir side effects; unreadable/absent -> []."""
+def _write_lines_atomically(path: Path, lines: list[str]) -> None:
+    """Write *lines* to *path* atomically via a same-directory temp file + rename.
+
+    Used only for the service's own SSH ``known_hosts`` trust file (not the
+    remo registry, which goes through :mod:`core.registry`'s own atomic writer).
+    """
+    dir_ = path.parent
+    dir_.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".known_hosts_tmp_")
+    tmp_path = Path(tmp_path_str)
     try:
-        text = get_known_hosts_path_readonly().read_text()
-    except OSError:
-        return []
-    hosts: list[KnownHost] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            hosts.append(KnownHost.from_line(line))
-        except ValueError:
-            continue
-    return hosts
+        with os.fdopen(fd, "w") as fh:
+            for line in lines:
+                fh.write(line + "\n")
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _mount_configured_response() -> JSONResponse:
@@ -190,9 +227,17 @@ def _invalid_payload(detail: str) -> JSONResponse:
     )
 
 
-def _is_ssm_entry(entry: RegistryEntryIn) -> bool:
-    """Mirrors `KnownHost.to_line`'s default: instance_id set + no explicit mode -> ssm."""
-    return entry.access_mode == "ssm" or bool(entry.instance_id and not entry.access_mode)
+def _unsupported_payload_version(version: Any) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={
+            "error": {
+                "code": "unsupported_payload_version",
+                "supported": list(SUPPORTED_PAYLOAD_VERSIONS),
+                "received": version,
+            }
+        },
+    )
 
 
 #: Plausible OpenSSH key-type token, e.g. ssh-ed25519, ecdsa-sha2-nistp256,
@@ -224,31 +269,46 @@ def _known_hosts_line_error(line: str) -> str | None:
     return None
 
 
-def _validate_payload(payload: AdoptionPayloadIn) -> str | None:
-    """All semantic `AdoptionPayload` rules (data-model.md); error detail or None.
-
-    All-or-nothing: callers write NOTHING unless this returns None (FR-019).
-    The empty-registry guard is separate (its own 422 reason).
-    """
-    if payload.version != 1:
-        return f"unsupported payload version {payload.version} (expected 1)"
-
-    names: set[str] = set()
-    for index, entry in enumerate(payload.registry):
+def _map_v1_entries(entries: list[RegistryEntryV1In]) -> tuple[list[KnownHost], str | None]:
+    """Map v1 entries through the shared legacy->v2 mapper (data-model.md §4)."""
+    hosts: list[KnownHost] = []
+    for index, entry in enumerate(entries):
         for field_name in ("type", "name", "host", "user"):
             if not getattr(entry, field_name).strip():
-                return f"registry[{index}]: field {field_name!r} must be non-empty"
-        for field_name in ("type", "name", "host", "user", "instance_id", "access_mode", "region"):
-            value = getattr(entry, field_name)
-            if ":" in value or "\n" in value:
-                return (
-                    f"registry[{index}].{field_name}: value {value!r} cannot contain "
-                    "':' or newline (colon-delimited registry format)"
-                )
-        names.add(entry.name)
+                return [], f"registry[{index}]: field {field_name!r} must be non-empty"
+        v2_entry = registry.legacy_fields_to_entry(
+            entry.type,
+            entry.name,
+            entry.host,
+            entry.user,
+            entry.instance_id,
+            entry.access_mode,
+            entry.region,
+        )
+        known_host = registry.entry_to_known_host(v2_entry)
+        if known_host is None:
+            return [], f"registry[{index}]: unrecognized type {entry.type!r}"
+        hosts.append(known_host)
+    return hosts, None
 
-    ssm_names = {entry.name for entry in payload.registry if _is_ssm_entry(entry)}
-    for name, lines in payload.host_keys.items():
+
+def _map_v2_entries(entries: list[RegistryEntryV2In]) -> tuple[list[KnownHost], str | None]:
+    hosts: list[KnownHost] = []
+    for index, entry in enumerate(entries):
+        raw = entry.model_dump()
+        known_host = registry.entry_to_known_host(raw)
+        if known_host is None:
+            return [], f"registry[{index}]: does not match the expected hostEntry shape"
+        hosts.append(known_host)
+    return hosts, None
+
+
+def _validate_host_keys(
+    hosts: list[KnownHost], host_keys: dict[str, list[str]]
+) -> str | None:
+    names = {h.name for h in hosts}
+    ssm_names = {h.name for h in hosts if h.access_mode == "ssm"}
+    for name, lines in host_keys.items():
         if name not in names:
             return f"host_keys entry {name!r} does not reference any registry entry"
         if name in ssm_names:
@@ -260,37 +320,30 @@ def _validate_payload(payload: AdoptionPayloadIn) -> str | None:
     return None
 
 
-def _apply_payload(payload: AdoptionPayloadIn, settings: WebSettings) -> None:
-    """Atomic two-file apply: service known_hosts FIRST, registry LAST (R5).
+def _apply_payload(
+    hosts: list[KnownHost], host_keys: dict[str, list[str]], settings: WebSettings
+) -> None:
+    """Ordered, crash-convergent apply (contracts/mirror-payload-v2.md §3):
 
-    Each file is replaced via temp-file + ``os.replace`` (the
-    `core/known_hosts.py` atomic pattern). A crash between the two writes
-    leaves a superset of needed host keys and the old registry -- safe, and
-    convergent on re-push (FR-015). Never touches live terminal sessions:
-    established SSH processes hold their own file descriptors.
+    1. service trust file (``web-identity/known_hosts``) -- unchanged from today.
+    2. ``registry.json`` (v2) via :func:`core.registry.replace_registry`.
+    3. remove any legacy ``known_hosts`` mirror file left from a pre-upgrade
+       push (service-owned replaceable state, not user data).
+
+    A crash mid-sequence leaves a readable superset; re-push converges.
     """
     known_hosts_lines: list[str] = []
-    for entry in payload.registry:
-        for line in payload.host_keys.get(entry.name, []):
+    for host in hosts:
+        for line in host_keys.get(host.name, []):
             known_hosts_lines.append(line.strip())
 
     identity_dir = settings.web_identity_dir
     identity_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     _write_lines_atomically(settings.service_known_hosts_path, known_hosts_lines)
 
-    registry_lines = [
-        KnownHost(
-            type=entry.type,
-            name=entry.name,
-            host=entry.host,
-            user=entry.user,
-            instance_id=entry.instance_id,
-            access_mode=entry.access_mode,
-            region=entry.region,
-        ).to_line()
-        for entry in payload.registry
-    ]
-    _write_lines_atomically(get_known_hosts_path(), registry_lines)
+    registry.replace_registry(hosts, allow_empty=True)
+
+    get_known_hosts_path().unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -303,11 +356,13 @@ def get_status(request: Request) -> SetupStatusResponse:
     """`GET /api/v1/setup/status` -- service mode + identity presence. Cheap."""
     settings = _get_settings(request)
     identity = load_service_identity(settings)  # no side effects
+    registry_instances = len(registry.read_registry(readonly=True).hosts)
     return SetupStatusResponse(
         state=detect_state(settings).value,
         deployment_id=(identity.deployment_id or None) if identity else None,
         public_key_available=identity is not None,
-        registry_instances=len(_read_registry_readonly()),
+        registry_instances=registry_instances,
+        payload_versions=list(SUPPORTED_PAYLOAD_VERSIONS),
     )
 
 
@@ -335,17 +390,32 @@ def put_registry(
 ) -> RegistryApplyResponse | JSONResponse:
     """`PUT /api/v1/setup/registry` -- apply the adoption mirror atomically.
 
-    Validates the FULL payload before writing anything (FR-019); a
-    mount-configured deployment is read-only via this API (409, FR-017); an
-    empty registry requires the explicit ``allow_empty=true`` opt-out
-    (defense-in-depth for the CLI-side FR-016 guard).
+    Accepts payload v1 (legacy fields, mapped through the shared legacy->v2
+    mapper) and v2 (registry-file-v2.md hostEntry shape); always stores v2
+    (FR-020/FR-022). Validates the FULL payload before writing anything
+    (FR-019); a mount-configured deployment is read-only via this API (409,
+    FR-017); an empty registry requires the explicit ``allow_empty=true``
+    opt-out (defense-in-depth for the CLI-side FR-016 guard); an unsupported
+    ``version`` is rejected with the prior mirror left completely intact
+    (400 ``unsupported_payload_version``, FR-021).
     """
     settings = _get_settings(request)
     if detect_state(settings) is ConfigurationState.MOUNT_CONFIGURED:
         return _mount_configured_response()
 
+    version = body.get("version")
+    if version not in SUPPORTED_PAYLOAD_VERSIONS:
+        return _unsupported_payload_version(version)
+
     try:
-        payload = AdoptionPayloadIn.model_validate(body)
+        if version == 1:
+            payload_v1 = AdoptionPayloadV1In.model_validate(body)
+            hosts, error = _map_v1_entries(payload_v1.registry)
+            host_keys = payload_v1.host_keys
+        else:
+            payload_v2 = AdoptionPayloadV2In.model_validate(body)
+            hosts, error = _map_v2_entries(payload_v2.registry)
+            host_keys = payload_v2.host_keys
     except ValidationError as exc:
         detail = "; ".join(
             f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}"
@@ -353,28 +423,41 @@ def put_registry(
         )
         return _invalid_payload(detail or "malformed payload")
 
-    error = _validate_payload(payload)
     if error is not None:
         return _invalid_payload(error)
 
-    if not payload.registry and not allow_empty:
+    if not hosts and not allow_empty:
         return JSONResponse(status_code=422, content={"reason": "empty_registry"})
 
     try:
-        _apply_payload(payload, settings)
-    except OSError as exc:
+        registry.validate_hosts(hosts)
+    except registry.RegistryValidationError as exc:
+        return _invalid_payload(str(exc))
+
+    host_keys_error = _validate_host_keys(hosts, host_keys)
+    if host_keys_error is not None:
+        return _invalid_payload(host_keys_error)
+
+    try:
+        _apply_payload(hosts, host_keys, settings)
+    except (OSError, registry.RegistryError) as exc:
+        # OSError: a filesystem write failed. RegistryError: a lock timeout
+        # (RegistryBusyError) or an unreadable/newer-version registry.json on
+        # the service volume -- either way a clean 500, never an uncaught
+        # traceback (the hosts themselves were already validated above).
         logger.error("registry apply failed: %s", exc)
         raise HTTPException(status_code=500, detail="failed to apply registry") from exc
 
     logger.info(
-        "adoption mirror applied: %d registry entries, %d instances with host keys",
-        len(payload.registry),
-        len(payload.host_keys),
+        "adoption mirror applied (payload v%d): %d registry entries, %d instances with host keys",
+        version,
+        len(hosts),
+        len(host_keys),
     )
     return RegistryApplyResponse(
         applied=True,
-        registry_instances=len(payload.registry),
-        host_key_instances=len(payload.host_keys),
+        registry_instances=len(hosts),
+        host_key_instances=len(host_keys),
     )
 
 

@@ -1,4 +1,5 @@
-"""Tests for the adoption payload builder in remo_cli.core.web_adopt (011-web-adopt, T022).
+"""Tests for the adoption payload builder in remo_cli.core.web_adopt (011-web-adopt, T022;
+updated for 015-registry-v2 T032/T033: the payload is now v2-shaped).
 
 Covers build_adoption_payload full-mirror semantics (FR-008), SSM host-key
 exclusion (FR-012), the empty-registry guard (FR-016), the no-private-key
@@ -21,7 +22,9 @@ from remo_cli.models.host import KnownHost
 # Helpers
 # -----------------------------------------------------------------------
 
-ALL_FIELDS = ("type", "name", "host", "user", "instance_id", "access_mode", "region")
+#: v2 hostEntry common fields (registry-file-v2.md) — every entry always
+#: carries these; per-type nested fields (e.g. "aws") are additional.
+COMMON_FIELDS = ("type", "name", "host", "user", "access")
 
 
 def _make_host(type_="incus", name="myhost/dev", host="10.0.0.1", user="remo", **kwargs):
@@ -64,12 +67,12 @@ HOST_KEY_LINE = "10.0.0.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyMaterialFo
 
 
 class TestFullMirror:
-    """The payload mirrors the complete registry, every field, version 1."""
+    """The payload mirrors the complete registry, every field, current version."""
 
-    def test_version_is_one(self):
+    def test_version_matches_payload_version(self):
         payload = build_adoption_payload(_sample_hosts())
-        assert payload["version"] == 1
         assert payload["version"] == PAYLOAD_VERSION
+        assert payload["version"] == 2
 
     def test_every_registry_entry_present(self):
         hosts = _sample_hosts()
@@ -77,13 +80,16 @@ class TestFullMirror:
         assert len(payload["registry"]) == len(hosts)
         assert [e["name"] for e in payload["registry"]] == [h.name for h in hosts]
 
-    def test_all_seven_knownhost_fields_mirrored(self):
+    def test_common_fields_mirrored_as_v2_hostentry(self):
         hosts = _sample_hosts()
         payload = build_adoption_payload(hosts)
         for host, entry in zip(hosts, payload["registry"]):
-            assert set(entry.keys()) == set(ALL_FIELDS)
-            for field_name in ALL_FIELDS:
-                assert entry[field_name] == getattr(host, field_name)
+            assert set(COMMON_FIELDS) <= set(entry.keys())
+            assert entry["type"] == host.type
+            assert entry["name"] == host.name
+            assert entry["host"] == host.host
+            assert entry["user"] == host.user
+            assert entry["access"] == (host.access_mode or "direct")
 
     def test_ssm_entry_fields_mirrored_verbatim(self):
         """SSM entries are excluded from host_keys but fully present in registry."""
@@ -94,9 +100,8 @@ class TestFullMirror:
             "name": "devbox-ssm",
             "host": "3.14.15.92",
             "user": "remo",
-            "instance_id": "i-0abc123def",
-            "access_mode": "ssm",
-            "region": "us-west-2",
+            "access": "ssm",
+            "aws": {"instance_id": "i-0abc123def", "region": "us-west-2"},
         }
 
     def test_host_keys_default_to_empty_dict(self):
@@ -220,7 +225,7 @@ class TestNoPrivateKeyMaterial:
 
         assert set(payload.keys()) == {"version", "registry", "host_keys"}
         for entry in payload["registry"]:
-            assert set(entry.keys()) == set(ALL_FIELDS)
+            assert set(COMMON_FIELDS) <= set(entry.keys())
         assert payload["host_keys"] == {"web1": [HOST_KEY_LINE]}
         # Every host-key line in the payload is one the caller provided.
         for lines in payload["host_keys"].values():
@@ -247,7 +252,11 @@ class TestIsDirectAccess:
         host = _make_host(type_="aws", name="devbox", instance_id="i-0abc", access_mode="ssm")
         assert is_direct_access(host) is False
 
-    def test_instance_id_with_default_empty_mode_classifies_as_ssm(self):
-        """A 5-field legacy entry (instance_id, no explicit mode) defaults to SSM."""
+    def test_instance_id_with_default_empty_mode_classifies_as_direct(self):
+        """Registry v2: access is always explicit ("direct"/"ssm") on any
+        accessor-sourced KnownHost; an empty access_mode (the dataclass
+        default) means "direct" — the old implicit-empty-means-ssm legacy
+        quirk is resolved at the accessor boundary (core/registry.py), not
+        inferred here anymore."""
         host = _make_host(type_="aws", name="devbox", instance_id="i-0abc", access_mode="")
-        assert is_direct_access(host) is False
+        assert is_direct_access(host) is True

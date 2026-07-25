@@ -31,11 +31,14 @@ Push delta-cache design (non-secret optimization)
 
 The service has no registry-read endpoint, so "unchanged since the last push"
 is decided workstation-side by a **non-secret** cache
-(``~/.config/remo/web-service.json``) mapping each service ``deployment_id`` to
-``{instance name -> {fingerprint, host_keys}}`` — no URL and no code are ever
-stored. The ``fingerprint`` is a SHA256 over the canonical registry-entry fields
-(type/name/host/user/instance_id/access_mode/region) and ``host_keys`` are the
-verified known_hosts lines pushed for that instance.
+(``~/.config/remo/web-service.json``, ``cache_version: 2``) mapping each
+service ``deployment_id`` to ``{instance name -> {fingerprint, host_keys}}`` —
+no URL and no code are ever stored. The ``fingerprint`` is a SHA256 over the
+canonical sorted-key JSON of the instance's v2 hostEntry (registry-file-v2.md)
+and ``host_keys`` are the verified known_hosts lines pushed for that instance.
+Any cache without ``cache_version: 2`` (including every pre-015 file, which had
+no version field at all) is treated as empty, forcing one full
+re-verification push after an upgrade (research R10).
 
 On ``remo web push``, a direct-access instance whose current fingerprint matches
 the cache for the service's ``deployment_id`` skips keyscan + authorize
@@ -69,6 +72,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from remo_cli.core import registry
 from remo_cli.core.config import get_known_hosts_path_readonly, get_remo_home_readonly
 from remo_cli.core.known_hosts import get_known_hosts
 from remo_cli.core.output import (
@@ -88,8 +92,10 @@ from remo_cli.models.host import KnownHost
 # Constants
 # ---------------------------------------------------------------------------
 
-#: Adoption payload schema version (contracts/setup-api.md).
-PAYLOAD_VERSION = 1
+#: Adoption payload schema version this workstation SENDS (specs/015-registry-v2/
+#: contracts/mirror-payload-v2.md §2) — the v2 hostEntry shape, no overloaded
+#: fields on the wire.
+PAYLOAD_VERSION = 2
 
 #: Default service port assumed by --via when the target URL names none.
 DEFAULT_SERVICE_PORT = 8080
@@ -167,6 +173,12 @@ class EmptyRegistryError(AdoptError):
 
 class TunnelError(AdoptError):
     """The --via SSH tunnel could not be established (FR-018)."""
+
+
+class UnsupportedPayloadVersionError(AdoptError):
+    """The service does not advertise support for this workstation's payload
+    version (specs/015-registry-v2/contracts/mirror-payload-v2.md §1, FR-021).
+    Raised BEFORE any instance processing or mutation — fail truly fast."""
 
 
 # ---------------------------------------------------------------------------
@@ -320,25 +332,13 @@ def is_direct_access(host: KnownHost) -> bool:
     """True when the entry is reached over plain SSH (not SSM-routed).
 
     SSM entries appear in the pushed ``registry`` mirror but must never carry
-    ``host_keys`` entries and are never key-authorized (FR-012). Mirrors
-    ``KnownHost.to_line``: an entry with an ``instance_id`` and no explicit
-    ``access_mode`` defaults to SSM.
+    ``host_keys`` entries and are never key-authorized (FR-012). Registry v2
+    entries always carry an explicit, normalized ``access`` of ``"direct"`` or
+    ``"ssm"`` (the legacy implicit-empty-access-mode-means-ssm quirk is
+    resolved at the accessor boundary — see core/registry.py — so no fallback
+    inference is needed here anymore).
     """
-    if host.access_mode == "ssm":
-        return False
-    return not (host.instance_id and not host.access_mode)
-
-
-def _registry_entry(host: KnownHost) -> dict[str, str]:
-    return {
-        "type": host.type,
-        "name": host.name,
-        "host": host.host,
-        "user": host.user,
-        "instance_id": host.instance_id,
-        "access_mode": host.access_mode,
-        "region": host.region,
-    }
+    return host.access_mode != "ssm"
 
 
 def build_adoption_payload(
@@ -365,9 +365,25 @@ def build_adoption_payload(
     }
     return {
         "version": PAYLOAD_VERSION,
-        "registry": [_registry_entry(h) for h in hosts],
+        "registry": [registry.known_host_to_entry(h) for h in hosts],
         "host_keys": filtered_keys,
     }
+
+
+def _check_payload_version_supported(status: dict[str, Any]) -> None:
+    """FR-021: abort before any mutation if the service doesn't speak our
+    payload version. ``payload_versions`` absent on ``GET /setup/status``
+    means a pre-015 service, which only ever spoke v1.
+    """
+    versions = status.get("payload_versions")
+    if not isinstance(versions, list):
+        versions = [1]
+    if PAYLOAD_VERSION not in versions:
+        raise UnsupportedPayloadVersionError(
+            f"this remo-web deployment only accepts registry payload "
+            f"v{max(versions) if versions else 1} — upgrade the remo-web "
+            "container image, then re-run the push."
+        )
 
 
 def _empty_registry_message() -> str:
@@ -721,18 +737,25 @@ class CachedInstance:
 
 
 def instance_fingerprint(host: KnownHost) -> str:
-    """SHA256 over the canonical registry-entry fields of *host*.
+    """SHA256 over the canonical sorted-key JSON of *host*'s v2 hostEntry.
 
-    Any change to the fields the service mirrors (host, user, access mode, …)
-    changes the fingerprint, forcing the full keyscan+authorize treatment on
-    the next push.
+    Any change to the fields the service mirrors (host, user, access, per-type
+    nested fields, …) changes the fingerprint, forcing the full
+    keyscan+authorize treatment on the next push. (research R10: replaces the
+    legacy 7-field digest.)
     """
-    canonical = json.dumps(_registry_entry(host), sort_keys=True)
+    canonical = json.dumps(registry.known_host_to_entry(host), sort_keys=True)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 #: Push cache shape: deployment_id -> {instance name -> CachedInstance}.
 PushCache = dict[str, dict[str, "CachedInstance"]]
+
+#: Push-cache file format version (research R10). Any other/missing value is
+#: treated as an empty cache — a one-time full re-verification push after a
+#: registry-format upgrade (FR-026), since fingerprints are computed
+#: differently under each cache format.
+PUSH_CACHE_VERSION = 2
 
 
 def push_cache_path() -> Path:
@@ -763,8 +786,10 @@ def load_push_cache() -> PushCache:
 
     Files written by the 011 credential format (top-level ``url``/``token`` +
     name-keyed ``push_cache``) do not match the deployment-keyed shape and are
-    ignored (they parse to an empty cache), so the next push simply retries in
-    full and the next save overwrites the stale file — no secret is ever read.
+    ignored. Files without ``cache_version: 2`` (either the pre-015 format,
+    which had no version field at all, or a future incompatible one) are also
+    treated as empty (research R10) — the next push simply retries in full and
+    the next save overwrites the stale file — no secret is ever read.
     """
     path = push_cache_path()
     try:
@@ -772,6 +797,8 @@ def load_push_cache() -> PushCache:
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(parsed, dict):
+        return {}
+    if parsed.get("cache_version") != PUSH_CACHE_VERSION:
         return {}
     raw_cache = parsed.get("push_cache")
     if not isinstance(raw_cache, dict):
@@ -796,6 +823,7 @@ def save_push_cache(cache: PushCache) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(
         {
+            "cache_version": PUSH_CACHE_VERSION,
             "push_cache": {
                 deployment_id: {
                     name: {"fingerprint": c.fingerprint, "host_keys": c.host_keys}
@@ -1102,11 +1130,13 @@ def _adopt_flow(
     allow_empty: bool,
     interactive: bool,
 ) -> AdoptResult:
-    # Step 1: status precheck (FR-017).
+    # Step 1: status precheck (FR-017), then the payload-version skew gate
+    # (FR-021) — BEFORE any instance processing or mutation.
     status = client.get_status()
     state = str(status.get("state", "unknown"))
     if state == "mount_configured":
         raise MountConfiguredError(_MOUNT_CONFIGURED_MSG)
+    _check_payload_version_supported(status)
     print_info(
         f"Service state: {state} "
         f"({status.get('registry_instances', 0)} instances currently registered)"
@@ -1216,9 +1246,12 @@ def _push_flow(
     interactive: bool,
 ) -> AdoptResult:
     # Step 1: status precheck (FR-017) — a mount-configured service is read-only.
+    # Then the payload-version skew gate (FR-021) — BEFORE any instance
+    # processing or mutation.
     status = client.get_status()
     if str(status.get("state", "unknown")) == "mount_configured":
         raise MountConfiguredError(_MOUNT_CONFIGURED_MSG)
+    _check_payload_version_supported(status)
 
     # Step 2: service identity + the push cache entry for this deployment.
     identity = client.get_identity()

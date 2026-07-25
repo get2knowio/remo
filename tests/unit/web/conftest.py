@@ -54,7 +54,13 @@ class StateDirFactory:
 
     @property
     def registry_path(self) -> Path:
+        """Legacy colon-delimited known_hosts path — read-in-place input format."""
         return self.home / "known_hosts"
+
+    @property
+    def v2_registry_path(self) -> Path:
+        """registry.json (v2) — where PUT /setup/registry now writes (015-registry-v2)."""
+        return self.home / "registry.json"
 
     @property
     def web_identity_dir(self) -> Path:

@@ -42,7 +42,7 @@ _SETUP_ROUTES = [
 _SETUP_ROUTES_VALID_CODE = [
     ("GET", "/api/v1/setup/status", 200),
     ("GET", "/api/v1/setup/identity", 200),
-    ("PUT", "/api/v1/setup/registry", 422),  # got PAST the gate into domain code
+    ("PUT", "/api/v1/setup/registry", 400),  # got PAST the gate into domain code
     ("POST", "/api/v1/setup/verify", 200),
 ]
 
@@ -94,7 +94,7 @@ def test_valid_code_reaches_route_handler(state_dir, method, path, expected):
     assert resp.status_code == expected
     assert resp.status_code != 404
     if path.endswith("/registry"):
-        assert resp.json()["reason"] == "invalid_payload"
+        assert resp.json()["error"]["code"] == "unsupported_payload_version"
 
 
 def test_valid_code_accepts_case_insensitive_scheme(state_dir):

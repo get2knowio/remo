@@ -119,7 +119,8 @@ def test_originless_setup_request_bypasses_origin_check(tmp_path, monkeypatch):
     # /api/v1/setup/* — this is what lets the `remo web adopt` CLI (and its
     # --via tunnel) talk to a live service. The bearer dependency still gates
     # the route: with a token configured and presented, the request reaches
-    # domain validation (422 for a garbage body), never 403.
+    # domain validation (400 unsupported_payload_version for a body with no
+    # "version" field), never 403.
     settings = _settings()
     settings.operator_auth = "none"
     settings.web_identity_dir = tmp_path / "web-identity"
@@ -132,7 +133,7 @@ def test_originless_setup_request_bypasses_origin_check(tmp_path, monkeypatch):
             json={},
             headers={"Authorization": f"Bearer {code}"},
         )
-    assert resp.status_code == 422
+    assert resp.status_code == 400
 
 
 def test_setup_request_with_disallowed_origin_still_rejected():

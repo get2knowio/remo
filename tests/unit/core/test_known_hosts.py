@@ -1,9 +1,8 @@
 """Tests for remo.core.known_hosts registry module."""
 
-import os
-
 import pytest
 
+from remo_cli.core.config import get_registry_backup_path
 from remo_cli.core.known_hosts import (
     clear_known_hosts_by_prefix,
     clear_known_hosts_by_type,
@@ -22,17 +21,27 @@ from remo_cli.models.host import KnownHost
 
 
 def _read_registry(config_dir) -> str:
-    """Read the raw known_hosts file content."""
+    """Read the raw known_hosts file content (legacy-format fixture input)."""
     return (config_dir / "known_hosts").read_text()
 
 
 def _write_registry(config_dir, content: str) -> None:
-    """Write raw content to the known_hosts file."""
+    """Write raw legacy-format content to the known_hosts file.
+
+    Used only to seed a legacy fixture as MIGRATION INPUT; ``save_known_host``
+    et al. write ``registry.json`` (v2), not this file (FR-015 delegate).
+    """
     (config_dir / "known_hosts").write_text(content)
 
 
 def _make_host(type_="incus", name="myhost/dev", host="10.0.0.1", user="remo", **kwargs):
-    """Convenience factory for KnownHost instances."""
+    """Convenience factory for KnownHost instances.
+
+    Defaults ``access_mode`` to ``"direct"`` since registry v2 validation
+    (V6) requires it to be ``"direct"`` or ``"ssm"`` — the legacy implicit-
+    empty convention no longer round-trips (data-model.md §3).
+    """
+    kwargs.setdefault("access_mode", "direct")
     return KnownHost(type=type_, name=name, host=host, user=user, **kwargs)
 
 
@@ -45,11 +54,11 @@ class TestSaveKnownHost:
     """Adding and replacing entries in the registry."""
 
     def test_creates_file_if_missing(self, tmp_config_dir):
-        """Registry file is created if it does not already exist."""
-        kh_path = tmp_config_dir / "known_hosts"
-        assert not kh_path.exists()
+        """Registry file (registry.json, v2) is created if it does not already exist."""
+        registry_path = tmp_config_dir / "registry.json"
+        assert not registry_path.exists()
         save_known_host(_make_host())
-        assert kh_path.exists()
+        assert registry_path.exists()
         hosts = get_known_hosts()
         assert len(hosts) == 1
         assert hosts[0].name == "myhost/dev"
@@ -86,23 +95,26 @@ class TestSaveKnownHost:
         assert hetzner_hosts[0].host == "5.6.7.8"
 
     def test_preserves_unparseable_lines(self, tmp_config_dir):
-        """Lines that cannot be parsed are preserved in the file."""
+        """Unparseable legacy lines are never dropped: they survive verbatim in
+        the renamed migration backup (known_hosts.v1.bak), not the new
+        registry.json (data-model.md §4 rule 4 / §6 S1->S2)."""
         _write_registry(tmp_config_dir, "# comment line\nbadline\nincus:h/c:10.0.0.1:remo\n")
         save_known_host(_make_host(type_="hetzner", name="web1", host="5.5.5.5"))
-        raw = _read_registry(tmp_config_dir)
+        raw = get_registry_backup_path().read_text()
         assert "# comment line" in raw
         assert "badline" in raw
         hosts = get_known_hosts()
         assert len(hosts) == 2
 
     def test_preserves_empty_lines(self, tmp_config_dir):
-        """Empty lines in the file are preserved."""
+        """Empty lines in the legacy file survive verbatim in the migration
+        backup (the rename is a byte-for-byte copy of the original file)."""
         _write_registry(tmp_config_dir, "incus:h/c:10.0.0.1:remo\n\n\n")
         save_known_host(_make_host(type_="hetzner", name="web1", host="5.5.5.5"))
-        raw = _read_registry(tmp_config_dir)
-        # There should still be empty lines present in the output.
+        raw = get_registry_backup_path().read_text()
+        # There should still be empty lines present in the backup.
         lines = raw.split("\n")
-        empty_lines = [l for l in lines if l.strip() == ""]
+        empty_lines = [line for line in lines if line.strip() == ""]
         assert len(empty_lines) >= 2
 
 

@@ -36,17 +36,16 @@ from remo_cli.models.host import KnownHost
 
 
 def _reject_unsafe_field(label: str, value: str) -> None:
-    """Reject a registry field that would corrupt the colon-delimited line.
+    """Reject a control character in a registry field value.
 
-    The known-hosts store is both ``:``-delimited and newline-delimited, so a
-    field containing ``:`` shifts every later field on reload and a control
-    character (newline/tab/…) can inject or truncate a line. Neither must ever
-    be persisted (FR-013).
+    The registry (registry.json, format v2) rejects control characters and
+    newlines in any string field (data-model.md V2); checking here gives a
+    friendlier, ``add``-specific error message before the value is parsed any
+    further. Colons are unrestricted in the JSON registry — the previous
+    colon-delimited format's positional-overloading problem no longer exists.
     """
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         raise ValueError(f"{label} contains control characters")
-    if ":" in value:
-        raise ValueError(f"{label} must not contain ':'")
 
 
 def _find_name_conflict(name: str) -> KnownHost | None:
@@ -86,8 +85,11 @@ def parse_ssh_target(
     (:data:`DEFAULT_ADDED_HOST_USER`) is applied; when no port is present,
     :data:`DEFAULT_SSH_PORT` is used.
 
-    Un-bracketed IPv6 literals (and the bracketed ``[::1]:22`` form, which is out
-    of scope for this feature) are rejected so a malformed line is never written.
+    IPv6 literals are accepted two ways (US2, T020): the OpenSSH-style
+    bracketed form ``[v6][:port]`` (e.g. ``[2001:db8::7]:2222``), and a bare
+    bracket-less TARGET containing more than one colon, which is treated as
+    a host with no port suffix (a legal ``host:port`` has exactly one colon,
+    so 2+ colons unambiguously means an un-bracketed IPv6 literal).
 
     Raises
     ------
@@ -106,23 +108,35 @@ def parse_ssh_target(
         user_part = ""
         rest = raw
 
-    # IPv6: a bracketed form, or more than one colon in the host portion, is an
-    # IPv6 literal — reject with guidance (a legal host:port has exactly one ':').
     if rest.startswith("["):
-        raise ValueError(
-            f"'{target}': IPv6 literals are not supported. "
-            "Use a hostname or an '~/.ssh/config' alias."
-        )
-    if rest.count(":") > 1:
-        raise ValueError(
-            f"'{target}': IPv6 literals are not supported. "
-            "Use a hostname or an '~/.ssh/config' alias."
-        )
-
-    if rest.count(":") == 1:
+        closing = rest.find("]")
+        if closing == -1:
+            raise ValueError(f"'{target}': unmatched '[' in IPv6 literal")
+        host_part = rest[1:closing]
+        remainder = rest[closing + 1 :]
+        if remainder and not remainder.startswith(":"):
+            raise ValueError(
+                f"'{target}': unexpected characters after ']': {remainder!r}"
+            )
+        port_str = remainder[1:] if remainder else ""
+        if port_str:
+            try:
+                embedded_port: int | None = int(port_str)
+            except ValueError:
+                raise ValueError(
+                    f"'{target}': port '{port_str}' is not a number"
+                ) from None
+        else:
+            embedded_port = None
+    elif rest.count(":") > 1:
+        # Bare (bracket-less) IPv6 literal — no port suffix is representable
+        # without brackets, so the whole remainder is the host.
+        host_part = rest
+        embedded_port = None
+    elif rest.count(":") == 1:
         host_part, _, port_str = rest.partition(":")
         try:
-            embedded_port: int | None = int(port_str)
+            embedded_port = int(port_str)
         except ValueError:
             raise ValueError(
                 f"'{target}': port '{port_str}' is not a number"
@@ -239,9 +253,9 @@ def add(
             _reject_unsafe_field("identity path", identity)
         except ValueError:
             print_error(
-                "Invalid --identity: the path must not contain ':' or control "
-                "characters (they would corrupt the colon-delimited registry "
-                "line). Use an '~/.ssh/config' IdentityFile entry for such a key."
+                "Invalid --identity: the path must not contain control "
+                "characters. Use an '~/.ssh/config' IdentityFile entry for "
+                "such a key."
             )
             return 2
 

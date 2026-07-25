@@ -1,6 +1,6 @@
 # remo Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-07-13
+Auto-generated from all feature plans. Last updated: 2026-07-25
 
 ## Constitution
 
@@ -10,10 +10,11 @@ See `.specify/memory/constitution.md` for project principles and non-negotiable 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (existing), Incus CLI (local) (002-incus-container-support)
 - N/A (Incus storage pools already configured by 001-bootstrap-incus-host) (002-incus-container-support)
 - Python 3.11+ + Click (CLI framework), InquirerPy (interactive picker), boto3 (AWS, optional), hcloud (Hetzner, optional) (003-python-cli-rewrite)
-- Flat file (`~/.config/remo/known_hosts`, colon-delimited) (003-python-cli-rewrite)
+- Versioned JSON registry (`~/.config/remo/registry.json`, format v2 — named fields per type, no positional overloading; single accessor `core/registry.py` owns parse/serialize/validate/lock/migrate for CLI, providers, and the web service). Legacy `~/.config/remo/known_hosts` (colon-delimited) is read-only migration input, lazily migrated to v2 on first CLI read and renamed to `known_hosts.v1.bak`. (003-python-cli-rewrite; superseded by 015-registry-v2)
 - Cross-provider snapshot model (`models/snapshot.py`) + shared helpers in `core/snapshot.py` (name generator, validator, table formatter, destroy-time cleanup hook). No new runtime deps. (005-provider-snapshots)
 - FastAPI/Uvicorn + WebSockets (backend, optional `web` extra), TypeScript/Vite/React + ghostty-web (frontend), Bash (`remo-host` host command templated by Ansible) (010-web-session-interface)
-- Stdlib `urllib.request` CLI setup client + token-gated `/api/v1/setup/*` FastAPI surface; service state in flat files under the writable `REMO_HOME` volume (`web-identity/` keypair + service known_hosts, `~/.config/remo/web-service.json` saved credentials) (011-web-adopt)
+- Stdlib `urllib.request` CLI setup client + token-gated `/api/v1/setup/*` FastAPI surface; service state in flat files under the writable `REMO_HOME` volume (`web-identity/` keypair + service known_hosts, `~/.config/remo/web-service.json` saved credentials, `cache_version: 2`) (011-web-adopt; payload versioning updated by 015-registry-v2)
+- `core/registry.py`: stdlib `json` (format), `fcntl` (advisory locking via a `registry.lock` sidecar), `os.replace` (atomic writes). No new runtime deps. Setup API mirror payload moved to v2 (`contracts/mirror-payload-v2.md`) with a `payload_versions` capability handshake; an upgraded service still accepts v1 payloads. (015-registry-v2)
 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module) (001-bootstrap-incus-host)
 
@@ -43,7 +44,8 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── config.py          # REMO_HOME, paths, read-only registry accessor
 │   ├── output.py          # Colored output, confirm()
 │   ├── validation.py      # Name, port, region, tool validation
-│   ├── known_hosts.py     # Flat-file host registry
+│   ├── registry.py        # Registry v2 accessor: parse/serialize/validate/lock/migrate (registry.json + legacy known_hosts)
+│   ├── known_hosts.py     # Thin delegates onto registry.py (public API unchanged: get/save/remove/clear_known_hosts*)
 │   ├── ssh.py             # build_ssh_base_cmd(), SSH options, terminal reset, timezone
 │   ├── remo_host_client.py  # Versioned remo-host protocol client (shared by CLI + web)
 │   ├── web_adopt.py       # Workstation-side adoption/push engine (stdlib HTTP, keyscan trust verify, authorized_keys mgmt, --via tunnel)
@@ -188,6 +190,7 @@ Provider SDKs (boto3, hcloud) are lazy-imported with clear error messages if mis
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
+- 015-registry-v2: Replaced the colon-delimited `known_hosts` registry with a versioned JSON `registry.json` (format v2, named per-type fields, no positional overloading) via a single new accessor `core/registry.py` (parse/serialize/validate/advisory-lock/migrate) shared by the CLI, providers, and web service; lazy, lossless, idempotent CLI migration (`known_hosts` → `known_hosts.v1.bak`); `core/known_hosts.py` slimmed to thin delegates; the setup API's adoption mirror moved to payload v2 with a `payload_versions` capability handshake (an upgraded service still accepts v1 payloads); push delta-cache bumped to `cache_version: 2`.
 - 011-web-adopt: Added CLI-to-web adoption — unconfigured boot with service-scoped ed25519 identity, token-gated `/api/v1/setup/*` (REMO_WEB_API_TOKEN, fail-closed), `remo web adopt`/`remo web push` (registry mirror + workstation-verified host keys + idempotent `remo-web@<id>` authorized_keys entries), AwaitingAdoption SPA page.
 - 010-web-session-interface: Added remo-web Docker service (FastAPI + React/ghostty-web) brokering browser terminal sessions across all Remo-managed instances via a new remo-host SSH command; web extra + remo web {serve,check} CLI group.
 - 005-provider-snapshots: Added cross-provider snapshot CLI (`remo <P> snapshot {create,list,restore,delete}`) + destroy-time cleanup hook across Incus / Proxmox / AWS / Hetzner.

@@ -26,7 +26,12 @@ from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 
-from remo_cli.core.config import get_known_hosts_path_readonly, get_remo_home_readonly
+from remo_cli.core.config import (
+    get_known_hosts_path_readonly,
+    get_registry_path_readonly,
+    get_remo_home_readonly,
+)
+from remo_cli.core.registry import RegistryError, read_registry
 from remo_cli.web.config import WebSettings
 
 logger = logging.getLogger("remo_cli.web.state")
@@ -65,6 +70,39 @@ def _probe_file(path: Path) -> str:
         if not os.access(path, os.R_OK):
             return "unreadable"
     except OSError:
+        return "unreadable"
+    return "ok"
+
+
+def _probe_registry() -> str:
+    """Classify registry presence as ``absent`` / ``ok`` / ``unreadable``.
+
+    Per data-model.md §6, the registry can be EITHER `registry.json` OR the
+    legacy `known_hosts` file — either present satisfies "registry present".
+    Byte-level readability is checked first (cheap, and matches
+    `_probe_file`'s EACCES-safety); only once both candidate files are at
+    least byte-readable (or absent) do we actually parse via
+    `core.registry.read_registry(readonly=True)`, so a file that exists and
+    is readable as bytes but is semantically invalid (e.g. `{"version": 99,
+    ...}`, a newer-format file) is still classified ``unreadable`` here —
+    the same bucket `detect_state` maps to `BROKEN`.
+    """
+    registry_probe = _probe_file(get_registry_path_readonly())
+    legacy_probe = _probe_file(get_known_hosts_path_readonly())
+
+    if "unreadable" in (registry_probe, legacy_probe):
+        return "unreadable"
+    if registry_probe == "absent" and legacy_probe == "absent":
+        return "absent"
+
+    # Also catches a plain `OSError`: the accessor's own `Path.exists()`/
+    # `read_text()` calls raise on EACCES rather than swallowing it, so an
+    # untraversable directory that slips past the byte-level probes above
+    # (e.g. a TOCTOU race) must still classify as "unreadable", never crash
+    # `detect_state`.
+    try:
+        read_registry(readonly=True)
+    except (RegistryError, OSError):
         return "unreadable"
     return "ok"
 
@@ -117,7 +155,11 @@ def detect_state(settings: WebSettings | None = None) -> ConfigurationState:
     Derivation (research R2):
 
     - ``broken``: any required artifact present but unreadable, or a
-      half-pair service keypair (exactly one of the two key files).
+      half-pair service keypair (exactly one of the two key files). A
+      registry file that parses at the byte level but is structurally
+      invalid per `core.registry` (e.g. a `registry.json` written by a
+      newer, unsupported format version -- `RegistryNewerVersionError`) is
+      also classified here (015-registry-v2, data-model.md §6, S5).
     - ``mount_configured``: registry present AND (``REMO_HOME`` not writable
       OR a user SSH identity resolves). Explicit mounts are the operator's
       stated intent, so this wins even when a service keypair also exists
@@ -128,7 +170,7 @@ def detect_state(settings: WebSettings | None = None) -> ConfigurationState:
     """
     settings = settings or WebSettings()
 
-    registry = _probe_file(get_known_hosts_path_readonly())
+    registry = _probe_registry()
     private = _probe_file(settings.service_private_key_path)
     public = _probe_file(settings.service_public_key_path)
 

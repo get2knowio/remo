@@ -15,6 +15,7 @@ Conventions:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -22,7 +23,6 @@ from fastapi.testclient import TestClient
 
 from remo_cli.web import app as app_module
 from remo_cli.web import check as web_check_module
-from remo_cli.web.api import setup as setup_api
 
 _ORIGIN = "http://testserver"
 _TOKEN = "unit-test-setup-token"
@@ -97,7 +97,25 @@ def _payload(**overrides: Any) -> dict[str, Any]:
     return payload
 
 
-_EXPECTED_REGISTRY_TEXT = "incus:dev:10.0.0.5:remo\naws:cloud:3.4.5.6:remo:i-0abc:ssm:us-east-1\n"
+#: Expected v2 registry.json hosts (sorted by (type, name)) for `_payload()`'s
+#: default two entries, once mapped through the v1->v2 legacy mapper.
+_EXPECTED_V2_HOSTS = [
+    {
+        "type": "aws",
+        "name": "cloud",
+        "host": "3.4.5.6",
+        "user": "remo",
+        "access": "ssm",
+        "aws": {"instance_id": "i-0abc", "region": "us-east-1"},
+    },
+    {
+        "type": "incus",
+        "name": "dev",
+        "host": "10.0.0.5",
+        "user": "remo",
+        "access": "direct",
+    },
+]
 
 
 def _service_known_hosts(state_dir):
@@ -105,8 +123,9 @@ def _service_known_hosts(state_dir):
 
 
 def _assert_nothing_written(state_dir) -> None:
-    """FR-019 all-or-nothing: neither target file appears after a rejected PUT."""
+    """FR-019 all-or-nothing: no target file appears after a rejected PUT."""
     assert not state_dir.registry_path.exists()
+    assert not state_dir.v2_registry_path.exists()
     assert not _service_known_hosts(state_dir).exists()
 
 
@@ -129,6 +148,7 @@ def test_status_unconfigured_without_identity(state_dir):
         "deployment_id": None,
         "public_key_available": False,
         "registry_instances": 0,
+        "payload_versions": [1, 2],
     }
 
 
@@ -143,6 +163,7 @@ def test_status_unconfigured_with_identity(state_dir):
         "deployment_id": "dep12345",
         "public_key_available": True,
         "registry_instances": 0,
+        "payload_versions": [1, 2],
     }
 
 
@@ -156,6 +177,7 @@ def test_status_adopted(state_dir):
         "deployment_id": "dep12345",
         "public_key_available": True,
         "registry_instances": 1,
+        "payload_versions": [1, 2],
     }
 
 
@@ -172,6 +194,7 @@ def test_status_mount_configured_has_null_identity(state_dir, layout):
         "deployment_id": None,
         "public_key_available": False,
         "registry_instances": 1,
+        "payload_versions": [1, 2],
     }
 
 
@@ -264,9 +287,12 @@ def test_put_registry_happy_path_applies_mirror_and_flips_to_adopted(state_dir):
             "host_key_instances": 1,
         }
 
-        # First-class file contents: service known_hosts + colon-delimited registry.
+        # First-class file contents: service known_hosts + v2 registry.json.
         assert _service_known_hosts(state_dir).read_text() == _VALID_KEY_LINE + "\n"
-        assert state_dir.registry_path.read_text() == _EXPECTED_REGISTRY_TEXT
+        doc = json.loads(state_dir.v2_registry_path.read_text())
+        assert doc["version"] == 2
+        assert doc["hosts"] == _EXPECTED_V2_HOSTS
+        assert not state_dir.registry_path.exists()  # legacy mirror never written
 
         # The PUT does not end the session (verify is the terminal step, FR-007).
         status = client.get("/api/v1/setup/status", headers=_AUTH).json()
@@ -317,14 +343,14 @@ def test_put_registry_empty_with_allow_empty_succeeds(state_dir):
         "registry_instances": 0,
         "host_key_instances": 0,
     }
-    assert state_dir.registry_path.read_text() == ""
+    doc = json.loads(state_dir.v2_registry_path.read_text())
+    assert doc == {"version": 2, "hosts": []}
     assert _service_known_hosts(state_dir).read_text() == ""
 
 
 @pytest.mark.parametrize(
     ("body", "detail_fragment"),
     [
-        pytest.param(_payload(version=2), "unsupported payload version 2", id="wrong-version"),
         pytest.param(
             _payload(host_keys={"ghost": [_VALID_KEY_LINE]}),
             "does not reference any registry entry",
@@ -342,13 +368,19 @@ def test_put_registry_empty_with_allow_empty_succeeds(state_dir):
         ),
         pytest.param(
             _payload(
-                registry=[{"type": "incus", "name": "a:b", "host": "10.0.0.5", "user": "remo"}],
+                registry=[
+                    {"type": "incus", "name": "a\nb", "host": "10.0.0.5", "user": "remo"}
+                ],
                 host_keys={},
             ),
-            "cannot contain",
-            id="colon-in-registry-field",
+            "control characters",
+            id="control-character-in-registry-field",
         ),
-        pytest.param({"registry": "nope"}, "", id="structurally-malformed-body"),
+        pytest.param(
+            _payload(version=2, registry=[{"type": "incus", "name": "dev", "host": "10.0.0.5"}]),
+            "user",
+            id="v2-entry-missing-required-field",
+        ),
     ],
 )
 def test_put_registry_invalid_payload_writes_nothing(state_dir, body, detail_fragment):
@@ -364,6 +396,68 @@ def test_put_registry_invalid_payload_writes_nothing(state_dir, body, detail_fra
     _assert_nothing_written(state_dir)
 
 
+@pytest.mark.parametrize(
+    ("body", "received"),
+    [
+        pytest.param(_payload(version=3), 3, id="version-3-not-yet-supported"),
+        pytest.param({"registry": "nope"}, None, id="missing-version-field"),
+    ],
+)
+def test_put_registry_unsupported_version_writes_nothing(state_dir, body, received):
+    """FR-021: an unknown/missing payload version is rejected with 400 and the
+    prior mirror left completely intact — no partial application at all."""
+    state_dir.unconfigured()
+    with _client(state_dir) as client:
+        resp = client.put("/api/v1/setup/registry", json=body, headers=_AUTH)
+    assert resp.status_code == 400
+    assert resp.json() == {
+        "error": {
+            "code": "unsupported_payload_version",
+            "supported": [1, 2],
+            "received": received,
+        }
+    }
+    _assert_nothing_written(state_dir)
+
+
+def test_put_registry_v2_payload_happy_path(state_dir):
+    """A v2-shaped payload (registry-file-v2.md hostEntry, no overloaded fields)
+    is accepted and stored exactly as-is (FR-020)."""
+    state_dir.write_keypair()
+    state_dir.write_state_json()
+    v2_body = {
+        "version": 2,
+        "registry": [
+            {
+                "type": "incus",
+                "name": "dev",
+                "host": "10.0.0.5",
+                "user": "remo",
+                "access": "direct",
+            },
+            {
+                "type": "aws",
+                "name": "cloud",
+                "host": "3.4.5.6",
+                "user": "remo",
+                "access": "ssm",
+                "aws": {"instance_id": "i-0abc", "region": "us-east-1"},
+            },
+        ],
+        "host_keys": {"dev": [_VALID_KEY_LINE]},
+    }
+    with _client(state_dir) as client:
+        resp = client.put("/api/v1/setup/registry", json=v2_body, headers=_AUTH)
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "applied": True,
+        "registry_instances": 2,
+        "host_key_instances": 1,
+    }
+    doc = json.loads(state_dir.v2_registry_path.read_text())
+    assert doc["hosts"] == _EXPECTED_V2_HOSTS
+
+
 # ---------------------------------------------------------------------------
 # PUT /api/v1/setup/registry — atomicity on mid-apply failure (research R5)
 # ---------------------------------------------------------------------------
@@ -373,16 +467,19 @@ def test_put_registry_mid_apply_failure_is_safe_and_converges(state_dir, monkeyp
     state_dir.write_keypair()
     state_dir.write_state_json()
 
-    real_write = setup_api._write_lines_atomically
+    from remo_cli.core import registry as registry_module
+
+    real_write = registry_module._atomic_write_text
     fail_registry_write = {"active": True}
 
-    def flaky_write(path, lines):
-        # Host-keys file is written first; fail only the registry (second) write.
-        if fail_registry_write["active"] and path == state_dir.registry_path:
+    def flaky_write(path, text):
+        # Service known_hosts is written first (setup.py's own helper, not
+        # patched here); fail only the registry.json (v2) write.
+        if fail_registry_write["active"] and path == state_dir.v2_registry_path:
             raise OSError("disk full")
-        real_write(path, lines)
+        real_write(path, text)
 
-    monkeypatch.setattr(setup_api, "_write_lines_atomically", flaky_write)
+    monkeypatch.setattr(registry_module, "_atomic_write_text", flaky_write)
 
     with _client(state_dir) as client:
         resp = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
@@ -391,7 +488,7 @@ def test_put_registry_mid_apply_failure_is_safe_and_converges(state_dir, monkeyp
 
         # Crash between writes: host keys may exist (documented-safe superset,
         # apply order R5), but the registry must be untouched/absent.
-        assert not state_dir.registry_path.exists()
+        assert not state_dir.v2_registry_path.exists()
         assert _service_known_hosts(state_dir).read_text() == _VALID_KEY_LINE + "\n"
 
         # A subsequent successful push converges to the full mirror. (The
@@ -401,7 +498,8 @@ def test_put_registry_mid_apply_failure_is_safe_and_converges(state_dir, monkeyp
         resp = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
         assert resp.status_code == 200
         assert resp.json()["applied"] is True
-        assert state_dir.registry_path.read_text() == _EXPECTED_REGISTRY_TEXT
+        doc = json.loads(state_dir.v2_registry_path.read_text())
+        assert doc["hosts"] == _EXPECTED_V2_HOSTS
 
         status = client.get("/api/v1/setup/status", headers=_AUTH).json()
     assert status["state"] == "adopted"

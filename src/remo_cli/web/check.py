@@ -45,18 +45,15 @@ from remo_cli.core.remo_host_client import (
     SshTransportError,
     get_capabilities,
 )
-from remo_cli.core.config import get_known_hosts_path_readonly
+from remo_cli.core.config import get_known_hosts_path_readonly, get_registry_path_readonly
+from remo_cli.core.registry import RegistryNewerVersionError, RegistryReadError, read_registry
 from remo_cli.core.ssh import build_ssh_base_cmd
 from remo_cli.models.host import KnownHost
 from remo_cli.web import health
 from remo_cli.web.config import WebSettings
 from remo_cli.web.operator_auth import OperatorAuthConfigError, build_operator_auth_provider
 from remo_cli.web.state import ConfigurationState, detect_state
-from remo_cli.web.discovery import (
-    _classify_ssh_transport,
-    _looks_like_missing_remo_host,
-    _read_known_hosts_readonly,
-)
+from remo_cli.web.discovery import _classify_ssh_transport, _looks_like_missing_remo_host
 
 __all__ = ["CheckResult", "all_passed", "format_results", "run_checks"]
 
@@ -181,16 +178,57 @@ def _operator_auth_check(settings: WebSettings) -> CheckResult:
     )
 
 
-def _registry_check(hosts: list[KnownHost]) -> CheckResult:
+def _registry_check(hosts: list[KnownHost], source_format: str) -> CheckResult:
+    """Build the passing "registry" line. Only called when `_read_registry_for_check`
+    reports no failure (its own missing/unreadable/newer-version FAIL lines
+    are built there instead, so this always reports success)."""
+    path = get_registry_path_readonly() if source_format == "v2" else get_known_hosts_path_readonly()
+    return CheckResult(
+        "registry",
+        True,
+        f"readable at {path} ({len(hosts)} instances, format={source_format})",
+    )
+
+
+def _read_registry_for_check() -> tuple[list[KnownHost], str, CheckResult | None]:
+    """Read the registry via the accessor for `run_checks`.
+
+    Returns ``(hosts, source_format, failure)``. *failure* is ``None`` unless
+    the registry is unusable: `health._check_registry()` first gates the
+    plain missing/unreadable-*file* cases (byte-level readability, EACCES-safe
+    against a read-only or unmounted volume) -- when it isn't "ok" we don't
+    even attempt to parse. Once bytes are readable, `read_registry()` can
+    still fail structurally, principally `RegistryNewerVersionError`
+    (`registry.json` written by a newer, unsupported format version), which
+    must FAIL this specific check with clear remediation rather than silently
+    reporting zero instances (FR-025). A defensive `OSError` catch covers the
+    same EACCES-on-``Path.exists()`` edge case `health._check_registry()`
+    guards against (e.g. a TOCTOU race between the two checks).
+    """
     status = health._check_registry()
     path = get_known_hosts_path_readonly()
-    if status == "ok":
-        return CheckResult("registry", True, f"readable at {path} ({len(hosts)} instances)")
     if status == "missing":
-        return CheckResult("registry", False, f"not found at {path}", _REMEDIATE_REGISTRY_MISSING)
-    return CheckResult(
-        "registry", False, f"{path} exists but is not readable", _REMEDIATE_REGISTRY_MISSING
-    )
+        return [], "empty", CheckResult(
+            "registry", False, f"not found at {path}", _REMEDIATE_REGISTRY_MISSING
+        )
+    if status == "unreadable":
+        return [], "unknown", CheckResult(
+            "registry", False, f"{path} exists but is not readable", _REMEDIATE_REGISTRY_MISSING
+        )
+
+    try:
+        view = read_registry(readonly=True)
+    except RegistryNewerVersionError as exc:
+        # The exception message already names the remediation (upgrade remo,
+        # or restore the known_hosts.v1.bak backup) -- surface it as-is
+        # rather than duplicating it in a separate `remediation` field.
+        return [], "unknown", CheckResult("registry", False, str(exc))
+    except (RegistryReadError, OSError) as exc:
+        return [], "unknown", CheckResult(
+            "registry", False, f"{path} exists but is not readable: {exc}",
+            _REMEDIATE_REGISTRY_MISSING,
+        )
+    return view.hosts, view.source_format, None
 
 
 def _ssh_identity_check(settings: WebSettings) -> CheckResult:
@@ -312,12 +350,13 @@ def run_checks(
             _executable_check("ssh", "ssh"),
         ]
 
-    hosts = _read_known_hosts_readonly()
+    hosts, source_format, registry_failure = _read_registry_for_check()
+    registry_result = registry_failure or _registry_check(hosts, source_format)
 
     results = [
         _configuration_check(state),
         _operator_auth_check(settings),
-        _registry_check(hosts),
+        registry_result,
         _ssh_identity_check(settings),
         _runtime_dir_check(settings.ssh_control_dir),
         _executable_check("ssh", "ssh"),

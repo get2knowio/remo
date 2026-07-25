@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import click
 
 import remo_cli
@@ -98,3 +100,17 @@ def _register_commands() -> None:
 
 
 _register_commands()
+
+
+def main() -> None:
+    """Console-script entry point: run the CLI, translating registry accessor
+    errors (data-model.md §8) into a plain-language message and exit code 1
+    instead of an uncaught traceback (FR-013: the accessor itself never exits).
+    """
+    from remo_cli.core.registry import RegistryError
+
+    try:
+        cli()
+    except RegistryError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
