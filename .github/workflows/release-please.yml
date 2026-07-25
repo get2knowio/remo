@@ -29,13 +29,15 @@ jobs:
       # here because the SHA can't be resolved offline.
       - uses: googleapis/release-please-action@v4
         with:
-          # IMPORTANT: a PAT with `contents` + `pull-requests` write is required
-          # so the tag release-please creates on merge is authored by a real
-          # token and therefore triggers the tag-driven `release.yml` (the PyPI +
-          # Docker publish). A tag created with the default GITHUB_TOKEN does NOT
-          # fire `on: push: tags`, so without this secret the release PR and tag
-          # are still created but nothing publishes until a maintainer re-pushes
-          # the tag. Store the PAT as the `RELEASE_PLEASE_TOKEN` repo secret.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          # Prefer a PAT (`RELEASE_PLEASE_TOKEN`, `contents` + `pull-requests`
+          # write); fall back to GITHUB_TOKEN so release-please still opens and
+          # maintains the release PR out of the box.
+          #
+          # The PAT matters only for the *publish chain*: a tag created with the
+          # default GITHUB_TOKEN does NOT fire `on: push: tags`, so with the
+          # fallback the release PR and tag are still created, but `release.yml`
+          # (PyPI + Docker) won't run until a maintainer re-pushes the tag. Set
+          # the `RELEASE_PLEASE_TOKEN` secret to make merge-to-publish automatic.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
