@@ -1,11 +1,12 @@
 """Concurrent per-instance session discovery.
 
-Reads the read-only registry (:func:`~remo_cli.core.config.get_known_hosts_path_readonly`),
-runs `remo-host capabilities`/`sessions list` against every registered
-instance concurrently (bounded by `WebSettings.discovery_concurrency`, each
-call bounded by `WebSettings.discovery_timeout_s`), and maintains an
-in-memory TTL cache of the resulting `DiscoverySnapshot` per instance plus a
-flattened `SessionTarget` index (see data-model.md and R1/R10).
+Reads the registry via the read-only accessor
+(:func:`~remo_cli.core.registry.read_registry`, ``readonly=True``), runs
+`remo-host capabilities`/`sessions list` against every registered instance
+concurrently (bounded by `WebSettings.discovery_concurrency`, each call
+bounded by `WebSettings.discovery_timeout_s`), and maintains an in-memory TTL
+cache of the resulting `DiscoverySnapshot` per instance plus a flattened
+`SessionTarget` index (see data-model.md and R1/R10).
 
 `remo_host_client`'s functions are synchronous (`subprocess.run`-based); this
 module runs them in the default thread-pool executor via
@@ -20,10 +21,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import time
 from datetime import datetime, timezone
 
-from remo_cli.core.config import get_known_hosts_path_readonly
+from remo_cli.core.registry import RegistryError, read_registry
 from remo_cli.core.remo_host_client import (
     IncompatibleProtocolError,
     MalformedResponseError,
@@ -42,6 +44,8 @@ from remo_cli.models.session_target import SessionTarget, derive_session_target_
 from remo_cli.web.config import WebSettings
 
 __all__ = ["DiscoveryService", "derive_instance_id"]
+
+logger = logging.getLogger("remo_cli.web.discovery")
 
 
 def _now_iso() -> str:
@@ -65,40 +69,34 @@ def derive_instance_id(host: KnownHost) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _read_known_hosts_readonly() -> list[KnownHost]:
-    """Read the registry via the read-only-safe path (no ``mkdir`` side effect).
+def _read_registry_hosts_readonly() -> list[KnownHost]:
+    """Read the registry via the read-only accessor (no side effects).
 
-    `core.known_hosts.get_known_hosts()` is built on `get_known_hosts_path()`,
-    which goes through `get_remo_home()` and therefore *creates* the config
-    directory as a side effect — unsafe against a read-only-mounted registry
-    (R10). This re-implements the same tolerant line-parsing
-    (`KnownHost.from_line`, skipping blank/unparseable lines, never raising)
-    directly against `get_known_hosts_path_readonly()` instead.
+    Delegates to `core.registry.read_registry(readonly=True)`, which reads
+    `registry.json` if present, else the legacy `known_hosts` file in place,
+    with no ``mkdir``/write/lock side effects — safe against a
+    read-only-mounted registry (R10). Per-entry problems come back as
+    `RegistryView.warnings` (logged, never raised); structural problems
+    (`RegistryReadError`, `RegistryNewerVersionError`) are caught here and
+    degrade to "no known hosts", the same resilience the old
+    line-parsing implementation had for a missing/unreadable file —
+    discovery must never crash the whole service over one bad registry.
+
+    Also catches a plain `OSError`: `Path.exists()`/`read_text()` (used
+    internally by the accessor) raise on EACCES rather than swallowing it
+    (only ENOENT-ish errors are swallowed), so an entirely untraversable
+    `REMO_HOME` -- e.g. bind-mounted from a host directory this uid cannot
+    traverse -- surfaces as a raw `OSError`, not a `RegistryError` subclass.
     """
-    path = get_known_hosts_path_readonly()
     try:
-        if not path.exists():
-            return []
-        raw_lines = path.read_text().splitlines()
-    except OSError:
-        # `Path.exists()`/`read_text()` raise on EACCES (only ENOENT-ish
-        # errors are swallowed). An unreadable registry -- e.g. bind-mounted
-        # from a host directory this uid cannot traverse -- must not escape
-        # as a traceback from every caller, `remo web check` included.
-        # Degrade to "no instances"; `health._check_registry` separately
-        # reports the mount as unreadable, with remediation.
+        view = read_registry(readonly=True)
+    except (RegistryError, OSError) as exc:
+        logger.warning("registry read failed, degrading to empty host list: %s", exc)
         return []
 
-    hosts: list[KnownHost] = []
-    for raw_line in raw_lines:
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            hosts.append(KnownHost.from_line(line))
-        except ValueError:
-            continue
-    return hosts
+    for warning in view.warnings:
+        logger.warning("registry: %s", warning)
+    return view.hosts
 
 
 # ---------------------------------------------------------------------------
@@ -372,11 +370,11 @@ class DiscoveryService:
         `KnownHost` (only the `(type, name)` strings), but opening a terminal
         needs the full record (`.host`, `.user`, `.access_mode`, ...) to build
         the SSH command. Rather than duplicate registry-reading logic elsewhere,
-        this re-reads the read-only registry with the same tolerant parsing as
-        `_read_known_hosts_readonly()` and returns the first `(type, name)`
+        this re-reads the read-only registry via
+        `_read_registry_hosts_readonly()` and returns the first `(type, name)`
         match, or ``None`` if the instance is no longer registered.
         """
-        for host in _read_known_hosts_readonly():
+        for host in _read_registry_hosts_readonly():
             if host.type == instance_type and host.name == instance_name:
                 return host
         return None
@@ -408,7 +406,7 @@ class DiscoveryService:
         if not force and instance_id is None and self._is_fresh():
             return
 
-        hosts = _read_known_hosts_readonly()
+        hosts = _read_registry_hosts_readonly()
         if instance_id is not None:
             hosts = [h for h in hosts if derive_instance_id(h) == instance_id]
             if not hosts:

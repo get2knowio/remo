@@ -51,7 +51,9 @@ from pathlib import Path
 
 import pytest
 
+from remo_cli.core import registry as core_registry
 from remo_cli.core import web_adopt
+from remo_cli.core.known_hosts import save_known_host
 from remo_cli.models.host import KnownHost
 
 # ---------------------------------------------------------------------------
@@ -96,9 +98,16 @@ _UNREACHABLE = KnownHost(
 )
 _HOSTS = [_DIRECT, _SSM, _UNREACHABLE]
 
-#: What the service-side registry mirror must contain, byte-for-byte
-#: (colon-delimited `KnownHost.to_line()` per entry, payload order).
+#: Legacy colon-delimited text -- used ONLY to seed the WORKSTATION-side
+#: (CLI-side) registry fixture; still valid as migration input (015-registry-v2).
 _EXPECTED_SERVICE_REGISTRY = "".join(h.to_line() + "\n" for h in _HOSTS)
+
+#: What the SERVICE-side registry.json (v2) must contain: hostEntry dicts
+#: sorted by (type, name), matching core/registry.py's serializer (015-registry-v2).
+_EXPECTED_SERVICE_HOSTS = [
+    core_registry.known_host_to_entry(h)
+    for h in sorted(_HOSTS, key=lambda h: (h.type, h.name))
+]
 
 #: Canned "scanned & workstation-trusted" host keys for the direct instance.
 #: Structurally valid known_hosts lines (plausible key type + base64) so the
@@ -156,7 +165,8 @@ class LiveService:
 
     @property
     def registry_path(self) -> Path:
-        return self.remo_home / "known_hosts"
+        """The service's registry.json (v2) — 015-registry-v2 write target."""
+        return self.remo_home / "registry.json"
 
     def mint(self) -> str:
         """Mint a fresh pairing code over HTTP (network-restricted posture)."""
@@ -363,6 +373,7 @@ def test_fresh_boot_is_unconfigured_with_generated_identity(service: LiveService
         "deployment_id": state["deployment_id"],
         "public_key_available": True,
         "registry_instances": 0,
+        "payload_versions": [1, 2],
     }
     assert not service.registry_path.exists()
 
@@ -422,9 +433,11 @@ def test_full_adopt_then_idempotent_rerun(
     assert config_lines and config_lines[0]["passed"]
     assert "adopted" in config_lines[0]["detail"]
 
-    # Service-side end state: full colon-delimited registry mirror (all 3
-    # entries) + service known_hosts containing exactly the canned lines.
-    assert service.registry_path.read_text() == _EXPECTED_SERVICE_REGISTRY
+    # Service-side end state: full v2 registry mirror (all 3 entries) +
+    # service known_hosts containing exactly the canned lines.
+    doc = json.loads(service.registry_path.read_text())
+    assert doc["version"] == 2
+    assert doc["hosts"] == _EXPECTED_SERVICE_HOSTS
     service_known_hosts = service.identity_dir / "known_hosts"
     assert service_known_hosts.read_text() == _EXPECTED_SERVICE_KNOWN_HOSTS
 
@@ -526,7 +539,8 @@ def test_registry_put_preserves_established_sessions(
             # The path now serves the NEW content...
             new_bytes = service.registry_path.read_bytes()
             assert new_bytes != original_bytes
-            assert b"incus:webbox:192.0.2.10:dev" in new_bytes
+            assert b'"host": "192.0.2.10"' in new_bytes
+            assert b'"user": "dev"' in new_bytes
             # ...while the held fd still reads the ORIGINAL content: the PUT
             # swapped the directory entry (os.replace), never the old inode.
             assert _read_fd_fully(held_fd) == original_bytes
@@ -572,7 +586,8 @@ def test_push_after_adopt_processes_only_the_new_instance(
     assert cache_path.stat().st_mode & 0o777 == 0o600
     saved = json.loads(cache_path.read_text())
     # No secret is persisted (FR-019): no url, no token/code, no top-level id.
-    assert set(saved) == {"push_cache"}
+    assert set(saved) == {"cache_version", "push_cache"}
+    assert saved["cache_version"] == 2
     dep = result.deployment_id
     # Delta cache is deployment-keyed and seeded with the adopted instance.
     assert set(saved["push_cache"]) == {dep}
@@ -583,8 +598,11 @@ def test_push_after_adopt_processes_only_the_new_instance(
     adoption_ssh_mocks["authorized"].clear()
 
     # ---- A NEW direct-access instance is registered workstation-side ----
-    registry = workstation / "known_hosts"
-    registry.write_text(registry.read_text() + _NEW_DIRECT.to_line() + "\n")
+    # (the workstation's legacy known_hosts was already migrated to
+    # registry.json by the adopt call above, so this goes through the public
+    # registry API rather than appending a colon line to a file that no
+    # longer exists.)
+    save_known_host(_NEW_DIRECT)
 
     # ---- Push with a freshly minted code (FR-018/FR-019) -----------------
     push = web_adopt.run_push(service.url, service.mint(), interactive=False)
@@ -616,17 +634,23 @@ def test_push_after_adopt_processes_only_the_new_instance(
 
     # Service-side end state: the mirror gained exactly the new entry, and
     # the service known_hosts holds the cached webbox lines (reused from the
-    # delta cache) plus the new instance's freshly scanned lines, in
-    # registry order.
-    assert (
-        service.registry_path.read_text()
-        == _EXPECTED_SERVICE_REGISTRY + _NEW_DIRECT.to_line() + "\n"
-    )
+    # delta cache) plus the new instance's freshly scanned lines.
+    expected_hosts_after_push = [
+        core_registry.known_host_to_entry(h)
+        for h in sorted([*_HOSTS, _NEW_DIRECT], key=lambda h: (h.type, h.name))
+    ]
+    doc = json.loads(service.registry_path.read_text())
+    assert doc["hosts"] == expected_hosts_after_push
+    # Registry v2 always writes entries sorted by (type, name); the wire
+    # payload built from get_known_hosts() follows the same order, so the
+    # service known_hosts lines land "incus/newbox" (n < w) before
+    # "incus/webbox" -- a deterministic ordering change from the old
+    # append-order flat file, not a bug.
     assert (
         service.identity_dir / "known_hosts"
-    ).read_text() == _EXPECTED_SERVICE_KNOWN_HOSTS + "".join(
+    ).read_text() == "".join(
         line + "\n" for line in _NEW_CANNED_HOST_KEY_LINES
-    )
+    ) + _EXPECTED_SERVICE_KNOWN_HOSTS
 
     status, setup = service.setup_status()
     assert status == 200

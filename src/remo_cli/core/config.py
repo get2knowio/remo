@@ -148,6 +148,37 @@ def get_known_hosts_path_readonly() -> Path:
     return get_remo_home_readonly() / "known_hosts"
 
 
+def get_registry_path() -> Path:
+    """Return the path to the remo registry.json (v2) file.
+
+    Creates the parent config directory if it does not exist.
+    """
+    return get_remo_home() / "registry.json"
+
+
+def get_registry_path_readonly() -> Path:
+    """Return the path to registry.json WITHOUT creating its parent.
+
+    Mirrors :func:`get_registry_path` but built on
+    :func:`get_remo_home_readonly` — safe against a read-only bind mount.
+    """
+    return get_remo_home_readonly() / "registry.json"
+
+
+def get_registry_backup_path() -> Path:
+    """Return the path where the legacy known_hosts file is renamed to on migration."""
+    return get_remo_home_readonly() / "known_hosts.v1.bak"
+
+
+def get_registry_lock_path() -> Path:
+    """Return the path to the registry's advisory-lock sidecar file.
+
+    Never replaced by an atomic write (unlike ``registry.json`` itself),
+    so a lock held on it remains meaningful across writers.
+    """
+    return get_remo_home_readonly() / "registry.lock"
+
+
 def is_verbose() -> bool:
     """Return True if REMO_VERBOSE is set to '1'."""
     return os.environ.get("REMO_VERBOSE") == "1"

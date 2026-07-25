@@ -38,8 +38,8 @@ web = [
 ]
 
 [project.scripts]
-remo-cli = "remo_cli.cli.main:cli"
-remo = "remo_cli.cli.main:cli"
+remo-cli = "remo_cli.cli.main:main"
+remo = "remo_cli.cli.main:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/remo_cli"]

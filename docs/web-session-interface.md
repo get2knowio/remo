@@ -43,7 +43,7 @@ second launcher; it reuses the same host-side scripts (`project-launch`) that th
 ## Architecture
 
 ```text
-~/.config/remo/known_hosts (read-only mount)
+~/.config/remo/registry.json (read-only mount; legacy known_hosts also read in place)
         │
         ▼
   remo-web (FastAPI + Uvicorn)
@@ -268,7 +268,9 @@ bind-mount deployment to this release changes nothing (FR-005/SC-005).
 Everything the adopted service owns lives in one place: `<REMO_HOME>/web-identity/` — `id_ed25519` +
 `id_ed25519.pub` (the service keypair, generated once via `ssh-keygen` and **never** silently
 regenerated while the files exist), `known_hosts` (service-managed instance host keys), and
-`state.json` (the deployment id). The registry stays at its usual path (`~/.config/remo/known_hosts`).
+`state.json` (the deployment id). The registry stays at its usual path (`~/.config/remo/registry.json`,
+format v2 — a legacy `known_hosts` file is still read in place if present, e.g. right after an
+in-place service upgrade, before the next adoption push replaces it).
 From these artifacts the service derives one of four states:
 
 | State | Derivation | `remo web check` | `GET /api/v1/ready` | Browser |
@@ -344,7 +346,7 @@ only its named state volume.
 
 | Mount | Purpose | Why read-only |
 |---|---|---|
-| `${HOME}/.config/remo:/home/remo/.config/remo:ro` | The Remo **registry** (`known_hosts`) — provider type, instance name, address, SSH user, access mode, region. | This is metadata, **not authentication material** (see below). The service never needs to write it; FR-004 requires hot-reload without a container restart, not mutation. |
+| `${HOME}/.config/remo:/home/remo/.config/remo:ro` | The Remo **registry** (`registry.json`, format v2 — or legacy `known_hosts`, read in place) — provider type, instance name, address, SSH user, access, and per-type fields (e.g. AWS instance id/region). | This is metadata, **not authentication material** (see below). The service never needs to write it; FR-004 requires hot-reload without a container restart, not mutation. |
 | `${HOME}/.ssh/id_ed25519:/home/remo/.ssh/id_ed25519:ro` (+ `config`, `known_hosts`) | The **SSH identity** that actually authenticates to every instance. | The service only ever needs to *use* this key, never modify it; read-only limits blast radius if the container is compromised. |
 | `${HOME}/.aws:/home/remo/.aws:ro` (optional, commented out by default) | AWS credentials/profile for any registered instance using the SSM access mode. | Same reasoning — read-only, and only mounted at all if you actually have SSM-routed instances. |
 

@@ -25,7 +25,7 @@ from click.testing import CliRunner
 from remo_cli.cli.main import cli
 from remo_cli.web import check as check_module
 from remo_cli.web import health
-from remo_cli.web.discovery import _read_known_hosts_readonly
+from remo_cli.web.discovery import _read_registry_hosts_readonly
 from remo_cli.web.check import all_passed, format_results, run_checks
 from remo_cli.web.config import WebSettings
 
@@ -265,7 +265,7 @@ class TestUnreadableRegistry:
         _write_registry(tmp_config_dir, ["incus:dev:127.0.0.1:remo"])
         tmp_config_dir.chmod(0o000)
         try:
-            assert _read_known_hosts_readonly() == []
+            assert _read_registry_hosts_readonly() == []
         finally:
             tmp_config_dir.chmod(0o700)
 

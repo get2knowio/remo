@@ -1,5 +1,5 @@
 """Enable `python -m remo`."""
 
-from remo_cli.cli.main import cli
+from remo_cli.cli.main import main
 
-cli()
+main()

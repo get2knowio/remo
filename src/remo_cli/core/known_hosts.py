@@ -1,171 +1,108 @@
-"""Flat-file registry of registered development environments."""
+"""Public host-registry API — thin delegates onto :mod:`core.registry`.
+
+Every existing call site in ``providers/*`` and ``cli/*`` keeps working
+unchanged (FR-015); the accessor in :mod:`remo_cli.core.registry` owns all
+parsing, serialization, validation, locking, and migration.
+"""
 
 from __future__ import annotations
 
 import os
 import sys
-import tempfile
-from pathlib import Path
 
-from remo_cli.core.config import get_known_hosts_path
+from remo_cli.core.registry import (
+    MigrationReport,
+    migrate_if_needed,
+    mutate_registry,
+    read_registry,
+)
 from remo_cli.models.host import KnownHost
+
+_migration_notice_shown = False
+
+
+def _print_migration_notice(report: MigrationReport) -> None:
+    """Print the one-time plain-language migration notice (FR-025/FR-026)."""
+    from remo_cli.core.output import print_info, print_warning
+
+    global _migration_notice_shown
+    if _migration_notice_shown:
+        return
+    _migration_notice_shown = True
+
+    print_info(
+        f"Migrated {report.migrated_count} registry entr"
+        f"{'y' if report.migrated_count == 1 else 'ies'} to the new registry.json "
+        f"format (backup saved as {report.backup_path.name})."
+    )
+    if report.skipped_lines:
+        print_warning(
+            f"Skipped {len(report.skipped_lines)} unrecognized line(s) during "
+            f"migration (left untouched in the backup):"
+        )
+        for line in report.skipped_lines:
+            print_warning(f"  {line!r}")
+    print_info(
+        "Note: the next `remo web push` will re-verify all instances (the "
+        "registry format changed)."
+    )
+
+
+def _migrate_and_notify() -> None:
+    report = migrate_if_needed()
+    if report is not None:
+        _print_migration_notice(report)
 
 
 def save_known_host(host: KnownHost) -> None:
-    """Add or replace a host entry in the registry.
+    """Add or replace a host entry in the registry (upsert by (type, name))."""
+    _migrate_and_notify()
 
-    Ensures the registry file and its parent directory exist.  Any existing
-    entry with the same (type, name) pair is removed before the new entry is
-    appended, so each (type, name) pair remains unique.
+    def _upsert(hosts: list[KnownHost]) -> list[KnownHost]:
+        kept = [h for h in hosts if not (h.type == host.type and h.name == host.name)]
+        kept.append(host)
+        return kept
 
-    The write is performed atomically: lines are filtered into a temp file in
-    the same directory, then renamed over the registry file.
-    """
-    registry_path = get_known_hosts_path()
-    registry_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not registry_path.exists():
-        registry_path.touch()
-
-    # Read all existing lines, dropping any entry that matches (type, name).
-    kept_lines: list[str] = []
-    with registry_path.open() as fh:
-        for raw_line in fh:
-            line = raw_line.rstrip("\n")
-            if not line:
-                kept_lines.append(line)
-                continue
-            try:
-                existing = KnownHost.from_line(line)
-            except ValueError:
-                # Preserve lines that cannot be parsed.
-                kept_lines.append(line)
-                continue
-            if existing.type == host.type and existing.name == host.name:
-                # Drop the stale entry; the new one will be appended below.
-                continue
-            kept_lines.append(line)
-
-    kept_lines.append(host.to_line())
-
-    _write_lines_atomically(registry_path, kept_lines)
+    mutate_registry(_upsert)
 
 
 def remove_known_host(type: str, name: str) -> None:
-    """Remove the entry matching (type, name) from the registry.
+    """Remove the entry matching (type, name) from the registry, if present."""
+    _migrate_and_notify()
 
-    Does nothing if the registry file does not exist or if no matching entry
-    is found.
-    """
-    registry_path = get_known_hosts_path()
-    if not registry_path.exists():
-        return
+    def _drop(hosts: list[KnownHost]) -> list[KnownHost]:
+        return [h for h in hosts if not (h.type == type and h.name == name)]
 
-    kept_lines: list[str] = []
-    with registry_path.open() as fh:
-        for raw_line in fh:
-            line = raw_line.rstrip("\n")
-            if not line:
-                kept_lines.append(line)
-                continue
-            try:
-                existing = KnownHost.from_line(line)
-            except ValueError:
-                kept_lines.append(line)
-                continue
-            if existing.type == type and existing.name == name:
-                continue
-            kept_lines.append(line)
-
-    _write_lines_atomically(registry_path, kept_lines)
+    mutate_registry(_drop)
 
 
 def get_known_hosts(type_filter: str | None = None) -> list[KnownHost]:
-    """Return all registered hosts, optionally filtered by type.
-
-    Returns an empty list if the registry file does not exist.  Lines that are
-    empty or that fail to parse are silently skipped.
-    """
-    registry_path = get_known_hosts_path()
-    if not registry_path.exists():
-        return []
-
-    hosts: list[KnownHost] = []
-    with registry_path.open() as fh:
-        for raw_line in fh:
-            line = raw_line.strip()
-            if not line:
-                continue
-            try:
-                host = KnownHost.from_line(line)
-            except ValueError:
-                continue
-            if type_filter is not None and host.type != type_filter:
-                continue
-            hosts.append(host)
-
+    """Return all registered hosts, optionally filtered by type."""
+    _migrate_and_notify()
+    hosts = read_registry(readonly=False).hosts
+    if type_filter is not None:
+        hosts = [h for h in hosts if h.type == type_filter]
     return hosts
 
 
 def clear_known_hosts_by_type(type: str) -> None:
-    """Remove all entries whose type equals *type*.
+    """Remove all entries whose type equals *type*."""
+    _migrate_and_notify()
 
-    Does nothing if the registry file does not exist.
-    """
-    registry_path = get_known_hosts_path()
-    if not registry_path.exists():
-        return
+    def _filter(hosts: list[KnownHost]) -> list[KnownHost]:
+        return [h for h in hosts if h.type != type]
 
-    kept_lines: list[str] = []
-    with registry_path.open() as fh:
-        for raw_line in fh:
-            line = raw_line.rstrip("\n")
-            if not line:
-                kept_lines.append(line)
-                continue
-            try:
-                existing = KnownHost.from_line(line)
-            except ValueError:
-                kept_lines.append(line)
-                continue
-            if existing.type == type:
-                continue
-            kept_lines.append(line)
-
-    _write_lines_atomically(registry_path, kept_lines)
+    mutate_registry(_filter)
 
 
 def clear_known_hosts_by_prefix(type: str, prefix: str) -> None:
-    """Remove entries where type matches and name starts with *prefix*.
+    """Remove entries where type matches and name starts with *prefix*."""
+    _migrate_and_notify()
 
-    Used during incus sync to remove stale container entries for a particular
-    Incus host before re-populating them.  For example::
+    def _filter(hosts: list[KnownHost]) -> list[KnownHost]:
+        return [h for h in hosts if not (h.type == type and h.name.startswith(prefix))]
 
-        clear_known_hosts_by_prefix("incus", "myhost/")
-
-    Does nothing if the registry file does not exist.
-    """
-    registry_path = get_known_hosts_path()
-    if not registry_path.exists():
-        return
-
-    kept_lines: list[str] = []
-    with registry_path.open() as fh:
-        for raw_line in fh:
-            line = raw_line.rstrip("\n")
-            if not line:
-                kept_lines.append(line)
-                continue
-            try:
-                existing = KnownHost.from_line(line)
-            except ValueError:
-                kept_lines.append(line)
-                continue
-            if existing.type == type and existing.name.startswith(prefix):
-                continue
-            kept_lines.append(line)
-
-    _write_lines_atomically(registry_path, kept_lines)
+    mutate_registry(_filter)
 
 
 def get_aws_region(name: str) -> str:
@@ -264,28 +201,3 @@ def resolve_remo_host_by_name(name: str) -> KnownHost:
             f"Error: no environment named '{name}' found in the registry.\n"
             "The registry is empty. Use 'remo add' to register an environment."
         )
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-
-def _write_lines_atomically(path: Path, lines: list[str]) -> None:
-    """Write *lines* to *path* atomically via a temp file + rename.
-
-    A temporary file is created in the same directory as *path* so that the
-    ``os.replace`` rename is guaranteed to be on the same filesystem (and
-    therefore atomic on POSIX systems).
-    """
-    dir_ = path.parent
-    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".known_hosts_tmp_")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            for line in lines:
-                fh.write(line + "\n")
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise

@@ -78,7 +78,11 @@ def api_client(mocker):
     client = mocker.MagicMock()
     client.base_url = URL
     client.token = CODE
-    client.get_status.return_value = {"state": "adopted", "registry_instances": 2}
+    client.get_status.return_value = {
+        "state": "adopted",
+        "registry_instances": 2,
+        "payload_versions": [1, 2],
+    }
     client.get_identity.return_value = {"deployment_id": DEPLOYMENT_ID, "public_key": PUBLIC_KEY}
     client.put_registry.return_value = {"registry_instances": 2, "host_key_instances": 1}
     client.post_verify.return_value = {"all_passed": True, "results": []}
@@ -160,6 +164,7 @@ class TestPushCacheLifecycle:
         push_cache_path().write_text(
             json.dumps(
                 {
+                    "cache_version": 2,
                     "push_cache": {
                         DEPLOYMENT_ID: {
                             "good": {"fingerprint": "f" * 64, "host_keys": [KEY_LINE_NODE1]},
@@ -198,12 +203,29 @@ class TestInstanceFingerprint:
             {"host": "10.0.0.99"},
             {"user": "other"},
             {"instance_id": "i-0abc123"},
-            {"access_mode": "direct"},
-            {"region": "us-east-1"},
+            {"access_mode": "ssm"},
         ],
     )
     def test_any_field_change_changes_fingerprint(self, change):
+        # NOTE: an empty access_mode ("" — the KnownHost dataclass default) and
+        # an explicit "direct" both serialize to the same v2 "access": "direct"
+        # (known_host_to_entry normalizes), so they are NOT expected to produce
+        # different fingerprints — hence "ssm" here instead of "direct".
         assert instance_fingerprint(_make_host()) != instance_fingerprint(_make_host(**change))
+
+    def test_region_change_changes_fingerprint_for_types_that_use_it(self):
+        # "region" only maps to a nested v2 field for proxmox/aws/ssh — not
+        # incus (test_any_field_change_changes_fingerprint's default type),
+        # which has no v2 slot for it at all.
+        base = _make_host(
+            type_="proxmox", name="pve1/dev", instance_id="104",
+            access_mode="direct", region="root",
+        )
+        changed = _make_host(
+            type_="proxmox", name="pve1/dev", instance_id="104",
+            access_mode="direct", region="admin",
+        )
+        assert instance_fingerprint(base) != instance_fingerprint(changed)
 
 
 # ---------------------------------------------------------------------------

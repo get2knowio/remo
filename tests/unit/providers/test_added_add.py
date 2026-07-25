@@ -1,9 +1,12 @@
-"""Tests for providers/added.py add() + target parsing (feature 014, US1).
+"""Tests for providers/added.py add() + target parsing (feature 014, US1;
+updated for 015-registry-v2 T020: IPv6 literals and colons are now accepted —
+the registry.json format has no positional colon-overloading to protect
+against, so only control characters remain rejected).
 
-Covers target parsing (default user, overrides, IPv6/bracketed rejection),
-identity-colon rejection, create-writes-one-entry, provider-name collision
-refusal (FR-010), and FR-006 resolvability/picker inclusion of an added host.
-SSH/registry are mocked except the FR-006 test, which uses a real temp registry.
+Covers target parsing (default user, overrides, IPv6 bracket/bare forms),
+create-writes-one-entry, provider-name collision refusal (FR-010), and FR-006
+resolvability/picker inclusion of an added host. SSH/registry are mocked
+except the FR-006 test, which uses a real temp registry.
 """
 
 from __future__ import annotations
@@ -38,14 +41,28 @@ class TestParseTarget:
     def test_port_override_wins(self) -> None:
         assert added.parse_ssh_target("host:22", port_override=2022)[2] == 2022
 
-    @pytest.mark.parametrize("bad", ["::1", "fe80::1", "user@2001:db8::1"])
-    def test_ipv6_literal_rejected(self, bad: str) -> None:
-        with pytest.raises(ValueError, match="IPv6"):
-            added.parse_ssh_target(bad)
+    @pytest.mark.parametrize(
+        ("target", "expected_host"),
+        [("::1", "::1"), ("fe80::1", "fe80::1"), ("user@2001:db8::1", "2001:db8::1")],
+    )
+    def test_bare_ipv6_literal_accepted_no_port(self, target: str, expected_host: str) -> None:
+        """A bracket-less multi-colon TARGET is an IPv6 literal with no port
+        suffix (a legal host:port has exactly one colon)."""
+        _, host, port = added.parse_ssh_target(target)
+        assert host == expected_host
+        assert port == 22
 
-    def test_bracketed_ipv6_rejected(self) -> None:
-        with pytest.raises(ValueError, match="IPv6"):
-            added.parse_ssh_target("user@[2001:db8::1]:22")
+    def test_bracketed_ipv6_with_port_accepted(self) -> None:
+        user, host, port = added.parse_ssh_target("user@[2001:db8::1]:22")
+        assert (user, host, port) == ("user", "2001:db8::1", 22)
+
+    def test_bracketed_ipv6_without_port_accepted(self) -> None:
+        user, host, port = added.parse_ssh_target("admin@[2001:db8::7]")
+        assert (user, host, port) == ("admin", "2001:db8::7", 22)
+
+    def test_unmatched_bracket_rejected(self) -> None:
+        with pytest.raises(ValueError, match="unmatched"):
+            added.parse_ssh_target("user@[2001:db8::1")
 
     def test_non_numeric_port_rejected(self) -> None:
         with pytest.raises(ValueError, match="not a number"):
@@ -63,10 +80,10 @@ class TestParseTarget:
         with pytest.raises(ValueError):
             added.parse_ssh_target("@host")
 
-    def test_user_with_colon_rejected(self) -> None:
-        # A ':' in the user would shift every later registry field on reload.
-        with pytest.raises(ValueError, match="user must not contain"):
-            added.parse_ssh_target("host", user_override="ev:il")
+    def test_user_with_colon_accepted(self) -> None:
+        # registry.json has no positional colon-overloading to protect
+        # against (unlike the old colon-delimited known_hosts format).
+        assert added.parse_ssh_target("host", user_override="ev:il")[0] == "ev:il"
 
     def test_user_with_newline_rejected(self) -> None:
         # A newline would inject a second registry line.
@@ -128,16 +145,18 @@ class TestAddCreate:
 
         assert save.call_args.args[0].region == "/home/dev/.ssh/id"
 
-    def test_identity_with_colon_rejected_no_write(self, mocker) -> None:
+    def test_identity_with_colon_accepted(self, mocker) -> None:
+        # registry.json has no positional colon-overloading to protect
+        # against, so a colon in an identity path is stored intact.
         mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[])
         save = mocker.patch("remo_cli.providers.added.save_known_host")
-        err = mocker.patch("remo_cli.providers.added.print_error")
+        mocker.patch("remo_cli.providers.added.print_success")
+        mocker.patch("remo_cli.providers.added.print_info")
 
         rc = added.add(name="box", target="dev@host", identity="/bad:path/key")
 
-        assert rc == 2
-        save.assert_not_called()
-        assert err.called
+        assert rc == 0
+        assert save.call_args.args[0].region == "/bad:path/key"
 
     def test_identity_with_newline_rejected_no_write(self, mocker) -> None:
         # A newline in the identity would inject a forged registry line.
@@ -150,12 +169,25 @@ class TestAddCreate:
         assert rc == 2
         save.assert_not_called()
 
+    def test_bare_ipv6_target_accepted(self, mocker) -> None:
+        mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[])
+        save = mocker.patch("remo_cli.providers.added.save_known_host")
+        mocker.patch("remo_cli.providers.added.print_success")
+        mocker.patch("remo_cli.providers.added.print_info")
+
+        rc = added.add(name="box", target="::1")
+
+        assert rc == 0
+        entry = save.call_args.args[0]
+        assert entry.host == "::1"
+        assert entry.user == "remo"
+
     def test_malformed_target_rejected_no_write(self, mocker) -> None:
         mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[])
         save = mocker.patch("remo_cli.providers.added.save_known_host")
         mocker.patch("remo_cli.providers.added.print_error")
 
-        rc = added.add(name="box", target="::1")
+        rc = added.add(name="box", target="host:nope")
 
         assert rc == 2
         save.assert_not_called()

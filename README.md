@@ -36,7 +36,7 @@ remo completion zsh >> ~/.zshrc
 remo completion fish > ~/.config/fish/completions/remo.fish
 ```
 
-After re-loading your shell, `remo proxmox info --name <TAB>` will suggest registered container names from your `known_hosts` registry.
+After re-loading your shell, `remo proxmox info --name <TAB>` will suggest registered container names from your `registry.json` registry.
 
 ---
 
@@ -454,7 +454,7 @@ rm -rf ~/.config/remo
 
 | Path | Contents |
 |------|----------|
-| `~/.config/remo/` | Runtime state: `known_hosts` (environment registry) |
+| `~/.config/remo/` | Runtime state: `registry.json` (environment registry, format v2); `known_hosts.v1.bak` (pre-upgrade backup, if you upgraded from an older remo) |
 
 **Note:** Uninstalling remo does not destroy any cloud resources (EC2 instances, Hetzner VMs, Incus or Proxmox containers). Run `remo <platform> destroy` first if you want to tear those down.
 
