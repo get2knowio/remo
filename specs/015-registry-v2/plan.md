@@ -96,7 +96,7 @@ tests/
 │   │   └── test_registry_locking.py   # NEW — lock timeout, degradation, crash atomicity
 │   ├── providers/
 │   │   ├── test_provider_registry_entries.py # NEW — per-provider save-path fixtures (R5 risk pin)
-│   │   └── test_added_ipv6.py         # NEW — IPv6 added-host end-to-end
+│   │   └── test_added_add.py          # EXTENDED — IPv6 added-host end-to-end (bracket + bare forms)
 │   └── web/
 │       └── test_registry_readonly.py  # NEW — both formats, ro volume, parity, broken mapping
 ├── integration/
