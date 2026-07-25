@@ -124,10 +124,23 @@ Users install the stable release with:
 curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 ```
 
-> **One-time setup:** the tag release-please creates must be authored by a PAT
-> (repo secret `RELEASE_PLEASE_TOKEN`, `contents` + `pull-requests` write) for
-> the publish to fire — a tag made with the default `GITHUB_TOKEN` does not
-> trigger `release.yml`. See `.github/workflows/release-please.yml`.
+> **One-time setup — publish trigger:** the tag release-please creates must be
+> authored by a token that can trigger workflows, or `release.yml` (PyPI +
+> Docker) won't fire (a tag made with the default `GITHUB_TOKEN` does **not**
+> trigger `on: push: tags`). `release-please.yml` resolves the token in this
+> order:
+>
+> 1. **GitHub App (recommended)** — set the org (or repo) Actions **variable**
+>    `RELEASE_PLEASE_APP_ID` and the **secret** `RELEASE_PLEASE_APP_KEY` (the
+>    App's private key). Install a GitHub App with **Contents: write** +
+>    **Pull requests: write** on this repo. Short-lived, auto-minted, nothing to
+>    rotate, tied to no personal account — and reusable across org repos.
+> 2. **`RELEASE_PLEASE_TOKEN` PAT** — a personal access token (`contents` +
+>    `pull-requests` write) as a fallback if you don't use an App.
+> 3. **`GITHUB_TOKEN`** — automatic last resort: release PRs still open, but the
+>    tag won't auto-publish until a maintainer re-pushes it.
+>
+> See `.github/workflows/release-please.yml`.
 >
 > **Note:** release-please does not run `uv lock`; if `uv.lock`'s recorded
 > project version matters to you, run `uv lock` and amend it onto the release PR
