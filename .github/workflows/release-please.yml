@@ -24,20 +24,34 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     steps:
-      # NOTE: SHA-pin this to match the repo's action-pinning convention once the
-      # v4 commit SHA is available (e.g. `@<sha> # v4`). Left as a floating tag
-      # here because the SHA can't be resolved offline.
+      # Mint a short-lived GitHub App installation token when the App is
+      # configured (org secrets RELEASE_PLEASE_APP_ID + RELEASE_PLEASE_APP_KEY).
+      # An App token — like a PAT, unlike GITHUB_TOKEN — triggers the tag-driven
+      # `release.yml`, but it's short-lived, auto-minted (nothing to rotate), and
+      # tied to no human account. The step is skipped if the App isn't set up.
+      #
+      # NOTE: SHA-pin `create-github-app-token` and `release-please-action` to
+      # match the repo's action-pinning convention (e.g. `@<sha> # v2`) once the
+      # SHAs are available — left as floating tags because they can't be
+      # resolved offline.
+      - name: Mint GitHub App token
+        id: app-token
+        if: ${{ vars.RELEASE_PLEASE_APP_ID != '' }}
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.RELEASE_PLEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_PLEASE_APP_KEY }}
+
       - uses: googleapis/release-please-action@v4
         with:
-          # Prefer a PAT (`RELEASE_PLEASE_TOKEN`, `contents` + `pull-requests`
-          # write); fall back to GITHUB_TOKEN so release-please still opens and
-          # maintains the release PR out of the box.
-          #
-          # The PAT matters only for the *publish chain*: a tag created with the
-          # default GITHUB_TOKEN does NOT fire `on: push: tags`, so with the
-          # fallback the release PR and tag are still created, but `release.yml`
-          # (PyPI + Docker) won't run until a maintainer re-pushes the tag. Set
-          # the `RELEASE_PLEASE_TOKEN` secret to make merge-to-publish automatic.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          # Token precedence:
+          #   1. GitHub App installation token (recommended — see above).
+          #   2. RELEASE_PLEASE_TOKEN PAT (if someone set one instead).
+          #   3. GITHUB_TOKEN fallback — release-please still opens/maintains the
+          #      release PR out of the box, but a tag it creates will NOT fire
+          #      `on: push: tags`, so `release.yml` (PyPI + Docker) won't run
+          #      until a maintainer re-pushes the tag. Configure the App (or the
+          #      PAT) to make merge-to-publish automatic.
+          token: ${{ steps.app-token.outputs.token || secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
