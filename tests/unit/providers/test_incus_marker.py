@@ -1,8 +1,10 @@
 """Tests for the Incus managed-marker feature (providers/incus.py).
 
-Covers marker apply/read helpers, create/update wiring, and filtered sync —
-including FR-010 (sync is read-only) and FR-013 (sync makes a bounded number of
-host queries). All SSH is mocked; no live Incus host is required.
+Covers marker apply/read helpers and create/update wiring. `sync()` itself
+is now a thin wrapper over the reconcile engine (016-sync-reconcile); its
+probe is covered by tests/unit/providers/test_incus_sync.py and the
+read-only / consent / write behaviour by tests/integration/test_sync_reconcile.py.
+All SSH is mocked; no live Incus host is required.
 """
 
 from __future__ import annotations
@@ -136,79 +138,3 @@ class TestUpdateBackfill:
         rc = providers_incus.update(name="dev1", host="h", user="u")
         assert rc == 0
         apply.assert_called_once_with("h", "u", "dev1")
-
-
-# ---------------------------------------------------------------------------
-# sync() — filtering, hint, FR-010 (read-only), FR-013 (bounded)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def patch_registry(mocker):
-    save = mocker.patch("remo_cli.providers.incus.save_known_host")
-    mocker.patch("remo_cli.providers.incus.clear_known_hosts_by_prefix")
-    return save
-
-
-class TestSyncFiltering:
-    def test_default_registers_only_marked(self, patch_host, patch_registry, mocker):
-        patch_host.return_value = _completed(0, stdout="dev1,true\nplex,\n")
-        info = mocker.patch("remo_cli.providers.incus.print_info")
-        warn = mocker.patch("remo_cli.providers.incus.print_warning")
-
-        providers_incus.sync(host="h", user="u")
-
-        # Only dev1 registered.
-        saved = [c.args[0].name for c in patch_registry.call_args_list]
-        assert saved == ["h/dev1"]
-        # Hint names the skipped container.
-        warn_text = " ".join(str(c.args[0]) for c in warn.call_args_list)
-        assert "plex" in warn_text
-        info_text = " ".join(str(c.args[0]) for c in info.call_args_list)
-        assert "--all" in info_text and "remo incus update" in info_text
-
-    def test_all_registers_everything(self, patch_host, patch_registry, mocker):
-        patch_host.return_value = _completed(0, stdout="dev1,true\nplex,\n")
-        warn = mocker.patch("remo_cli.providers.incus.print_warning")
-        mocker.patch("remo_cli.providers.incus.print_info")
-
-        providers_incus.sync(host="h", user="u", include_all=True)
-
-        saved = sorted(c.args[0].name for c in patch_registry.call_args_list)
-        assert saved == ["h/dev1", "h/plex"]
-        warn_text = " ".join(str(c.args[0]) for c in warn.call_args_list)
-        assert "plex" in warn_text
-        # The adopted-unmarked summary must actually be emitted (FR-009).
-        assert "not remo-created" in warn_text
-
-    def test_sync_is_read_only_and_bounded(self, patch_host, patch_registry, mocker):
-        patch_host.return_value = _completed(0, stdout="dev1,true\nplex,\n")
-        mocker.patch("remo_cli.providers.incus.print_info")
-        mocker.patch("remo_cli.providers.incus.print_warning")
-
-        providers_incus.sync(host="h", user="u")
-
-        # FR-013: a single bulk host query, regardless of container count.
-        assert patch_host.call_count == 1
-        # FR-010: sync issues no marker mutation.
-        for call in patch_host.call_args_list:
-            assert "config set" not in call.args[2]
-
-    def test_registry_shape_unchanged(self, patch_host, patch_registry, mocker):
-        # FR-012: the KnownHost written by sync keeps its pre-feature fields;
-        # marker state is not recorded in the registry.
-        patch_host.return_value = _completed(0, stdout="dev1,true\n")
-        mocker.patch("remo_cli.providers.incus.print_info")
-        mocker.patch("remo_cli.providers.incus.print_warning")
-
-        providers_incus.sync(host="h", user="u")
-
-        kh = patch_registry.call_args.args[0]
-        assert kh.type == "incus"
-        assert kh.name == "h/dev1"
-        assert kh.user == "remo"
-        assert kh.instance_id == "u"
-        assert kh.access_mode == "direct"
-        # No marker attribute leaked onto the registry entry.
-        assert not hasattr(kh, "marker")
-        assert not hasattr(kh, "managed")

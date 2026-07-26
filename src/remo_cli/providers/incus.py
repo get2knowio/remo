@@ -20,13 +20,13 @@ from remo_cli.core.config import (
     INCUS_MANAGED_CONFIG_VALUE,
 )
 from remo_cli.core.known_hosts import (
-    clear_known_hosts_by_prefix,
     get_known_hosts,
     guard_not_added_ssh_host,
     remove_known_host,
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_warning
+from remo_cli.core.reconcile import DiscoveredHost, ProbeError, ProbeResult, SyncScope, run_sync
 from remo_cli.core.snapshot import (
     handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
@@ -104,17 +104,21 @@ def _resolve_container_ip(
                 text=True,
             )
             if result.returncode != 0:
-                print_error(f"SSH to '{ssh_target}' failed: {result.stderr.strip()}")
+                # Soft-fail: a transient SSH hiccup must not abort a sync or
+                # crash create/update. Callers treat "" as "unknown", not
+                # "gone" -- merge_entry preserves the previously recorded
+                # address instead of overwriting it.
+                print_warning(f"SSH to '{ssh_target}' failed: {result.stderr.strip()}")
                 if not user:
                     print_warning(
                         f"Try specifying --user, e.g.: remo incus update --host {host} "
                         f"--user <username> {name}"
                     )
-                sys.exit(1)
+                return ""
             container_ip = _extract_eth0_ip(result.stdout)
         except FileNotFoundError:
-            print_error("ssh command not found")
-            sys.exit(1)
+            print_warning("ssh command not found")
+            return ""
 
     return container_ip
 
@@ -597,82 +601,86 @@ def info(name: str, host: str = "", user: str = "") -> int:
     return 0
 
 
+def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> ProbeResult:
+    """Provider-probe for :func:`sync` (contracts/provider-probe.md "Incus").
+
+    Returns every container on *scope.host* -- marked and unmarked alike;
+    the marker only decides eligibility for addition, never what is even
+    seen (FR-044). Read-only: issues one bulk listing query and, when
+    *use_ip* is set, one IP lookup per container. Never writes/mutates the
+    provider.
+    """
+    try:
+        rows = _list_containers_with_marker(scope.host, user)
+    except RuntimeError as exc:
+        raise ProbeError(f"Failed to list containers on '{scope.host}': {exc}") from exc
+
+    warnings: list[str] = []
+    hosts: list[DiscoveredHost] = []
+    for cname, marked in rows:
+        if use_ip:
+            ip = _resolve_container_ip(cname, scope.host, user)
+            if ip:
+                container_host = ip
+            else:
+                # Soft IP-lookup failure: leave entry.host empty so
+                # merge_entry preserves the previously recorded address
+                # instead of overwriting it with the bare container name.
+                container_host = ""
+                warnings.append(
+                    f"Could not resolve IP for '{cname}', keeping previously "
+                    "recorded address"
+                )
+        else:
+            container_host = cname
+
+        entry = KnownHost(
+            type="incus",
+            name=f"{scope.host}/{cname}",
+            host=container_host,
+            user="remo",
+            instance_id=user,
+            access_mode="direct",
+        )
+        hosts.append(DiscoveredHost(entry=entry, marked=marked))
+
+    return ProbeResult(
+        hosts=hosts,
+        complete=True,  # incus list never paginates
+        adoption_criteria="every container on this Incus host",
+        warnings=warnings,
+    )
+
+
 def sync(
     host: str = "localhost",
     user: str = "",
     use_ip: bool = False,
     include_all: bool = False,
-) -> None:
-    """Discover Incus containers on *host* and register them in known-hosts.
+    auto_confirm: bool = False,
+    dry_run: bool = False,
+) -> int:
+    """Reconcile the registry's Incus entries for *host* against reality.
 
-    Uses a single ``incus list -f csv -c n,user.remo`` query (locally when
-    ``host == "localhost"``, else over SSH) that returns each container's name
-    and managed-marker value (FR-013). By default (``include_all=False``) only
-    marker-bearing containers are registered (FR-006) and any skipped unmarked
-    containers are named in a hint (FR-008). With ``include_all=True`` every
-    container is registered — the pre-feature behavior (FR-007) — and unmarked
-    adoptions are called out in the summary (FR-009).
+    Delegates diffing, consent, and the single atomic write to
+    :func:`remo_cli.core.reconcile.run_sync`; this function's only job is
+    the probe closure above. By default only marker-bearing containers are
+    eligible for addition (FR-006); ``include_all=True`` widens that to
+    every container (FR-007). Removals require a complete enumeration and
+    consent (``auto_confirm`` or an interactive confirm), never happen on
+    ``dry_run``, and an unmarked host that still exists is never removed
+    (FR-022) -- there is no "later sync drops it again".
 
-    This function never mutates container state: it applies/removes no marker
-    (FR-010). When *use_ip* is true, each container's eth0 IP is resolved and
-    stored as the ``host`` field; otherwise the container name is stored.
+    Returns the process exit code (see ``core/reconcile.py`` EXIT_*).
     """
-    try:
-        discovered = _list_containers_with_marker(host, user)
-    except RuntimeError as e:
-        print_error(f"Failed to list containers on '{host}': {e}")
-        sys.exit(1)
-
-    # Clear existing entries for this host before re-populating.
-    clear_known_hosts_by_prefix("incus", f"{host}/")
-
-    registered = 0
-    skipped: list[str] = []
-    adopted_unmarked: list[str] = []
-    for name, marked in discovered:
-        if not include_all and not marked:
-            skipped.append(name)
-            continue
-        if include_all and not marked:
-            adopted_unmarked.append(name)
-        if use_ip:
-            container_host = _resolve_container_ip(name, host, user) or name
-        else:
-            container_host = name
-        save_known_host(
-            KnownHost(
-                type="incus",
-                name=f"{host}/{name}",
-                host=container_host,
-                user="remo",
-                instance_id=user,
-                access_mode="direct",
-            )
-        )
-        registered += 1
-
-    print_info(f"Synced {registered} container(s) from '{host}'.")
-
-    if not include_all and skipped:
-        print_warning(
-            f"Skipped {len(skipped)} unmarked container(s): {', '.join(skipped)}"
-        )
-        print_info(
-            f"  • Adopt all this run:      remo incus sync --host {host} --all"
-        )
-        print_info(
-            "  • Mark one permanently:    remo incus update --name <name> "
-            f"--host {host}"
-        )
-
-    if include_all and adopted_unmarked:
-        print_warning(
-            f"{len(adopted_unmarked)} of the registered container(s) are not "
-            f"remo-created (adopted via --all): {', '.join(adopted_unmarked)}"
-        )
-        print_info(
-            "Note: a later default `sync` will drop those unmarked one(s) again."
-        )
+    scope = SyncScope(type="incus", host=host)
+    return run_sync(
+        scope,
+        lambda: _probe(scope, user=user, use_ip=use_ip, include_all=include_all),
+        auto_confirm=auto_confirm,
+        dry_run=dry_run,
+        include_all=include_all,
+    )
 
 
 def bootstrap(

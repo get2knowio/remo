@@ -18,13 +18,19 @@ from datetime import datetime, timezone
 
 from remo_cli.core.ansible_runner import run_playbook
 from remo_cli.core.known_hosts import (
-    clear_known_hosts_by_type,
     get_known_hosts,
     guard_not_added_ssh_host,
     remove_known_host,
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.reconcile import (
+    DiscoveredHost,
+    ProbeError,
+    ProbeResult,
+    SyncScope,
+    run_sync,
+)
 from remo_cli.core.snapshot import (
     handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
@@ -253,6 +259,17 @@ def update(
     server_name = name or "remo"
     guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
 
+    # `update` doubles as the backfill path for the remo managed label
+    # (T058) -- API-only, so it runs before/independent of the SSH-reachable
+    # steps below and is not skipped by a later playbook failure. Warn on
+    # failure but do not fail the whole update (FR-005 parity).
+    ok, err = _apply_managed_label(server_name)
+    if not ok:
+        print_warning(
+            f"Could not mark server '{server_name}' as remo-managed ({err}); "
+            f"it may not be picked up by a default `remo hetzner sync`."
+        )
+
     # Get server address from known_hosts.
     server_host = _lookup_hetzner_host(server_name)
     if not server_host:
@@ -380,59 +397,99 @@ def info(name: str = "") -> int:
     return 0
 
 
-def sync() -> None:
-    """Discover Hetzner VMs with the ``remo`` label and update the registry.
+def _hetzner_api_paged(path: str, key: str) -> tuple[list[dict], bool]:
+    """Walk every page of a Hetzner list endpoint, accumulating ``response[key]``.
 
-    Requires the ``HETZNER_API_TOKEN`` environment variable.  Queries the
-    Hetzner Cloud API for all servers carrying the ``remo`` label, clears
-    existing hetzner entries from the known-hosts registry, and re-registers
-    each discovered server.
+    Hetzner's list endpoints default to ``per_page=25`` (max 50) and report
+    ``meta.pagination.next_page`` (``None`` once exhausted); nothing in this
+    module used to read that field, so ``sync`` silently truncated at 25.
+
+    Returns ``(items, complete)`` -- ``complete`` is True only if the walk
+    reached a page with ``next_page is None``. A failure on the *first*
+    page means we could not ask at all, so it propagates (the caller turns
+    that into :class:`ProbeError`); a failure on a *later* page means the
+    enumeration is partial, so it is swallowed here and reported as
+    ``complete=False`` alongside whatever was already gathered.
     """
-    token = os.environ.get("HETZNER_API_TOKEN", "")
-    if not token:
-        print_error("HETZNER_API_TOKEN environment variable is not set.")
-        sys.exit(1)
+    items: list[dict] = []
+    page = 1
+    separator = "&" if "?" in path else "?"
+    while True:
+        query = f"{path}{separator}page={page}&per_page=50"
+        try:
+            response = _hetzner_api("GET", query)
+        except RuntimeError:
+            if page == 1:
+                raise
+            return items, False
+        items.extend(response.get(key, []))
+        next_page = response.get("meta", {}).get("pagination", {}).get("next_page")
+        if next_page is None:
+            return items, True
+        page = next_page
 
-    url = "https://api.hetzner.cloud/v1/servers?label_selector=remo"
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {token}"},
-    )
 
+def _probe(scope: SyncScope, include_all: bool) -> ProbeResult:
+    """Enumerate every Hetzner server in the project (FR-044: never filtered
+    server-side by the ``remo`` label -- an unlabelled-but-live server must
+    still be seen, or it would look absent and get proposed for deletion).
+    """
+    del include_all  # eligibility widening happens in build_plan, not here
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-    except (urllib.error.URLError, json.JSONDecodeError) as exc:
-        print_error(f"Failed to query Hetzner API: {exc}")
-        sys.exit(1)
+        servers, complete = _hetzner_api_paged("/servers", "servers")
+    except RuntimeError as exc:
+        raise ProbeError(str(exc)) from exc
 
-    servers = data.get("servers", [])
-
-    clear_known_hosts_by_type("hetzner")
-
+    hosts: list[DiscoveredHost] = []
     for server in servers:
         name = server.get("name", "")
-        ip = (
-            server.get("public_net", {})
-            .get("ipv4", {})
-            .get("ip", "")
-        )
-        if name and ip:
-            save_known_host(
-                KnownHost(
-                    type="hetzner",
-                    name=name,
-                    host=ip,
-                    user="remo",
-                )
-            )
-            print_info(f"Registered: {name} ({ip})")
+        if not name:
+            continue
+        # Defensive `or {}` at each hop: an IPv6-only server reports
+        # public_net.ipv4 as null (key present, value None), so a plain
+        # chained .get() would raise AttributeError and crash the sync.
+        public_net = server.get("public_net") or {}
+        ipv4 = public_net.get("ipv4") or {}
+        ip = ipv4.get("ip", "") or ""
+        labels = server.get("labels", {}) or {}
+        # R6's chosen convention is the single-key label {"remo": "true"};
+        # matching on the exact value (rather than mere key presence) keeps
+        # this in lockstep with what create/update write.
+        marked = labels.get("remo") == "true"
+        entry = KnownHost(type="hetzner", name=name, host=ip, user="remo")
+        # FR-019: only non-running states are ever annotated in render_plan's
+        # output, so a normally-running server must report state="" here --
+        # otherwise every healthy server would print as "(running)".
+        status = server.get("status", "")
+        state = "" if status == "running" else status
+        hosts.append(DiscoveredHost(entry=entry, marked=marked, state=state))
 
-    count = len(servers)
-    if count == 0:
-        print_warning("No Hetzner VMs with 'remo' label found.")
-    else:
-        print_success(f"Synced {count} Hetzner VM(s).")
+    return ProbeResult(
+        hosts=hosts,
+        complete=complete,
+        incomplete_reason="" if complete else "pagination did not complete",
+        adoption_criteria="every server in this Hetzner project",
+    )
+
+
+def sync(
+    include_all: bool = False, auto_confirm: bool = False, dry_run: bool = False
+) -> int:
+    """Discover Hetzner Cloud servers and reconcile the registry.
+
+    Enumerates every server in the project via the paginated API (never
+    filtered by the ``remo`` label server-side), classifies each by the
+    presence of that label, and reconciles the result against the registry
+    through the shared reconcile engine. Returns the process exit code.
+    """
+    scope = SyncScope(type="hetzner")
+    return run_sync(
+        scope,
+        lambda: _probe(scope, include_all=include_all),
+        auto_confirm=auto_confirm,
+        dry_run=dry_run,
+        include_all=include_all,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -496,6 +553,43 @@ def _get_server_by_name(server_name: str) -> dict:
     if not servers:
         raise RuntimeError(f"No Hetzner server found named '{server_name}'.")
     return servers[0]
+
+
+# ---------------------------------------------------------------------------
+# Managed label backfill (016-sync-reconcile, R6/T057)
+# ---------------------------------------------------------------------------
+
+
+def _apply_managed_label(server_name: str) -> tuple[bool, str]:
+    """Backfill the ``remo: "true"`` label onto an existing server (host-side).
+
+    `create` now applies the label via Ansible at creation time, but a server
+    created before this change (or otherwise unlabelled) needs a retroactive
+    path. Both ``hetzner.hcloud.server`` and a raw ``PUT /servers/{id}`` treat
+    the supplied label map as authoritative and replace it wholesale, so this
+    reads the current map first and merges rather than overwriting it --
+    a naive backfill would destroy the user's own labels (FR-034).
+
+    Already-labelled is a no-op with no API write (FR-033). Returns
+    ``(ok, err)`` -- never raises, never exits -- matching
+    ``_apply_managed_marker`` in the other providers; callers warn but do not
+    fail the whole command on this alone.
+    """
+    try:
+        server = _get_server_by_name(server_name)
+    except RuntimeError as e:
+        return False, str(e)
+
+    labels = server.get("labels", {}) or {}
+    if labels.get("remo") == "true":
+        return True, ""
+
+    merged = {**labels, "remo": "true"}
+    try:
+        _hetzner_api("PUT", f"/servers/{server.get('id', 0)}", {"labels": merged})
+    except RuntimeError as e:
+        return False, str(e)
+    return True, ""
 
 
 def _parse_hetzner_timestamp(s: str) -> datetime:

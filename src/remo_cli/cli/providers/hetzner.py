@@ -127,11 +127,26 @@ def info(name: str) -> None:
 
 
 @hetzner.command()
-def sync() -> None:
-    """Discover VMs and update registry."""
+@click.option(
+    "--all",
+    "include_all",
+    is_flag=True,
+    help="Also register servers that lack the remo managed marker.",
+)
+@click.option("--yes", "-y", "auto_confirm", is_flag=True, default=False, help="Skip the removal confirmation prompt.")
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="Show what would change without writing to the registry.",
+)
+def sync(include_all: bool, auto_confirm: bool, dry_run: bool) -> None:
+    """Discover Hetzner Cloud servers and reconcile the registry."""
     from remo_cli.providers.hetzner import sync as do_sync
 
-    do_sync()
+    rc = do_sync(include_all=include_all, auto_confirm=auto_confirm, dry_run=dry_run)
+    sys.exit(rc)
 
 
 # ---------------------------------------------------------------------------

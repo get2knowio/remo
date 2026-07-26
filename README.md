@@ -288,7 +288,10 @@ remo remove NAME [--yes]            # Deregister an added host (local-only)
 remo hetzner create                 # Provision VM
 remo hetzner list                   # List registered VMs
 remo hetzner info [--name N]        # Show type, cores, memory, volume size
-remo hetzner sync                   # Discover existing VMs
+remo hetzner sync                   # Reconcile registry with existing VMs
+remo hetzner sync --all             # Also adopt unlabelled VMs
+remo hetzner sync --yes             # Skip the removal confirmation
+remo hetzner sync --dry-run         # Preview the plan, change nothing
 remo hetzner update                 # Update dev tools
 remo hetzner update --volume-size 100   # Grow persistent volume + FS
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
@@ -297,7 +300,10 @@ remo hetzner destroy [--yes]        # Tear down (keeps volume)
 remo aws create                     # Provision EC2 via SSM
 remo aws create --spot              # Use spot instance (~70% savings)
 remo aws list                       # List registered instances
-remo aws sync                       # Discover existing instances
+remo aws sync                       # Reconcile registry with existing instances
+remo aws sync --all                 # Also adopt untagged remo-* named instances
+remo aws sync --yes                 # Skip the removal confirmation
+remo aws sync --dry-run             # Preview the plan, change nothing
 remo aws update                     # Update dev tools
 remo aws update --volume-size 100   # Grow EBS volume + FS in place
 remo aws stop [--yes]               # Stop instance (pause billing)
@@ -310,8 +316,10 @@ remo aws info [--name N]            # Show type, cores, memory, EBS size
 remo incus create --name <n> [--host H]  # Create container
 remo incus list                     # List registered containers
 remo incus info --name <n>          # Show cores, memory, root size
-remo incus sync [--host H]          # Discover remo-managed containers
+remo incus sync [--host H]          # Reconcile registry with remo-managed containers
 remo incus sync [--host H] --all    # Also adopt non-remo containers on the host
+remo incus sync [--host H] --yes    # Skip the removal confirmation
+remo incus sync [--host H] --dry-run   # Preview the plan, change nothing
 remo incus update --name <n>        # Update dev tools (also marks as remo-managed)
 remo incus update --name <n> --volume-size 40 --cores 4 --memory 4096
 remo incus destroy --name <n> [--yes]    # Destroy container
@@ -321,8 +329,10 @@ remo incus bootstrap                # Initialize Incus on host
 remo proxmox create --name <n> --host <node>  # Create LXC container
 remo proxmox list                   # List registered containers
 remo proxmox info --name <n>        # Show cores, memory, rootfs size
-remo proxmox sync --host <node>     # Discover remo-managed containers
+remo proxmox sync --host <node>     # Reconcile registry with remo-managed containers
 remo proxmox sync --host <node> --all   # Also adopt non-remo containers on the node
+remo proxmox sync --host <node> --yes   # Skip the removal confirmation
+remo proxmox sync --host <node> --dry-run   # Preview the plan, change nothing
 remo proxmox update --name <n>      # Update dev tools (also marks as remo-managed)
 remo proxmox update --name <n> --volume-size 40 --cores 4 --memory 4096
 remo proxmox destroy --name <n> [--yes] [--purge]   # Destroy container
@@ -408,20 +418,31 @@ discovery states, terminal limits, troubleshooting, and upgrade notes:
 
 **Installed remo on a new machine with existing instances?**
 ```bash
-remo aws sync                          # Discover AWS instances with 'remo' tag
-remo hetzner sync                      # Discover Hetzner VMs with 'remo' label
-remo incus sync                        # Discover remo-managed Incus containers
-remo proxmox sync --host <node>        # Discover remo-managed Proxmox LXC containers
+remo aws sync                          # Reconcile registry with AWS instances tagged 'remo'
+remo hetzner sync                      # Reconcile registry with Hetzner VMs labelled 'remo'
+remo incus sync                        # Reconcile registry with remo-managed Incus containers
+remo proxmox sync --host <node>        # Reconcile registry with remo-managed Proxmox LXC containers
 ```
 
-All four providers now filter `sync` to the containers/instances **remo created**.
-On Incus/Proxmox, `remo`-created containers are marked at provision time (an Incus
-`user.remo=true` config key or a Proxmox `remo` guest tag), and a default `sync`
-registers only those. To adopt containers `remo` did not create, use
-`sync --all` (a one-time, unmarked adoption) or `remo <provider> update <name>`
-(permanently marks one). Containers created before this feature are unmarked;
-the first default `sync` after upgrading names them and prints both remedies
-rather than silently dropping or re-marking them.
+`sync` reconciles the registry against what a provider actually has within one
+bounded scope (an Incus/Proxmox host, an AWS region, or — for Hetzner — the
+whole project): additions and updates apply immediately, but removing a
+registry entry that's genuinely gone always requires confirmation first,
+either interactively or with `--yes`. `--dry-run` prints the plan — what
+would be added, updated, removed, and why — without changing anything or
+prompting.
+
+A default `sync` only *adds* containers/instances that carry the `remo`
+managed marker (an Incus `user.remo=true` config key, a Proxmox `remo` guest
+tag, an AWS `tag:remo=true`, or a Hetzner `remo` label) — but an existing
+registry entry is never removed just because it lacks that marker; presence
+at the provider is what protects it, independently of the marker. To adopt
+unmarked containers/instances into the registry, use `sync --all` (per-run,
+prints what it widened to) or `remo <provider> update <name>` (marks one
+permanently, and for Hetzner also backfills the label on the server itself).
+Containers/instances that predate this marker convention are unmarked; a
+default `sync` retains them, names them, and prints both remedies rather than
+dropping or silently re-marking them.
 
 **SSH connection fails?**
 ```bash

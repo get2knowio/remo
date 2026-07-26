@@ -85,9 +85,15 @@ def _snapshot_describe_response(
 @pytest.fixture
 def ec2(mocker):
     """Stub `_boto3_session(...).client('ec2')` to return a MagicMock and
-    `get_aws_region` to be a no-op."""
+    `get_aws_region` to be a no-op.
+
+    `get_paginator("describe_instances").paginate(...)` defaults to an empty
+    page list (sync tests configure `.paginate.return_value` per-test); no
+    test in this module calls it, so the default is a harmless no-op.
+    """
     mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-east-1")
     ec2_client = MagicMock()
+    ec2_client.get_paginator.return_value.paginate.return_value = []
     session = MagicMock()
     session.client.return_value = ec2_client
     mocker.patch("remo_cli.providers.aws._boto3_session", return_value=session)

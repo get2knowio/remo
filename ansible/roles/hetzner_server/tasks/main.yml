@@ -65,6 +65,8 @@
       - "{{ hetzner_ssh_key_name }}"
     firewalls:
       - "{{ hetzner_server_name }}-firewall"
+    labels:
+      remo: "true"
     state: present
   register: hetzner_server_result
 

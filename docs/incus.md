@@ -105,6 +105,47 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `--host <host>` | Incus host |
 | `--user <user>` | SSH user for host |
 
+### Sync
+
+```bash
+# Reconcile the registry with what's actually on the host (default project only)
+remo incus sync --host myserver --user paul
+
+# Also adopt containers without the remo managed marker
+remo incus sync --host myserver --user paul --all
+
+# Skip the removal confirmation prompt
+remo incus sync --host myserver --user paul --yes
+
+# Preview the plan without changing the registry or prompting
+remo incus sync --host myserver --user paul --dry-run
+```
+
+`sync` reconciles the registry against every container on the given host's
+**default project** (`--all-projects` is deliberately not queried, so
+containers in other projects are outside this run's scope and are never
+read, matched, or touched). Containers and instances still present at the
+provider are never removed just because they lack the marker — only a
+container that has genuinely disappeared, in a fully-enumerated scope, is
+proposed for removal, and that removal always requires confirmation (or
+`--yes`) before it's written. `--dry-run` prints the same plan — additions,
+updates, removals, and any unmarked containers skipped or retained — without
+prompting or changing anything, and always exits `0`.
+
+By default only containers carrying the `user.remo=true` managed marker are
+*added*; `--all` widens that to every container on the host for this run
+only. To mark one permanently instead, use `remo incus update --name <n>
+--host <h>`.
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | Incus host (default: `localhost`) |
+| `--user <user>` | SSH user for remote Incus host |
+| `--use-ip` | Store each container's resolved IP instead of its name |
+| `--all` | Also register containers without the managed marker (this run only) |
+| `--yes`, `-y` | Skip the removal confirmation prompt |
+| `--dry-run` | Show what would change without writing to the registry |
+
 ## Features
 
 | Feature | Description |
