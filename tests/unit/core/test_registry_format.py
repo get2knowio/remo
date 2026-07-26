@@ -143,6 +143,41 @@ class TestUnknownTypePreservation:
         assert docker_entries[0]["user"] == "remo"
 
 
+class TestUnknownTypeSerializationFallback:
+    """018 T048 Edge Case "Unknown host type": serializing a KnownHost object
+    whose type isn't a registered provider (nor "ssh") must never crash or
+    silently drop instance_id/region -- it falls back to raw field names and
+    warns, rather than raising."""
+
+    def test_known_host_to_entry_serializes_unknown_type_verbatim(self, capsys):
+        from remo_cli.core.registry import known_host_to_entry
+
+        host = KnownHost(
+            type="digitalocean",
+            name="droplet1",
+            host="1.2.3.4",
+            user="remo",
+            instance_id="do-123",
+            region="nyc1",
+        )
+
+        entry = known_host_to_entry(host)
+
+        assert entry["type"] == "digitalocean"
+        assert entry["digitalocean"] == {"instance_id": "do-123", "region": "nyc1"}
+        assert "Unknown host type" in capsys.readouterr().out
+
+    def test_known_host_to_entry_unknown_type_no_nested_fields_is_silent_and_clean(self, capsys):
+        from remo_cli.core.registry import known_host_to_entry
+
+        host = KnownHost(type="digitalocean", name="droplet1", host="1.2.3.4", user="remo")
+
+        entry = known_host_to_entry(host)
+
+        assert "digitalocean" not in entry
+        assert "Unknown host type" in capsys.readouterr().out
+
+
 class TestNewerVersionRejection:
     """A registry.json written by a newer format version is rejected untouched."""
 

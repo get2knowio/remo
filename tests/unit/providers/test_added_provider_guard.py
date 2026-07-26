@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import pytest
 
+from remo_cli.core.errors import PreconditionError
 from remo_cli.core.known_hosts import guard_not_added_ssh_host, save_known_host
 from remo_cli.models.host import KnownHost
 from remo_cli.providers import aws as providers_aws
@@ -49,87 +50,106 @@ def _no_network(mocker):
 
 # Each entry: (id, callable performing a provider lifecycle op on ADDED_NAME).
 LIFECYCLE_OPS = [
-    ("incus.destroy", lambda: providers_incus.destroy(name=ADDED_NAME, auto_confirm=True)),
+    # incus.destroy: the guard moved to the shared core/lifecycle.run_destroy
+    # template (018-provider-abstraction T038); providers_incus.teardown()
+    # itself performs destruction only (R-A3) and no longer guards. Generic
+    # guard-ordering coverage lives in tests/unit/core/test_lifecycle.py;
+    # Incus-specific wiring coverage lives at the CLI layer:
+    # tests/unit/cli/providers/test_incus_snapshot.py::TestDestroyCLI.
     ("incus.update", lambda: providers_incus.update(name=ADDED_NAME)),
     (
         "incus.snapshot_create",
-        lambda: providers_incus.snapshot_create(
+        lambda: providers_incus.snapshot_create_legacy(
             container=ADDED_NAME, host="localhost", user="", snap_name="snap1"
         ),
     ),
     (
         "incus.snapshot_restore",
-        lambda: providers_incus.snapshot_restore(
+        lambda: providers_incus.snapshot_restore_legacy(
             container=ADDED_NAME, host="localhost", user="", snap_name="snap1",
             auto_confirm=True,
         ),
     ),
     (
         "incus.snapshot_delete",
-        lambda: providers_incus.snapshot_delete(
+        lambda: providers_incus.snapshot_delete_legacy(
             container=ADDED_NAME, host="localhost", user="", snap_name="snap1",
             auto_confirm=True,
         ),
     ),
-    (
-        "proxmox.destroy",
-        lambda: providers_proxmox.destroy(name=ADDED_NAME, host="node1", auto_confirm=True),
-    ),
+    # proxmox.destroy: the guard moved to the shared core/lifecycle.run_destroy
+    # template (018-provider-abstraction T038); providers_proxmox.teardown()
+    # itself performs destruction only (R-A3) and no longer guards. Coverage
+    # for the proxmox destroy guard now lives at the CLI layer:
+    # tests/unit/cli/providers/test_proxmox_snapshot.py::TestDestroyCLI.
     ("proxmox.update", lambda: providers_proxmox.update(name=ADDED_NAME, host="node1")),
     (
         "proxmox.snapshot_create",
-        lambda: providers_proxmox.snapshot_create(
+        lambda: providers_proxmox.snapshot_create_legacy(
             container=ADDED_NAME, host="node1", user="root", vmid="100",
             snap_name="snap1",
         ),
     ),
     (
         "proxmox.snapshot_restore",
-        lambda: providers_proxmox.snapshot_restore(
+        lambda: providers_proxmox.snapshot_restore_legacy(
             container=ADDED_NAME, host="node1", user="root", vmid="100",
             snap_name="snap1", auto_confirm=True,
         ),
     ),
     (
         "proxmox.snapshot_delete",
-        lambda: providers_proxmox.snapshot_delete(
+        lambda: providers_proxmox.snapshot_delete_legacy(
             container=ADDED_NAME, host="node1", user="root", vmid="100",
             snap_name="snap1", auto_confirm=True,
         ),
     ),
-    ("aws.destroy", lambda: providers_aws.destroy(name=ADDED_NAME, auto_confirm=True)),
+    # aws.destroy: the guard moved to the shared core/lifecycle.run_destroy
+    # template (018-provider-abstraction T038); providers_aws.teardown()
+    # itself performs destruction only (R-A3) and no longer guards. Generic
+    # guard-ordering coverage lives in tests/unit/core/test_lifecycle.py;
+    # AWS-specific wiring coverage lives at the CLI layer:
+    # tests/unit/cli/providers/test_aws_snapshot.py::TestDestroyCLI.
     ("aws.update", lambda: providers_aws.update(name=ADDED_NAME)),
     (
         "aws.snapshot_create",
-        lambda: providers_aws.snapshot_create(instance_name=ADDED_NAME, snap_name="snap1"),
+        lambda: providers_aws.snapshot_create_legacy(
+            instance_name=ADDED_NAME, snap_name="snap1"
+        ),
     ),
     (
         "aws.snapshot_restore",
-        lambda: providers_aws.snapshot_restore(
+        lambda: providers_aws.snapshot_restore_legacy(
             instance_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
         ),
     ),
     (
         "aws.snapshot_delete",
-        lambda: providers_aws.snapshot_delete(
+        lambda: providers_aws.snapshot_delete_legacy(
             instance_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
         ),
     ),
-    ("hetzner.destroy", lambda: providers_hetzner.destroy(name=ADDED_NAME, auto_confirm=True)),
+    # hetzner.destroy: the guard moved to the shared core/lifecycle.run_destroy
+    # template (018-provider-abstraction T038); providers_hetzner.teardown()
+    # itself performs destruction only (R-A3) and no longer guards. Coverage
+    # for the hetzner destroy guard now lives at the CLI layer:
+    # tests/unit/cli/providers/test_hetzner_snapshot.py::TestDestroyCLI.
     ("hetzner.update", lambda: providers_hetzner.update(name=ADDED_NAME)),
     (
         "hetzner.snapshot_create",
-        lambda: providers_hetzner.snapshot_create(server_name=ADDED_NAME, snap_name="snap1"),
+        lambda: providers_hetzner.snapshot_create_legacy(
+            server_name=ADDED_NAME, snap_name="snap1"
+        ),
     ),
     (
         "hetzner.snapshot_restore",
-        lambda: providers_hetzner.snapshot_restore(
+        lambda: providers_hetzner.snapshot_restore_legacy(
             server_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
         ),
     ),
     (
         "hetzner.snapshot_delete",
-        lambda: providers_hetzner.snapshot_delete(
+        lambda: providers_hetzner.snapshot_delete_legacy(
             server_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
         ),
     ),
@@ -140,7 +160,7 @@ LIFECYCLE_OPS = [
     "op", [op for _, op in LIFECYCLE_OPS], ids=[i for i, _ in LIFECYCLE_OPS]
 )
 def test_lifecycle_op_rejects_added_ssh_host(added_ssh_host, op):
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(PreconditionError) as exc:
         op()
     message = str(exc.value)
     assert "manually-registered SSH host" in message
@@ -154,7 +174,7 @@ def test_lifecycle_op_rejects_added_ssh_host(added_ssh_host, op):
 
 
 def test_guard_message_names_the_provider(added_ssh_host):
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(PreconditionError) as exc:
         guard_not_added_ssh_host(ADDED_NAME, "aws")
     assert "no managed aws infrastructure" in str(exc.value)
 

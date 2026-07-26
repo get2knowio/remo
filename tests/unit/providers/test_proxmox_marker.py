@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from remo_cli.core.errors import OperationFailedError
 from remo_cli.providers import proxmox as providers_proxmox
 
 
@@ -113,7 +114,7 @@ class TestReadTags:
             "remo_cli.providers.proxmox._run_on_node", autospec=True
         )
         node.return_value = _completed(1, stderr="ssh: connection refused")
-        with pytest.raises(RuntimeError, match="connection refused"):
+        with pytest.raises(OperationFailedError, match="connection refused"):
             providers_proxmox._read_tags_by_vmid("h", "u")
 
 
@@ -127,9 +128,9 @@ class TestCreateUpdateWiring:
         mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=0)
         mocker.patch("remo_cli.providers.proxmox.remove_known_host")
         mocker.patch("remo_cli.providers.proxmox.save_known_host")
-        mocker.patch("remo_cli.providers.proxmox.detect_timezone", return_value="")
+        mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
         mocker.patch(
-            "remo_cli.providers.proxmox.get_current_version", return_value="unknown"
+            "remo_cli.core.version.get_current_version", return_value="unknown"
         )
         mocker.patch(
             "remo_cli.providers.proxmox.resolve_devcontainer_runtime",
@@ -140,8 +141,8 @@ class TestCreateUpdateWiring:
             "remo_cli.providers.proxmox._apply_managed_marker",
             return_value=(True, ""),
         )
-        rc = providers_proxmox.create(name="dev1", host="node", user="root")
-        assert rc == 0
+        result = providers_proxmox.create(name="dev1", host="node", user="root")
+        assert result is None
         apply.assert_called_once_with("node", "root", "100")
 
     def test_update_backfills_marker(self, mocker):
@@ -150,9 +151,9 @@ class TestCreateUpdateWiring:
             "remo_cli.providers.proxmox._resolve_container_ip", return_value="10.0.0.9"
         )
         mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=0)
-        mocker.patch("remo_cli.providers.proxmox.detect_timezone", return_value="")
+        mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
         mocker.patch(
-            "remo_cli.providers.proxmox.get_current_version", return_value="unknown"
+            "remo_cli.core.version.get_current_version", return_value="unknown"
         )
         mocker.patch(
             "remo_cli.providers.proxmox.resolve_devcontainer_runtime",
@@ -162,8 +163,8 @@ class TestCreateUpdateWiring:
             "remo_cli.providers.proxmox._apply_managed_marker",
             return_value=(True, ""),
         )
-        rc = providers_proxmox.update(name="dev1", host="node", user="root")
-        assert rc == 0
+        result = providers_proxmox.update(name="dev1", host="node", user="root")
+        assert result is None
         apply.assert_called_once_with("node", "root", "100")
 
 

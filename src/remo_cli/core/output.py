@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from remo_cli.models.host import KnownHost
 
 # ANSI color constants
 RED = "\033[0;31m"
@@ -54,3 +60,38 @@ def confirm(prompt: str, default: bool = False) -> bool:
         return default
 
     return answer in _AFFIRMATIVE
+
+
+@dataclass(frozen=True)
+class Column:
+    """One `render_host_table` column: a header plus how to extract its
+    value from a `KnownHost` entry."""
+
+    header: str
+    value: Callable[[KnownHost], str]
+    width: int = 20
+
+
+def render_host_table(
+    entries: list[KnownHost], columns: tuple[Column, ...], *, empty_message: str = "No instances registered."
+) -> None:
+    """Print *entries* as a column-aligned table (FR-016; replaces the four
+    per-provider `list_hosts()` renderers). The last column is left
+    unpadded (free-form width)."""
+    if not entries:
+        print(empty_message)
+        return
+
+    headers = [c.header for c in columns]
+    rows = [[c.value(entry) for c in columns] for entry in entries]
+
+    widths = [c.width for c in columns[:-1]]
+    header_line = "  ".join(
+        h.ljust(widths[i]) if i < len(widths) else h for i, h in enumerate(headers)
+    )
+    print(header_line)
+    print("  ".join("-" * len(h) if i >= len(widths) else ("-" * len(h)).ljust(widths[i]) for i, h in enumerate(headers)))
+
+    for row in rows:
+        line = "  ".join(cell.ljust(widths[i]) if i < len(widths) else cell for i, cell in enumerate(row))
+        print(line)

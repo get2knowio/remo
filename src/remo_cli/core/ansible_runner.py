@@ -135,6 +135,39 @@ def _filter_line(line: str, pending: list[str]) -> str | None:
     return None
 
 
+def build_configure_extra_vars(tools_only: tuple[str, ...], tools_skip: tuple[str, ...]) -> list[str]:
+    """Timezone + tool-selection + version-pin extra-vars shared by every
+    create/configure playbook invocation (FR-015; replaces 8 inline copies).
+    """
+    from remo_cli.core.ssh import detect_timezone  # noqa: PLC0415
+    from remo_cli.core.validation import build_tool_args  # noqa: PLC0415
+    from remo_cli.core.version import get_current_version  # noqa: PLC0415
+
+    extra_vars: list[str] = []
+
+    tz = detect_timezone()
+    if tz:
+        extra_vars.extend(["-e", f"timezone={tz}"])
+
+    extra_vars.extend(build_tool_args(tools_only, tools_skip))
+
+    current = get_current_version()
+    if current != "unknown":
+        extra_vars.extend(["-e", f"remo_version={current}"])
+
+    return extra_vars
+
+
+def run_resize_playbook(playbook: str, extra_vars: list[str], verbose: bool = False) -> None:
+    """Run a resize playbook; raise on failure (FR-016; replaces the
+    Incus/Proxmox private ``_run_resize_playbook`` copies)."""
+    from remo_cli.core.errors import OperationFailedError  # noqa: PLC0415
+
+    rc = run_playbook(playbook, extra_vars, verbose=verbose)
+    if rc != 0:
+        raise OperationFailedError(f"Resize failed (playbook rc={rc}).")
+
+
 def run_playbook(
     playbook: str,
     extra_vars: list[str] | None = None,

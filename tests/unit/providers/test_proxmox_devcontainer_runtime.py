@@ -10,6 +10,7 @@ from __future__ import annotations
 import click
 import pytest
 
+from remo_cli.core.errors import OperationFailedError
 from remo_cli.providers import proxmox as providers_proxmox
 
 
@@ -28,7 +29,8 @@ def capture_runtime(mocker):
     """Patch create's side effects; return a getter for the runtime extra-var.
 
     run_playbook returns rc=1 so create() skips all post-provision work
-    (vmid lookup, known_hosts save) and returns immediately.
+    (vmid lookup, known_hosts save) and raises OperationFailedError
+    immediately.
     """
     captured: dict[str, list[str]] = {}
 
@@ -37,16 +39,17 @@ def capture_runtime(mocker):
         return 1
 
     mocker.patch("remo_cli.providers.proxmox.run_playbook", side_effect=fake_run)
-    mocker.patch("remo_cli.providers.proxmox.detect_timezone", return_value="")
+    mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
     mocker.patch(
-        "remo_cli.providers.proxmox.get_current_version", return_value="unknown"
+        "remo_cli.core.version.get_current_version", return_value="unknown"
     )
     mocker.patch("remo_cli.providers.proxmox.remove_known_host")
 
     def run(devcontainer_runtime=None):
-        providers_proxmox.create(
-            name="dev1", host="pve", devcontainer_runtime=devcontainer_runtime
-        )
+        with pytest.raises(OperationFailedError):
+            providers_proxmox.create(
+                name="dev1", host="pve", devcontainer_runtime=devcontainer_runtime
+            )
         return _extra_value(captured["extra_vars"], "devcontainer_runtime")
 
     return run

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import pytest
 
+from remo_cli.core.errors import OperationFailedError
 from remo_cli.core.reconcile import ProbeError, SyncScope, build_plan
 from remo_cli.models.host import KnownHost
 from remo_cli.providers import hetzner as providers_hetzner
@@ -63,7 +64,7 @@ class TestProbePagination:
 
     def test_first_page_failure_raises_probe_error(self, scope, mocker):
         mocker.patch.object(
-            providers_hetzner, "_hetzner_api", side_effect=RuntimeError("boom")
+            providers_hetzner, "_hetzner_api", side_effect=OperationFailedError("boom")
         )
 
         with pytest.raises(ProbeError):
@@ -76,7 +77,7 @@ class TestProbePagination:
         mocker.patch.object(
             providers_hetzner,
             "_hetzner_api",
-            side_effect=[page1, RuntimeError("boom")],
+            side_effect=[page1, OperationFailedError("boom")],
         )
 
         # Partial-but-answered must not raise -- only a first-page failure

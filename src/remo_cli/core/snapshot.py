@@ -11,11 +11,14 @@ same name is portable across Incus / Proxmox / AWS / Hetzner:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from datetime import datetime
 
 import click
 
-from remo_cli.core.output import confirm, print_info, print_warning
+from remo_cli.core.errors import ProviderError
+from remo_cli.core.output import confirm, print_error, print_info, print_warning
+from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot
 
 # Anchored, single-pass: first char alphanumeric, rest alphanumeric/_/-.
@@ -168,3 +171,28 @@ def format_snapshot_table(
         padded = [cell.ljust(widths[i]) for i, cell in enumerate(row[:-1])]
         lines.append("  ".join(padded + [row[-1]]).rstrip())
     return "\n".join(lines)
+
+
+def list_all_snapshots(
+    type_name: str, lister: Callable[[KnownHost], list[Snapshot]]
+) -> tuple[list[Snapshot], bool]:
+    """Aggregate snapshots across every registered instance of *type_name*.
+
+    *lister* is a provider's entry-based ``snapshot_list(entry)`` (Protocol
+    Part A): it raises :class:`~remo_cli.core.errors.ProviderError` on a
+    per-instance failure rather than returning an error code. Failures are
+    reported as warnings and do not stop enumeration of the remaining
+    instances; the second return value is ``True`` iff any instance failed
+    (callers use this to decide the process exit code).
+    """
+    from remo_cli.core.known_hosts import get_known_hosts
+
+    all_snapshots: list[Snapshot] = []
+    any_failure = False
+    for entry in get_known_hosts(type_filter=type_name):
+        try:
+            all_snapshots.extend(lister(entry))
+        except ProviderError as e:
+            print_error(f"{entry.name}: {e}")
+            any_failure = True
+    return all_snapshots, any_failure

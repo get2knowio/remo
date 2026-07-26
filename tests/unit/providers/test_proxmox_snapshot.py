@@ -7,6 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from remo_cli.core.errors import OperationFailedError, PreconditionError
+from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 from remo_cli.providers import proxmox as providers_proxmox
 
@@ -137,7 +139,7 @@ class TestSnapshotCreate:
             "remo_cli.providers.proxmox._detect_snapshot_capable_storage",
             return_value=(False, "dir"),
         )
-        rc = providers_proxmox.snapshot_create(
+        rc = providers_proxmox.snapshot_create_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -170,7 +172,7 @@ class TestSnapshotCreate:
             "remo_cli.providers.proxmox._list_snapshots_for_vmid",
             return_value=[existing],
         )
-        rc = providers_proxmox.snapshot_create(
+        rc = providers_proxmox.snapshot_create_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -192,7 +194,7 @@ class TestSnapshotCreate:
             return_value=[],
         )
         patch_ssh.return_value = _completed(0)
-        rc = providers_proxmox.snapshot_create(
+        rc = providers_proxmox.snapshot_create_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -234,7 +236,7 @@ class TestSnapshotRestore:
             "remo_cli.providers.proxmox._list_snapshots_for_vmid",
             return_value=[],
         )
-        rc = providers_proxmox.snapshot_restore(
+        rc = providers_proxmox.snapshot_restore_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -252,7 +254,7 @@ class TestSnapshotRestore:
             return_value=[_existing_snap()],
         )
         mocker.patch("remo_cli.providers.proxmox.confirm", return_value=False)
-        rc = providers_proxmox.snapshot_restore(
+        rc = providers_proxmox.snapshot_restore_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -272,7 +274,7 @@ class TestSnapshotRestore:
             return_value="running",
         )
         patch_ssh.return_value = _completed(0)
-        rc = providers_proxmox.snapshot_restore(
+        rc = providers_proxmox.snapshot_restore_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -297,7 +299,7 @@ class TestSnapshotRestore:
             return_value="stopped",
         )
         patch_ssh.return_value = _completed(0)
-        rc = providers_proxmox.snapshot_restore(
+        rc = providers_proxmox.snapshot_restore_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -316,7 +318,7 @@ class TestSnapshotDelete:
         mocker.patch(
             "remo_cli.providers.proxmox._list_snapshots_for_vmid", return_value=[]
         )
-        rc = providers_proxmox.snapshot_delete(
+        rc = providers_proxmox.snapshot_delete_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -333,7 +335,7 @@ class TestSnapshotDelete:
             return_value=[_existing_snap()],
         )
         mocker.patch("remo_cli.providers.proxmox.confirm", return_value=False)
-        rc = providers_proxmox.snapshot_delete(
+        rc = providers_proxmox.snapshot_delete_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -350,7 +352,7 @@ class TestSnapshotDelete:
             return_value=[_existing_snap()],
         )
         patch_ssh.return_value = _completed(0)
-        rc = providers_proxmox.snapshot_delete(
+        rc = providers_proxmox.snapshot_delete_legacy(
             container="dev1",
             host="lab1",
             user="root",
@@ -365,101 +367,90 @@ class TestSnapshotDelete:
 
 
 # ---------------------------------------------------------------------------
-# destroy integration (FR-020 — FR-023)
+# teardown (018-provider-abstraction T038 — destroy template)
+#
+# Guard, snapshot pre-cleanup, confirmation, and registry removal moved to
+# the shared ``core.lifecycle.run_destroy`` template; that generic ordering
+# is covered once, provider-agnostically, in tests/unit/core/test_lifecycle.py.
+# This class only proves ``teardown()`` -- the provider-specific step -- does
+# the right Proxmox-flavored thing: derives node/vmid/user from the entry,
+# builds the expected extra_vars, and translates a nonzero rc / an
+# undetermined host into the right typed error (R-A3).
 # ---------------------------------------------------------------------------
 
 
-class TestDestroySnapshotCleanup:
-    def test_no_snapshots_no_extra_prompt(self, mocker):
-        mocker.patch(
-            "remo_cli.providers.proxmox._lookup_proxmox_host",
-            return_value=("lab1", "root", "100"),
+class TestTeardown:
+    def test_builds_expected_extra_vars(self, mocker):
+        entry = KnownHost(
+            type="proxmox", name="lab1/dev1", host="lab1", user="remo",
+            instance_id="100", region="root",
         )
-        mocker.patch(
-            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
-            return_value=[],
-        )
-        mocker.patch(
+        run_playbook = mocker.patch(
             "remo_cli.providers.proxmox.run_playbook", return_value=0
         )
-        mock_confirm = mocker.patch(
-            "remo_cli.providers.proxmox.confirm", return_value=True
-        )
-        spy = mocker.patch(
-            "remo_cli.providers.proxmox.snapshot_delete", return_value=0
-        )
-        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
-        rc = providers_proxmox.destroy(name="dev1")
-        assert rc == 0
-        assert mock_confirm.call_count == 1
-        spy.assert_not_called()
+        providers_proxmox.teardown(entry, purge=True)
+        args, kwargs = run_playbook.call_args
+        assert args[0] == "proxmox_teardown.yml"
+        extra_vars = args[1]
+        assert "-e" in extra_vars and "container_name=dev1" in extra_vars
+        assert "purge=true" in extra_vars
+        assert "container_vmid=100" in extra_vars
+        assert "-i" in extra_vars and "lab1," in extra_vars
+        assert "target_hosts=all" in extra_vars
+        assert "proxmox_host_user=root" in extra_vars
 
-    def test_cleanup_accepted(self, mocker):
-        mocker.patch(
-            "remo_cli.providers.proxmox._lookup_proxmox_host",
-            return_value=("lab1", "root", "100"),
+    def test_omits_vmid_when_unknown(self, mocker):
+        entry = KnownHost(
+            type="proxmox", name="lab1/dev1", host="lab1", user="remo",
+            instance_id="", region="root",
         )
-        mocker.patch(
-            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
-            return_value=[_existing_snap("a"), _existing_snap("b")],
-        )
-        mocker.patch(
+        run_playbook = mocker.patch(
             "remo_cli.providers.proxmox.run_playbook", return_value=0
         )
-        mocker.patch("remo_cli.core.snapshot.confirm", return_value=True)
-        mocker.patch("remo_cli.providers.proxmox.confirm", return_value=True)
-        spy = mocker.patch(
-            "remo_cli.providers.proxmox.snapshot_delete", return_value=0
-        )
-        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
-        rc = providers_proxmox.destroy(name="dev1")
-        assert rc == 0
-        assert spy.call_count == 2
+        providers_proxmox.teardown(entry)
+        extra_vars = run_playbook.call_args.args[1]
+        assert not any(v.startswith("container_vmid=") for v in extra_vars)
+        assert "purge=false" in extra_vars
 
-    def test_cleanup_declined_warns(self, mocker, capsys):
-        mocker.patch(
-            "remo_cli.providers.proxmox._lookup_proxmox_host",
-            return_value=("lab1", "root", "100"),
+    def test_defaults_user_to_root_when_region_empty(self, mocker):
+        entry = KnownHost(
+            type="proxmox", name="lab1/dev1", host="lab1", user="remo",
+            instance_id="100", region="",
         )
-        mocker.patch(
-            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
-            return_value=[_existing_snap()],
-        )
-        mocker.patch(
+        run_playbook = mocker.patch(
             "remo_cli.providers.proxmox.run_playbook", return_value=0
         )
-        mocker.patch("remo_cli.core.snapshot.confirm", return_value=False)
-        mocker.patch("remo_cli.providers.proxmox.confirm", return_value=True)
-        spy = mocker.patch(
-            "remo_cli.providers.proxmox.snapshot_delete", return_value=0
-        )
-        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
-        rc = providers_proxmox.destroy(name="dev1")
-        assert rc == 0
-        spy.assert_not_called()
-        out = capsys.readouterr().out
-        assert "Snapshots will remain on Proxmox" in out
+        providers_proxmox.teardown(entry)
+        extra_vars = run_playbook.call_args.args[1]
+        assert "proxmox_host_user=root" in extra_vars
 
-    def test_auto_confirm_keeps(self, mocker, capsys):
-        mocker.patch(
-            "remo_cli.providers.proxmox._lookup_proxmox_host",
-            return_value=("lab1", "root", "100"),
+    def test_nonzero_rc_raises_operation_failed_error(self, mocker):
+        entry = KnownHost(
+            type="proxmox", name="lab1/dev1", host="lab1", user="remo",
+            instance_id="100", region="root",
         )
-        mocker.patch(
-            "remo_cli.providers.proxmox._list_snapshots_for_vmid",
-            return_value=[_existing_snap()],
+        mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=1)
+        with pytest.raises(OperationFailedError, match="rc=1"):
+            providers_proxmox.teardown(entry)
+
+    def test_undetermined_host_raises_precondition_error(self, mocker):
+        # An entry whose name carries no "host/container" separator (e.g. a
+        # bare stub built without --host) leaves teardown unable to locate
+        # the Proxmox node.
+        entry = KnownHost(type="proxmox", name="dev1", host="", user="remo")
+        run_playbook = mocker.patch("remo_cli.providers.proxmox.run_playbook")
+        with pytest.raises(PreconditionError, match="could not be determined"):
+            providers_proxmox.teardown(entry)
+        run_playbook.assert_not_called()
+
+    def test_ignores_forwarded_host_and_user_kwargs(self, mocker):
+        # The CLI factory forwards the destroy command's --host/--user
+        # destroy-options through to teardown() alongside --purge; they're
+        # already baked into *entry* by the CLI's entry-resolution step, so
+        # teardown must accept-and-ignore them rather than crash (R-A2).
+        entry = KnownHost(
+            type="proxmox", name="lab1/dev1", host="lab1", user="remo",
+            instance_id="100", region="root",
         )
-        mocker.patch(
-            "remo_cli.providers.proxmox.run_playbook", return_value=0
-        )
-        spy = mocker.patch(
-            "remo_cli.providers.proxmox.snapshot_delete", return_value=0
-        )
-        mock_confirm = mocker.patch("remo_cli.providers.proxmox.confirm")
-        mocker.patch("remo_cli.providers.proxmox.remove_known_host")
-        rc = providers_proxmox.destroy(name="dev1", auto_confirm=True)
-        assert rc == 0
-        mock_confirm.assert_not_called()
-        spy.assert_not_called()
-        out = capsys.readouterr().out
-        assert "--yes is set" in out
+        mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=0)
+        providers_proxmox.teardown(entry, host="ignored-host", user="ignored-user")

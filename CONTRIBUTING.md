@@ -18,6 +18,12 @@ cd remo
 3. Test locally
 4. Submit a pull request
 
+## Adding a Provider
+
+Want to add a fifth cloud/host provider (DigitalOcean, Vultr, ...)? See
+[`docs/providers.md`](docs/providers.md) — providers are a free-function
+module + one descriptor registration, no existing CLI files to touch.
+
 ## Release Process
 
 Releases run through GitHub Actions in **two lanes**:

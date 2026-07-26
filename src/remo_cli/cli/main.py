@@ -82,20 +82,16 @@ def _register_commands() -> None:
     from remo_cli.cli.shell import shell  # noqa: F811
     from remo_cli.cli.cp import cp  # noqa: F811
     from remo_cli.cli.added import add, remove  # noqa: F811
-    from remo_cli.cli.providers.incus import incus  # noqa: F811
-    from remo_cli.cli.providers.proxmox import proxmox  # noqa: F811
-    from remo_cli.cli.providers.hetzner import hetzner  # noqa: F811
-    from remo_cli.cli.providers.aws import aws  # noqa: F811
+    from remo_cli.cli.providers.factory import build_provider_group  # noqa: F811
     from remo_cli.cli.web import web  # noqa: F811
+    from remo_cli.core.provider_registry import all_descriptors  # noqa: F811
 
     cli.add_command(shell)
     cli.add_command(cp)
     cli.add_command(add)
     cli.add_command(remove)
-    cli.add_command(incus)
-    cli.add_command(proxmox)
-    cli.add_command(hetzner)
-    cli.add_command(aws)
+    for descriptor in all_descriptors():
+        cli.add_command(build_provider_group(descriptor))
     cli.add_command(web)
 
 

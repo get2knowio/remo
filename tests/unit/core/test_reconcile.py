@@ -62,8 +62,14 @@ def _kh(
     )
 
 
-def _dh(entry: KnownHost, marked: bool = True, state: str = "", adopted: bool = True) -> DiscoveredHost:
-    return DiscoveredHost(entry=entry, marked=marked, state=state, adopted=adopted)
+def _dh(
+    entry: KnownHost,
+    marked: bool = True,
+    state: str = "",
+    adopted: bool = True,
+    observed: frozenset[str] | None = None,
+) -> DiscoveredHost:
+    return DiscoveredHost(entry=entry, marked=marked, state=state, adopted=adopted, observed=observed)
 
 
 def _probe(
@@ -266,6 +272,72 @@ class TestMergeEntry:
         merged = merge_entry(existing, discovered)
         assert merged.type == existing.type
         assert merged.name == existing.name
+
+
+# ---------------------------------------------------------------------------
+# merge_entry: observed-vs-default semantics (018, contracts/sync-merge.md, #87)
+# ---------------------------------------------------------------------------
+
+
+class TestMergeEntryObserved:
+    def test_observed_none_is_legacy_semantics(self):
+        """observed=None (the default) behaves exactly like today: any
+        non-empty discovered value wins, regardless of field name."""
+        existing = _kh("aws", "devbox", access_mode="ssh", region="us-east-1")
+        discovered = _kh("aws", "devbox", access_mode="ssm", region="us-west-2")
+        merged = merge_entry(existing, discovered, observed=None)
+        assert merged.access_mode == "ssm"
+        assert merged.region == "us-west-2"
+
+    def test_unobserved_field_preserves_existing_even_if_discovered_nonempty(self):
+        """The core of #87: a field the provider filled with a default
+        (not observed) must never clobber a hand-edited existing value,
+        even though the discovered value is non-empty."""
+        existing = _kh("aws", "devbox", access_mode="ssh", region="us-east-1")
+        discovered = _kh("aws", "devbox", access_mode="ssm", region="us-west-2")
+        merged = merge_entry(existing, discovered, observed=frozenset({"region"}))
+        assert merged.access_mode == "ssh"  # not observed -> existing wins
+        assert merged.region == "us-west-2"  # observed -> discovered wins
+
+    def test_observed_field_with_empty_discovered_value_preserves_existing(self):
+        existing = _kh("aws", "devbox", host="203.0.113.7")
+        discovered = _kh("aws", "devbox", host="")
+        merged = merge_entry(existing, discovered, observed=frozenset({"host"}))
+        assert merged.host == "203.0.113.7"
+
+    def test_empty_observed_set_preserves_everything(self):
+        existing = _kh(
+            "aws", "devbox", host="1.1.1.1", instance_id="i-old", access_mode="ssm", region="us-east-1"
+        )
+        discovered = _kh(
+            "aws", "devbox", host="2.2.2.2", instance_id="i-new", access_mode="direct", region="us-west-2"
+        )
+        merged = merge_entry(existing, discovered, observed=frozenset())
+        assert merged == existing
+
+
+class TestBuildPlanObservedIdempotence:
+    def test_unobserved_default_never_produces_a_phantom_update(self):
+        """#87 acceptance: an existing entry with a hand-set access_mode
+        that the probe didn't actually observe (e.g. untagged instance)
+        must not show up as an update, and running the same probe twice in
+        a row must both yield an empty (no-op) plan."""
+        scope = SyncScope(type="aws", region="us-west-2")
+        existing = _kh("aws", "devbox", access_mode="ssh")
+        # The provider always fills access_mode with a default ("ssm") but
+        # only actually observed host/instance_id this round.
+        discovered = _kh("aws", "devbox", access_mode="ssm")
+
+        for _ in range(2):  # same probe result, run twice -> idempotent
+            plan = build_plan(
+                [existing],
+                _probe([_dh(discovered, marked=True, observed=frozenset({"host", "instance_id"}))]),
+                scope,
+                include_all=False,
+            )
+            assert plan.updated == []
+            assert plan.unchanged == [existing]
+            assert plan.is_noop
 
 
 # ---------------------------------------------------------------------------

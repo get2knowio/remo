@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 from click.testing import CliRunner
 
@@ -76,27 +74,32 @@ class TestShellVersionCheck:
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_remote_behind_update_accepted(self, runner, mocker):
-        """When user accepts update, provider update is called."""
+        """When user accepts update, provider update_entry is called."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
         mocker.patch("remo_cli.core.output.confirm", return_value=True)
-        mock_update = mocker.patch("remo_cli.providers.hetzner.update", return_value=0)
+        mock_update_entry = mocker.patch("remo_cli.providers.hetzner.update_entry")
 
         result = runner.invoke(shell, [])
 
         assert result.exit_code == 0
-        mock_update.assert_called_once_with(name="webserver")
+        mock_update_entry.assert_called_once()
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_update_failure_prompts_before_connect(self, runner, mocker):
         """When tools update fails, user is prompted to confirm connect."""
+        from remo_cli.core.errors import OperationFailedError
+
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
         # First confirm() = "Update?" → True; second = "Connect anyway?" → True
         mock_confirm = mocker.patch(
             "remo_cli.core.output.confirm", side_effect=[True, True]
         )
-        mocker.patch("remo_cli.providers.hetzner.update", return_value=2)
+        mocker.patch(
+            "remo_cli.providers.hetzner.update_entry",
+            side_effect=OperationFailedError("playbook rc=2"),
+        )
         mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
 
         result = runner.invoke(shell, [])
@@ -109,16 +112,21 @@ class TestShellVersionCheck:
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_update_failure_decline_aborts(self, runner, mocker):
         """When user declines after failed update, shell_connect is not called."""
+        from remo_cli.core.errors import OperationFailedError
+
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
         # First confirm() = "Update?" → True; second = "Connect anyway?" → False
         mocker.patch("remo_cli.core.output.confirm", side_effect=[True, False])
-        mocker.patch("remo_cli.providers.hetzner.update", return_value=2)
+        mocker.patch(
+            "remo_cli.providers.hetzner.update_entry",
+            side_effect=OperationFailedError("playbook rc=2"),
+        )
         mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
 
         result = runner.invoke(shell, [])
 
-        assert result.exit_code == 2
+        assert result.exit_code == 1
         mock_shell_connect.assert_not_called()
 
     @pytest.mark.usefixtures("_patch_shell_deps")
@@ -177,6 +185,27 @@ class TestShellVersionCheck:
 
         assert result.exit_code == 0
         mock_check.assert_not_called()
+
+
+class TestShellAutoStartAwsFailure:
+    """auto_start_aws_if_stopped raising ProviderError (018) exits with its
+    exit_code and prints the message, instead of an uncaught SystemExit."""
+
+    def test_precondition_error_exits_with_message(self, runner, mocker, hetzner_host):
+        from remo_cli.core.errors import PreconditionError
+
+        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=hetzner_host)
+        mocker.patch(
+            "remo_cli.providers.aws.auto_start_aws_if_stopped",
+            side_effect=PreconditionError("Instance i-123 is currently stopping."),
+        )
+        mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        result = runner.invoke(shell, [])
+
+        assert result.exit_code == 1
+        assert "Instance i-123 is currently stopping." in result.output
+        mock_shell_connect.assert_not_called()
 
 
 class TestShellProjectLaunchFlags:
@@ -352,39 +381,40 @@ class TestBuildProjectLaunchRemoteCmd:
 
 
 class TestRunProviderUpdate:
-    """Tests for _run_provider_update()."""
+    """Tests for _run_provider_update(): registry-dispatched via
+    provider_registry + the Protocol's update_entry(entry) verb (018)."""
 
     def test_aws_update(self, mocker):
         from remo_cli.cli.shell import _run_provider_update
 
         host = KnownHost(type="aws", name="devbox", host="1.2.3.4", user="remo")
-        mock_update = mocker.patch("remo_cli.providers.aws.update", return_value=0)
+        mock_update_entry = mocker.patch("remo_cli.providers.aws.update_entry")
 
         _run_provider_update(host)
 
-        mock_update.assert_called_once_with(name="devbox")
+        mock_update_entry.assert_called_once_with(host)
 
     def test_hetzner_update(self, mocker):
         from remo_cli.cli.shell import _run_provider_update
 
         host = KnownHost(type="hetzner", name="webserver", host="5.6.7.8", user="remo")
-        mock_update = mocker.patch("remo_cli.providers.hetzner.update", return_value=0)
+        mock_update_entry = mocker.patch("remo_cli.providers.hetzner.update_entry")
 
         _run_provider_update(host)
 
-        mock_update.assert_called_once_with(name="webserver")
+        mock_update_entry.assert_called_once_with(host)
 
-    def test_incus_update_extracts_container_name(self, mocker):
+    def test_incus_update(self, mocker):
         from remo_cli.cli.shell import _run_provider_update
 
         host = KnownHost(type="incus", name="myhost/devcontainer", host="192.168.1.50", user="remo")
-        mock_update = mocker.patch("remo_cli.providers.incus.update", return_value=0)
+        mock_update_entry = mocker.patch("remo_cli.providers.incus.update_entry")
 
         _run_provider_update(host)
 
-        mock_update.assert_called_once_with(name="devcontainer")
+        mock_update_entry.assert_called_once_with(host)
 
-    def test_proxmox_update_extracts_node_and_container(self, mocker):
+    def test_proxmox_update(self, mocker):
         from remo_cli.cli.shell import _run_provider_update
 
         host = KnownHost(
@@ -396,8 +426,30 @@ class TestRunProviderUpdate:
             access_mode="direct",
             region="root",
         )
-        mock_update = mocker.patch("remo_cli.providers.proxmox.update", return_value=0)
+        mock_update_entry = mocker.patch("remo_cli.providers.proxmox.update_entry")
 
         _run_provider_update(host)
 
-        mock_update.assert_called_once_with(name="dev1", host="lab1", user="root")
+        mock_update_entry.assert_called_once_with(host)
+
+    def test_unknown_type_raises_precondition_error_naming_the_type(self):
+        from remo_cli.cli.shell import _run_provider_update
+        from remo_cli.core.errors import PreconditionError
+
+        host = KnownHost(type="totally-unknown", name="foo", host="1.2.3.4", user="remo")
+
+        with pytest.raises(PreconditionError, match="totally-unknown"):
+            _run_provider_update(host)
+
+    def test_update_entry_failure_propagates_as_provider_error(self, mocker):
+        from remo_cli.cli.shell import _run_provider_update
+        from remo_cli.core.errors import OperationFailedError
+
+        host = KnownHost(type="aws", name="devbox", host="1.2.3.4", user="remo")
+        mocker.patch(
+            "remo_cli.providers.aws.update_entry",
+            side_effect=OperationFailedError("boom"),
+        )
+
+        with pytest.raises(OperationFailedError):
+            _run_provider_update(host)

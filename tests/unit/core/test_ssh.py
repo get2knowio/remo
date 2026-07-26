@@ -60,7 +60,7 @@ class TestBuildSshOpts:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_hetzner_basic(self, hetzner_host, mocker):
         """A plain Hetzner host returns user@host with no ProxyCommand."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
         from remo_cli.core.ssh import build_ssh_opts
 
@@ -74,7 +74,7 @@ class TestBuildSshOpts:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_ssm_host_has_proxy_command(self, ssm_host, mocker):
         """An SSM host returns user@instance_id and contains aws ssm ProxyCommand."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
         from remo_cli.core.ssh import build_ssh_opts
 
@@ -91,7 +91,7 @@ class TestBuildSshOpts:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_multiplex_adds_control_opts(self, hetzner_host, mocker):
         """When multiplex=True, ControlMaster/ControlPath/ControlPersist are included."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
         from remo_cli.core.ssh import build_ssh_opts
 
@@ -105,7 +105,7 @@ class TestBuildSshOpts:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_multiplex_false_no_control_opts(self, hetzner_host, mocker):
         """Without multiplex, no ControlMaster options appear."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
         from remo_cli.core.ssh import build_ssh_opts
 
@@ -118,7 +118,7 @@ class TestBuildSshOpts:
     def test_aws_profile_in_proxy_command(self, ssm_host, monkeypatch, mocker):
         """When AWS_PROFILE is set, the ProxyCommand is wrapped with env prefix."""
         monkeypatch.setenv("AWS_PROFILE", "myprofile")
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
         from remo_cli.core.ssh import build_ssh_opts
 
@@ -132,7 +132,7 @@ class TestBuildSshOpts:
     def test_no_aws_profile_no_env_prefix(self, ssm_host, monkeypatch, mocker):
         """Without AWS_PROFILE, no env wrapper in ProxyCommand."""
         monkeypatch.delenv("AWS_PROFILE", raising=False)
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
         from remo_cli.core.ssh import build_ssh_opts
 
@@ -146,7 +146,7 @@ class TestBuildSshOpts:
         """When detect_timezone returns a value, SendEnv=TZ is added."""
         monkeypatch.delenv("TZ", raising=False)
         mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="America/New_York")
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
         from remo_cli.core.ssh import build_ssh_opts
 
@@ -396,7 +396,7 @@ class TestCheckRemoteVersion:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_returns_version_on_success(self, hetzner_host, mocker):
         """Returns (version, None) when SSH succeeds and marker is present."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         mock_run = mocker.patch(
             "subprocess.run",
             return_value=MagicMock(returncode=0, stdout="0.8.0rc1\n", stderr=""),
@@ -415,7 +415,7 @@ class TestCheckRemoteVersion:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_returns_no_marker_on_missing_file(self, hetzner_host, mocker):
         """Returns (None, None) when the remote command failed (cat → marker missing)."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         mocker.patch(
             "subprocess.run",
             return_value=MagicMock(returncode=1, stdout="", stderr=""),
@@ -428,7 +428,7 @@ class TestCheckRemoteVersion:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_returns_no_marker_on_empty_output(self, hetzner_host, mocker):
         """Returns (None, None) when SSH succeeds but the marker is empty."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         mocker.patch(
             "subprocess.run",
             return_value=MagicMock(returncode=0, stdout="", stderr=""),
@@ -441,7 +441,7 @@ class TestCheckRemoteVersion:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_returns_error_on_ssh_failure(self, hetzner_host, mocker):
         """Returns (None, stderr) when SSH itself fails (rc 255)."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         mocker.patch(
             "subprocess.run",
             return_value=MagicMock(
@@ -460,7 +460,7 @@ class TestCheckRemoteVersion:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_returns_error_on_timeout(self, hetzner_host, mocker):
         """Returns (None, error) when SSH times out."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         mocker.patch(
             "subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd="ssh", timeout=15),
@@ -476,7 +476,7 @@ class TestCheckRemoteVersion:
     @pytest.mark.usefixtures("_suppress_tz")
     def test_returns_error_on_os_error(self, hetzner_host, mocker):
         """Returns (None, error) when the ssh binary can't be invoked."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         mocker.patch("subprocess.run", side_effect=OSError("No ssh"))
 
         from remo_cli.core.ssh import check_remote_version

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from remo_cli.core.errors import UserAbortedError
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 from remo_cli.providers import hetzner as providers_hetzner
 
@@ -98,7 +99,7 @@ class TestSnapshotCreate:
             {"images": []},   # GET /images?... (existing list)
             {"action": {"id": 1}},  # POST create_image
         ]
-        rc = providers_hetzner.snapshot_create(
+        rc = providers_hetzner.snapshot_create_legacy(
             server_name="dev1",
             snap_name="pre-x",
             description="before x",
@@ -116,7 +117,7 @@ class TestSnapshotCreate:
 
     def test_unknown_server(self, mocker, api, capsys):
         api.side_effect = [{"servers": []}]
-        rc = providers_hetzner.snapshot_create(
+        rc = providers_hetzner.snapshot_create_legacy(
             server_name="ghost", snap_name="pre-x"
         )
         assert rc == 1
@@ -128,7 +129,7 @@ class TestSnapshotCreate:
             SERVER_RESPONSE,
             {"images": [_img(snap_name="pre-x")]},
         ]
-        rc = providers_hetzner.snapshot_create(
+        rc = providers_hetzner.snapshot_create_legacy(
             server_name="dev1", snap_name="pre-x"
         )
         assert rc == 1
@@ -150,7 +151,7 @@ class TestSnapshotRestore:
             SERVER_RESPONSE,
             {"images": [_img(status="creating")]},
         ]
-        rc = providers_hetzner.snapshot_restore(
+        rc = providers_hetzner.snapshot_restore_legacy(
             server_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 1
@@ -162,7 +163,7 @@ class TestSnapshotRestore:
             SERVER_RESPONSE,
             {"images": []},
         ]
-        rc = providers_hetzner.snapshot_restore(
+        rc = providers_hetzner.snapshot_restore_legacy(
             server_name="dev1", snap_name="ghost", auto_confirm=True
         )
         assert rc == 1
@@ -175,10 +176,10 @@ class TestSnapshotRestore:
             {"images": [_img()]},
         ]
         mocker.patch("remo_cli.providers.hetzner.confirm", return_value=False)
-        rc = providers_hetzner.snapshot_restore(
-            server_name="dev1", snap_name="pre-x", auto_confirm=False
-        )
-        assert rc == 1
+        with pytest.raises(UserAbortedError):
+            providers_hetzner.snapshot_restore_legacy(
+                server_name="dev1", snap_name="pre-x", auto_confirm=False
+            )
         # No POST rebuild call
         post_calls = [c for c in api.call_args_list if c.args[0] == "POST"]
         assert post_calls == []
@@ -192,7 +193,7 @@ class TestSnapshotRestore:
         mocker.patch(
             "remo_cli.providers.hetzner._wait_for_action", return_value=True
         )
-        rc = providers_hetzner.snapshot_restore(
+        rc = providers_hetzner.snapshot_restore_legacy(
             server_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 0
@@ -212,7 +213,7 @@ class TestSnapshotRestore:
         mocker.patch(
             "remo_cli.providers.hetzner._wait_for_action", return_value=False
         )
-        rc = providers_hetzner.snapshot_restore(
+        rc = providers_hetzner.snapshot_restore_legacy(
             server_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 1
@@ -231,7 +232,7 @@ class TestSnapshotDelete:
             SERVER_RESPONSE,
             {"images": [_img(status="creating")]},
         ]
-        rc = providers_hetzner.snapshot_delete(
+        rc = providers_hetzner.snapshot_delete_legacy(
             server_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 1
@@ -243,7 +244,7 @@ class TestSnapshotDelete:
             SERVER_RESPONSE,
             {"images": []},
         ]
-        rc = providers_hetzner.snapshot_delete(
+        rc = providers_hetzner.snapshot_delete_legacy(
             server_name="dev1", snap_name="ghost", auto_confirm=True
         )
         assert rc == 1
@@ -254,7 +255,7 @@ class TestSnapshotDelete:
             {"images": [_img(snap_id=100)]},
             {},  # DELETE
         ]
-        rc = providers_hetzner.snapshot_delete(
+        rc = providers_hetzner.snapshot_delete_legacy(
             server_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 0
@@ -267,16 +268,20 @@ class TestSnapshotDelete:
             {"images": [_img()]},
         ]
         mocker.patch("remo_cli.providers.hetzner.confirm", return_value=False)
-        rc = providers_hetzner.snapshot_delete(
-            server_name="dev1", snap_name="pre-x", auto_confirm=False
-        )
-        assert rc == 1
+        with pytest.raises(UserAbortedError):
+            providers_hetzner.snapshot_delete_legacy(
+                server_name="dev1", snap_name="pre-x", auto_confirm=False
+            )
         delete_calls = [c for c in api.call_args_list if c.args[0] == "DELETE"]
         assert delete_calls == []
 
 
 # ---------------------------------------------------------------------------
-# destroy integration (FR-020 — FR-023)
+# teardown (018-provider-abstraction T038 — provider-specific destruction
+# step only; guard / snapshot pre-cleanup / confirm / registry removal now
+# live in core/lifecycle.run_destroy and are covered generically in
+# tests/unit/core/test_lifecycle.py + at the CLI layer in
+# tests/unit/cli/providers/test_hetzner_snapshot.py::TestDestroyCLI)
 # ---------------------------------------------------------------------------
 
 
@@ -293,80 +298,47 @@ def _hetzner_snap(name: str = "pre-x") -> Snapshot:
     )
 
 
-class TestDestroySnapshotCleanup:
-    def test_no_snapshots_no_extra_prompt(self, mocker):
-        mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_list", return_value=[]
-        )
-        mocker.patch(
-            "remo_cli.providers.hetzner.run_playbook", return_value=0
-        )
-        mock_confirm = mocker.patch(
-            "remo_cli.providers.hetzner.confirm", return_value=True
-        )
-        spy = mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_delete", return_value=0
-        )
-        mocker.patch("remo_cli.providers.hetzner.remove_known_host")
-        rc = providers_hetzner.destroy(name="dev1")
-        assert rc == 0
-        assert mock_confirm.call_count == 1
-        spy.assert_not_called()
+class TestTeardown:
+    def test_builds_expected_extra_vars(self, mocker):
+        from remo_cli.models.host import KnownHost
 
-    def test_cleanup_accepted(self, mocker):
-        mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_list",
-            return_value=[_hetzner_snap("a"), _hetzner_snap("b")],
-        )
-        mocker.patch(
-            "remo_cli.providers.hetzner.run_playbook", return_value=0
-        )
-        mocker.patch("remo_cli.core.snapshot.confirm", return_value=True)
-        mocker.patch("remo_cli.providers.hetzner.confirm", return_value=True)
-        spy = mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_delete", return_value=0
-        )
-        mocker.patch("remo_cli.providers.hetzner.remove_known_host")
-        rc = providers_hetzner.destroy(name="dev1")
-        assert rc == 0
-        assert spy.call_count == 2
+        spy = mocker.patch("remo_cli.providers.hetzner.run_playbook", return_value=0)
+        entry = KnownHost(type="hetzner", name="dev1", host="5.6.7.8", user="remo")
 
-    def test_cleanup_declined_warns(self, mocker, capsys):
-        mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_list",
-            return_value=[_hetzner_snap()],
-        )
-        mocker.patch(
-            "remo_cli.providers.hetzner.run_playbook", return_value=0
-        )
-        mocker.patch("remo_cli.core.snapshot.confirm", return_value=False)
-        mocker.patch("remo_cli.providers.hetzner.confirm", return_value=True)
-        spy = mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_delete", return_value=0
-        )
-        mocker.patch("remo_cli.providers.hetzner.remove_known_host")
-        rc = providers_hetzner.destroy(name="dev1")
-        assert rc == 0
-        spy.assert_not_called()
-        out = capsys.readouterr().out
-        assert "Snapshots will remain on Hetzner" in out
+        providers_hetzner.teardown(entry, verbose=True, remove_volume=True)
 
-    def test_auto_confirm_keeps(self, mocker, capsys):
-        mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_list",
-            return_value=[_hetzner_snap()],
+        spy.assert_called_once_with(
+            "hetzner_teardown.yml",
+            [
+                "-e", "hetzner_server_name=dev1",
+                "-e", "remove_volume=true",
+            ],
+            verbose=True,
         )
-        mocker.patch(
-            "remo_cli.providers.hetzner.run_playbook", return_value=0
+
+    def test_remove_volume_false_by_default(self, mocker):
+        from remo_cli.models.host import KnownHost
+
+        spy = mocker.patch("remo_cli.providers.hetzner.run_playbook", return_value=0)
+        entry = KnownHost(type="hetzner", name="dev1", host="5.6.7.8", user="remo")
+
+        providers_hetzner.teardown(entry)
+
+        spy.assert_called_once_with(
+            "hetzner_teardown.yml",
+            [
+                "-e", "hetzner_server_name=dev1",
+                "-e", "remove_volume=false",
+            ],
+            verbose=False,
         )
-        spy = mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_delete", return_value=0
-        )
-        mock_confirm = mocker.patch("remo_cli.providers.hetzner.confirm")
-        mocker.patch("remo_cli.providers.hetzner.remove_known_host")
-        rc = providers_hetzner.destroy(name="dev1", auto_confirm=True)
-        assert rc == 0
-        mock_confirm.assert_not_called()
-        spy.assert_not_called()
-        out = capsys.readouterr().out
-        assert "--yes is set" in out
+
+    def test_nonzero_rc_raises_operation_failed_error(self, mocker):
+        from remo_cli.core.errors import OperationFailedError
+        from remo_cli.models.host import KnownHost
+
+        mocker.patch("remo_cli.providers.hetzner.run_playbook", return_value=1)
+        entry = KnownHost(type="hetzner", name="dev1", host="5.6.7.8", user="remo")
+
+        with pytest.raises(OperationFailedError, match="playbook rc=1"):
+            providers_hetzner.teardown(entry)

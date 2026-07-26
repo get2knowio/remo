@@ -66,7 +66,7 @@ def _no_control_dir_env(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _mock_aws_region(mocker):
-    mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ class TestSafeArgConstruction:
     def test_hostname_with_shell_metacharacters_stays_isolated(self, monkeypatch, mocker):
         """Even a maliciously-crafted hostname is carried as one argv element
         (never shell-interpreted), proving no shell=True string building."""
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         evil_host = KnownHost(
             type="hetzner",
             name="evil",

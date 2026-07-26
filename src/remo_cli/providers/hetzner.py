@@ -9,21 +9,33 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
-from remo_cli.core.ansible_runner import run_playbook
+from remo_cli.core.ansible_runner import build_configure_extra_vars, run_playbook
+from remo_cli.core.errors import (
+    OperationFailedError,
+    PreconditionError,
+    ProviderError,
+    UserAbortedError,
+)
 from remo_cli.core.known_hosts import (
     get_known_hosts,
     guard_not_added_ssh_host,
-    remove_known_host,
     save_known_host,
 )
-from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.output import (
+    Column,
+    confirm,
+    print_error,
+    print_info,
+    print_success,
+    print_warning,
+    render_host_table,
+)
 from remo_cli.core.reconcile import (
     DiscoveredHost,
     ProbeError,
@@ -31,13 +43,8 @@ from remo_cli.core.reconcile import (
     SyncScope,
     run_sync,
 )
-from remo_cli.core.snapshot import (
-    handle_destroy_snapshot_cleanup,
-    validate_name as validate_snapshot_name,
-)
-from remo_cli.core.ssh import detect_timezone
-from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
-from remo_cli.core.version import get_current_version
+from remo_cli.core.snapshot import validate_name as validate_snapshot_name
+from remo_cli.core.validation import parse_volume_size, validate_name
 from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
@@ -102,10 +109,10 @@ def create(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
-) -> int:
+) -> None:
     """Create a new Hetzner Cloud VM and configure it with dev tools.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Raises :class:`OperationFailedError` if the playbook fails.
     """
     if name:
         validate_name(name, "server name")
@@ -124,20 +131,12 @@ def create(
     if volume_size:
         extra_vars.extend(["-e", f"hetzner_volume_size={volume_size}"])
 
-    tz = detect_timezone()
-    if tz:
-        extra_vars.extend(["-e", f"timezone={tz}"])
-
-    extra_vars.extend(build_tool_args(tools_only, tools_skip))
-
-    current = get_current_version()
-    if current != "unknown":
-        extra_vars.extend(["-e", f"remo_version={current}"])
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
     rc = run_playbook("hetzner_site.yml", extra_vars, verbose=verbose)
 
     if rc != 0:
-        return rc
+        raise OperationFailedError(f"Failed to create Hetzner VM (playbook rc={rc}).")
 
     # Save to known_hosts on success.
     server_name = name or "remo"
@@ -169,73 +168,30 @@ def create(
     print_success("==================================================")
     print("")
 
-    return rc
 
+def teardown(entry: KnownHost, *, verbose: bool = False, remove_volume: bool = False) -> None:
+    """Destroy *entry*'s Hetzner Cloud VM (Protocol Part A: destruction only).
 
-def destroy(
-    name: str = "",
-    auto_confirm: bool = False,
-    remove_volume: bool = False,
-    verbose: bool = False,
-) -> int:
-    """Destroy a Hetzner Cloud VM.
+    Guard, snapshot pre-cleanup, confirmation, and registry removal are the
+    shared template's job (``core/lifecycle.run_destroy``, R-A3) -- this
+    performs only the provider-specific teardown step.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Hetzner is FLAT (name_format) -- ``entry.name`` IS the server name
+    directly, no host/container parsing needed (R-A2).
+
+    Raises :class:`OperationFailedError` if the playbook fails.
     """
-    if name:
-        validate_name(name, "server name")
+    server_name = entry.name
 
-    server_name = name or "remo"
-    guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
-
-    if remove_volume:
-        print_warning(
-            "WARNING: --remove-volume will destroy all data on the persistent volume!"
-        )
-
-    # FR-020 through FR-023: surface remo-managed snapshot images before destroy.
-    try:
-        _pre = snapshot_list(server_name=server_name)
-    except Exception as e:  # noqa: BLE001
-        print_warning(
-            f"Could not list snapshots before destroy ({e}); "
-            f"proceeding without snapshot cleanup."
-        )
-        _pre = []
-    handle_destroy_snapshot_cleanup(
-        provider_label="Hetzner",
-        instance=server_name,
-        snapshots=_pre,
-        delete_one=lambda snap: snapshot_delete(
-            server_name=server_name,
-            snap_name=snap.name,
-            auto_confirm=True,
-        ),
-        auto_confirm=auto_confirm,
-        show_status=True,
-    )
-
-    if not auto_confirm:
-        prompt = f"Destroy Hetzner Cloud server '{server_name}'? This cannot be undone."
-        if not confirm(prompt):
-            print_info("Aborted.")
-            return 0
-
-    print_info(f"Destroying Hetzner VM '{server_name}'...")
-
-    extra_vars: list[str] = []
-
-    if name:
-        extra_vars.extend(["-e", f"hetzner_server_name={name}"])
-
-    extra_vars.extend(["-e", f"remove_volume={'true' if remove_volume else 'false'}"])
+    extra_vars: list[str] = [
+        "-e", f"hetzner_server_name={server_name}",
+        "-e", f"remove_volume={'true' if remove_volume else 'false'}",
+    ]
 
     rc = run_playbook("hetzner_teardown.yml", extra_vars, verbose=verbose)
 
-    # Remove from known_hosts.
-    remove_known_host("hetzner", server_name)
-
-    return rc
+    if rc != 0:
+        raise OperationFailedError(f"Failed to destroy Hetzner VM '{server_name}' (playbook rc={rc}).")
 
 
 def update(
@@ -244,13 +200,14 @@ def update(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
-) -> int:
+) -> None:
     """Re-configure dev tools on an existing Hetzner VM.
 
     When *volume_size* is provided, grow the persistent volume and the
     filesystem first (idempotent — no-op when sizes match).
 
-    Returns the ansible-playbook exit code (0 on success).
+    Raises :class:`PreconditionError` if the server is not registered, or
+    :class:`OperationFailedError` if a playbook fails.
     """
     if name:
         validate_name(name, "server name")
@@ -273,9 +230,10 @@ def update(
     # Get server address from known_hosts.
     server_host = _lookup_hetzner_host(server_name)
     if not server_host:
-        print_error(f"Server '{server_name}' not found in known_hosts.")
-        print("Run 'remo hetzner sync' or 'remo hetzner create' first.")
-        sys.exit(1)
+        raise PreconditionError(
+            f"Server '{server_name}' not found in known_hosts. "
+            f"Run 'remo hetzner sync' or 'remo hetzner create' first."
+        )
 
     if volume_size:
         print_info(f"Resizing Hetzner volume for '{server_name}' to {volume_size}GB...")
@@ -285,7 +243,9 @@ def update(
         ]
         rc = run_playbook("hetzner_resize.yml", resize_vars, verbose=verbose)
         if rc != 0:
-            return rc
+            raise OperationFailedError(
+                f"Failed to resize Hetzner volume for '{server_name}' (playbook rc={rc})."
+            )
 
     print_info(f"Updating Hetzner VM '{server_name}' at {server_host}...")
 
@@ -294,50 +254,51 @@ def update(
         "-e", "ansible_user=remo",
     ]
 
-    extra_vars.extend(build_tool_args(tools_only, tools_skip))
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
-    tz = detect_timezone()
-    if tz:
-        extra_vars.extend(["-e", f"timezone={tz}"])
-
-    current = get_current_version()
-    if current != "unknown":
-        extra_vars.extend(["-e", f"remo_version={current}"])
-
-    return run_playbook(
+    rc = run_playbook(
         "hetzner_configure.yml",
         extra_vars,
         verbose=verbose,
     )
+    if rc != 0:
+        raise OperationFailedError(f"Failed to update tools on '{server_name}' (playbook rc={rc}).")
+
+
+def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
+    """Re-apply tool configuration to an existing VM (Protocol Part A)."""
+    update(name=entry.name, verbose=verbose)
+
+
+_LIST_COLUMNS = (
+    Column("NAME", lambda e: e.name, width=25),
+    Column("HOST", lambda e: e.host, width=25),
+    Column("SSH COMMAND", lambda e: f"ssh {e.user}@{e.host}"),
+)
 
 
 def list_hosts() -> None:
     """Print a formatted table of all registered Hetzner VMs."""
     entries = get_known_hosts(type_filter="hetzner")
-
-    print(f"{'NAME':<25} {'HOST':<25} {'SSH COMMAND'}")
-    print(f"{'----':<25} {'----':<25} {'-----------'}")
-
-    for entry in entries:
-        ssh_cmd = f"ssh {entry.user}@{entry.host}"
-        print(f"{entry.name:<25} {entry.host:<25} {ssh_cmd}")
-
-    if not entries:
-        print("No Hetzner VMs registered.")
-        print("Create one with: remo hetzner create")
+    render_host_table(
+        entries,
+        _LIST_COLUMNS,
+        empty_message="No Hetzner VMs registered.\nCreate one with: remo hetzner create",
+    )
 
 
-def info(name: str = "") -> int:
+def info(name: str = "") -> None:
     """Print detailed information about a Hetzner Cloud server.
 
     Queries the Hetzner API for the server (type, status, IP) and its
     paired ``<name>-home`` volume (size). Requires ``HETZNER_API_TOKEN``.
-    Returns 0 on success or 1 on failure.
+
+    Raises :class:`PreconditionError` if the token is missing or the server
+    is not found, or :class:`OperationFailedError` if the API request fails.
     """
     token = os.environ.get("HETZNER_API_TOKEN", "")
     if not token:
-        print_error("HETZNER_API_TOKEN is not set.")
-        return 1
+        raise PreconditionError("HETZNER_API_TOKEN is not set.")
 
     server_name = name or "remo"
 
@@ -350,13 +311,11 @@ def info(name: str = "") -> int:
         with urllib.request.urlopen(server_req, timeout=15) as resp:
             server_data = json.loads(resp.read().decode())
     except urllib.error.URLError as e:
-        print_error(f"Hetzner API request failed: {e}")
-        return 1
+        raise OperationFailedError(f"Hetzner API request failed: {e}") from e
 
     servers = server_data.get("servers", [])
     if not servers:
-        print_error(f"No Hetzner server found with name '{server_name}'.")
-        return 1
+        raise PreconditionError(f"No Hetzner server found with name '{server_name}'.")
 
     server = servers[0]
     server_type = server.get("server_type") or {}
@@ -394,8 +353,6 @@ def info(name: str = "") -> int:
     print(f"  Volume:        {volume_size or '(none attached)'} ({volume_name})")
     print("")
 
-    return 0
-
 
 def _hetzner_api_paged(path: str, key: str) -> tuple[list[dict], bool]:
     """Walk every page of a Hetzner list endpoint, accumulating ``response[key]``.
@@ -418,7 +375,7 @@ def _hetzner_api_paged(path: str, key: str) -> tuple[list[dict], bool]:
         query = f"{path}{separator}page={page}&per_page=50"
         try:
             response = _hetzner_api("GET", query)
-        except RuntimeError:
+        except ProviderError:
             if page == 1:
                 raise
             return items, False
@@ -437,7 +394,7 @@ def _probe(scope: SyncScope, include_all: bool) -> ProbeResult:
     del include_all  # eligibility widening happens in build_plan, not here
     try:
         servers, complete = _hetzner_api_paged("/servers", "servers")
-    except RuntimeError as exc:
+    except ProviderError as exc:
         raise ProbeError(str(exc)) from exc
 
     hosts: list[DiscoveredHost] = []
@@ -505,12 +462,13 @@ def _hetzner_api(
 ) -> dict:
     """Call the Hetzner Cloud REST API and return the decoded JSON body.
 
-    Raises :class:`RuntimeError` on non-2xx responses or transport errors so
-    callers can surface them.
+    Raises :class:`PreconditionError` if ``HETZNER_API_TOKEN`` is not set, or
+    :class:`OperationFailedError` on non-2xx responses or transport errors,
+    so callers can surface them.
     """
     token = os.environ.get("HETZNER_API_TOKEN", "")
     if not token:
-        raise RuntimeError(
+        raise PreconditionError(
             "HETZNER_API_TOKEN is not set; cannot reach the Hetzner Cloud API."
         )
 
@@ -535,23 +493,23 @@ def _hetzner_api(
             err_msg = err_body.get("error", {}).get("message", str(e))
         except (ValueError, OSError):
             err_msg = str(e)
-        raise RuntimeError(
+        raise OperationFailedError(
             f"Hetzner API {method} {path} failed: {e.code} {err_msg}"
         ) from None
     except urllib.error.URLError as e:
-        raise RuntimeError(f"Hetzner API {method} {path} failed: {e}") from None
+        raise OperationFailedError(f"Hetzner API {method} {path} failed: {e}") from None
 
 
 def _get_server_by_name(server_name: str) -> dict:
     """Return the Hetzner server record for *server_name*.
 
-    Raises :class:`RuntimeError` if no matching server exists.
+    Raises :class:`PreconditionError` if no matching server exists.
     """
     qs = urllib.parse.urlencode({"name": server_name})
     payload = _hetzner_api("GET", f"/servers?{qs}")
     servers = payload.get("servers", [])
     if not servers:
-        raise RuntimeError(f"No Hetzner server found named '{server_name}'.")
+        raise PreconditionError(f"No Hetzner server found named '{server_name}'.")
     return servers[0]
 
 
@@ -577,7 +535,7 @@ def _apply_managed_label(server_name: str) -> tuple[bool, str]:
     """
     try:
         server = _get_server_by_name(server_name)
-    except RuntimeError as e:
+    except ProviderError as e:
         return False, str(e)
 
     labels = server.get("labels", {}) or {}
@@ -587,7 +545,7 @@ def _apply_managed_label(server_name: str) -> tuple[bool, str]:
     merged = {**labels, "remo": "true"}
     try:
         _hetzner_api("PUT", f"/servers/{server.get('id', 0)}", {"labels": merged})
-    except RuntimeError as e:
+    except ProviderError as e:
         return False, str(e)
     return True, ""
 
@@ -644,10 +602,15 @@ def _list_snapshots_for_server(
     return snapshots
 
 
-def snapshot_create(
+def snapshot_create_legacy(
     server_name: str, snap_name: str, description: str = ""
 ) -> int:
     """Create a Hetzner Cloud snapshot of *server_name*.
+
+    Legacy rc-returning, multi-kwarg signature retained for internal reuse.
+    Called by :func:`snapshot_create` below, the Protocol Part A
+    (entry-based, exception-raising) wrapper the generated CLI actually
+    invokes.
 
     Returns 0 once the provider accepts the request (no polling — per FR-004).
     """
@@ -656,7 +619,7 @@ def snapshot_create(
 
     try:
         server = _get_server_by_name(server_name)
-    except RuntimeError as e:
+    except ProviderError as e:
         print_error(str(e))
         return 1
 
@@ -680,7 +643,7 @@ def snapshot_create(
     }
     try:
         _hetzner_api("POST", f"/servers/{server_id}/actions/create_image", body)
-    except RuntimeError as e:
+    except ProviderError as e:
         print_error(str(e))
         return 1
 
@@ -701,7 +664,7 @@ def _wait_for_action(action_id: int, timeout: int = 600) -> bool:
     while time.time() < deadline:
         try:
             payload = _hetzner_api("GET", f"/actions/{action_id}")
-        except RuntimeError:
+        except ProviderError:
             return False
         status = payload.get("action", {}).get("status", "")
         if status == "success":
@@ -712,10 +675,15 @@ def _wait_for_action(action_id: int, timeout: int = 600) -> bool:
     return False
 
 
-def snapshot_restore(
+def snapshot_restore_legacy(
     server_name: str, snap_name: str, auto_confirm: bool = False
 ) -> int:
     """Rebuild *server_name* from snapshot *snap_name*.
+
+    Legacy rc-returning, multi-kwarg signature retained for internal reuse.
+    Called by :func:`snapshot_restore` below, the Protocol Part A
+    (entry-based, exception-raising) wrapper the generated CLI actually
+    invokes.
 
     Hetzner's rebuild is atomic from the user's perspective: server ID and
     IP are preserved (FR-013). We poll the rebuild action until success.
@@ -724,7 +692,7 @@ def snapshot_restore(
     guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
     try:
         server = _get_server_by_name(server_name)
-    except RuntimeError as e:
+    except ProviderError as e:
         print_error(str(e))
         return 1
 
@@ -755,8 +723,7 @@ def snapshot_restore(
             f"typically 1-2 minutes of downtime.",
             default=False,
         ):
-            print_info("Aborted.")
-            return 1
+            raise UserAbortedError("Aborted.")
 
     try:
         payload = _hetzner_api(
@@ -764,7 +731,7 @@ def snapshot_restore(
             f"/servers/{server_id}/actions/rebuild",
             {"image": int(target.backend_id)},
         )
-    except RuntimeError as e:
+    except ProviderError as e:
         print_error(str(e))
         return 1
 
@@ -783,23 +750,34 @@ def snapshot_restore(
     return 0
 
 
-def snapshot_list(server_name: str) -> list[Snapshot]:
+def snapshot_list_legacy(server_name: str) -> list[Snapshot]:
     """Return remo-managed snapshots for *server_name*.
 
-    Raises :class:`RuntimeError` if the server cannot be found.
+    Legacy signature retained for internal reuse. Called by
+    :func:`snapshot_list` below, the Protocol Part A (entry-based,
+    exception-raising) wrapper the generated CLI actually invokes.
+
+    Raises :class:`PreconditionError` if the server cannot be found, or
+    :class:`OperationFailedError` if the underlying Hetzner API call fails.
     """
     server = _get_server_by_name(server_name)
     return _list_snapshots_for_server(server.get("id", 0), server_name)
 
 
-def snapshot_delete(
+def snapshot_delete_legacy(
     server_name: str, snap_name: str, auto_confirm: bool = False
 ) -> int:
-    """Delete the remo-managed Hetzner snapshot image *snap_name*."""
+    """Delete the remo-managed Hetzner snapshot image *snap_name*.
+
+    Legacy rc-returning, multi-kwarg signature retained for internal reuse.
+    Called by :func:`snapshot_delete` below, the Protocol Part A
+    (entry-based, exception-raising) wrapper the generated CLI actually
+    invokes.
+    """
     guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
     try:
         server = _get_server_by_name(server_name)
-    except RuntimeError as e:
+    except ProviderError as e:
         print_error(str(e))
         return 1
 
@@ -823,14 +801,67 @@ def snapshot_delete(
             f"Delete snapshot '{snap_name}' of {server_name}?",
             default=False,
         ):
-            print_info("Aborted.")
-            return 1
+            raise UserAbortedError("Aborted.")
 
     try:
         _hetzner_api("DELETE", f"/images/{target.backend_id}")
-    except RuntimeError as e:
+    except ProviderError as e:
         print_error(str(e))
         return 1
 
     print_info(f"Deleted snapshot '{snap_name}' of {server_name}.")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Entry-based snapshot verbs (contracts/provider-protocol.md Part A)
+#
+# Hetzner is FLAT (name_format) -- entry.name IS the server name directly,
+# no host/container parsing needed (R-A2). These wrap the legacy
+# rc-returning helpers above and convert failure into OperationFailedError
+# (R-A1); snapshot_list_legacy already raises a typed ProviderError directly,
+# so snapshot_list just propagates it.
+# ---------------------------------------------------------------------------
+
+
+def snapshot_create(entry: KnownHost, snapshot_name: str, *, description: str = "") -> None:
+    """Create a snapshot of *entry*'s server."""
+    rc = snapshot_create_legacy(
+        server_name=entry.name, snap_name=snapshot_name, description=description
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to create snapshot '{snapshot_name}' for '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_restore(entry: KnownHost, snapshot_name: str) -> None:
+    """Restore *entry*'s server to *snapshot_name*."""
+    rc = snapshot_restore_legacy(
+        server_name=entry.name, snap_name=snapshot_name, auto_confirm=True
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to restore snapshot '{snapshot_name}' for '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_delete(entry: KnownHost, snapshot_name: str) -> None:
+    """Delete *snapshot_name* from *entry*'s server."""
+    rc = snapshot_delete_legacy(
+        server_name=entry.name, snap_name=snapshot_name, auto_confirm=True
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to delete snapshot '{snapshot_name}' for '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_list(entry: KnownHost) -> list[Snapshot]:
+    """List snapshots of *entry*'s server (R-A5: public on every provider).
+
+    ``snapshot_list_legacy`` already raises a typed :class:`ProviderError`
+    (``PreconditionError`` if not found, ``OperationFailedError`` on an API
+    failure), so it propagates unchanged here.
+    """
+    return snapshot_list_legacy(server_name=entry.name)

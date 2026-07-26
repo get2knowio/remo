@@ -11,13 +11,20 @@ import json
 import re
 import shlex
 import subprocess
-import sys
 from datetime import datetime, timezone
 
-from remo_cli.core.ansible_runner import run_playbook
+from remo_cli.core.ansible_runner import (
+    build_configure_extra_vars,
+    run_playbook,
+    run_resize_playbook as _run_resize_shared,
+)
 from remo_cli.core.config import (
     INCUS_MANAGED_CONFIG_KEY,
     INCUS_MANAGED_CONFIG_VALUE,
+)
+from remo_cli.core.errors import (
+    OperationFailedError,
+    PreconditionError,
 )
 from remo_cli.core.known_hosts import (
     get_known_hosts,
@@ -25,15 +32,10 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     save_known_host,
 )
-from remo_cli.core.output import confirm, print_error, print_info, print_warning
+from remo_cli.core.output import Column, confirm, print_error, print_info, print_warning, render_host_table
 from remo_cli.core.reconcile import DiscoveredHost, ProbeError, ProbeResult, SyncScope, run_sync
-from remo_cli.core.snapshot import (
-    handle_destroy_snapshot_cleanup,
-    validate_name as validate_snapshot_name,
-)
-from remo_cli.core.ssh import detect_timezone
-from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
-from remo_cli.core.version import get_current_version
+from remo_cli.core.snapshot import validate_name as validate_snapshot_name
+from remo_cli.core.validation import parse_volume_size, validate_name
 from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
@@ -162,13 +164,16 @@ def _list_containers_with_marker(host: str, user: str) -> list[tuple[str, bool]]
 
     Uses a single bulk query ``incus list -f csv -c n,<marker-key>`` (FR-013):
     the second CSV column holds the marker value, so no per-container round-trip
-    is needed. Raises :class:`RuntimeError` if the ``incus list`` call fails so
-    the caller can surface it.
+    is needed. Raises :class:`OperationFailedError` if the ``incus list`` call
+    fails so the caller can surface it.
     """
     cmd = f"incus list -f csv -c n,{INCUS_MANAGED_CONFIG_KEY}"
     result = _ssh_run_on_incus_host(host, user, cmd)
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+        raise OperationFailedError(
+            f"incus list failed (rc={result.returncode}): "
+            f"{result.stderr.strip() or result.stdout.strip()}"
+        )
 
     rows: list[tuple[str, bool]] = []
     for line in result.stdout.splitlines():
@@ -198,12 +203,12 @@ def _run_resize_playbook(
     cores: int = 0,
     memory: int = 0,
     verbose: bool = False,
-) -> int:
+) -> None:
     """Run incus_resize.yml against the Incus host.
 
     Pass any combination of *volume_size*, *cores*, and *memory*; the
-    playbook adjusts only the axes whose value is set. Returns the
-    ansible-playbook exit code (0 on success, including no-op).
+    playbook adjusts only the axes whose value is set. Raises
+    :class:`OperationFailedError` on a nonzero ansible-playbook rc.
     """
     extra_vars: list[str] = ["-e", f"container_name={name}"]
     if volume_size:
@@ -219,7 +224,7 @@ def _run_resize_playbook(
         if user:
             extra_vars.extend(["-e", f"incus_host_user={user}"])
 
-    return run_playbook("incus_resize.yml", extra_vars, verbose=verbose)
+    _run_resize_shared("incus_resize.yml", extra_vars, verbose=verbose)
 
 
 def create(
@@ -235,10 +240,10 @@ def create(
     tools_skip: tuple[str, ...] = (),
     use_ip: bool = False,
     verbose: bool = False,
-) -> int:
+) -> None:
     """Create a new Incus container and configure it with dev tools.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Raises :class:`OperationFailedError` on a nonzero ansible-playbook rc.
     """
     validate_name(name, "container name")
     volume_size = parse_volume_size(volume_size)
@@ -258,15 +263,7 @@ def create(
         if user:
             extra_vars.extend(["-e", f"incus_host_user={user}"])
 
-    tz = detect_timezone()
-    if tz:
-        extra_vars.extend(["-e", f"timezone={tz}"])
-
-    extra_vars.extend(build_tool_args(tools_only, tools_skip))
-
-    current = get_current_version()
-    if current != "unknown":
-        extra_vars.extend(["-e", f"remo_version={current}"])
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
     # Clear any stale registry entry so _resolve_container_ip queries
     # the Incus host for the fresh IP instead of returning cached values.
@@ -274,34 +271,39 @@ def create(
 
     rc = run_playbook("incus_site.yml", extra_vars, verbose=verbose)
 
-    if rc == 0:
-        if use_ip:
-            container_host = _resolve_container_ip(name, host, user) or name
-        else:
-            container_host = name
-        save_known_host(
-            KnownHost(
-                type="incus",
-                name=f"{host}/{name}",
-                host=container_host,
-                user="remo",
-                instance_id=user,
-                access_mode="direct",
-            )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to create Incus container '{name}' (playbook rc={rc})."
         )
 
-        # FR-001: mark the container as remo-managed so a default `sync` picks
-        # it up. FR-005: a marking failure warns but does not fail create.
-        ok, err = _apply_managed_marker(host, user, name)
-        if not ok:
-            print_warning(
-                f"Container '{name}' was created but could not be marked as "
-                f"remo-managed ({err}). A default `remo incus sync` will skip "
-                f"it; use `--all` or re-run `remo incus update` to include it."
-            )
+    if use_ip:
+        container_host = _resolve_container_ip(name, host, user) or name
+    else:
+        container_host = name
+    save_known_host(
+        KnownHost(
+            type="incus",
+            name=f"{host}/{name}",
+            host=container_host,
+            user="remo",
+            instance_id=user,
+            access_mode="direct",
+        )
+    )
 
-        if volume_size or cores or memory:
-            rc = _run_resize_playbook(
+    # FR-001: mark the container as remo-managed so a default `sync` picks
+    # it up. FR-005: a marking failure warns but does not fail create.
+    ok, err = _apply_managed_marker(host, user, name)
+    if not ok:
+        print_warning(
+            f"Container '{name}' was created but could not be marked as "
+            f"remo-managed ({err}). A default `remo incus sync` will skip "
+            f"it; use `--all` or re-run `remo incus update` to include it."
+        )
+
+    if volume_size or cores or memory:
+        try:
+            _run_resize_playbook(
                 name=name,
                 host=host,
                 user=user,
@@ -310,87 +312,56 @@ def create(
                 memory=memory,
                 verbose=verbose,
             )
+        except OperationFailedError as e:
+            raise OperationFailedError(f"Container '{name}' was created but resizing failed: {e}") from e
 
-    return rc
 
-
-def destroy(
-    name: str,
-    host: str = "",
-    user: str = "",
-    remove_storage: bool = False,
-    auto_confirm: bool = False,
+def teardown(
+    entry: KnownHost,
+    *,
     verbose: bool = False,
-) -> int:
-    """Destroy an Incus container.
+    remove_storage: bool = False,
+    **_ignored: object,
+) -> None:
+    """Destroy the Incus container backing *entry* (Protocol Part A).
 
-    Returns the ansible-playbook exit code (0 on success).
+    Provider-destruction only (R-A3): the guard, snapshot pre-cleanup,
+    confirmation prompt, and registry removal all now live in
+    ``core.lifecycle.run_destroy``, which calls this as its one
+    provider-specific step. The generated CLI's ``destroy`` command also
+    forwards its ``--host``/``--user`` destroy-options through as keyword
+    arguments; they're accepted-but-ignored here (absorbed by
+    ``**_ignored``) since the resolved *entry* is the sole source of truth
+    for where the container lives (R-A2) — ``host`` doesn't affect where
+    the playbook runs, and ``user`` is a stale hint superseded by
+    ``entry.instance_id``.
     """
-    validate_name(name, "container name")
-    guard_not_added_ssh_host(name, "incus")  # FR-012
-
-    # If --host not specified, look up container in known_hosts.
-    if not host:
-        host, looked_up_user = _lookup_incus_host(name)
-        if not user and looked_up_user:
-            user = looked_up_user
+    incus_host, sep, container = entry.name.partition("/")
+    if not sep:
+        incus_host, container = "localhost", entry.name
+    user = entry.instance_id  # host user stored in instance_id field
 
     if remove_storage:
         print_warning(
             "WARNING: --remove-storage will delete host mount directories — all data on bound mounts will be lost!"
         )
 
-    # FR-020 through FR-023: surface any remo-managed snapshots and offer to
-    # clean them up alongside the instance, before the destructive prompt.
-    try:
-        _pre_destroy_snapshots = _list_snapshots_for_container(host, name, user)
-    except RuntimeError as e:
-        print_warning(
-            f"Could not list snapshots before destroy ({e}); "
-            f"proceeding without snapshot cleanup."
-        )
-        _pre_destroy_snapshots = []
-    handle_destroy_snapshot_cleanup(
-        provider_label="Incus",
-        instance=name,
-        snapshots=_pre_destroy_snapshots,
-        delete_one=lambda snap: snapshot_delete(
-            container=name,
-            host=host,
-            user=user,
-            snap_name=snap.name,
-            auto_confirm=True,
-        ),
-        auto_confirm=auto_confirm,
-        show_status=False,
-    )
-
-    if not auto_confirm:
-        location = f" on {host}" if host and host != "localhost" else ""
-        prompt = f"Destroy Incus container '{name}'{location}? This cannot be undone."
-        if not confirm(prompt):
-            print_info("Aborted.")
-            return 0
-
-    print_info(f"Destroying Incus container '{name}'...")
-
     extra_vars: list[str] = [
-        "-e", f"container_name={name}",
+        "-e", f"container_name={container}",
         "-e", f"preserve_data={'false' if remove_storage else 'true'}",
     ]
 
-    if host != "localhost":
-        extra_vars.extend(["-i", f"{host},"])
+    if incus_host != "localhost":
+        extra_vars.extend(["-i", f"{incus_host},"])
         extra_vars.extend(["-e", "target_hosts=all"])
         if user:
             extra_vars.extend(["-e", f"incus_host_user={user}"])
 
     rc = run_playbook("incus_teardown.yml", extra_vars, verbose=verbose)
-
-    # Remove from known_hosts regardless of rc (best-effort cleanup).
-    remove_known_host("incus", f"{host}/{name}")
-
-    return rc
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to destroy Incus container '{container}' (playbook rc={rc})."
+        )
 
 
 def update(
@@ -403,14 +374,16 @@ def update(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
-) -> int:
+) -> None:
     """Re-configure dev tools on an existing Incus container.
 
     When any of *volume_size*, *cores*, or *memory* is provided, apply
     those resource changes (via incus config set / device override)
     before running the dev-tools configure playbook.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Raises :class:`PreconditionError` if the container's IP could not be
+    resolved, or :class:`OperationFailedError` on a nonzero
+    ansible-playbook rc.
     """
     validate_name(name, "container name")
     guard_not_added_ssh_host(name, "incus")  # FR-012
@@ -441,7 +414,7 @@ def update(
             bits.append(f"memory={memory}MiB")
         location = f" on {host}" if host and host != "localhost" else ""
         print_info(f"Updating resources on '{name}' ({', '.join(bits)}){location}...")
-        rc = _run_resize_playbook(
+        _run_resize_playbook(
             name=name,
             host=host,
             user=user,
@@ -450,38 +423,61 @@ def update(
             memory=memory,
             verbose=verbose,
         )
-        if rc != 0:
-            return rc
 
     print_info(f"Looking up container '{name}'...")
 
     container_ip = _resolve_container_ip(name, host, user)
 
     if not container_ip:
-        print_error(f"Could not find IP for container '{name}'")
-        print_warning(
-            "Container may not exist, may be stopped, or may not have an IP yet"
-        )
         ssh_target = f"{user}@{host}" if user else host
-        print_warning(f"Check with: ssh {ssh_target} 'incus list {name}'")
-        sys.exit(1)
+        raise PreconditionError(
+            f"Could not find IP for container '{name}'. Container may not "
+            f"exist, may be stopped, or may not have an IP yet. Check with: "
+            f"ssh {ssh_target} 'incus list {name}'"
+        )
 
     print_info(f"Found container at {container_ip}")
     print_info(f"Configuring container '{name}'...")
 
     extra_vars: list[str] = ["-e", f"container_ip={container_ip}"]
 
-    extra_vars.extend(build_tool_args(tools_only, tools_skip))
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
-    tz = detect_timezone()
-    if tz:
-        extra_vars.extend(["-e", f"timezone={tz}"])
+    rc = run_playbook("incus_configure.yml", extra_vars, verbose=verbose)
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to configure tools on container '{name}' (playbook rc={rc})."
+        )
 
-    current = get_current_version()
-    if current != "unknown":
-        extra_vars.extend(["-e", f"remo_version={current}"])
 
-    return run_playbook("incus_configure.yml", extra_vars, verbose=verbose)
+def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
+    """Re-apply tool configuration to an existing container (Protocol Part A).
+
+    Entry-based wrapper around :func:`update`: parses the host-scoped
+    ``entry.name`` (``"<incus_host>/<container>"``) and the Incus-host SSH
+    user carried in ``entry.instance_id`` (R-A2 — callers never parse
+    names). ``update`` now raises directly on failure (R-A1), so this is a
+    thin adapter.
+    """
+    incus_host, sep, container = entry.name.partition("/")
+    if not sep:
+        incus_host, container = "localhost", entry.name
+    update(name=container, host=incus_host, user=entry.instance_id, verbose=verbose)
+
+
+def _split_host_container(entry: KnownHost) -> tuple[str, str]:
+    if "/" in entry.name:
+        host, container = entry.name.split("/", maxsplit=1)
+        return host, container
+    return "", entry.name
+
+
+_LIST_COLUMNS = (
+    Column("CONTAINER", lambda e: _split_host_container(e)[1]),
+    Column("INCUS HOST", lambda e: _split_host_container(e)[0]),
+    Column("SSH HOST", lambda e: e.host),
+    Column("SSH COMMAND", lambda e: f"ssh {e.user}@{e.host}"),
+)
 
 
 def list_hosts() -> None:
@@ -492,42 +488,22 @@ def list_hosts() -> None:
     hint about creating one with ``remo incus create``.
     """
     entries = get_known_hosts(type_filter="incus")
-
-    print(
-        f"{'CONTAINER':<20} {'INCUS HOST':<20} {'SSH HOST':<20} SSH COMMAND"
-    )
-    print(
-        f"{'---------':<20} {'----------':<20} {'--------':<20} -----------"
+    render_host_table(
+        entries,
+        _LIST_COLUMNS,
+        empty_message="No Incus containers registered.\nCreate one with: remo incus create <name>",
     )
 
-    for entry in entries:
-        if "/" in entry.name:
-            incus_host, container = entry.name.split("/", maxsplit=1)
-        else:
-            incus_host = ""
-            container = entry.name
 
-        ssh_host = entry.host
-        ssh_user = entry.user
-        ssh_cmd = f"ssh {ssh_user}@{ssh_host}"
-
-        print(f"{container:<20} {incus_host:<20} {ssh_host:<20} {ssh_cmd}")
-
-    if not entries:
-        print("No Incus containers registered.")
-        print("Create one with: remo incus create <name>")
-
-
-def info(name: str, host: str = "", user: str = "") -> int:
+def info(name: str, host: str = "", user: str = "") -> None:
     """Print detailed information about an Incus container.
 
     Runs ``incus list <name> --format=json`` (locally or via SSH on the
     Incus host) and reports state, IP, CPU limit, memory limit, and root
-    disk size. Returns 0 on success or 1 if the container could not be
+    disk size. Raises :class:`OperationFailedError` if the query/parse
+    fails, or :class:`PreconditionError` if the container could not be
     located.
     """
-    import json
-
     validate_name(name, "container name")
 
     if not host:
@@ -554,20 +530,17 @@ def info(name: str, host: str = "", user: str = "") -> int:
         )
 
     if result.returncode != 0:
-        print_error(
+        raise OperationFailedError(
             f"Failed to query container '{name}' on '{host}': {result.stderr.strip()}"
         )
-        return 1
 
     try:
         containers = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        print_error(f"Could not parse incus output for '{name}'.")
-        return 1
+    except json.JSONDecodeError as e:
+        raise OperationFailedError(f"Could not parse incus output for '{name}'.") from e
 
     if not containers:
-        print_error(f"Container '{name}' was not found on Incus host '{host}'.")
-        return 1
+        raise PreconditionError(f"Container '{name}' was not found on Incus host '{host}'.")
 
     container = containers[0]
     state = container.get("status", "unknown")
@@ -598,8 +571,6 @@ def info(name: str, host: str = "", user: str = "") -> int:
     print(f"  Root size:  {root_size or '(profile default)'}{f' ({root_pool})' if root_pool else ''}")
     print("")
 
-    return 0
-
 
 def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> ProbeResult:
     """Provider-probe for :func:`sync` (contracts/provider-probe.md "Incus").
@@ -612,7 +583,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
     """
     try:
         rows = _list_containers_with_marker(scope.host, user)
-    except RuntimeError as exc:
+    except OperationFailedError as exc:
         raise ProbeError(f"Failed to list containers on '{scope.host}': {exc}") from exc
 
     warnings: list[str] = []
@@ -688,13 +659,13 @@ def bootstrap(
     user: str = "",
     network_type: str = "",
     verbose: bool = False,
-) -> int:
+) -> None:
     """Initialize an Incus host by running the bootstrap playbook.
 
     Configures storage pools, networking, and other prerequisites so the
     host is ready to create containers.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Raises :class:`OperationFailedError` on a nonzero ansible-playbook rc.
     """
     extra_vars: list[str] = []
 
@@ -715,7 +686,9 @@ def bootstrap(
     if verbose:
         extra_vars.extend(["-e", "incus_bootstrap_verbosity=detailed"])
 
-    return run_playbook("incus_bootstrap.yml", extra_vars, verbose=verbose)
+    rc = run_playbook("incus_bootstrap.yml", extra_vars, verbose=verbose)
+    if rc != 0:
+        raise OperationFailedError(f"Failed to bootstrap Incus host (playbook rc={rc}).")
 
 
 # ---------------------------------------------------------------------------
@@ -754,14 +727,14 @@ def _list_snapshots_for_container(
     Queries ``incus query /1.0/instances/<container>/snapshots?recursion=1``
     over SSH (or locally) and parses the JSON response. Returns an empty
     list when the container has no snapshots. Raises
-    :class:`RuntimeError` if the Incus call itself fails so the caller can
-    surface the error per FR-011.
+    :class:`OperationFailedError` if the Incus call itself fails so the
+    caller can surface the error per FR-011.
     """
     quoted = shlex.quote(container)
     cmd = f"incus query /1.0/instances/{quoted}/snapshots?recursion=1"
     result = _ssh_run_on_incus_host(host, user, cmd)
     if result.returncode != 0:
-        raise RuntimeError(
+        raise OperationFailedError(
             f"incus query failed (rc={result.returncode}): "
             f"{result.stderr.strip() or result.stdout.strip()}"
         )
@@ -769,7 +742,7 @@ def _list_snapshots_for_container(
     try:
         items = json.loads(result.stdout or "[]")
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"incus query returned unparseable JSON: {e}") from e
+        raise OperationFailedError(f"incus query returned unparseable JSON: {e}") from e
 
     snapshots: list[Snapshot] = []
     for item in items:
@@ -807,7 +780,7 @@ def _parse_incus_timestamp(s: str) -> datetime:
         return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
-def snapshot_create(
+def snapshot_create_legacy(
     container: str,
     host: str,
     user: str,
@@ -815,6 +788,11 @@ def snapshot_create(
     description: str = "",
 ) -> int:
     """Create a snapshot of *container* on the Incus host.
+
+    Legacy rc-returning, multi-kwarg signature retained for internal reuse.
+    Called by :func:`snapshot_create` below, the Protocol Part A
+    (entry-based, exception-raising) wrapper the generated CLI actually
+    invokes.
 
     Returns 0 on success, 1 on provider failure or duplicate-name conflict
     (per FR-006). The snapshot name must already have been validated via
@@ -825,7 +803,7 @@ def snapshot_create(
 
     try:
         existing = _list_snapshots_for_container(host, container, user)
-    except RuntimeError as e:
+    except OperationFailedError as e:
         print_error(str(e))
         return 1
 
@@ -890,7 +868,7 @@ def _get_container_status(host: str, user: str, container: str) -> str:
     return info.get("status", "")
 
 
-def snapshot_restore(
+def snapshot_restore_legacy(
     container: str,
     host: str,
     user: str,
@@ -898,6 +876,11 @@ def snapshot_restore(
     auto_confirm: bool = False,
 ) -> int:
     """Restore *container* to *snap_name*.
+
+    Legacy rc-returning, multi-kwarg signature retained for internal reuse.
+    Called by :func:`snapshot_restore` below, the Protocol Part A
+    (entry-based, exception-raising) wrapper the generated CLI actually
+    invokes.
 
     Validates that the snapshot exists and is :attr:`SnapshotStatus.AVAILABLE`
     (always true on Incus once present). Confirms with the user unless
@@ -908,7 +891,7 @@ def snapshot_restore(
     guard_not_added_ssh_host(container, "incus")  # FR-012
     try:
         existing = _list_snapshots_for_container(host, container, user)
-    except RuntimeError as e:
+    except OperationFailedError as e:
         print_error(str(e))
         return 1
 
@@ -985,18 +968,24 @@ def snapshot_restore(
     return 0
 
 
-def snapshot_delete(
+def snapshot_delete_legacy(
     container: str,
     host: str,
     user: str,
     snap_name: str,
     auto_confirm: bool = False,
 ) -> int:
-    """Delete a snapshot of *container*."""
+    """Delete a snapshot of *container*.
+
+    Legacy rc-returning, multi-kwarg signature retained for internal reuse.
+    Called by :func:`snapshot_delete` below, the Protocol Part A
+    (entry-based, exception-raising) wrapper the generated CLI actually
+    invokes.
+    """
     guard_not_added_ssh_host(container, "incus")  # FR-012
     try:
         existing = _list_snapshots_for_container(host, container, user)
-    except RuntimeError as e:
+    except OperationFailedError as e:
         print_error(str(e))
         return 1
 
@@ -1034,3 +1023,94 @@ def snapshot_delete(
 
     print_info(f"Deleted snapshot '{snap_name}' of {container}.")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Protocol Part A — entry-based wrappers (contracts/provider-protocol.md)
+# ---------------------------------------------------------------------------
+#
+# These are the Protocol-conformant public surface (``core/provider_protocol.py``
+# ``Provider``): they take a resolved registry entry, do all host/container
+# name-parsing internally (R-A2), and raise a taxonomy error instead of
+# returning an rc (R-A1). They delegate to the legacy rc-returning,
+# multi-kwarg functions above, which do their own "host/container"
+# name-parsing and remain purely for internal reuse — the generated CLI
+# (``cli/providers/factory.py``) only ever calls the Protocol wrappers below.
+
+
+def snapshot_create(entry: KnownHost, snapshot_name: str, *, description: str = "") -> None:
+    """Create a snapshot of the container backing *entry* (Protocol Part A)."""
+    incus_host, sep, container = entry.name.partition("/")
+    if not sep:
+        incus_host, container = "localhost", entry.name
+    rc = snapshot_create_legacy(
+        container=container,
+        host=incus_host,
+        user=entry.instance_id,
+        snap_name=snapshot_name,
+        description=description,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to create snapshot '{snapshot_name}' on '{entry.name}'."
+        )
+
+
+def snapshot_restore(entry: KnownHost, snapshot_name: str) -> None:
+    """Restore the container backing *entry* to *snapshot_name* (Protocol Part A).
+
+    Entry-based Protocol callers have no CLI prompt available, so this
+    always confirms (``auto_confirm=True``); the interactive confirmation
+    lives only in the legacy CLI-facing path.
+    """
+    incus_host, sep, container = entry.name.partition("/")
+    if not sep:
+        incus_host, container = "localhost", entry.name
+    rc = snapshot_restore_legacy(
+        container=container,
+        host=incus_host,
+        user=entry.instance_id,
+        snap_name=snapshot_name,
+        auto_confirm=True,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to restore snapshot '{snapshot_name}' on '{entry.name}'."
+        )
+
+
+def snapshot_delete(entry: KnownHost, snapshot_name: str) -> None:
+    """Delete a snapshot of the container backing *entry* (Protocol Part A).
+
+    Always confirms (``auto_confirm=True``) — see :func:`snapshot_restore`.
+    """
+    incus_host, sep, container = entry.name.partition("/")
+    if not sep:
+        incus_host, container = "localhost", entry.name
+    rc = snapshot_delete_legacy(
+        container=container,
+        host=incus_host,
+        user=entry.instance_id,
+        snap_name=snapshot_name,
+        auto_confirm=True,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to delete snapshot '{snapshot_name}' on '{entry.name}'."
+        )
+
+
+def snapshot_list(entry: KnownHost) -> list[Snapshot]:
+    """List snapshots of the container backing *entry* (Protocol Part A, R-A5).
+
+    Public on every provider — eliminates the Incus/Proxmox private
+    reach-ins the CLI layer previously needed. ``_list_snapshots_for_container``
+    already raises :class:`OperationFailedError` on failure, so no
+    translation is needed here.
+    """
+    incus_host, sep, container = entry.name.partition("/")
+    if not sep:
+        incus_host, container = "localhost", entry.name
+    return _list_snapshots_for_container(
+        host=incus_host, container=container, user=entry.instance_id
+    )
