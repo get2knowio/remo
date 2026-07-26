@@ -1,6 +1,6 @@
 # remo Development Guidelines
 
-Auto-generated from all feature plans. Last updated: 2026-07-25
+Auto-generated from all feature plans. Last updated: 2026-07-26
 
 ## Constitution
 
@@ -15,6 +15,7 @@ See `.specify/memory/constitution.md` for project principles and non-negotiable 
 - FastAPI/Uvicorn + WebSockets (backend, optional `web` extra), TypeScript/Vite/React + ghostty-web (frontend), Bash (`remo-host` host command templated by Ansible) (010-web-session-interface)
 - Stdlib `urllib.request` CLI setup client + token-gated `/api/v1/setup/*` FastAPI surface; service state in flat files under the writable `REMO_HOME` volume (`web-identity/` keypair + service known_hosts, `~/.config/remo/web-service.json` saved credentials, `cache_version: 2`) (011-web-adopt; payload versioning updated by 015-registry-v2)
 - `core/registry.py`: stdlib `json` (format), `fcntl` (advisory locking via a `registry.lock` sidecar), `os.replace` (atomic writes). No new runtime deps. Setup API mirror payload moved to v2 (`contracts/mirror-payload-v2.md`) with a `payload_versions` capability handshake; an upgraded service still accepts v1 payloads. (015-registry-v2)
+- `core/reconcile.py`: provider-agnostic sync-reconcile engine (`SyncScope`, `DiscoveredHost`, `ProbeResult`, `build_plan` (pure), `render_plan`, the consent gate, `apply_plan` via the existing `mutate_registry()`, and the `run_sync` driver). No new runtime deps — stdlib only, built on `core/registry.py`/`core/output.py` as-is. (016-sync-reconcile)
 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module) (001-bootstrap-incus-host)
 
@@ -190,6 +191,7 @@ Provider SDKs (boto3, hcloud) are lazy-imported with clear error messages if mis
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
+- 016-sync-reconcile: Replaced all four providers' hand-rolled clear-then-repopulate `sync` with one shared reconcile engine (`core/reconcile.py`): each provider now contributes only a read-only probe (every host in scope, marked and unmarked alike, plus a `complete` enumeration-completeness flag), and the engine diffs against the in-scope registry slice, prints a scope-first plan, gates removals behind a `--yes`/interactive/`--dry-run`-aware consent gate, and writes exactly once via the existing `mutate_registry()` (aborting with a conflict error, no auto-retry, if the in-scope slice moved between plan and write). Fixes three data-loss bugs: Hetzner's `sync` wiped its entire registry slice on every run (the `remo` label it filtered on was never applied by anything — now applied at create and backfillable via `update`), a bare `remo aws sync` destroyed every other region's entries, and `remo aws stop` followed by any sync destroyed the stopped instance's own entry. The managed marker now gates only *addition* (`--all` widens it, per-provider — unrestricted for Incus/Proxmox/Hetzner, narrowed to `remo-*`-named instances for AWS); provider presence alone protects an existing entry from removal. New `--yes`/`--dry-run` on all four providers' `sync`, new `--all` on AWS/Hetzner. No registry schema change.
 - 015-registry-v2: Replaced the colon-delimited `known_hosts` registry with a versioned JSON `registry.json` (format v2, named per-type fields, no positional overloading) via a single new accessor `core/registry.py` (parse/serialize/validate/advisory-lock/migrate) shared by the CLI, providers, and web service; lazy, lossless, idempotent CLI migration (`known_hosts` → `known_hosts.v1.bak`); `core/known_hosts.py` slimmed to thin delegates; the setup API's adoption mirror moved to payload v2 with a `payload_versions` capability handshake (an upgraded service still accepts v1 payloads); push delta-cache bumped to `cache_version: 2`.
 - 011-web-adopt: Added CLI-to-web adoption — unconfigured boot with service-scoped ed25519 identity, token-gated `/api/v1/setup/*` (REMO_WEB_API_TOKEN, fail-closed), `remo web adopt`/`remo web push` (registry mirror + workstation-verified host keys + idempotent `remo-web@<id>` authorized_keys entries), AwaitingAdoption SPA page.
 - 010-web-session-interface: Added remo-web Docker service (FastAPI + React/ghostty-web) brokering browser terminal sessions across all Remo-managed instances via a new remo-host SSH command; web extra + remo web {serve,check} CLI group.

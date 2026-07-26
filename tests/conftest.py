@@ -106,3 +106,15 @@ def write_v2_registry(config_dir, hosts: list[dict], version: int = 2) -> None:
     """Write a v2 registry.json document built from a list of hostEntry dicts."""
     doc = {"version": version, "hosts": hosts}
     (config_dir / "registry.json").write_text(json.dumps(doc, indent=2) + "\n")
+
+
+def seed_registry(config_dir, hosts: list) -> None:
+    """Write a v2 registry.json document from a list of ``KnownHost`` objects.
+
+    Wraps :func:`write_v2_registry`, converting each host via the real
+    ``known_host_to_entry`` serializer so seeded fixtures always match what
+    the registry accessor itself would have written.
+    """
+    from remo_cli.core.registry import known_host_to_entry
+
+    write_v2_registry(config_dir, [known_host_to_entry(h) for h in hosts])

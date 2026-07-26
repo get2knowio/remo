@@ -1,8 +1,8 @@
 """Tests for the Proxmox managed-marker feature (providers/proxmox.py).
 
-Covers tag apply (union, preserve, no-op), bulk tag read, create/update wiring,
-and filtered sync — including FR-003 (preserve tags), FR-010 (read-only), and
-FR-013 (bounded queries). All SSH is mocked.
+Covers tag apply (union, preserve, no-op), bulk tag read, and create/update
+wiring — including FR-003 (preserve tags), FR-010 (read-only), and FR-013
+(bounded queries). All SSH is mocked.
 """
 
 from __future__ import annotations
@@ -105,6 +105,17 @@ class TestReadTags:
         mapping = providers_proxmox._read_tags_by_vmid("h", "u")
         assert mapping == {"100": {"media", "remo"}, "101": {"media"}}
 
+    def test_nonzero_returncode_raises_instead_of_reporting_empty(self, mocker):
+        # T044/research.md R5 #1: an SSH failure must never be interpreted
+        # as "no container has any tags" -- that reads every container as
+        # unmarked and a default sync would wipe the node's registry slice.
+        node = mocker.patch(
+            "remo_cli.providers.proxmox._run_on_node", autospec=True
+        )
+        node.return_value = _completed(1, stderr="ssh: connection refused")
+        with pytest.raises(RuntimeError, match="connection refused"):
+            providers_proxmox._read_tags_by_vmid("h", "u")
+
 
 # ---------------------------------------------------------------------------
 # create() / update() wiring
@@ -157,89 +168,10 @@ class TestCreateUpdateWiring:
 
 
 # ---------------------------------------------------------------------------
-# sync() — filtering, hint, FR-010 (read-only), FR-013 (bounded)
+# sync()'s probe now lives in providers/proxmox.py `_probe` and is covered by
+# tests/unit/providers/test_proxmox_sync.py (feature 016-sync-reconcile).
+# The direct-write internals this class used to exercise (save_known_host
+# called straight from sync(), clear_known_hosts_by_prefix) no longer exist:
+# sync() delegates to core/reconcile.run_sync, which owns diffing, consent,
+# and the single registry write.
 # ---------------------------------------------------------------------------
-
-
-_PCT_LIST = (
-    "VMID       Status     Lock         Name\n"
-    "100        running                 dev1\n"
-    "101        running                 plex\n"
-)
-
-
-@pytest.fixture
-def patch_registry(mocker):
-    save = mocker.patch("remo_cli.providers.proxmox.save_known_host")
-    mocker.patch("remo_cli.providers.proxmox.clear_known_hosts_by_prefix")
-    return save
-
-
-class TestSyncFiltering:
-    def _wire_ssh(self, mocker):
-        """Route `pct list` and the bulk conf dump through _ssh_run."""
-        def side_effect(host, user, cmd):
-            if cmd == "pct list":
-                return _completed(0, stdout=_PCT_LIST)
-            if cmd.startswith("for f in /etc/pve/lxc/"):
-                return _completed(
-                    0, stdout="@@@/etc/pve/lxc/100.conf\ntags: remo\n"
-                )
-            return _completed(0)
-
-        return mocker.patch(
-            "remo_cli.providers.proxmox._ssh_run", side_effect=side_effect
-        )
-
-    def test_default_registers_only_marked(self, patch_registry, mocker):
-        self._wire_ssh(mocker)
-        mocker.patch("remo_cli.providers.proxmox.print_info")
-        warn = mocker.patch("remo_cli.providers.proxmox.print_warning")
-
-        providers_proxmox.sync(host="node", user="root")
-
-        saved = [c.args[0].name for c in patch_registry.call_args_list]
-        assert saved == ["node/dev1"]
-        warn_text = " ".join(str(c.args[0]) for c in warn.call_args_list)
-        assert "plex" in warn_text
-
-    def test_all_registers_everything(self, patch_registry, mocker):
-        self._wire_ssh(mocker)
-        mocker.patch("remo_cli.providers.proxmox.print_info")
-        mocker.patch("remo_cli.providers.proxmox.print_warning")
-
-        providers_proxmox.sync(host="node", user="root", include_all=True)
-
-        saved = sorted(c.args[0].name for c in patch_registry.call_args_list)
-        assert saved == ["node/dev1", "node/plex"]
-
-    def test_read_only_and_bounded(self, patch_registry, mocker):
-        ssh = self._wire_ssh(mocker)
-        mocker.patch("remo_cli.providers.proxmox.print_info")
-        mocker.patch("remo_cli.providers.proxmox.print_warning")
-
-        providers_proxmox.sync(host="node", user="root")
-
-        # FR-013: two bulk calls (pct list + one grep), no per-container loop.
-        assert ssh.call_count == 2
-        # FR-010: no marker mutation during sync.
-        for call in ssh.call_args_list:
-            assert "pct set" not in call.args[2]
-
-    def test_registry_shape_unchanged(self, patch_registry, mocker):
-        # FR-012: the KnownHost written by sync keeps its pre-feature fields.
-        self._wire_ssh(mocker)
-        mocker.patch("remo_cli.providers.proxmox.print_info")
-        mocker.patch("remo_cli.providers.proxmox.print_warning")
-
-        providers_proxmox.sync(host="node", user="root")
-
-        kh = patch_registry.call_args.args[0]
-        assert kh.type == "proxmox"
-        assert kh.name == "node/dev1"
-        assert kh.user == "remo"
-        assert kh.instance_id == "100"
-        assert kh.region == "root"
-        assert kh.access_mode == "direct"
-        assert not hasattr(kh, "marker")
-        assert not hasattr(kh, "managed")

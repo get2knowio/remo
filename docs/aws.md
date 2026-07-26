@@ -215,7 +215,8 @@ The principal `remo` uses (your local IAM user, SSO session, or assumed role) ne
 |---|---|
 | `create` | `RunInstances`, `DescribeInstances`, `DescribeImages`, `DescribeVolumes`, `CreateTags`, `CreateVolume`, `DescribeSecurityGroups`, `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `CreateKeyPair`, `ImportKeyPair`, `DescribeKeyPairs`, `RunInstances`, `iam:PassRole`, `iam:GetRole`, `iam:CreateRole`, `iam:AttachRolePolicy`, `iam:GetInstanceProfile`, `iam:CreateInstanceProfile`, `iam:AddRoleToInstanceProfile` |
 | `destroy` | `DescribeInstances`, `TerminateInstances`, `DescribeVolumes`, `DeleteVolume`, `DescribeSecurityGroups`, `DeleteSecurityGroup`, `DescribeKeyPairs`, `DeleteKeyPair`, plus the IAM cleanup mirror of `create` |
-| `update`, `info`, `list`, `sync` | `DescribeInstances`, `DescribeVolumes` (+ `ModifyVolume` and `DescribeVolumesModifications` for `update --volume-size`) |
+| `update`, `info`, `list` | `DescribeInstances`, `DescribeVolumes` (+ `ModifyVolume` and `DescribeVolumesModifications` for `update --volume-size`) |
+| `sync` | `DescribeInstances` — describes every non-terminal instance in the region (paginated; not filtered by the `remo` tag) and reads each instance's tags to determine its registry name and managed-marker state. No new action beyond what `update`/`info`/`list` already require. |
 | `stop`, `start`, `reboot` | `DescribeInstances`, `StopInstances` / `StartInstances` / `RebootInstances` |
 | `snapshot create` | `DescribeInstances`, `DescribeVolumes`, `DescribeSnapshots`, `CreateSnapshot`, `CreateTags` |
 | `snapshot list` | `DescribeInstances`, `DescribeVolumes`, `DescribeSnapshots` |

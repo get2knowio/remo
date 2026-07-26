@@ -19,7 +19,6 @@ import time
 
 from remo_cli.core.ansible_runner import run_playbook
 from remo_cli.core.known_hosts import (
-    clear_known_hosts_by_type,
     get_aws_region,
     get_known_hosts,
     guard_not_added_ssh_host,
@@ -29,6 +28,13 @@ from remo_cli.core.known_hosts import (
 from datetime import datetime, timezone
 
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.reconcile import (
+    DiscoveredHost,
+    ProbeError,
+    ProbeResult,
+    SyncScope,
+    run_sync,
+)
 from remo_cli.core.snapshot import (
     handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
@@ -704,67 +710,147 @@ def list_hosts() -> None:
         print(f"{host.name:<20} {instance_id:<20} remo shell")
 
 
-def sync(region: str = "") -> None:
-    """Sync local known-hosts registry with running AWS EC2 instances.
+def _paginate_instances(ec2) -> tuple[list[dict], bool]:  # noqa: ANN001
+    """Walk every page of ``describe_instances``, accumulating raw instance dicts.
 
-    Queries EC2 for instances tagged ``remo=true`` that are currently
-    running, clears all existing AWS entries in the registry, and
-    re-registers each discovered instance.
+    Filters on instance state only -- never ``tag:remo`` (FR-044): a
+    server-side marker filter would make an untagged-but-live instance
+    indistinguishable from a deleted one, and it would get proposed for
+    removal. ``pending``/``running``/``stopping``/``stopped`` matches the
+    list every other AWS command already passes to ``_find_remo_instance``
+    (FR-017); ``shutting-down``/``terminated`` are excluded.
+
+    Returns ``(instances, complete)``. A failure before any page is
+    gathered means we could not ask at all, so it raises :class:`ProbeError`
+    (R3, mirrors Hetzner's ``_hetzner_api_paged``); a failure after at least
+    one page succeeded means the enumeration is partial -- swallowed here
+    and reported as ``complete=False`` alongside whatever was gathered.
     """
-    _require_boto3()
-    effective_region = _effective_region(region)
-    session = _boto3_session(effective_region)
+    instances: list[dict] = []
+    got_a_page = False
+    try:
+        paginator = ec2.get_paginator("describe_instances")
+        pages = paginator.paginate(
+            Filters=[
+                {
+                    "Name": "instance-state-name",
+                    "Values": ["pending", "running", "stopping", "stopped"],
+                }
+            ]
+        )
+        for page in pages:
+            for reservation in page.get("Reservations", []):
+                instances.extend(reservation.get("Instances", []))
+            got_a_page = True
+        return instances, True
+    except ProbeError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- boto3 raises ClientError et al.
+        if not got_a_page:
+            raise ProbeError(f"describe_instances pagination failed: {exc}") from exc
+        return instances, False
+
+
+def _derive_resource_name(tags: dict[str, str]) -> str:
+    """Derive the registry name from instance tags (R8).
+
+    Prefers the authoritative ``remo_resource_name`` tag; falls back to the
+    ``Name`` tag with the ``remo-`` prefix stripped. Returns ``""`` when
+    neither yields a usable name -- the caller skips such an instance
+    entirely, since it can't be matched to any registry entry.
+    """
+    name = tags.get("remo_resource_name", "")
+    if name:
+        return name
+    name_tag = tags.get("Name", "")
+    return name_tag.removeprefix("remo-") if name_tag else ""
+
+
+def _probe(scope: SyncScope, include_all: bool) -> ProbeResult:
+    """Enumerate every non-terminal EC2 instance in ``scope.region``.
+
+    Never filtered server-side by ``tag:remo`` (FR-044) -- ``marked`` is
+    evaluated locally from the broad query so an untagged-but-live instance
+    is retained rather than proposed for removal.
+
+    ``include_all`` itself is not consulted here -- the query is unchanged
+    either way (FR-044) -- but each host's ``adopted`` flag *is* set here,
+    narrowing what ``--all`` may actually sweep in to instances whose
+    ``tag:Name`` matches ``remo-*`` (R7), rather than any untagged instance
+    in the region.
+    """
+    del include_all
+    session = _boto3_session(scope.region)
     ec2 = session.client("ec2")
 
-    print_info(f"Syncing AWS instances in region {effective_region}...")
+    instances, complete = _paginate_instances(ec2)
 
-    response = ec2.describe_instances(
-        Filters=[
-            {"Name": "tag:remo", "Values": ["true"]},
-            {"Name": "instance-state-name", "Values": ["running"]},
-        ]
-    )
-
-    instances: list[dict] = []
-    for reservation in response.get("Reservations", []):
-        for instance in reservation.get("Instances", []):
-            instances.append(instance)
-
-    # Clear all existing AWS entries before re-populating.
-    clear_known_hosts_by_type("aws")
-
-    if not instances:
-        print_info("No running remo instances found.")
-        return
-
+    hosts: list[DiscoveredHost] = []
     for instance in instances:
-        tags = {
-            t["Key"]: t["Value"] for t in instance.get("Tags", [])
-        }
-        name_tag = tags.get("Name", "")
-        # Strip the remo- prefix from the Name tag.
-        resource_name = name_tag.removeprefix("remo-") if name_tag else ""
-        if not resource_name:
+        tags = {t["Key"]: t["Value"] for t in instance.get("Tags", [])}
+        name = _derive_resource_name(tags)
+        if not name:
             continue
 
-        ip = instance.get("PublicIpAddress", "")
-        instance_id = instance.get("InstanceId", "")
-        access_mode = tags.get("remo_access_mode", "ssm")
-
-        save_known_host(
-            KnownHost(
-                type="aws",
-                name=resource_name,
-                host=ip or instance_id,
-                user="remo",
-                instance_id=instance_id,
-                access_mode=access_mode,
-                region=effective_region,
+        marked = tags.get("remo") == "true"
+        state = instance.get("State", {}).get("Name", "")
+        entry = KnownHost(
+            type="aws",
+            name=name,
+            # Never fall back to the instance id (FR-018): a stopped
+            # instance reports no PublicIpAddress, and an empty host here
+            # lets merge_entry preserve the last-known address instead of
+            # blanking or replacing it.
+            host=instance.get("PublicIpAddress", ""),
+            user="remo",
+            instance_id=instance.get("InstanceId", ""),
+            access_mode=tags.get("remo_access_mode", "ssm"),
+            region=scope.region,
+        )
+        hosts.append(
+            DiscoveredHost(
+                entry=entry,
+                marked=marked,
+                # Only a non-running state is worth annotating (FR-019);
+                # gating here keeps render_plan's annotate() correct
+                # without needing a core/reconcile.py change.
+                state=state if state != "running" else "",
+                adopted=tags.get("Name", "").startswith("remo-"),
             )
         )
-        print_success(f"  Registered: {resource_name} ({instance_id})")
 
-    print_success(f"Synced {len(instances)} instance(s).")
+    return ProbeResult(
+        hosts=hosts,
+        complete=complete,
+        incomplete_reason="" if complete else "pagination did not complete",
+        adoption_criteria="also matching instances named remo-* without the remo tag",
+    )
+
+
+def sync(
+    region: str = "",
+    include_all: bool = False,
+    auto_confirm: bool = False,
+    dry_run: bool = False,
+) -> int:
+    """Discover EC2 instances in one region and reconcile the registry.
+
+    Enumerates every non-terminal instance in the resolved region (never
+    filtered by ``tag:remo`` server-side), classifies each by the presence
+    of that tag, and reconciles the result against the registry through the
+    shared reconcile engine. Scoped to a single region -- entries recorded
+    against every other region are left untouched. Returns the process exit
+    code.
+    """
+    _require_boto3()
+    scope = SyncScope(type="aws", region=_effective_region(region))
+    return run_sync(
+        scope,
+        lambda: _probe(scope, include_all=include_all),
+        auto_confirm=auto_confirm,
+        dry_run=dry_run,
+        include_all=include_all,
+    )
 
 
 def stop(name: str = "", auto_confirm: bool = False) -> None:

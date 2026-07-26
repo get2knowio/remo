@@ -22,13 +22,19 @@ from datetime import datetime, timezone
 from remo_cli.core.ansible_runner import run_playbook
 from remo_cli.core.config import PROXMOX_MANAGED_TAG
 from remo_cli.core.known_hosts import (
-    clear_known_hosts_by_prefix,
     get_known_hosts,
     guard_not_added_ssh_host,
     remove_known_host,
     save_known_host,
 )
 from remo_cli.core.output import confirm, print_error, print_info, print_warning
+from remo_cli.core.reconcile import (
+    DiscoveredHost,
+    ProbeError,
+    ProbeResult,
+    SyncScope,
+    run_sync,
+)
 from remo_cli.core.snapshot import (
     handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
@@ -158,6 +164,12 @@ def _read_tags_by_vmid(host: str, user: str) -> dict[str, set[str]]:
         user,
         'for f in /etc/pve/lxc/*.conf; do echo "@@@$f"; cat "$f"; done 2>/dev/null',
     )
+    if result.returncode != 0:
+        # An SSH failure here must be loud: silently treating an empty
+        # tag map as "nothing is marked" turns a transient failure into a
+        # proposed deletion of the node's entire fleet (research.md R5).
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+
     mapping: dict[str, set[str]] = {}
     vmid: str | None = None
     in_snapshot_section = False
@@ -728,49 +740,30 @@ def _parse_pct_config_field(config_text: str, field: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def sync(
-    host: str,
-    user: str = "",
-    use_ip: bool = False,
-    include_all: bool = False,
-) -> None:
-    """Discover Proxmox LXC containers on *host* and register them.
+def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> ProbeResult:
+    """Provider-probe for :func:`sync` (contracts/provider-probe.md "Proxmox").
 
-    Runs ``pct list`` for the vmid/name inventory and one bulk
-    ``grep '^tags:' /etc/pve/lxc/*.conf`` to read every container's tags in a
-    single round-trip (FR-013). By default (``include_all=False``) only
-    containers carrying the ``remo`` managed tag are registered (FR-006), and
-    skipped unmarked containers are named in a hint (FR-008). With
-    ``include_all=True`` every container is registered — the pre-feature
-    behavior (FR-007) — and unmarked adoptions are called out (FR-009).
-
-    This function never mutates container state (FR-010). When *use_ip* is true,
-    each container's eth0 IP is resolved and stored as the ``host`` field.
-
-    Existing entries with the host prefix are cleared first.
+    Returns every LXC container on *scope.host* -- marked and unmarked alike;
+    the marker only decides eligibility for addition, never what is even
+    seen (FR-044). Read-only: one ``pct list`` plus one bulk tag dump, and
+    when *use_ip* is set, one IP lookup per container. Never writes/mutates
+    the provider.
     """
-    if not host:
-        print_error("Proxmox host is required (use --host).")
-        sys.exit(1)
-
-    # `pct list` columns: VMID Status Lock Name
-    if host == "localhost":
-        result = subprocess.run(
-            ["pct", "list"], capture_output=True, text=True
-        )
-    else:
-        result = _ssh_run(host, user, "pct list")
+    result = _run_on_node(scope.host, user, "pct list")
 
     if result.returncode != 0:
-        print_error(
-            f"Failed to list containers on '{host}': {result.stderr.strip()}"
+        raise ProbeError(
+            f"Failed to list containers on '{scope.host}': {result.stderr.strip()}"
         )
-        sys.exit(1)
 
     containers: list[tuple[str, str]] = []  # (vmid, hostname)
     for line in result.stdout.splitlines()[1:]:  # skip header
         parts = line.split()
-        if len(parts) < 2:
+        # A real row is `VMID Status [Lock] Name` -- at least 3 columns even
+        # when Lock is empty. A 2-column row is a nameless container, whose
+        # Status ("running"/"stopped") would otherwise be misread as the
+        # name; skip it (it can't be matched to a named registry entry).
+        if len(parts) < 3:
             continue
         vmid = parts[0]
         if not vmid.isdigit():
@@ -779,59 +772,89 @@ def sync(
         hostname = parts[-1]
         containers.append((vmid, hostname))
 
-    tags_by_vmid = _read_tags_by_vmid(host, user)
+    try:
+        # No containers means no tags to read; skip the bulk dump entirely.
+        # On an empty node the `/etc/pve/lxc/*.conf` glob would not expand and
+        # the shell command would exit non-zero, which _read_tags_by_vmid
+        # (correctly) treats as a failure -- turning a legitimate empty node
+        # into a spurious probe error instead of a clean reconcile.
+        tags_by_vmid = _read_tags_by_vmid(scope.host, user) if containers else {}
+    except RuntimeError as exc:
+        # A tag-read failure must abort the whole probe, not silently treat
+        # every container as unmarked (the bug this phase fixes -- R5 #1).
+        raise ProbeError(
+            f"Failed to read managed tags on '{scope.host}': {exc}"
+        ) from exc
 
-    clear_known_hosts_by_prefix("proxmox", f"{host}/")
-
-    registered = 0
-    skipped: list[str] = []
-    adopted_unmarked: list[str] = []
+    warnings: list[str] = []
+    hosts: list[DiscoveredHost] = []
     for vmid, hostname in containers:
         marked = PROXMOX_MANAGED_TAG in tags_by_vmid.get(vmid, set())
-        if not include_all and not marked:
-            skipped.append(hostname)
-            continue
-        if include_all and not marked:
-            adopted_unmarked.append(hostname)
+
         if use_ip:
-            container_host = _resolve_container_ip(hostname, host, user, vmid=vmid) or hostname
+            ip = _resolve_container_ip(hostname, scope.host, user, vmid=vmid)
+            if ip:
+                container_host = ip
+            else:
+                # Soft IP-lookup failure: leave entry.host empty so
+                # merge_entry preserves the previously recorded address
+                # instead of overwriting it with the bare hostname.
+                container_host = ""
+                warnings.append(
+                    f"Could not resolve IP for '{hostname}', keeping "
+                    "previously recorded address"
+                )
         else:
             container_host = hostname
-        save_known_host(
-            KnownHost(
-                type="proxmox",
-                name=f"{host}/{hostname}",
-                host=container_host,
-                user="remo",
-                instance_id=vmid,
-                access_mode="direct",
-                region=user or "root",
-            )
-        )
-        registered += 1
 
-    print_info(f"Synced {registered} container(s) from '{host}'.")
+        entry = KnownHost(
+            type="proxmox",
+            name=f"{scope.host}/{hostname}",
+            host=container_host,
+            user="remo",
+            instance_id=vmid,
+            access_mode="direct",
+            region=user or "root",
+        )
+        hosts.append(DiscoveredHost(entry=entry, marked=marked))
 
-    if not include_all and skipped:
-        print_warning(
-            f"Skipped {len(skipped)} unmarked container(s): {', '.join(skipped)}"
-        )
-        print_info(
-            f"  • Adopt all this run:      remo proxmox sync --host {host} --all"
-        )
-        print_info(
-            "  • Mark one permanently:    remo proxmox update --name <name> "
-            f"--host {host}"
-        )
+    return ProbeResult(
+        hosts=hosts,
+        complete=True,  # neither `pct list` nor the tag dump paginates
+        adoption_criteria="every container on this Proxmox node",
+        warnings=warnings,
+    )
 
-    if include_all and adopted_unmarked:
-        print_warning(
-            f"{len(adopted_unmarked)} of the registered container(s) are not "
-            f"remo-created (adopted via --all): {', '.join(adopted_unmarked)}"
-        )
-        print_info(
-            "Note: a later default `sync` will drop those unmarked one(s) again."
-        )
+
+def sync(
+    host: str,
+    user: str = "",
+    use_ip: bool = False,
+    include_all: bool = False,
+    auto_confirm: bool = False,
+    dry_run: bool = False,
+) -> int:
+    """Reconcile the registry's Proxmox entries for *host* against reality.
+
+    Delegates diffing, consent, and the single atomic write to
+    :func:`remo_cli.core.reconcile.run_sync`; this function's only job is
+    the probe closure above. By default only marker-bearing containers are
+    eligible for addition (FR-006); ``include_all=True`` widens that to
+    every container (FR-007). Removals require a complete enumeration and
+    consent (``auto_confirm`` or an interactive confirm), never happen on
+    ``dry_run``, and an unmarked host that still exists is never removed
+    (FR-022) -- there is no "later sync drops it again".
+
+    Returns the process exit code (see ``core/reconcile.py`` EXIT_*).
+    """
+    scope = SyncScope(type="proxmox", host=host)
+    return run_sync(
+        scope,
+        lambda: _probe(scope, user=user, use_ip=use_ip, include_all=include_all),
+        auto_confirm=auto_confirm,
+        dry_run=dry_run,
+        include_all=include_all,
+    )
 
 
 def bootstrap(

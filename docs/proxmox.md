@@ -61,8 +61,15 @@ remo proxmox update --name dev1 --volume-size 40
 # Live-tune CPU and/or memory limits (cgroup v2)
 remo proxmox update --name dev1 --cores 4 --memory 4096
 
-# Sync remo's registry with the node (rebuild known_hosts entries)
+# Reconcile the registry with the node (this node's LXC containers only —
+# other nodes' entries are never read, matched, or touched)
 remo proxmox sync --host prox01 --user root
+
+# Also adopt containers without the remo tag, skip the removal prompt, or
+# preview the plan without changing anything
+remo proxmox sync --host prox01 --user root --all
+remo proxmox sync --host prox01 --user root --yes
+remo proxmox sync --host prox01 --user root --dry-run
 
 # Destroy a container (rootfs is removed regardless)
 remo proxmox destroy --name dev1 --yes

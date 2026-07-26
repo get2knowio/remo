@@ -198,9 +198,32 @@ def info(name: str, host: str, user: str) -> None:
     is_flag=True,
     help="Register every container on the host, including those without the remo managed marker (pre-feature behavior).",
 )
-def sync(host: str, user: str, use_ip: bool, include_all: bool) -> None:
+@click.option(
+    "--yes", "-y", "auto_confirm", is_flag=True, default=False,
+    help="Skip the removal confirmation prompt.",
+)
+@click.option(
+    "--dry-run", "dry_run", is_flag=True, default=False,
+    help="Show what would change without writing to the registry.",
+)
+def sync(
+    host: str,
+    user: str,
+    use_ip: bool,
+    include_all: bool,
+    auto_confirm: bool,
+    dry_run: bool,
+) -> None:
     """Discover containers from an Incus host."""
-    providers_incus.sync(host=host, user=user, use_ip=use_ip, include_all=include_all)
+    rc = providers_incus.sync(
+        host=host,
+        user=user,
+        use_ip=use_ip,
+        include_all=include_all,
+        auto_confirm=auto_confirm,
+        dry_run=dry_run,
+    )
+    sys.exit(rc)
 
 
 @incus.command()

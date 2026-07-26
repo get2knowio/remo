@@ -93,6 +93,45 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `--yes`, `-y` | Skip confirmation prompt |
 | `--remove-volume` | Also delete the persistent volume (destroys all data) |
 
+### Sync
+
+```bash
+# Reconcile the registry with every server in the Hetzner Cloud project
+remo hetzner sync
+
+# Also adopt servers without the remo label
+remo hetzner sync --all
+
+# Skip the removal confirmation prompt
+remo hetzner sync --yes
+
+# Preview the plan without changing the registry or prompting
+remo hetzner sync --dry-run
+```
+
+`sync` reconciles the registry against every server in the project (Hetzner
+has no per-node/per-region boundary to scope to). Servers still present in
+the project are never removed just because they lack the `remo` label —
+only a server that has genuinely disappeared, in a fully-paginated listing,
+is proposed for removal, and that removal always requires confirmation (or
+`--yes`) first. `--dry-run` prints the same plan without prompting or
+changing anything, and always exits `0`.
+
+By default only servers carrying the `remo` label are *added*; `--all`
+widens that to every server in the project for this run only — Hetzner has
+no naming convention to narrow to, so `--all` here is deliberately broad.
+
+The `remo` label is applied automatically at `create` time. A server created
+before this label existed (or one whose label was somehow lost) can be
+backfilled permanently — without disturbing any of its other labels — by
+running `remo hetzner update`.
+
+| Option | Description |
+|--------|-------------|
+| `--all` | Also register servers without the managed label (this run only) |
+| `--yes`, `-y` | Skip the removal confirmation prompt |
+| `--dry-run` | Show what would change without writing to the registry |
+
 ## Features
 
 | Feature | Description |
