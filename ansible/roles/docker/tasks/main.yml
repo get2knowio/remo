@@ -58,6 +58,10 @@
 - name: Update apt cache after adding Docker repo
   ansible.builtin.apt:
     update_cache: true
+  register: docker_repo_cache
+  until: docker_repo_cache is succeeded
+  retries: 3
+  delay: 10
 
 - name: Install Docker packages
   ansible.builtin.apt:
@@ -68,6 +72,15 @@
       - docker-buildx-plugin
       - docker-compose-plugin
     state: present
+    # Refresh the index immediately before install and ride out a transient
+    # download.docker.com fetch miss: on a supported codename (e.g. noble) a
+    # missing containerd.io means the Docker repo index was not fetched, not
+    # that the package is gone. Retrying the cache refresh + install self-heals.
+    update_cache: true
+  register: docker_pkg_install
+  until: docker_pkg_install is succeeded
+  retries: 3
+  delay: 10
 
 - name: Ensure Docker service is started and enabled
   ansible.builtin.systemd:
