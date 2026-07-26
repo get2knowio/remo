@@ -83,11 +83,21 @@ jobs:
 
       - name: Test SSM connectivity
         run: |
-          ENTRY=$(grep "^aws:${INSTANCE_NAME}:" ~/.config/remo/known_hosts | tail -1)
-          USER=$(echo "$ENTRY" | cut -d: -f4)
-          INSTANCE_ID=$(echo "$ENTRY" | cut -d: -f5)
-          REGION=$(echo "$ENTRY" | cut -d: -f7)
+          # Registry v2 (feature 015) stores entries in registry.json, not the
+          # legacy colon-delimited known_hosts (which is renamed to
+          # known_hosts.v1.bak on first read). Read the JSON directly.
+          REG=~/.config/remo/registry.json
+          read -r USER INSTANCE_ID REGION < <(
+            jq -r --arg n "$INSTANCE_NAME" \
+              '.hosts[] | select(.type=="aws" and .name==$n) | [.user, .aws.instance_id, .aws.region] | @tsv' \
+              "$REG"
+          )
           REGION="${REGION:-us-west-2}"
+          if [ -z "$INSTANCE_ID" ]; then
+            echo "No aws registry entry for '$INSTANCE_NAME' in $REG:"
+            cat "$REG" 2>/dev/null || echo "(registry.json not found)"
+            exit 1
+          fi
 
           # Wait for SSM to report the instance as connected. The provision
           # playbook polls PingStatus during create, but the agent can flap
