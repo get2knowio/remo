@@ -393,8 +393,9 @@ def test_full_adopt_then_idempotent_rerun(
     status, ready = _http_json("GET", f"{service.url}/api/v1/ready")
     assert (status, ready["status"]) == (200, "unconfigured")
 
-    # ---- First adoption (scenario B) ------------------------------------
-    result = web_adopt.run_adopt(service.url, service.mint(), interactive=False)
+    # ---- First adoption (scenario B) — the unified `run_push` adopts a
+    # not-yet-adopted deployment on first contact (017 US1). ----------------
+    result = web_adopt.run_push(service.url, service.mint(), interactive=False)
 
     outcomes = {o.host.name: o.outcome for o in result.outcomes}
     assert outcomes == {
@@ -402,10 +403,12 @@ def test_full_adopt_then_idempotent_rerun(
         "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
         "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
     }
+    # 017 US5: the PUT returns the mirror generation it just wrote (starts at 1).
     assert result.applied == {
         "applied": True,
         "registry_instances": 3,
         "host_key_instances": 1,
+        "mirror_generation": 1,
     }
     assert result.deployment_id
 
@@ -455,14 +458,30 @@ def test_full_adopt_then_idempotent_rerun(
     known_hosts_bytes = service_known_hosts.read_bytes()
     state_bytes = (service.identity_dir / "state.json").read_bytes()
 
+    # Re-run through the deprecated `run_adopt` alias to prove it still drives
+    # the same unified path (017 US1 / FR-008). Because the first push seeded the
+    # delta cache, the second run RE-SYNCS: the reachable direct instance is now
+    # reported `unchanged` (keyscan/authorize skipped) rather than re-adopted —
+    # this is the adopt-or-resync auto-detection, not a regression.
     rerun = web_adopt.run_adopt(service.url, service.mint(), interactive=False)
 
-    assert {o.host.name: o.outcome for o in rerun.outcomes} == outcomes
-    assert rerun.applied == result.applied
+    assert {o.host.name: o.outcome for o in rerun.outcomes} == {
+        "webbox": web_adopt.OUTCOME_UNCHANGED,
+        "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
+        "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
+    }
     assert rerun.deployment_id == result.deployment_id
     assert isinstance(rerun.verify.get("results"), list) and rerun.verify["results"]
+    # The registry mirror is byte-identical, but the advisory mirror-generation
+    # marker advances on every successful apply (informational, not mirror state).
+    assert rerun.applied["applied"] is True
+    assert rerun.applied["registry_instances"] == 3
+    assert rerun.applied["host_key_instances"] == 1
+    assert rerun.applied["mirror_generation"] == 2
 
-    # Byte-identical service-side files; identity untouched (FR-002/FR-015).
+    # Byte-identical service-side registry/known_hosts/state; identity untouched
+    # (FR-002/FR-015). (mirror-meta.json is the one file that intentionally
+    # advances — it is not part of the mirror and is not checked here.)
     assert service.registry_path.read_bytes() == registry_bytes
     assert service_known_hosts.read_bytes() == known_hosts_bytes
     assert (service.identity_dir / "state.json").read_bytes() == state_bytes
@@ -574,8 +593,8 @@ def test_push_after_adopt_processes_only_the_new_instance(
     fresh code -- only the new instance gets keyscan+authorize; the original is
     `unchanged` from the delta cache but still contributes its cached host-key
     lines to the full mirror PUT."""
-    # ---- Adopt (auto-seeds the deployment-keyed push cache, no secret) ---
-    result = web_adopt.run_adopt(service.url, service.mint(), interactive=False)
+    # ---- First push adopts (auto-seeds the deployment-keyed v3 cache) -----
+    result = web_adopt.run_push(service.url, service.mint(), interactive=False)
     assert {o.host.name: o.outcome for o in result.outcomes} == {
         "webbox": web_adopt.OUTCOME_ADOPTED,
         "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
@@ -587,12 +606,24 @@ def test_push_after_adopt_processes_only_the_new_instance(
     saved = json.loads(cache_path.read_text())
     # No secret is persisted (FR-019): no url, no token/code, no top-level id.
     assert set(saved) == {"cache_version", "push_cache"}
-    assert saved["cache_version"] == 2
+    assert saved["cache_version"] == 3  # 017: cache format bumped 2 -> 3
     dep = result.deployment_id
-    # Delta cache is deployment-keyed and seeded with the adopted instance.
+    # Delta cache is deployment-keyed; each deployment now nests
+    # {mirror_generation, instances} (cache v3).
     assert set(saved["push_cache"]) == {dep}
-    assert set(saved["push_cache"][dep]) == {"webbox"}
-    assert saved["push_cache"][dep]["webbox"]["host_keys"] == _CANNED_HOST_KEY_LINES
+    assert set(saved["push_cache"][dep]) == {"mirror_generation", "instances"}
+    assert saved["push_cache"][dep]["mirror_generation"] == 1
+    # webbox (direct, adopted) AND ssmbox (SSM, skipped_by_design) are cached;
+    # ghost (direct, unreachable) is not. SSM instances are tracked so `remo web
+    # status` doesn't report them as perpetually new, but carry no host keys.
+    assert set(saved["push_cache"][dep]["instances"]) == {"webbox", "ssmbox"}
+    assert (
+        saved["push_cache"][dep]["instances"]["webbox"]["host_keys"] == _CANNED_HOST_KEY_LINES
+    )
+    assert saved["push_cache"][dep]["instances"]["ssmbox"]["host_keys"] == []
+    assert saved["push_cache"][dep]["instances"]["ssmbox"]["access"] == "ssm"
+    # The retained connection tuple is non-secret and present (017 US3).
+    assert saved["push_cache"][dep]["instances"]["webbox"]["host"] == _DIRECT_ADDR
 
     adoption_ssh_mocks["scanned"].clear()
     adoption_ssh_mocks["authorized"].clear()
@@ -618,6 +649,7 @@ def test_push_after_adopt_processes_only_the_new_instance(
         "applied": True,
         "registry_instances": 4,
         "host_key_instances": 2,
+        "mirror_generation": 2,  # 017 US5: second successful apply
     }
 
     # Call recording proves the delta: the original instance was never
@@ -661,9 +693,12 @@ def test_push_after_adopt_processes_only_the_new_instance(
     # instances now present under the same deployment key, so the NEXT push
     # would skip newbox too.
     resaved = json.loads(cache_path.read_text())
-    assert set(resaved["push_cache"][dep]) == {"webbox", "newbox"}
-    assert resaved["push_cache"][dep]["newbox"]["host_keys"] == _NEW_CANNED_HOST_KEY_LINES
-    assert resaved["push_cache"][dep]["webbox"] == saved["push_cache"][dep]["webbox"]
+    resaved_instances = resaved["push_cache"][dep]["instances"]
+    assert set(resaved_instances) == {"webbox", "newbox", "ssmbox"}
+    assert resaved_instances["newbox"]["host_keys"] == _NEW_CANNED_HOST_KEY_LINES
+    assert resaved_instances["webbox"] == saved["push_cache"][dep]["instances"]["webbox"]
+    # Generation advanced to the value the second PUT returned.
+    assert resaved["push_cache"][dep]["mirror_generation"] == 2
 
 
 @requires_live_web

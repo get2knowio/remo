@@ -116,7 +116,7 @@ class TestReadyConfigured:
         assert body["checks"]["ssh_identity"] == "ok"
 
     def test_mount_configured_is_ready(self, state_dir, monkeypatch):
-        state_dir.mount_configured_user_identity()
+        state_dir.mount_configured()
         _patch_ssh_on_path(monkeypatch)
 
         response = _app_and_client(state_dir).get("/api/v1/ready")
@@ -217,7 +217,7 @@ class TestCheckConfiguredModes:
         assert _result(results, "registry").passed is True
 
     def test_mount_configured_reports_mode_and_passes(self, state_dir, monkeypatch):
-        state_dir.mount_configured_user_identity()
+        state_dir.mount_configured()
         monkeypatch.setattr(
             check_module.shutil,
             "which",

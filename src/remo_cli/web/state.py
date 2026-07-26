@@ -36,12 +36,6 @@ from remo_cli.web.config import WebSettings
 
 logger = logging.getLogger("remo_cli.web.state")
 
-# The user-identity resolution mount-configured detection relies on -- the
-# explicit override env var plus the conventional ~/.ssh filenames. Mirrors
-# `health._check_ssh_identity()` exactly (deliberately NOT the service
-# keypair paths: a user identity here means the operator mounted one).
-_SSH_IDENTITY_CANDIDATES = ("id_ed25519", "id_ecdsa", "id_rsa", "id_dsa")
-
 _KEY_COMMENT_PREFIX = "remo-web@"
 
 
@@ -126,24 +120,6 @@ def _home_writable(home: Path) -> bool:
         return False
 
 
-def _user_identity_present() -> bool:
-    """A user SSH identity resolvable via today's mechanism (see health.py)."""
-    explicit = os.environ.get("REMO_WEB_SSH_IDENTITY_FILE")
-    candidates: list[Path] = []
-    if explicit:
-        candidates.append(Path(explicit))
-    ssh_dir = Path.home() / ".ssh"
-    candidates.extend(ssh_dir / name for name in _SSH_IDENTITY_CANDIDATES)
-
-    for candidate in candidates:
-        try:
-            if candidate.is_file() and os.access(candidate, os.R_OK):
-                return True
-        except OSError:
-            continue
-    return False
-
-
 # ---------------------------------------------------------------------------
 # State detection (research R2)
 # ---------------------------------------------------------------------------
@@ -152,21 +128,34 @@ def _user_identity_present() -> bool:
 def detect_state(settings: WebSettings | None = None) -> ConfigurationState:
     """Derive the configuration state from filesystem probes, on demand.
 
-    Derivation (research R2):
+    Derivation (research R5, data-model.md §6), in strict precedence order:
 
-    - ``broken``: any required artifact present but unreadable, or a
-      half-pair service keypair (exactly one of the two key files). A
-      registry file that parses at the byte level but is structurally
-      invalid per `core.registry` (e.g. a `registry.json` written by a
-      newer, unsupported format version -- `RegistryNewerVersionError`) is
-      also classified here (015-registry-v2, data-model.md §6, S5).
-    - ``mount_configured``: registry present AND (``REMO_HOME`` not writable
-      OR a user SSH identity resolves). Explicit mounts are the operator's
-      stated intent, so this wins even when a service keypair also exists
-      (the precedence rule).
-    - ``adopted``: ``REMO_HOME`` writable + service keypair + registry.
-    - ``unconfigured``: ``REMO_HOME`` writable, no registry (a service
-      keypair may or may not exist yet -- generated, awaiting first push).
+    1. ``broken`` guard: any required artifact (registry / service private
+       key / service public key) present but unreadable, or a half-pair
+       service keypair (exactly one of the two key files). A registry file
+       that parses at the byte level but is structurally invalid per
+       `core.registry` (e.g. a `registry.json` written by a newer,
+       unsupported format version -- `RegistryNewerVersionError`) is also
+       classified here (015-registry-v2). These guards ALWAYS win, even over
+       an explicit ``REMO_WEB_MODE`` override.
+    2. Explicit override: when ``settings.mode_override`` (env
+       ``REMO_WEB_MODE``) is a valid non-empty value (``adopted`` /
+       ``mount_configured``) and no broken guard above fired, it forces that
+       mode deterministically (017-web-adopt-simplify, US6).
+    3. ``mount_configured``: registry present AND ``REMO_HOME`` NOT writable.
+       A non-writable ``REMO_HOME`` (the Docker ``:ro`` bind mount) is now
+       the *only* heuristic mount signal -- a readable personal
+       ``~/.ssh/id_*`` no longer influences the mode (R5), so bare-metal
+       ``remo web serve`` on a writable volume classifies as ``adopted``.
+    4. ``adopted``: registry present AND ``REMO_HOME`` writable AND a service
+       keypair is present.
+    5. ``broken``: registry present AND ``REMO_HOME`` writable AND NO service
+       keypair -- a damaged/interrupted adoption with nothing to
+       authenticate; re-adopt (or a volume reset) fixes it.
+    6. ``unconfigured``: no registry AND ``REMO_HOME`` writable (a service
+       keypair may or may not exist yet -- generated, awaiting first push).
+    7. ``broken``: no registry AND ``REMO_HOME`` NOT writable -- the old
+       "nothing mounted" failure shape.
     """
     settings = settings or WebSettings()
 
@@ -174,31 +163,40 @@ def detect_state(settings: WebSettings | None = None) -> ConfigurationState:
     private = _probe_file(settings.service_private_key_path)
     public = _probe_file(settings.service_public_key_path)
 
-    # Broken first: artifacts that exist but cannot be used are never a
-    # healthy mode, whatever else is present.
+    # (1) Broken guards first: artifacts that exist but cannot be used, or a
+    # half-pair service keypair, are never a healthy mode -- and they win
+    # even over an explicit REMO_WEB_MODE override.
     if "unreadable" in (registry, private, public):
         return ConfigurationState.BROKEN
     if (private == "ok") != (public == "ok"):
         return ConfigurationState.BROKEN
 
+    # (2) Explicit override: a valid REMO_WEB_MODE now that the broken guards
+    # have cleared. `mode_override` is validated at WebSettings construction,
+    # so it is either "" or an exact ConfigurationState value here.
+    if settings.mode_override:
+        return ConfigurationState(settings.mode_override)
+
     keypair = private == "ok"  # implies public == "ok" after the gate above
     writable = _home_writable(get_remo_home_readonly())
 
     if registry == "ok":
-        if not writable or _user_identity_present():
+        # (3) A read-only REMO_HOME is the authoritative mounted-deployment
+        # signal; a personal user identity is deliberately ignored (R5).
+        if not writable:
             return ConfigurationState.MOUNT_CONFIGURED
+        # (4) Writable volume + service keypair -> adopted (bare-metal serve
+        # lands here even with a personal ~/.ssh/id_* present).
         if keypair:
             return ConfigurationState.ADOPTED
-        # A registry on a writable volume with nothing able to authenticate
-        # (no service keypair, no user identity): a damaged/interrupted
-        # adoption. Unusable -> broken; re-adopt (or volume reset) fixes it.
+        # (5) Writable volume, registry, but nothing to authenticate: a
+        # damaged/interrupted adoption. Unusable -> broken.
         return ConfigurationState.BROKEN
 
-    # No registry: awaiting adoption -- but only when the volume can
-    # actually be adopted. A read-only mount without a registry is the old
-    # "nothing mounted" failure shape.
+    # (6) No registry on a writable volume: awaiting adoption.
     if writable:
         return ConfigurationState.UNCONFIGURED
+    # (7) No registry on a read-only mount: the old "nothing mounted" shape.
     return ConfigurationState.BROKEN
 
 

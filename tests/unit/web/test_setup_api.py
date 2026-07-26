@@ -143,9 +143,10 @@ def test_status_unconfigured_without_identity(state_dir):
     client = _client(state_dir)
     resp = client.get("/api/v1/setup/status", headers=_AUTH)
     assert resp.status_code == 200
+    # deployment_id is None here -> omitted by response_model_exclude_none (017);
+    # mirror_generation/last_push are likewise absent (never pushed).
     assert resp.json() == {
         "state": "unconfigured",
-        "deployment_id": None,
         "public_key_available": False,
         "registry_instances": 0,
         "payload_versions": [1, 2],
@@ -182,16 +183,16 @@ def test_status_adopted(state_dir):
 
 
 @pytest.mark.parametrize(
-    "layout", ["mount_configured_user_identity", "mount_configured_readonly"]
+    "layout", ["mount_configured", "mount_configured_readonly"]
 )
 def test_status_mount_configured_has_null_identity(state_dir, layout):
     getattr(state_dir, layout)()
     with _client(state_dir) as client:
         resp = client.get("/api/v1/setup/status", headers=_AUTH)
     assert resp.status_code == 200
+    # deployment_id None -> omitted (response_model_exclude_none, 017).
     assert resp.json() == {
         "state": "mount_configured",
-        "deployment_id": None,
         "public_key_available": False,
         "registry_instances": 1,
         "payload_versions": [1, 2],
@@ -260,7 +261,7 @@ def test_identity_loads_preseeded_keypair_without_regenerating(state_dir):
 
 
 def test_identity_mount_configured_is_409(state_dir):
-    state_dir.mount_configured_user_identity()
+    state_dir.mount_configured()
     with _client(state_dir) as client:
         resp = client.get("/api/v1/setup/identity", headers=_AUTH)
     assert resp.status_code == 409
@@ -285,6 +286,7 @@ def test_put_registry_happy_path_applies_mirror_and_flips_to_adopted(state_dir):
             "applied": True,
             "registry_instances": 2,
             "host_key_instances": 1,
+            "mirror_generation": 1,  # 017: first successful apply
         }
 
         # First-class file contents: service known_hosts + v2 registry.json.
@@ -306,7 +308,7 @@ def test_put_registry_happy_path_applies_mirror_and_flips_to_adopted(state_dir):
 
 
 def test_put_registry_mount_configured_409_writes_nothing(state_dir):
-    state_dir.mount_configured_user_identity()
+    state_dir.mount_configured()
     original_registry = state_dir.registry_path.read_text()
     with _client(state_dir) as client:
         resp = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
@@ -342,6 +344,7 @@ def test_put_registry_empty_with_allow_empty_succeeds(state_dir):
         "applied": True,
         "registry_instances": 0,
         "host_key_instances": 0,
+        "mirror_generation": 1,  # 017: marker written even for an empty mirror
     }
     doc = json.loads(state_dir.v2_registry_path.read_text())
     assert doc == {"version": 2, "hosts": []}
@@ -453,6 +456,7 @@ def test_put_registry_v2_payload_happy_path(state_dir):
         "applied": True,
         "registry_instances": 2,
         "host_key_instances": 1,
+        "mirror_generation": 1,  # 017: first successful apply
     }
     doc = json.loads(state_dir.v2_registry_path.read_text())
     assert doc["hosts"] == _EXPECTED_V2_HOSTS
@@ -602,3 +606,135 @@ def test_setup_routes_are_dormant_404_on_wrong_code(state_dir, method, path):
     # FR-006: a wrong-but-present code is the SAME dormant 404, never a 401.
     assert resp.status_code == 404
     assert resp.json() == {"detail": "Not Found"}
+
+
+# ---------------------------------------------------------------------------
+# Mirror-identity marker (017 US5, service side) —
+# contracts/setup-status-marker.md, data-model.md §3.
+# ---------------------------------------------------------------------------
+
+
+def _mirror_meta_path(state_dir):
+    return state_dir.web_identity_dir / "mirror-meta.json"
+
+
+class TestMirrorMarker:
+    """The mirror-identity marker: written by PUT /registry, surfaced by
+    GET /status. Advisory-only; carries no secret and no instance content."""
+
+    def test_status_omits_marker_when_never_pushed(self, state_dir):
+        # A fresh service (identity present, no mirror ever applied) must not
+        # surface mirror_generation/last_push at all (omitted, not null).
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        assert not _mirror_meta_path(state_dir).exists()
+        with _client(state_dir) as client:
+            body = client.get("/api/v1/setup/status", headers=_AUTH).json()
+        assert "mirror_generation" not in body
+        assert "last_push" not in body
+
+    def test_put_writes_marker_and_status_surfaces_it(self, state_dir):
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            put = client.put(
+                "/api/v1/setup/registry",
+                json=_payload(workstation="hostA/paul"),
+                headers=_AUTH,
+            )
+            assert put.status_code == 200
+            assert put.json()["mirror_generation"] == 1
+
+            # The marker file exists on the writable state volume.
+            meta = json.loads(_mirror_meta_path(state_dir).read_text())
+            assert meta["generation"] == 1
+            assert meta["last_push"]["workstation"] == "hostA/paul"
+            assert isinstance(meta["last_push"]["at"], str) and meta["last_push"]["at"]
+
+            body = client.get("/api/v1/setup/status", headers=_AUTH).json()
+        assert body["mirror_generation"] == 1
+        assert body["last_push"]["workstation"] == "hostA/paul"
+        assert body["last_push"]["at"] == meta["last_push"]["at"]
+
+    def test_put_increments_generation_monotonically(self, state_dir):
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            first = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
+            second = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
+            status = client.get("/api/v1/setup/status", headers=_AUTH).json()
+        assert first.json()["mirror_generation"] == 1
+        assert second.json()["mirror_generation"] == 2
+        assert status["mirror_generation"] == 2
+
+    def test_absent_workstation_label_defaults_to_unknown(self, state_dir):
+        # _payload() carries no top-level "workstation" key.
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
+            body = client.get("/api/v1/setup/status", headers=_AUTH).json()
+        assert body["last_push"]["workstation"] == "unknown"
+
+    def test_non_string_workstation_label_defaults_to_unknown(self, state_dir):
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            client.put(
+                "/api/v1/setup/registry",
+                json=_payload(workstation={"not": "a string"}),
+                headers=_AUTH,
+            )
+            body = client.get("/api/v1/setup/status", headers=_AUTH).json()
+        assert body["last_push"]["workstation"] == "unknown"
+
+    def test_marker_write_failure_does_not_fail_the_put(self, state_dir, monkeypatch):
+        # A marker write failure after a successful registry apply is advisory:
+        # logged, swallowed, PUT still succeeds; mirror_generation omitted.
+        from remo_cli.web.api import setup as setup_module
+
+        def boom(settings, generation, workstation):
+            raise OSError("read-only marker volume")
+
+        monkeypatch.setattr(setup_module, "_write_mirror_meta", boom)
+
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            resp = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["applied"] is True
+            # response_model_exclude_none: a failed marker write omits the field.
+            assert "mirror_generation" not in body
+            # The registry apply itself still landed.
+            assert json.loads(state_dir.v2_registry_path.read_text())["hosts"] == _EXPECTED_V2_HOSTS
+            # No marker file was written.
+            assert not _mirror_meta_path(state_dir).exists()
+            # A later successful push converges the generation to 1.
+            monkeypatch.undo()
+            again = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
+        assert again.json()["mirror_generation"] == 1
+
+    def test_marker_exposes_no_secret_or_instance_contents(self, state_dir):
+        # FR-027: /status carries only the whitelisted keys; last_push only
+        # {at, workstation} — no key material, no registry entries.
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            client.put(
+                "/api/v1/setup/registry",
+                json=_payload(workstation="hostA/paul"),
+                headers=_AUTH,
+            )
+            body = client.get("/api/v1/setup/status", headers=_AUTH).json()
+        assert set(body) == {
+            "state",
+            "deployment_id",
+            "public_key_available",
+            "registry_instances",
+            "payload_versions",
+            "mirror_generation",
+            "last_push",
+        }
+        assert set(body["last_push"]) == {"at", "workstation"}

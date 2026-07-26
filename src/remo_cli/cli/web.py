@@ -218,34 +218,36 @@ def check(skip_instance_checks: bool) -> None:
         "reported as skipped_no_trust)."
     ),
 )
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-scan and re-authorize every direct-access instance (bypass the unchanged fast-path).",
+)
 def adopt(
     url: str | None,
     token: str | None,
     via_host: str | None,
     allow_empty: bool,
     assume_yes: bool,
+    force: bool,
 ) -> None:
-    """Adopt a running remo web service from this workstation.
+    """[DEPRECATED] Alias for `remo web push` — first push adopts automatically.
 
-    Open the service's awaiting-adoption page in a browser, click "Copy pairing
-    code", then run this command and paste the code when prompted. It pushes the
-    local registry (full mirror) plus verified SSH host keys to the service and
-    authorizes the service's SSH key on each reachable direct-access instance,
-    then runs a service-side verification pass.
-
-    URL resolution: argument, then $REMO_API_URL, then an interactive prompt.
-    Pairing code: --token, then $REMO_API_TOKEN, then a hidden prompt. Nothing
-    is saved — a later `remo web push` gets a fresh code the same way.
-
-    Exits 0 when the flow completes (per-instance skips/flags are reported in
-    the summary, not fatal); exits 1 on hard failure (dormant setup surface,
-    mount-configured deployment, empty registry without --allow-empty, tunnel
-    failure, payload rejected).
+    `remo web adopt` is deprecated and will be removed in a future release. The
+    unified `remo web push` adopts a not-yet-adopted deployment on first use and
+    re-syncs afterwards — you no longer choose between the two. This command
+    prints a deprecation notice and then behaves exactly like `remo web push`.
     """
-    # Deliberately imports only remo_cli.core.* — `remo web adopt` must work
-    # without the `web` extra installed (stdlib HTTP only, research R9).
-    from remo_cli.core.output import print_error  # noqa: PLC0415
-    from remo_cli.core.web_adopt import AdoptError, run_adopt  # noqa: PLC0415
+    # Deliberately imports only remo_cli.core.* — this must work without the
+    # `web` extra installed (stdlib HTTP only, research R9).
+    from remo_cli.core.output import print_error, print_warning  # noqa: PLC0415
+    from remo_cli.core.web_adopt import AdoptError, run_push  # noqa: PLC0415
+
+    print_warning(
+        "`remo web adopt` is deprecated; use `remo web push` — the first push "
+        "adopts automatically."
+    )
 
     resolved_url = url or os.environ.get("REMO_API_URL") or click.prompt("Service URL")
     resolved_code = (
@@ -253,12 +255,13 @@ def adopt(
     )
 
     try:
-        run_adopt(
+        run_push(
             resolved_url,
             resolved_code,
             via=via_host,
             allow_empty=allow_empty,
             assume_yes=assume_yes,
+            force=force,
         )
     except AdoptError as e:
         print_error(str(e))
@@ -295,7 +298,18 @@ def adopt(
     default=False,
     help=(
         "Non-interactive: skip fingerprint prompts for new/changed instances "
-        "(unverified instances are reported as skipped_no_trust)."
+        "(unverified instances are reported as skipped_no_trust); on flap "
+        "detection, warn and proceed instead of prompting."
+    ),
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help=(
+        "Re-scan host keys and re-authorize the service key on EVERY "
+        "direct-access instance, bypassing the fingerprint 'unchanged' "
+        "fast-path (recovers an out-of-band-rebuilt instance)."
     ),
 )
 def push(
@@ -304,23 +318,27 @@ def push(
     via_host: str | None,
     allow_empty: bool,
     assume_yes: bool,
+    force: bool,
 ) -> None:
-    """Re-sync the local registry to an adopted remo web service.
+    """Connect this workstation's registry to a remo web service (adopt or re-sync).
 
-    Open the dashboard's "Pair CLI to sync" affordance, click to copy a fresh
-    pairing code, then run this command and paste it. It updates the service's
-    registry (full mirror — removals propagate), pushes host keys, and authorizes
-    the service's identity on new or changed direct-access instances. Instances
-    unchanged since the last push skip the keyscan/authorize work and are
-    reported as `unchanged`.
+    The FIRST push to a not-yet-adopted deployment adopts it; every later push
+    re-syncs — this is auto-detected, you never choose. Open the page's pairing
+    affordance, copy a fresh code, then run this command and paste it. It updates
+    the service's registry (full mirror — removals propagate and their service
+    key is best-effort revoked), pushes verified host keys, and authorizes the
+    service's identity on new or changed direct-access instances. Instances
+    unchanged since the last push are reported `unchanged` (use --force to
+    re-process them anyway).
 
     URL resolution: argument, then $REMO_API_URL, then an interactive prompt.
     Pairing code: --token, then $REMO_API_TOKEN, then a hidden prompt. Nothing
     is saved between runs — every push gets a fresh code from the page.
 
-    Exits 0 when the flow completes (per-instance skips/flags are reported in
-    the summary, not fatal); exits 1 on hard failure (dormant setup surface,
-    mount-configured deployment, empty registry without --allow-empty).
+    Exits 0 when the flow completes (per-instance skips/flags and revocation
+    failures are reported in the summary, not fatal); exits 1 on hard failure
+    (dormant setup surface, mount-configured deployment, empty registry without
+    --allow-empty, or a flap abort declined interactively).
     """
     # Deliberately imports only remo_cli.core.* — `remo web push` must work
     # without the `web` extra installed (stdlib HTTP only, research R9).
@@ -339,7 +357,59 @@ def push(
             via=via_host,
             allow_empty=allow_empty,
             assume_yes=assume_yes,
+            force=force,
         )
     except AdoptError as e:
         print_error(str(e))
         raise SystemExit(1) from e
+
+
+@web.command()
+@click.option(
+    "--deployment",
+    "deployment",
+    default=None,
+    metavar="ID",
+    help=(
+        "Which cached deployment to report against (deployment id). Required "
+        "only when this workstation has pushed to more than one deployment."
+    ),
+)
+def status(deployment: str | None) -> None:
+    """Show offline drift between the local registry and the last push.
+
+    Compares the current registry against the non-secret push cache and reports
+    which instances are new / changed / removed / in sync since the last
+    `remo web push`. Makes ZERO network or SSH connections. Exits 0 (informational,
+    even when drift exists); exits 1 only when more than one deployment is cached
+    and no --deployment selector was given.
+    """
+    # core-only imports (works without the `web` extra).
+    from remo_cli.core.known_hosts import get_known_hosts  # noqa: PLC0415
+    from remo_cli.core.output import print_error, print_info, print_success  # noqa: PLC0415
+    from remo_cli.core.web_adopt import load_push_cache  # noqa: PLC0415
+    from remo_cli.core.web_drift import (  # noqa: PLC0415
+        DriftError,
+        build_drift_report,
+        render_drift,
+        select_deployment,
+    )
+
+    cache = load_push_cache()
+    if not cache:
+        print_info(
+            "No prior push recorded from this workstation — nothing to compare. "
+            "Run `remo web push <url>` to adopt/sync a deployment first."
+        )
+        return
+
+    try:
+        deployment_id = select_deployment(cache, deployment)
+    except DriftError as e:
+        print_error(str(e))
+        raise SystemExit(1) from e
+
+    report = build_drift_report(deployment_id, cache, get_known_hosts())
+    render_drift(report)
+    if report.is_in_sync:
+        print_success("In sync — nothing to push.")

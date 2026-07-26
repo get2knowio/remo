@@ -8,6 +8,15 @@ from pathlib import Path
 
 from remo_cli.core.config import get_remo_home_readonly
 
+
+class WebConfigError(ValueError):
+    """A ``REMO_WEB_*`` value is invalid; the service must fail fast (Constitution IV)."""
+
+
+#: Valid explicit mode overrides for ``REMO_WEB_MODE`` (017-web-adopt-simplify,
+#: data-model.md §7). An empty string means "unset -- use the heuristic".
+_VALID_MODE_OVERRIDES = ("adopted", "mount_configured")
+
 # Plain stdlib dataclass rather than pydantic's BaseSettings: pydantic is
 # already a transitive dependency of the `web` extra (via FastAPI), but this
 # module has no other reason to require pydantic v2's settings machinery, and
@@ -156,6 +165,21 @@ class WebSettings:
         default_factory=lambda: get_remo_home_readonly() / "web-identity"
     )
 
+    # -- Explicit mode override (017-web-adopt-simplify, US6) ---------------
+    #
+    # REMO_WEB_MODE deterministically forces the configuration state to
+    # ``adopted`` or ``mount_configured`` (honored by web/state.detect_state
+    # AFTER the `broken` guards, which always win). Unset ("") -> heuristic.
+    # Any other value is a fail-fast config error (data-model.md §7).
+    mode_override: str = field(default_factory=lambda: _env_str("MODE", "").strip())
+
+    def __post_init__(self) -> None:
+        if self.mode_override and self.mode_override not in _VALID_MODE_OVERRIDES:
+            raise WebConfigError(
+                f"REMO_WEB_MODE={self.mode_override!r} is not valid; expected one of "
+                f"{', '.join(_VALID_MODE_OVERRIDES)} (or leave it unset)."
+            )
+
     # -- Service identity paths (research R1 layout) -----------------------
 
     @property
@@ -173,6 +197,17 @@ class WebSettings:
     @property
     def service_state_path(self) -> Path:
         return self.web_identity_dir / "state.json"
+
+    @property
+    def mirror_meta_path(self) -> Path:
+        """Service-side mirror-identity marker (017-web-adopt-simplify, US5).
+
+        Written by ``PUT /setup/registry`` (generation counter + last-push
+        descriptor), read by ``GET /setup/status`` for cross-workstation flap
+        detection. Lives beside the service keypair on the writable state
+        volume.
+        """
+        return self.web_identity_dir / "mirror-meta.json"
 
     # -- Resolved SSH options for web call sites (research R6) -------------
     #

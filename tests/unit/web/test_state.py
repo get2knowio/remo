@@ -22,6 +22,7 @@ from datetime import datetime
 
 import pytest
 
+from remo_cli.web.config import WebConfigError
 from remo_cli.web.state import (
     ConfigurationState,
     ServiceIdentityError,
@@ -74,29 +75,23 @@ class TestAdopted:
         state_dir.write_keypair()
         assert detect_state(state_dir.settings()) is ConfigurationState.ADOPTED
 
+    def test_bare_metal_writable_home_with_personal_key_is_adopted(self, state_dir):
+        # US6 core fix: bare-metal `remo web serve` always has a personal
+        # `~/.ssh/id_*` present on a writable REMO_HOME with a service
+        # keypair -- it must classify as adopted, not mount_configured (R5).
+        state_dir.adopted()
+        state_dir.add_user_identity()
+        assert detect_state(state_dir.settings()) is ConfigurationState.ADOPTED
+
 
 class TestMountConfigured:
+    # 017-web-adopt-simplify / R5: a non-writable REMO_HOME (the Docker `:ro`
+    # bind mount) is now the ONLY heuristic mount signal. A readable personal
+    # `~/.ssh/id_*` no longer forces mount_configured.
+
     @skip_if_root
     def test_registry_plus_readonly_home(self, state_dir):
         state_dir.mount_configured_readonly()
-        assert detect_state(state_dir.settings()) is ConfigurationState.MOUNT_CONFIGURED
-
-    def test_registry_plus_user_identity_in_home_ssh(self, state_dir):
-        state_dir.mount_configured_user_identity()
-        assert detect_state(state_dir.settings()) is ConfigurationState.MOUNT_CONFIGURED
-
-    def test_registry_plus_explicit_identity_env(self, state_dir, tmp_path):
-        state_dir.write_registry()
-        key = tmp_path / "mounted_key"
-        key.write_text("fake key\n")
-        state_dir.set_identity_env(key)
-        assert detect_state(state_dir.settings()) is ConfigurationState.MOUNT_CONFIGURED
-
-    def test_precedence_user_identity_beats_service_keypair(self, state_dir):
-        # Both a user identity AND a full service keypair present: explicit
-        # mounts are the operator's stated intent -- mount_configured wins.
-        state_dir.adopted()
-        state_dir.add_user_identity()
         assert detect_state(state_dir.settings()) is ConfigurationState.MOUNT_CONFIGURED
 
     @skip_if_root
@@ -104,6 +99,14 @@ class TestMountConfigured:
         state_dir.adopted()
         state_dir.chmod(state_dir.home, 0o555)
         assert detect_state(state_dir.settings()) is ConfigurationState.MOUNT_CONFIGURED
+
+    def test_user_identity_no_longer_forces_mount_configured(self, state_dir):
+        # A full service keypair on a writable volume + a personal user
+        # identity: the personal key is now ignored (R5) -> adopted, not
+        # mount_configured (was the old precedence rule).
+        state_dir.adopted()
+        state_dir.add_user_identity()
+        assert detect_state(state_dir.settings()) is ConfigurationState.ADOPTED
 
     def test_user_identity_without_registry_is_not_mount_configured(self, state_dir):
         # mount_configured requires the registry; identity alone on a
@@ -151,10 +154,76 @@ class TestBroken:
         state_dir.write_registry()
         assert detect_state(state_dir.settings()) is ConfigurationState.BROKEN
 
+    def test_registry_plus_user_identity_no_keypair_is_broken(self, state_dir):
+        # 017/R5: a personal `~/.ssh/id_*` no longer forces mount_configured.
+        # Registry on a writable volume with only a user identity and NO
+        # service keypair is now a damaged adoption -> broken (was
+        # mount_configured under the old user-identity trigger).
+        state_dir.mount_configured_user_identity()
+        assert detect_state(state_dir.settings()) is ConfigurationState.BROKEN
+
+    def test_registry_plus_explicit_identity_env_no_keypair_is_broken(self, state_dir, tmp_path):
+        # Same as above via the explicit REMO_WEB_SSH_IDENTITY_FILE override:
+        # it no longer influences the mode. No service keypair -> broken.
+        state_dir.write_registry()
+        key = tmp_path / "mounted_key"
+        key.write_text("fake key\n")
+        state_dir.set_identity_env(key)
+        assert detect_state(state_dir.settings()) is ConfigurationState.BROKEN
+
     @skip_if_root
     def test_readonly_home_without_registry(self, state_dir):
         state_dir.chmod(state_dir.home, 0o555)
         assert detect_state(state_dir.settings()) is ConfigurationState.BROKEN
+
+
+# ---------------------------------------------------------------------------
+# Explicit REMO_WEB_MODE override (017-web-adopt-simplify, US6 / R5)
+# ---------------------------------------------------------------------------
+
+
+class TestModeOverride:
+    def test_adopted_override_forces_adopted_on_unconfigured_layout(self, state_dir, monkeypatch):
+        # An empty writable dir the heuristic would call unconfigured.
+        state_dir.unconfigured()
+        monkeypatch.setenv("REMO_WEB_MODE", "adopted")
+        assert detect_state(state_dir.settings()) is ConfigurationState.ADOPTED
+
+    def test_adopted_override_forces_adopted_on_broken_no_keypair_layout(
+        self, state_dir, monkeypatch
+    ):
+        # Registry + writable + user identity, no service keypair: the
+        # heuristic would call this broken (step 5), but the override wins
+        # (a broken *guard* did not fire -- only the "nothing to
+        # authenticate" outcome, which is below the override in precedence).
+        state_dir.mount_configured_user_identity()
+        monkeypatch.setenv("REMO_WEB_MODE", "adopted")
+        assert detect_state(state_dir.settings()) is ConfigurationState.ADOPTED
+
+    def test_mount_configured_override_forces_mount_configured_on_adopted_layout(
+        self, state_dir, monkeypatch
+    ):
+        state_dir.adopted()
+        monkeypatch.setenv("REMO_WEB_MODE", "mount_configured")
+        assert detect_state(state_dir.settings()) is ConfigurationState.MOUNT_CONFIGURED
+
+    def test_half_pair_broken_guard_beats_override(self, state_dir, monkeypatch):
+        # A half-pair service keypair is a broken *guard* -- it wins even
+        # over an explicit REMO_WEB_MODE=adopted (broken always wins).
+        state_dir.broken_half_pair(keep="private")
+        monkeypatch.setenv("REMO_WEB_MODE", "adopted")
+        assert detect_state(state_dir.settings()) is ConfigurationState.BROKEN
+
+    @skip_if_root
+    def test_unreadable_registry_broken_guard_beats_override(self, state_dir, monkeypatch):
+        state_dir.broken_unreadable_registry()
+        monkeypatch.setenv("REMO_WEB_MODE", "adopted")
+        assert detect_state(state_dir.settings()) is ConfigurationState.BROKEN
+
+    def test_invalid_mode_raises_web_config_error_at_construction(self, state_dir, monkeypatch):
+        monkeypatch.setenv("REMO_WEB_MODE", "bogus")
+        with pytest.raises(WebConfigError):
+            state_dir.settings()
 
 
 # ---------------------------------------------------------------------------

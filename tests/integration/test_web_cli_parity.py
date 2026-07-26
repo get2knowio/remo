@@ -520,3 +520,159 @@ class TestLiveDirectSshParity:
         finally:
             _stop_container(name)
             shutil.rmtree(work_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Out-of-date nudge parity (017-web-adopt-simplify US2, T010/T012).
+#
+# The one-line "your web deployment may be out of date" nudge must fire after a
+# SUCCESSFUL registry mutation — provider create/destroy, `remo add`/`remove`,
+# and an applied `sync` — iff a push cache exists, and NEVER on a dry-run/no-op
+# sync or on `aws stop|start|reboot`. These are pure in-process CLI/core tests
+# (no Docker, no network): the provider business logic is mocked to succeed.
+# ---------------------------------------------------------------------------
+
+from click.testing import CliRunner  # noqa: E402
+
+from remo_cli.core.reconcile import (  # noqa: E402
+    DiscoveredHost,
+    ProbeResult,
+    SyncScope,
+    run_sync,
+)
+from remo_cli.core.web_adopt import (  # noqa: E402
+    CachedInstance,
+    DeploymentCache,
+    save_push_cache,
+)
+
+_NUDGE = "may now be out of date"
+
+
+def _seed_push_cache() -> None:
+    save_push_cache(
+        {"dep-nudge": DeploymentCache(instances={"n": CachedInstance("f" * 64, ["line"])})}
+    )
+
+
+class TestOutOfDateNudge:
+    """The post-mutation nudge fires only when a push cache exists (FR-013/FR-014)."""
+
+    # -- provider create / destroy -----------------------------------------
+
+    @pytest.mark.parametrize(
+        "mock_target, command_import, argv",
+        [
+            ("remo_cli.providers.incus.create", "remo_cli.cli.providers.incus:create", []),
+            ("remo_cli.providers.incus.destroy", "remo_cli.cli.providers.incus:destroy", []),
+            ("remo_cli.providers.proxmox.create", "remo_cli.cli.providers.proxmox:create",
+             ["--host", "pve1"]),
+            ("remo_cli.providers.proxmox.destroy", "remo_cli.cli.providers.proxmox:destroy", []),
+            ("remo_cli.providers.hetzner.create", "remo_cli.cli.providers.hetzner:create", []),
+            ("remo_cli.providers.hetzner.destroy", "remo_cli.cli.providers.hetzner:destroy", []),
+            ("remo_cli.providers.aws.create", "remo_cli.cli.providers.aws:create", []),
+            ("remo_cli.providers.aws.destroy", "remo_cli.cli.providers.aws:destroy", []),
+        ],
+    )
+    def test_provider_create_destroy_nudges_with_cache(
+        self, tmp_config_dir, mocker, mock_target, command_import, argv
+    ):
+        import importlib
+
+        module_path, attr = command_import.split(":")
+        command = getattr(importlib.import_module(module_path), attr)
+        mocker.patch(mock_target, return_value=0)
+
+        _seed_push_cache()
+        result = CliRunner().invoke(command, argv)
+        assert result.exit_code == 0, result.output
+        assert _NUDGE in result.output
+
+    def test_provider_create_absent_without_cache(self, tmp_config_dir, mocker):
+        from remo_cli.cli.providers.incus import create
+
+        mocker.patch("remo_cli.providers.incus.create", return_value=0)
+        # No cache seeded.
+        result = CliRunner().invoke(create, [])
+        assert result.exit_code == 0
+        assert _NUDGE not in result.output
+
+    def test_provider_create_absent_on_failure(self, tmp_config_dir, mocker):
+        from remo_cli.cli.providers.incus import create
+
+        mocker.patch("remo_cli.providers.incus.create", return_value=1)
+        _seed_push_cache()
+        result = CliRunner().invoke(create, [])
+        assert result.exit_code == 1
+        assert _NUDGE not in result.output
+
+    # -- add / remove -------------------------------------------------------
+
+    def test_add_nudges_with_cache(self, tmp_config_dir, mocker):
+        from remo_cli.cli.added import add
+
+        mocker.patch("remo_cli.providers.added.add", return_value=0)
+        _seed_push_cache()
+        result = CliRunner().invoke(add, ["mybox", "user@10.0.0.9"])
+        assert result.exit_code == 0, result.output
+        assert _NUDGE in result.output
+
+    def test_remove_nudges_with_cache(self, tmp_config_dir, mocker):
+        from remo_cli.cli.added import remove
+
+        mocker.patch("remo_cli.providers.added.remove", return_value=0)
+        _seed_push_cache()
+        result = CliRunner().invoke(remove, ["mybox"])
+        assert result.exit_code == 0, result.output
+        assert _NUDGE in result.output
+
+    def test_add_absent_without_cache(self, tmp_config_dir, mocker):
+        from remo_cli.cli.added import add
+
+        mocker.patch("remo_cli.providers.added.add", return_value=0)
+        result = CliRunner().invoke(add, ["mybox", "user@10.0.0.9"])
+        assert result.exit_code == 0
+        assert _NUDGE not in result.output
+
+    # -- aws stop/start/reboot never nudge (no registry mutation) ----------
+
+    @pytest.mark.parametrize("cmd_attr", ["stop", "start", "reboot"])
+    def test_aws_power_commands_never_nudge(self, tmp_config_dir, mocker, cmd_attr):
+        import remo_cli.cli.providers.aws as aws_cli
+
+        mocker.patch(f"remo_cli.providers.aws.{cmd_attr}", return_value=None)
+        _seed_push_cache()
+        result = CliRunner().invoke(getattr(aws_cli, cmd_attr), [])
+        assert _NUDGE not in result.output
+
+    # -- sync (run_sync apply path) ----------------------------------------
+
+    def _probe_adds_one(self) -> ProbeResult:
+        host = KnownHost(type="hetzner", name="newsrv", host="1.2.3.4", user="remo")
+        return ProbeResult(hosts=[DiscoveredHost(entry=host, marked=True)], complete=True)
+
+    def _probe_empty(self) -> ProbeResult:
+        return ProbeResult(hosts=[], complete=True)
+
+    def test_sync_apply_nudges_with_cache(self, tmp_config_dir, capsys):
+        _seed_push_cache()
+        rc = run_sync(SyncScope(type="hetzner"), self._probe_adds_one, auto_confirm=True)
+        assert rc == 0
+        assert _NUDGE in capsys.readouterr().out
+
+    def test_sync_dry_run_never_nudges(self, tmp_config_dir, capsys):
+        _seed_push_cache()
+        rc = run_sync(SyncScope(type="hetzner"), self._probe_adds_one, dry_run=True)
+        assert rc == 0
+        assert _NUDGE not in capsys.readouterr().out
+
+    def test_sync_noop_never_nudges(self, tmp_config_dir, capsys):
+        _seed_push_cache()
+        rc = run_sync(SyncScope(type="hetzner"), self._probe_empty, auto_confirm=True)
+        assert rc == 0
+        assert _NUDGE not in capsys.readouterr().out
+
+    def test_sync_apply_absent_without_cache(self, tmp_config_dir, capsys):
+        rc = run_sync(SyncScope(type="hetzner"), self._probe_adds_one, auto_confirm=True)
+        assert rc == 0
+        assert _NUDGE not in capsys.readouterr().out

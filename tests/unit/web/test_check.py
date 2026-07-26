@@ -93,6 +93,9 @@ class TestAllPass:
     def test_run_checks_all_pass(self, tmp_config_dir, tmp_path, monkeypatch, mocker):
         _write_registry(tmp_config_dir, ["incus:dev:127.0.0.1:remo"])
         monkeypatch.setenv("REMO_WEB_SSH_IDENTITY_FILE", str(_fake_key_file(tmp_path)))
+        # 017 US6: an operator-mounted identity no longer implies mount_configured
+        # on its own; a mount-configured deployment declares the mode explicitly.
+        monkeypatch.setenv("REMO_WEB_MODE", "mount_configured")
         monkeypatch.setattr(
             check_module.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "ssh" else None
         )
@@ -131,6 +134,8 @@ class TestAllPass:
     def test_cli_check_all_pass_exits_zero(self, tmp_config_dir, tmp_path, monkeypatch, mocker):
         _write_registry(tmp_config_dir, ["incus:dev:127.0.0.1:remo"])
         monkeypatch.setenv("REMO_WEB_SSH_IDENTITY_FILE", str(_fake_key_file(tmp_path)))
+        # 017 US6: mount-configured deployments declare the mode explicitly now.
+        monkeypatch.setenv("REMO_WEB_MODE", "mount_configured")
         monkeypatch.setenv("REMO_WEB_SSH_CONTROL_DIR", str(tmp_path / "ssh-ctrl"))
         monkeypatch.setattr(
             check_module.shutil, "which", lambda name: f"/usr/bin/{name}" if name == "ssh" else None

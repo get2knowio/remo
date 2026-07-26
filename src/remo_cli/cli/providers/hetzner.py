@@ -14,6 +14,7 @@ from remo_cli.core.snapshot import (
     generate_default_name,
     validate_name as _validate_snap,
 )
+from remo_cli.core.web_drift import emit_out_of_date_notice
 
 
 @click.group()
@@ -52,6 +53,8 @@ def create(
         tools_skip=skip,
         verbose=verbose,
     )
+    if rc == 0:
+        emit_out_of_date_notice()  # 017 US2: registry gained an entry
     sys.exit(rc)
 
 
@@ -75,6 +78,8 @@ def destroy(
         remove_volume=remove_volume,
         verbose=verbose,
     )
+    if rc == 0:
+        emit_out_of_date_notice()  # 017 US2: registry lost an entry
     sys.exit(rc)
 
 

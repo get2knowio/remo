@@ -28,6 +28,8 @@ from remo_cli.core.web_adopt import (
     AUTHORIZED_KEYS_MARKER,
     authorize_service_key,
     build_authorize_command,
+    build_revoke_command,
+    revoke_service_key,
 )
 from remo_cli.models.host import KnownHost
 
@@ -344,3 +346,202 @@ class TestAuthorizeServiceKey:
         ok, detail = authorize_service_key(direct_host, SERVICE_KEY)
         assert ok is False
         assert detail == "remote command failed (exit 1): mktemp: failed"
+
+
+# ---------------------------------------------------------------------------
+# build_revoke_command — real semantics (run locally under a temp HOME)
+#
+# Symmetric to TestAuthorizeCommandSemantics (017 US3, contracts/revocation.md):
+# the generated command removes ONLY the `` remo-web@`` marker line, preserving
+# every other authorized key, tolerates a missing file as a success no-op, is
+# idempotent, and leaves the file 0600. Reuses the `_run_authorize`/`_mode`
+# helpers above — both just run the built POSIX-sh command under a temp $HOME.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildRevokeCommandSemantics:
+    def test_removes_only_marker_line_preserving_user_keys(self, tmp_path):
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir(mode=0o700)
+        auth = ssh_dir / "authorized_keys"
+        auth.write_text(f"{USER_KEY_1}\n{SERVICE_KEY}\n{USER_KEY_2}\n")
+        auth.chmod(0o600)
+
+        result = _run_authorize(build_revoke_command(), tmp_path)
+        assert result.returncode == 0, result.stderr
+
+        lines = auth.read_text().splitlines()
+        # Only the remo-web@ marker line is gone; user keys are untouched.
+        assert lines == [USER_KEY_1, USER_KEY_2]
+        assert not any(AUTHORIZED_KEYS_MARKER in line for line in lines)
+        assert _mode(auth) == 0o600
+
+    def test_missing_authorized_keys_is_success_no_op(self, tmp_path):
+        assert not (tmp_path / ".ssh").exists()
+
+        result = _run_authorize(build_revoke_command(), tmp_path)
+        # Missing file -> success no-op (exit 0). Not creating the file is fine.
+        assert result.returncode == 0, result.stderr
+
+    def test_idempotent_on_already_revoked_file(self, tmp_path):
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir(mode=0o700)
+        auth = ssh_dir / "authorized_keys"
+        auth.write_text(f"{USER_KEY_1}\n{SERVICE_KEY}\n")
+        auth.chmod(0o600)
+
+        cmd = build_revoke_command()
+        assert _run_authorize(cmd, tmp_path).returncode == 0
+        first = auth.read_bytes()
+        # SERVICE_KEY already gone after the first run.
+        assert SERVICE_KEY not in auth.read_text().splitlines()
+        # A second run against the already-revoked file is byte-identical.
+        assert _run_authorize(cmd, tmp_path).returncode == 0
+        assert auth.read_bytes() == first
+        assert _mode(auth) == 0o600
+
+    def test_resulting_file_mode_is_600(self, tmp_path):
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir(mode=0o700)
+        auth = ssh_dir / "authorized_keys"
+        # Start from an over-permissive file to prove the command tightens it.
+        auth.write_text(f"{USER_KEY_1}\n{SERVICE_KEY}\n")
+        auth.chmod(0o644)
+
+        result = _run_authorize(build_revoke_command(), tmp_path)
+        assert result.returncode == 0, result.stderr
+        assert _mode(auth) == 0o600
+
+
+# ---------------------------------------------------------------------------
+# revoke_service_key — mocked SSH execution layer
+#
+# Mirrors TestAuthorizeServiceKey: ambient SSH access (no IdentityFile
+# override), BatchMode + bounded connect timeout, and the remote command is
+# exactly `build_revoke_command()` (no public key argument). Never raises for
+# per-instance connection failures (contracts/revocation.md).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.usefixtures("_suppress_tz")
+class TestRevokeServiceKey:
+    def _completed(self, returncode: int = 0, stderr: str = "") -> MagicMock:
+        return MagicMock(returncode=returncode, stderr=stderr, stdout="")
+
+    def test_argv_uses_ambient_ssh_batchmode_and_remote_command(
+        self, direct_host, monkeypatch
+    ):
+        runs: list[tuple[list[str], dict]] = []
+
+        def fake_run(cmd, **kwargs):
+            runs.append((cmd, kwargs))
+            return self._completed(0)
+
+        monkeypatch.setattr("remo_cli.core.web_adopt.subprocess.run", fake_run)
+
+        ok, detail = revoke_service_key(direct_host)
+        assert ok is True
+        assert detail == ""
+
+        assert len(runs) == 1
+        argv, kwargs = runs[0]
+        assert argv[0] == "ssh"
+        # Ambient SSH access: NO IdentityFile/IdentitiesOnly override.
+        assert not any("IdentityFile" in arg for arg in argv)
+        assert "IdentitiesOnly=yes" not in argv
+        # BatchMode + bounded connect timeout.
+        assert "BatchMode=yes" in argv
+        assert "ConnectTimeout=10" in argv
+        # Target and remote command (exactly what build_revoke_command built —
+        # no public key argument).
+        assert "remo@5.6.7.8" in argv
+        assert argv[-1] == build_revoke_command()
+        # Bounded overall subprocess timeout (default 30s).
+        assert kwargs["timeout"] == 30.0
+
+    def test_delegates_to_build_ssh_base_cmd_without_identity_override(
+        self, direct_host, monkeypatch
+    ):
+        base_cmd_calls: list[tuple[tuple, dict]] = []
+
+        def fake_base_cmd(host, *args, **kwargs):
+            base_cmd_calls.append(((host, *args), kwargs))
+            return ["ssh", "stub-opt", "remo@5.6.7.8"]
+
+        monkeypatch.setattr(
+            "remo_cli.core.web_adopt.build_ssh_base_cmd", fake_base_cmd
+        )
+        run_mock = MagicMock(return_value=self._completed(0))
+        monkeypatch.setattr("remo_cli.core.web_adopt.subprocess.run", run_mock)
+
+        ok, _ = revoke_service_key(direct_host)
+        assert ok is True
+
+        assert len(base_cmd_calls) == 1
+        (positional, kwargs) = base_cmd_calls[0]
+        assert positional == (direct_host,)
+        assert kwargs == {
+            "extra_opts": ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+        }
+        assert "identity_file" not in kwargs
+
+        argv = run_mock.call_args.args[0]
+        assert argv == [
+            "ssh",
+            "stub-opt",
+            "remo@5.6.7.8",
+            build_revoke_command(),
+        ]
+
+    def test_custom_timeout_is_forwarded(self, direct_host, monkeypatch):
+        run_mock = MagicMock(return_value=self._completed(0))
+        monkeypatch.setattr("remo_cli.core.web_adopt.subprocess.run", run_mock)
+
+        revoke_service_key(direct_host, timeout=7.0)
+        assert run_mock.call_args.kwargs["timeout"] == 7.0
+
+    def test_timeout_expired_returns_false_never_raises(self, direct_host, monkeypatch):
+        def raise_timeout(cmd, **kwargs):
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=kwargs["timeout"])
+
+        monkeypatch.setattr("remo_cli.core.web_adopt.subprocess.run", raise_timeout)
+
+        ok, detail = revoke_service_key(direct_host)
+        assert ok is False
+        assert detail == "SSH timed out after 30s"
+
+    def test_oserror_returns_false_never_raises(self, direct_host, monkeypatch):
+        def raise_oserror(cmd, **kwargs):
+            raise OSError("ssh binary not found")
+
+        monkeypatch.setattr("remo_cli.core.web_adopt.subprocess.run", raise_oserror)
+
+        ok, detail = revoke_service_key(direct_host)
+        assert ok is False
+        assert detail == "SSH failed: ssh binary not found"
+
+    def test_exit_255_reports_connection_failure(self, direct_host, monkeypatch):
+        run_mock = MagicMock(
+            return_value=self._completed(255, stderr="Permission denied (publickey).")
+        )
+        monkeypatch.setattr("remo_cli.core.web_adopt.subprocess.run", run_mock)
+
+        ok, detail = revoke_service_key(direct_host)
+        assert ok is False
+        assert detail == "Permission denied (publickey)."
+
+    def test_exit_255_without_stderr_uses_default_detail(self, direct_host, monkeypatch):
+        run_mock = MagicMock(return_value=self._completed(255, stderr=""))
+        monkeypatch.setattr("remo_cli.core.web_adopt.subprocess.run", run_mock)
+
+        ok, detail = revoke_service_key(direct_host)
+        assert ok is False
+        assert detail == "SSH connection failed (exit code 255)"
+
+    def test_nonzero_remote_exit_reports_remote_failure(self, direct_host, monkeypatch):
+        run_mock = MagicMock(return_value=self._completed(1, stderr="mv: failed"))
+        monkeypatch.setattr("remo_cli.core.web_adopt.subprocess.run", run_mock)
+
+        ok, detail = revoke_service_key(direct_host)
+        assert ok is False
+        assert detail == "remote command failed (exit 1): mv: failed"
