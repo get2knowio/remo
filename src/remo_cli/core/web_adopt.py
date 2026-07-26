@@ -54,6 +54,7 @@ successful PUT.
 
 from __future__ import annotations
 
+import getpass
 import hashlib
 import json
 import os
@@ -73,7 +74,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 from remo_cli.core import registry
-from remo_cli.core.config import get_known_hosts_path_readonly, get_remo_home_readonly
+from remo_cli.core.config import (
+    DEFAULT_SSH_PORT,
+    get_known_hosts_path_readonly,
+    get_remo_home_readonly,
+)
 from remo_cli.core.known_hosts import get_known_hosts
 from remo_cli.core.output import (
     GREEN,
@@ -645,6 +650,67 @@ def authorize_service_key(
 
 
 # ---------------------------------------------------------------------------
+# Best-effort service-key revocation (017 US3, contracts/revocation.md).
+# Symmetric to build_authorize_command / authorize_service_key: marker-scoped,
+# atomic, idempotent, over the operator's ambient SSH access, never raises.
+# ---------------------------------------------------------------------------
+
+
+def build_revoke_command() -> str:
+    """Build the single POSIX-sh command that removes the service line.
+
+    Filters every `` remo-web@`` marker line out of ``~/.ssh/authorized_keys``
+    (tolerating a missing file) and writes back via temp-file + ``mv`` at 0600.
+    Removes ONLY marker lines — all other authorized keys are preserved. A
+    missing file is a success no-op; re-running against an already-revoked
+    instance is a byte-level no-op (idempotent).
+    """
+    quoted_marker = shlex.quote(AUTHORIZED_KEYS_MARKER)
+    return (
+        "set -e; "
+        "umask 077; "
+        "[ -f ~/.ssh/authorized_keys ] || exit 0; "
+        'tmp="$(mktemp ~/.ssh/.authorized_keys.remo.XXXXXX)"; '
+        f'grep -vF {quoted_marker} ~/.ssh/authorized_keys > "$tmp" || true; '
+        'chmod 600 "$tmp"; '
+        'mv "$tmp" ~/.ssh/authorized_keys'
+    )
+
+
+def revoke_service_key(
+    host: KnownHost,
+    *,
+    timeout: float = 30.0,
+) -> tuple[bool, str]:
+    """Remove the service's authorization entry from *host* (best-effort).
+
+    Mirrors :func:`authorize_service_key`: ambient SSH access (no identity
+    override), ``BatchMode=yes``, bounded timeout. Returns ``(ok, detail)`` and
+    never raises for per-instance connection failures — an exit 255 / timeout /
+    OSError becomes ``(False, <reason>)`` (contracts/revocation.md).
+    """
+    cmd = build_ssh_base_cmd(
+        host,
+        extra_opts=["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"],
+    )
+    cmd.append(build_revoke_command())
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return False, f"SSH timed out after {timeout:.0f}s"
+    except OSError as e:
+        return False, f"SSH failed: {e}"
+
+    if result.returncode == 0:
+        return True, ""
+    stderr = result.stderr.strip()
+    if result.returncode == 255:
+        return False, stderr or "SSH connection failed (exit code 255)"
+    return False, f"remote command failed (exit {result.returncode}): {stderr or 'no stderr'}"
+
+
+# ---------------------------------------------------------------------------
 # T019 — --via SSH tunnel helper (research R9, FR-018)
 # ---------------------------------------------------------------------------
 
@@ -730,10 +796,29 @@ def open_via_tunnel(
 
 @dataclass
 class CachedInstance:
-    """Per-instance delta-cache entry from the last successful push."""
+    """Per-instance delta-cache entry from the last successful push.
+
+    Beyond the delta fields (``fingerprint`` / ``host_keys``) the entry retains
+    a **non-secret connection tuple** (``host`` / ``user`` / ``access`` /
+    ``type`` / ``port`` / ``identity``) so a *removed* instance — one no longer
+    in the registry, whose connection fields are therefore gone from
+    ``get_known_hosts()`` — can still be reached for best-effort ``remo-web@``
+    revocation (017 US3, data-model.md §1). ``identity`` is the ssh-type host's
+    stored key path (a non-secret filesystem path, empty for every other type),
+    without which revoking a custom-key host would fall back to ambient keys and
+    fail. All new fields are optional and parsed leniently: an older cache
+    missing them simply disables revocation for that instance (reported as
+    could-not-be-performed), never an error.
+    """
 
     fingerprint: str
     host_keys: list[str] = field(default_factory=list)
+    host: str = ""
+    user: str = ""
+    access: str = ""
+    type: str = ""
+    port: int | None = None
+    identity: str = ""
 
 
 def instance_fingerprint(host: KnownHost) -> str:
@@ -748,14 +833,29 @@ def instance_fingerprint(host: KnownHost) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-#: Push cache shape: deployment_id -> {instance name -> CachedInstance}.
-PushCache = dict[str, dict[str, "CachedInstance"]]
+@dataclass
+class DeploymentCache:
+    """One deployment's slice of the push cache (cache v3, data-model.md §2).
 
-#: Push-cache file format version (research R10). Any other/missing value is
-#: treated as an empty cache — a one-time full re-verification push after a
-#: registry-format upgrade (FR-026), since fingerprints are computed
-#: differently under each cache format.
-PUSH_CACHE_VERSION = 2
+    Groups the per-instance delta entries under ``instances`` alongside the
+    ``mirror_generation`` this workstation last wrote/observed for the
+    deployment (used for multi-workstation flap detection, 017 US5).
+    """
+
+    instances: dict[str, CachedInstance] = field(default_factory=dict)
+    mirror_generation: int = 0
+
+
+#: Push cache shape: deployment_id -> DeploymentCache.
+PushCache = dict[str, "DeploymentCache"]
+
+#: Push-cache file format version. Bumped 2 -> 3 (017-web-adopt-simplify): the
+#: per-deployment shape is now ``{mirror_generation, instances}`` and each
+#: instance entry carries the non-secret connection tuple. Any other/missing
+#: value is treated as an empty cache — a one-time full re-verification push
+#: after a format upgrade (FR-026 / research R7), since older entries lack the
+#: fields the v3 flow depends on.
+PUSH_CACHE_VERSION = 3
 
 
 def push_cache_path() -> Path:
@@ -764,7 +864,12 @@ def push_cache_path() -> Path:
 
 
 def _parse_instances(raw: object) -> dict[str, CachedInstance]:
-    """Leniently parse one deployment's ``{name -> {fingerprint, host_keys}}``."""
+    """Leniently parse one deployment's ``{name -> instance entry}`` mapping.
+
+    Entries keep backward-lenient parsing: only ``fingerprint`` is required;
+    ``host_keys`` and the connection-tuple fields (``host``/``user``/``access``/
+    ``type``/``port``) default to empty/None when absent or malformed.
+    """
     instances: dict[str, CachedInstance] = {}
     if not isinstance(raw, dict):
         return instances
@@ -777,8 +882,36 @@ def _parse_instances(raw: object) -> dict[str, CachedInstance]:
             continue
         if not (isinstance(host_keys, list) and all(isinstance(k, str) for k in host_keys)):
             host_keys = []
-        instances[name] = CachedInstance(fingerprint=fingerprint, host_keys=list(host_keys))
+        host = entry.get("host")
+        user = entry.get("user")
+        access = entry.get("access")
+        type_ = entry.get("type")
+        port = entry.get("port")
+        identity = entry.get("identity")
+        instances[name] = CachedInstance(
+            fingerprint=fingerprint,
+            host_keys=list(host_keys),
+            host=host if isinstance(host, str) else "",
+            user=user if isinstance(user, str) else "",
+            access=access if isinstance(access, str) else "",
+            type=type_ if isinstance(type_, str) else "",
+            port=port if isinstance(port, int) and not isinstance(port, bool) else None,
+            identity=identity if isinstance(identity, str) else "",
+        )
     return instances
+
+
+def _parse_deployment(raw: object) -> DeploymentCache:
+    """Parse one deployment's ``{mirror_generation, instances}`` slice (v3)."""
+    if not isinstance(raw, dict):
+        return DeploymentCache()
+    generation = raw.get("mirror_generation")
+    if not (isinstance(generation, int) and not isinstance(generation, bool) and generation >= 0):
+        generation = 0
+    return DeploymentCache(
+        instances=_parse_instances(raw.get("instances")),
+        mirror_generation=generation,
+    )
 
 
 def load_push_cache() -> PushCache:
@@ -786,10 +919,10 @@ def load_push_cache() -> PushCache:
 
     Files written by the 011 credential format (top-level ``url``/``token`` +
     name-keyed ``push_cache``) do not match the deployment-keyed shape and are
-    ignored. Files without ``cache_version: 2`` (either the pre-015 format,
-    which had no version field at all, or a future incompatible one) are also
-    treated as empty (research R10) — the next push simply retries in full and
-    the next save overwrites the stale file — no secret is ever read.
+    ignored. Files without ``cache_version: 3`` (any pre-017 format or a future
+    incompatible one) are also treated as empty (research R7) — the next push
+    simply retries in full and the next save overwrites the stale file — no
+    secret is ever read.
     """
     path = push_cache_path()
     try:
@@ -804,12 +937,12 @@ def load_push_cache() -> PushCache:
     if not isinstance(raw_cache, dict):
         return {}
     cache: PushCache = {}
-    for deployment_id, instances in raw_cache.items():
+    for deployment_id, raw_deployment in raw_cache.items():
         if not isinstance(deployment_id, str):
             continue
-        parsed_instances = _parse_instances(instances)
-        if parsed_instances:
-            cache[deployment_id] = parsed_instances
+        deployment = _parse_deployment(raw_deployment)
+        if deployment.instances or deployment.mirror_generation:
+            cache[deployment_id] = deployment
     return cache
 
 
@@ -826,10 +959,22 @@ def save_push_cache(cache: PushCache) -> Path:
             "cache_version": PUSH_CACHE_VERSION,
             "push_cache": {
                 deployment_id: {
-                    name: {"fingerprint": c.fingerprint, "host_keys": c.host_keys}
-                    for name, c in instances.items()
+                    "mirror_generation": deployment.mirror_generation,
+                    "instances": {
+                        name: {
+                            "fingerprint": c.fingerprint,
+                            "host_keys": c.host_keys,
+                            "host": c.host,
+                            "user": c.user,
+                            "access": c.access,
+                            "type": c.type,
+                            "port": c.port,
+                            "identity": c.identity,
+                        }
+                        for name, c in deployment.instances.items()
+                    },
                 }
-                for deployment_id, instances in cache.items()
+                for deployment_id, deployment in cache.items()
             }
         },
         indent=2,
@@ -869,6 +1014,21 @@ class InstanceOutcome:
         return f"{self.host.type}/{self.host.name}"
 
 
+# Revocation outcome values (017 US3, data-model.md §5).
+REVOKE_OK = "revoked"
+REVOKE_FAILED = "could_not_revoke"
+
+
+@dataclass
+class RevocationOutcome:
+    """Per removed instance, surfaced in the push summary (data-model.md §5)."""
+
+    name: str
+    result: str  # REVOKE_OK | REVOKE_FAILED
+    detail: str = ""
+    remediation: str = ""
+
+
 @dataclass
 class AdoptResult:
     """Result of a completed adopt flow. Completion (even with per-instance
@@ -878,6 +1038,7 @@ class AdoptResult:
     verify: dict[str, Any]
     applied: dict[str, Any]
     deployment_id: str
+    revocations: list[RevocationOutcome] = field(default_factory=list)
 
     @property
     def all_verified(self) -> bool:
@@ -917,7 +1078,7 @@ def _process_instance(
                 detail=scan.detail,
                 remediation=(
                     "Check the instance is running and reachable from this "
-                    "workstation, then re-run `remo web adopt`."
+                    "workstation, then re-run `remo web push`."
                 ),
             )
         if scan.decision == "mismatch":
@@ -928,7 +1089,7 @@ def _process_instance(
                 remediation=(
                     "Do NOT trust this instance until you have investigated. If it "
                     f"was legitimately rebuilt, run `ssh-keygen -R {host.host}`, "
-                    "reconnect once to re-trust it, then re-run adopt."
+                    "reconnect once to re-trust it, then re-run `remo web push`."
                 ),
             )
         if scan.decision == "no_trust":
@@ -938,7 +1099,7 @@ def _process_instance(
                 detail=scan.detail,
                 remediation=(
                     f"Connect once (e.g. `remo shell`) to trust {host.host}'s key, or "
-                    "re-run adopt interactively and confirm the fingerprint."
+                    "re-run `remo web push` interactively and confirm the fingerprint."
                 ),
             )
 
@@ -950,7 +1111,7 @@ def _process_instance(
                 detail=f"host key verified, but authorizing the service key failed: {error}",
                 remediation=(
                     f"Check you can `ssh {host.user}@{host.host}` from this "
-                    "workstation, then re-run `remo web adopt`."
+                    "workstation, then re-run `remo web push`."
                 ),
             )
 
@@ -966,7 +1127,7 @@ def _process_instance(
             OUTCOME_SKIPPED_UNREACHABLE,
             detail=f"unexpected error: {e}",
             remediation=(
-                "Re-run `remo web adopt`; if this persists, re-run with "
+                "Re-run `remo web push`; if this persists, re-run with "
                 "REMO_VERBOSE=1 and inspect the error."
             ),
         )
@@ -977,36 +1138,194 @@ def _cache_from_outcomes(
 ) -> dict[str, CachedInstance]:
     """Build the push delta cache from a completed run (module docstring design).
 
-    Only direct-access instances that ended ``adopted`` or ``unchanged``
-    contribute an entry: those are exactly the instances whose host keys were
-    verified and whose lines were included in the successful PUT. Skipped or
-    flagged instances get no entry, so the next push retries them in full.
+    A direct-access instance is cached only when it ended ``adopted`` or
+    ``unchanged`` — those are exactly the instances whose host keys were verified
+    and whose lines were included in the successful PUT; a skipped/flagged direct
+    instance gets no entry so the next push retries it in full.
+
+    SSM instances are cached too (they end ``skipped_by_design``) even though
+    they carry no keyscan/authorize state: their registry entry IS mirrored on
+    every push, so caching their fingerprint lets ``remo web status`` track them
+    (otherwise every SSM instance reads as perpetually ``new``) and lets a later
+    removal be surfaced. Their ``host_keys`` stays empty, so they never take the
+    push fast-path (which is gated on ``is_direct_access``).
     """
     cache: dict[str, CachedInstance] = {}
     for o in outcomes:
-        if o.outcome not in (OUTCOME_ADOPTED, OUTCOME_UNCHANGED):
-            continue
-        if not is_direct_access(o.host):
+        if is_direct_access(o.host):
+            if o.outcome not in (OUTCOME_ADOPTED, OUTCOME_UNCHANGED):
+                continue
+        elif o.outcome != OUTCOME_SKIPPED_BY_DESIGN:
             continue
         cache[o.host.name] = CachedInstance(
             fingerprint=instance_fingerprint(o.host),
             host_keys=list(host_keys.get(o.host.name, [])),
+            # Non-secret connection tuple retained so a later removal can be
+            # reached for best-effort revocation (017 US3, data-model.md §1).
+            host=o.host.host,
+            user=o.host.user,
+            access=o.host.access_mode or "direct",
+            type=o.host.type,
+            port=(
+                o.host.ssh_port
+                if o.host.type == "ssh" and o.host.ssh_port != DEFAULT_SSH_PORT
+                else None
+            ),
+            # ssh-type stored key path (empty for every other type); without it
+            # revoking a custom-key host falls back to ambient keys and fails.
+            identity=o.host.ssh_identity or "",
         )
     return cache
 
 
-def _update_push_cache(deployment_id: str, instances: dict[str, CachedInstance]) -> None:
+def _update_push_cache(
+    deployment_id: str,
+    instances: dict[str, CachedInstance],
+    mirror_generation: int = 0,
+) -> None:
     """Merge one deployment's entry into the on-disk push cache (best-effort).
 
-    A write failure is non-fatal: the cache is only an optimization, so a push
+    ``mirror_generation`` is the generation the service reported after the PUT
+    (017 US5) — preserved across writes so the next push can flap-detect. A
+    write failure is non-fatal: the cache is only an optimization, so a push
     that cannot persist it still succeeds and simply retries in full next time.
     """
     try:
         cache = load_push_cache()
-        cache[deployment_id] = instances
+        cache[deployment_id] = DeploymentCache(
+            instances=instances, mirror_generation=mirror_generation
+        )
         save_push_cache(cache)
     except OSError as e:
         print_warning(f"could not update the push cache ({push_cache_path()}): {e}")
+
+
+def _manual_revoke_remediation(target: str) -> str:
+    return (
+        f"revoke manually by deleting the '{AUTHORIZED_KEYS_MARKER.strip()}...' line "
+        f"from ~/.ssh/authorized_keys on {target}."
+    )
+
+
+def _host_from_cache(name: str, cached: CachedInstance) -> KnownHost:
+    """Reconstruct a minimal SSH target from a removed instance's cached tuple.
+
+    A removed instance is gone from the registry, so its connection fields must
+    come from the push cache (v3). Only the fields revocation needs are
+    restored; the ``ssh``-type port round-trips through ``instance_id`` and the
+    ``ssh``-type stored identity path round-trips through ``region`` (both empty
+    for every other type, so their argv is unchanged) — see
+    ``KnownHost.ssh_port`` / ``KnownHost.ssh_identity``.
+    """
+    return KnownHost(
+        type=cached.type or "ssh",
+        name=name,
+        host=cached.host,
+        user=cached.user,
+        instance_id=str(cached.port) if (cached.type == "ssh" and cached.port) else "",
+        access_mode=cached.access or "direct",
+        region=cached.identity,
+    )
+
+
+def _revoke_removed(
+    removed: list[str], cached_instances: dict[str, CachedInstance]
+) -> list[RevocationOutcome]:
+    """Best-effort ``remo-web@`` revocation for each removed instance (US3).
+
+    Direct-access instances with a cached connection tuple are contacted over
+    ambient SSH; SSM instances and instances with no cached tuple (older cache)
+    are reported ``could_not_revoke`` with manual-removal remediation. Never
+    fatal — a failure to revoke never changes the push's exit code (FR-015).
+    """
+    outcomes: list[RevocationOutcome] = []
+    for name in removed:
+        cached = cached_instances.get(name)
+        if cached is None or not cached.host:
+            outcomes.append(
+                RevocationOutcome(
+                    name,
+                    REVOKE_FAILED,
+                    detail="no cached connection details for this instance",
+                    remediation=_manual_revoke_remediation("the instance"),
+                )
+            )
+            continue
+        if cached.access == "ssm":
+            outcomes.append(
+                RevocationOutcome(
+                    name,
+                    REVOKE_FAILED,
+                    detail="SSM-routed instance (AWS-managed transport)",
+                    remediation=_manual_revoke_remediation("the instance via SSM"),
+                )
+            )
+            continue
+
+        host = _host_from_cache(name, cached)
+        try:
+            ok, detail = revoke_service_key(host)
+        except Exception as e:  # noqa: BLE001 — revocation is never fatal (FR-015)
+            ok, detail = False, f"unexpected error: {e}"
+        if ok:
+            outcomes.append(RevocationOutcome(name, REVOKE_OK, detail="service key removed"))
+        else:
+            outcomes.append(
+                RevocationOutcome(
+                    name,
+                    REVOKE_FAILED,
+                    detail=detail,
+                    remediation=_manual_revoke_remediation(f"{host.user}@{host.host}"),
+                )
+            )
+    return outcomes
+
+
+def _workstation_label() -> str:
+    """Best-effort, non-authoritative ``hostname/user`` descriptor (US5).
+
+    Sent to the service as informational display text only; the service stores
+    it verbatim and never acts on it (FR-027).
+    """
+    try:
+        host = socket.gethostname() or "unknown"
+    except OSError:
+        host = "unknown"
+    user = ""
+    try:
+        user = getpass.getuser()
+    except Exception:  # noqa: BLE001 — getuser() can raise on odd environments
+        user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    return f"{host}/{user}" if user else host
+
+
+def _flap_warning(status: dict[str, Any], cached_generation: int) -> str | None:
+    """Return a flap warning when the mirror advanced elsewhere, else None (US5).
+
+    Warn iff the service reports a ``mirror_generation`` (a 017+ service that
+    has been pushed to at least once) AND it is greater than the generation this
+    workstation last recorded for the deployment. A pre-017 service (no
+    generation) or a same-or-older generation is not a flap (contracts/
+    setup-status-marker.md).
+    """
+    server_gen = status.get("mirror_generation")
+    if not (isinstance(server_gen, int) and not isinstance(server_gen, bool)):
+        return None
+    if server_gen <= cached_generation:
+        return None
+    last_push = status.get("last_push")
+    who = ""
+    when = ""
+    if isinstance(last_push, dict):
+        who = str(last_push.get("workstation") or "").strip()
+        when = str(last_push.get("at") or "").strip()
+    by = f" by {who}" if who else ""
+    at = f" at {when}" if when else ""
+    return (
+        f"the web deployment's mirror was last updated elsewhere (generation "
+        f"{server_gen}, this workstation last saw {cached_generation}){by}{at}. "
+        "Pushing now overwrites that mirror with this workstation's registry."
+    )
 
 
 def render_summary(outcomes: list[InstanceOutcome]) -> None:
@@ -1035,6 +1354,28 @@ def render_summary(outcomes: list[InstanceOutcome]) -> None:
         print(line)
         if o.remediation:
             print(f"      -> {o.remediation}")
+
+
+def render_revocations(revocations: list[RevocationOutcome]) -> None:
+    """Render best-effort revocation outcomes for removed instances (FR-018).
+
+    Printed alongside the adoption summary; a ``could_not_revoke`` never changes
+    the overall exit code (the push still completes).
+    """
+    if not revocations:
+        return
+    print()
+    print("Revocation (removed instances):")
+    name_width = max(len(r.name) for r in revocations)
+    result_width = max(len(r.result) for r in revocations)
+    for r in revocations:
+        color = GREEN if r.result == REVOKE_OK else YELLOW
+        print(
+            f"  {r.name:<{name_width}}  "
+            f"{color}{r.result:<{result_width}}{NC}  {r.detail}"
+        )
+        if r.remediation:
+            print(f"      -> {r.remediation}")
 
 
 def render_verification(verify: dict[str, Any], outcomes: list[InstanceOutcome]) -> None:
@@ -1101,110 +1442,9 @@ def _run_flow_maybe_tunneled(
     return flow(SetupApiClient(url, token))
 
 
-def run_adopt(
-    url: str,
-    token: str,
-    *,
-    via: str | None = None,
-    allow_empty: bool = False,
-    assume_yes: bool = False,
-    interactive: bool | None = None,
-) -> AdoptResult:
-    """Run the full adopt flow (contract steps 1-7). ``token`` is the pairing
-    code. Raises AdoptError on hard failure; returns an AdoptResult when the
-    flow completed (CLI exit 0, even with per-instance skips/flags)."""
-    if interactive is None:
-        interactive = sys.stdin.isatty() and not assume_yes
-    return _run_flow_maybe_tunneled(
-        url,
-        token,
-        via,
-        "adopting",
-        lambda client: _adopt_flow(client, allow_empty=allow_empty, interactive=interactive),
-    )
-
-
-def _adopt_flow(
-    client: SetupApiClient,
-    *,
-    allow_empty: bool,
-    interactive: bool,
-) -> AdoptResult:
-    # Step 1: status precheck (FR-017), then the payload-version skew gate
-    # (FR-021) — BEFORE any instance processing or mutation.
-    status = client.get_status()
-    state = str(status.get("state", "unknown"))
-    if state == "mount_configured":
-        raise MountConfiguredError(_MOUNT_CONFIGURED_MSG)
-    _check_payload_version_supported(status)
-    print_info(
-        f"Service state: {state} "
-        f"({status.get('registry_instances', 0)} instances currently registered)"
-    )
-
-    # Step 2: service identity.
-    identity = client.get_identity()
-    deployment_id = str(identity.get("deployment_id") or "")
-    public_key = str(identity.get("public_key") or "")
-    if not public_key:
-        raise AdoptError(
-            "the service returned no public key, so it cannot be authorized on "
-            "any instance. The service identity may be missing — check the "
-            "service's state volume and logs."
-        )
-    print_info(f"Service identity: remo-web@{deployment_id or 'unknown'}")
-
-    # Step 3: build the mirror from the local registry (FR-008/FR-016).
-    hosts = get_known_hosts()
-    if not hosts and not allow_empty:
-        raise EmptyRegistryError(_empty_registry_message())
-
-    # Step 4: per-instance loop (FR-009..FR-013), failures never fatal.
-    outcomes: list[InstanceOutcome] = []
-    host_keys: dict[str, list[str]] = {}
-    for host in hosts:
-        print_info(f"Processing {host.type}/{host.name} ({host.host})...")
-        outcomes.append(
-            _process_instance(
-                host,
-                public_key,
-                interactive=interactive,
-                host_keys=host_keys,
-            )
-        )
-
-    # Step 5: push the mirror (guard already applied above).
-    payload = build_adoption_payload(hosts, host_keys, allow_empty=True)
-    applied = client.put_registry(payload, allow_empty=allow_empty)
-    print_success(
-        f"Registry pushed: {applied.get('registry_instances', len(hosts))} instances, "
-        f"host keys for {applied.get('host_key_instances', len(host_keys))}."
-    )
-
-    # Step 6: service-side verification (FR-014).
-    print_info("Running service-side verification...")
-    verify = client.post_verify()
-
-    render_summary(outcomes)
-    render_verification(verify, outcomes)
-
-    # Step 7: seed the non-secret push cache from this run's outcomes so the
-    # first `remo web push` after adoption already skips unchanged instances
-    # (012 R10). No consent needed — no url or code is stored (FR-019), only
-    # per-instance fingerprints keyed by the service deployment_id.
-    if deployment_id:
-        _update_push_cache(deployment_id, _cache_from_outcomes(outcomes, host_keys))
-
-    return AdoptResult(
-        outcomes=outcomes,
-        verify=verify,
-        applied=applied,
-        deployment_id=deployment_id,
-    )
-
-
 # ---------------------------------------------------------------------------
-# T040 — Push orchestration (US4, FR-026/FR-027, clarification Q1)
+# Unified push orchestration (017 US1) — ONE code path for "adopt on first use,
+# re-sync afterwards". `remo web adopt` is a deprecated alias delegating here.
 # ---------------------------------------------------------------------------
 
 
@@ -1215,18 +1455,24 @@ def run_push(
     via: str | None = None,
     allow_empty: bool = False,
     assume_yes: bool = False,
+    force: bool = False,
     interactive: bool | None = None,
 ) -> AdoptResult:
-    """Run the re-sync flow (`remo web push`, US4). ``token`` is a pairing code.
+    """Run the unified push flow (`remo web push`, 017 US1). ``token`` is a
+    pairing code.
 
-    URL + code are supplied every time (option / env / prompt) — nothing durable
-    is saved (FR-018/FR-019). The service's ``deployment_id`` (read from the
-    setup API) selects the matching entry in the non-secret push cache: instances
-    whose registry entry matches the last successful push skip keyscan/authorize
-    (``unchanged``) and reuse their cached host-key lines; new/changed instances
-    get the full per-instance treatment. The full registry mirror is always PUT
-    (removals propagate). Raises AdoptError on hard failure; returns AdoptResult
-    on completion.
+    Adopts a not-yet-adopted deployment on first use and re-syncs an
+    already-adopted one afterwards — auto-detected from the delta cache being
+    empty vs. populated for the deployment; the operator never chooses. URL +
+    code are supplied every time (option / env / prompt) — nothing durable is
+    saved (FR-018/FR-019). The service's ``deployment_id`` selects the matching
+    push-cache entry: instances whose registry entry matches the last successful
+    push skip keyscan/authorize (``unchanged``) and reuse their cached host-key
+    lines; new/changed instances get the full per-instance treatment; removed
+    instances get best-effort ``remo-web@`` revocation. With ``force`` every
+    direct-access instance is re-scanned and re-authorized (the ``unchanged``
+    fast-path is bypassed, FR-019/FR-020). Raises AdoptError on hard failure;
+    returns AdoptResult on completion.
     """
     if interactive is None:
         interactive = sys.stdin.isatty() and not assume_yes
@@ -1235,7 +1481,36 @@ def run_push(
         token,
         via,
         "pushing",
-        lambda client: _push_flow(client, allow_empty=allow_empty, interactive=interactive),
+        lambda client: _push_flow(
+            client, allow_empty=allow_empty, interactive=interactive, force=force
+        ),
+    )
+
+
+def run_adopt(
+    url: str,
+    token: str,
+    *,
+    via: str | None = None,
+    allow_empty: bool = False,
+    assume_yes: bool = False,
+    force: bool = False,
+    interactive: bool | None = None,
+) -> AdoptResult:
+    """Deprecated alias for :func:`run_push` (017 US1 / FR-008).
+
+    Retained for one release so external callers and the deprecated
+    ``remo web adopt`` command keep working; there is no separate adopt code
+    path anymore ("adopt vs. re-sync" is auto-detected inside ``run_push``).
+    """
+    return run_push(
+        url,
+        token,
+        via=via,
+        allow_empty=allow_empty,
+        assume_yes=assume_yes,
+        force=force,
+        interactive=interactive,
     )
 
 
@@ -1244,14 +1519,20 @@ def _push_flow(
     *,
     allow_empty: bool,
     interactive: bool,
+    force: bool = False,
 ) -> AdoptResult:
     # Step 1: status precheck (FR-017) — a mount-configured service is read-only.
     # Then the payload-version skew gate (FR-021) — BEFORE any instance
     # processing or mutation.
     status = client.get_status()
-    if str(status.get("state", "unknown")) == "mount_configured":
+    state = str(status.get("state", "unknown"))
+    if state == "mount_configured":
         raise MountConfiguredError(_MOUNT_CONFIGURED_MSG)
     _check_payload_version_supported(status)
+    print_info(
+        f"Service state: {state} "
+        f"({status.get('registry_instances', 0)} instances currently registered)"
+    )
 
     # Step 2: service identity + the push cache entry for this deployment.
     identity = client.get_identity()
@@ -1265,7 +1546,22 @@ def _push_flow(
         )
     print_info(f"Service identity: remo-web@{deployment_id or 'unknown'}")
 
-    cached_instances = load_push_cache().get(deployment_id, {})
+    deployment_cache = load_push_cache().get(deployment_id)
+    cached_instances = deployment_cache.instances if deployment_cache else {}
+    cached_generation = deployment_cache.mirror_generation if deployment_cache else 0
+
+    # Flap detection (FR-024): the mirror advanced under us since our last push.
+    flap = _flap_warning(status, cached_generation)
+    if flap is not None:
+        print_warning(flap)
+        if interactive and not confirm(
+            "Push anyway, overwriting the other workstation's mirror?"
+        ):
+            raise AdoptError(
+                "push aborted: the deployment's mirror was updated by another "
+                "workstation. Re-run `remo web status`/`push` once you have "
+                "reconciled, or pass --yes to overwrite."
+            )
 
     # Step 3: build the mirror from the local registry (FR-008/FR-016).
     hosts = get_known_hosts()
@@ -1276,13 +1572,15 @@ def _push_flow(
     # fingerprint matches the cache skips keyscan/authorize but its cached
     # host-key lines are REUSED in the payload: PUT /setup/registry replaces the
     # service's known_hosts wholesale, so every mirrored direct-access instance
-    # must contribute lines on every push.
+    # must contribute lines on every push. ``force`` bypasses the fast-path so
+    # every direct-access instance is re-scanned and re-authorized (FR-019).
     outcomes: list[InstanceOutcome] = []
     host_keys: dict[str, list[str]] = {}
     for host in hosts:
         cached = cached_instances.get(host.name)
         if (
-            is_direct_access(host)
+            not force
+            and is_direct_access(host)
             and cached is not None
             and cached.fingerprint == instance_fingerprint(host)
             and cached.host_keys
@@ -1306,36 +1604,47 @@ def _push_flow(
             )
         )
 
-    # Instances the last push knew but the mirror no longer contains (they drop
-    # off the service; revocation stays a manual, documented action).
+    # Instances the last push knew but the mirror no longer contains. Revocation
+    # is deferred until AFTER the PUT below (017 US3): we only de-authorize an
+    # instance once the mirror removal is actually committed, so a failed PUT can
+    # never leave a de-authorized instance still listed in the service mirror.
     removed = sorted(set(cached_instances) - {h.name for h in hosts})
 
-    # Step 5: always PUT the full mirror (removals propagate).
+    # Step 5: always PUT the full mirror (removals propagate). The workstation
+    # label is informational display text for the deployment's flap marker (US5).
     payload = build_adoption_payload(hosts, host_keys, allow_empty=True)
+    payload["workstation"] = _workstation_label()
     applied = client.put_registry(payload, allow_empty=allow_empty)
     print_success(
         f"Registry pushed: {applied.get('registry_instances', len(hosts))} instances, "
         f"host keys for {applied.get('host_key_instances', len(host_keys))}."
     )
 
+    # Step 5b: now that the mirror no longer lists them, best-effort revoke the
+    # service's authorized_keys entry on each removed instance (never fatal).
+    revocations = _revoke_removed(removed, cached_instances)
+
     # Step 6: only after a successful PUT, rewrite the delta cache for this
     # deployment (removed instances drop out; skipped/flagged instances get no
-    # entry so the next push retries them in full).
+    # entry so the next push retries them in full). Record the generation the
+    # service just returned so the next push can flap-detect (US5).
+    returned_generation = applied.get("mirror_generation")
+    new_generation = (
+        returned_generation
+        if isinstance(returned_generation, int) and not isinstance(returned_generation, bool)
+        else cached_generation
+    )
     if deployment_id:
-        _update_push_cache(deployment_id, _cache_from_outcomes(outcomes, host_keys))
+        _update_push_cache(
+            deployment_id, _cache_from_outcomes(outcomes, host_keys), new_generation
+        )
 
-    # Step 7: service-side verification (FR-014), same as adopt.
+    # Step 7: service-side verification (FR-014).
     print_info("Running service-side verification...")
     verify = client.post_verify()
 
     render_summary(outcomes)
-    for name in removed:
-        print_warning(
-            f"{name}: removed from the service registry; its authorized_keys "
-            "entry remains on the instance — revoke it manually by deleting "
-            f"the '{AUTHORIZED_KEYS_MARKER.strip()}...' line from "
-            "~/.ssh/authorized_keys on that instance."
-        )
+    render_revocations(revocations)
     render_verification(verify, outcomes)
 
     return AdoptResult(
@@ -1343,4 +1652,5 @@ def _push_flow(
         verify=verify,
         applied=applied,
         deployment_id=deployment_id,
+        revocations=revocations,
     )

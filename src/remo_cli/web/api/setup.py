@@ -39,10 +39,12 @@ T011/T012/T013), all inheriting the router-level token dependency:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -116,12 +118,20 @@ router = APIRouter(prefix="/setup", dependencies=[Depends(require_pairing_code)]
 # ---------------------------------------------------------------------------
 
 
+class LastPush(BaseModel):
+    at: str
+    workstation: str
+
+
 class SetupStatusResponse(BaseModel):
     state: str
     deployment_id: str | None
     public_key_available: bool
     registry_instances: int
     payload_versions: list[int] = Field(default_factory=lambda: list(SUPPORTED_PAYLOAD_VERSIONS))
+    #: Mirror-identity marker (017); omitted when no mirror has ever been applied.
+    mirror_generation: int | None = None
+    last_push: LastPush | None = None
 
 
 class IdentityResponse(BaseModel):
@@ -178,6 +188,9 @@ class RegistryApplyResponse(BaseModel):
     applied: bool
     registry_instances: int
     host_key_instances: int
+    #: Generation just written to the mirror-identity marker (017); omitted if
+    #: the marker write failed (the registry apply still succeeded).
+    mirror_generation: int | None = None
 
 
 class VerifyCheckOut(BaseModel):
@@ -211,6 +224,52 @@ def _write_lines_atomically(path: Path, lines: list[str]) -> None:
         with os.fdopen(fd, "w") as fh:
             for line in lines:
                 fh.write(line + "\n")
+        os.replace(tmp_path, path)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def _read_mirror_meta(settings: WebSettings) -> dict[str, Any] | None:
+    """Read the mirror-identity marker (`web-identity/mirror-meta.json`).
+
+    Returns the parsed document, or ``None`` when the file is absent, unreadable,
+    or corrupt (data-model.md §3: a missing/unreadable marker is a safe default).
+    """
+    try:
+        raw = settings.mirror_meta_path.read_text()
+    except OSError:
+        return None
+    try:
+        doc = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    return doc
+
+
+def _write_mirror_meta(settings: WebSettings, generation: int, workstation: str) -> None:
+    """Write the mirror-identity marker atomically (temp-file + `os.replace`).
+
+    Mirrors :func:`_write_lines_atomically`'s idiom. The *workstation* label is
+    untrusted display text (stored verbatim, never acted on).
+    """
+    doc = {
+        "generation": generation,
+        "last_push": {
+            "at": datetime.now(UTC).isoformat(),
+            "workstation": workstation,
+        },
+    }
+    path = settings.mirror_meta_path
+    dir_ = path.parent
+    dir_.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".mirror_meta_tmp_")
+    tmp_path = Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(doc, fh)
         os.replace(tmp_path, path)
     except Exception:
         tmp_path.unlink(missing_ok=True)
@@ -321,16 +380,25 @@ def _validate_host_keys(
 
 
 def _apply_payload(
-    hosts: list[KnownHost], host_keys: dict[str, list[str]], settings: WebSettings
-) -> None:
+    hosts: list[KnownHost],
+    host_keys: dict[str, list[str]],
+    settings: WebSettings,
+    workstation: str,
+) -> int | None:
     """Ordered, crash-convergent apply (contracts/mirror-payload-v2.md §3):
 
     1. service trust file (``web-identity/known_hosts``) -- unchanged from today.
     2. ``registry.json`` (v2) via :func:`core.registry.replace_registry`.
     3. remove any legacy ``known_hosts`` mirror file left from a pre-upgrade
        push (service-owned replaceable state, not user data).
+    4. write the mirror-identity marker (017): ``generation + 1``, best-effort.
 
     A crash mid-sequence leaves a readable superset; re-push converges.
+
+    Returns the newly-written mirror generation, or ``None`` when only the
+    marker write failed (the registry apply already succeeded; the marker is
+    advisory, so its failure must not fail the request -- contracts/
+    setup-status-marker.md "Failure & precedence").
     """
     known_hosts_lines: list[str] = []
     for host in hosts:
@@ -345,24 +413,58 @@ def _apply_payload(
 
     get_known_hosts_path().unlink(missing_ok=True)
 
+    # The mirror-identity marker is the strictly-final, advisory step: it runs
+    # only after a successful registry write, and its own failure is swallowed.
+    existing = _read_mirror_meta(settings)
+    current_generation = 0
+    if existing is not None and isinstance(existing.get("generation"), int):
+        current_generation = existing["generation"]
+    new_generation = current_generation + 1
+    try:
+        _write_mirror_meta(settings, new_generation, workstation)
+    except OSError as exc:
+        logger.warning("mirror-meta write failed (registry apply succeeded): %s", exc)
+        return None
+    return new_generation
+
 
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
 
-@router.get("/status", response_model=SetupStatusResponse)
+@router.get("/status", response_model=SetupStatusResponse, response_model_exclude_none=True)
 def get_status(request: Request) -> SetupStatusResponse:
-    """`GET /api/v1/setup/status` -- service mode + identity presence. Cheap."""
+    """`GET /api/v1/setup/status` -- service mode + identity presence. Cheap.
+
+    Also surfaces the mirror-identity marker (017) when a mirror has ever been
+    applied; a missing/unreadable marker omits both fields (``exclude_none``),
+    so a never-pushed service stays byte-identical to a pre-017 response.
+    """
     settings = _get_settings(request)
     identity = load_service_identity(settings)  # no side effects
     registry_instances = len(registry.read_registry(readonly=True).hosts)
+
+    mirror_generation: int | None = None
+    last_push: LastPush | None = None
+    meta = _read_mirror_meta(settings)
+    if meta is not None and isinstance(meta.get("generation"), int):
+        mirror_generation = meta["generation"]
+        raw_last = meta.get("last_push")
+        if isinstance(raw_last, dict):
+            last_push = LastPush(
+                at=str(raw_last.get("at", "")),
+                workstation=str(raw_last.get("workstation", "unknown")),
+            )
+
     return SetupStatusResponse(
         state=detect_state(settings).value,
         deployment_id=(identity.deployment_id or None) if identity else None,
         public_key_available=identity is not None,
         registry_instances=registry_instances,
         payload_versions=list(SUPPORTED_PAYLOAD_VERSIONS),
+        mirror_generation=mirror_generation,
+        last_push=last_push,
     )
 
 
@@ -384,7 +486,9 @@ def get_identity(request: Request) -> IdentityResponse | JSONResponse:
     return IdentityResponse(deployment_id=identity.deployment_id, public_key=identity.public_key)
 
 
-@router.put("/registry", response_model=RegistryApplyResponse)
+@router.put(
+    "/registry", response_model=RegistryApplyResponse, response_model_exclude_none=True
+)
 def put_registry(
     request: Request, body: dict[str, Any], allow_empty: bool = False
 ) -> RegistryApplyResponse | JSONResponse:
@@ -438,8 +542,13 @@ def put_registry(
     if host_keys_error is not None:
         return _invalid_payload(host_keys_error)
 
+    # Optional untrusted display label read from the RAW body (the pydantic
+    # payload models drop extra fields). Stored verbatim, never acted on.
+    raw_workstation = body.get("workstation")
+    workstation = raw_workstation if isinstance(raw_workstation, str) else "unknown"
+
     try:
-        _apply_payload(hosts, host_keys, settings)
+        mirror_generation = _apply_payload(hosts, host_keys, settings, workstation)
     except (OSError, registry.RegistryError) as exc:
         # OSError: a filesystem write failed. RegistryError: a lock timeout
         # (RegistryBusyError) or an unreadable/newer-version registry.json on
@@ -458,6 +567,7 @@ def put_registry(
         applied=True,
         registry_instances=len(hosts),
         host_key_instances=len(host_keys),
+        mirror_generation=mirror_generation,
     )
 
 

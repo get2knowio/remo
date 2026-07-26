@@ -25,6 +25,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 
+from remo_cli.core import web_drift
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
 from remo_cli.core.registry import mutate_registry, read_registry
 from remo_cli.models.host import KnownHost
@@ -463,6 +464,15 @@ def run_sync(
         if plan.has_removals:
             entry_word = _plural(len(plan.removed), "entry", "entries")
             print_success(f"Removed {len(plan.removed)} {entry_word} from the registry.")
+        # Out-of-date nudge (017 US2, FR-013): only when the registry actually
+        # changed (never on a no-op, dry-run, or aborted sync). One site covers
+        # all four providers' sync via this shared engine (Spec 016). The nudge
+        # lives here, not in the CLI layer, because only run_sync distinguishes
+        # "applied" from "dry-run/no-op".
+        if not plan.is_noop:
+            notice = web_drift.out_of_date_notice()
+            if notice is not None:
+                print_info(notice)
         return EXIT_OK
 
     if outcome is ConsentOutcome.DECLINED:

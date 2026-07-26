@@ -60,6 +60,7 @@ def add(
       remo add mybox user@192.0.2.10 --verify
     """
     from remo_cli.core.validation import validate_name, validate_port  # noqa: PLC0415
+    from remo_cli.core.web_drift import emit_out_of_date_notice  # noqa: PLC0415
     from remo_cli.providers.added import add as provider_add  # noqa: PLC0415
 
     validate_name(name)
@@ -77,6 +78,7 @@ def add(
     )
     if rc:
         raise SystemExit(rc)
+    emit_out_of_date_notice()  # 017 US2: a registered SSH host was added
 
 
 @click.command("remove")
@@ -95,8 +97,10 @@ def remove(name: str, assume_yes: bool) -> None:
     contacted or modified (unlike a provider 'destroy'). Refuses to act on a
     provider-managed host.
     """
+    from remo_cli.core.web_drift import emit_out_of_date_notice  # noqa: PLC0415
     from remo_cli.providers.added import remove as provider_remove  # noqa: PLC0415
 
     rc = provider_remove(name=name, assume_yes=assume_yes)
     if rc:
         raise SystemExit(rc)
+    emit_out_of_date_notice()  # 017 US2: a registered SSH host was removed

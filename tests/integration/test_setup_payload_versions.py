@@ -127,7 +127,13 @@ def test_v2_payload_accepted_wire_entries_match_file_schema(tmp_path, monkeypatc
     with _client(tmp_path) as client:
         resp = client.put("/api/v1/setup/registry", json=_v2_payload(), headers=_AUTH)
     assert resp.status_code == 200
-    assert resp.json() == {"applied": True, "registry_instances": 1, "host_key_instances": 1}
+    # 017 US5: the PUT response now also carries the mirror generation just written.
+    assert resp.json() == {
+        "applied": True,
+        "registry_instances": 1,
+        "host_key_instances": 1,
+        "mirror_generation": 1,
+    }
 
     doc = json.loads((tmp_path / "remo" / "registry.json").read_text())
     assert doc["hosts"] == _v2_payload()["registry"]
@@ -229,21 +235,22 @@ def test_push_proceeds_when_service_advertises_v2(tmp_config_dir, api_client, mo
 
 
 # ---------------------------------------------------------------------------
-# Push delta cache: stale/missing cache_version treated as empty (research R10)
+# Push delta cache: stale/missing cache_version treated as empty (research R7).
 # ---------------------------------------------------------------------------
 
 
 def test_stale_cache_version_forces_full_reverify_then_idempotent(tmp_config_dir):
     cache_path = web_adopt.push_cache_path()
-    # Pre-015 shape: no "cache_version" key at all.
+    # Pre-017 shape (no "cache_version", or the v2 nesting): discarded wholesale.
     cache_path.write_text(
         json.dumps(
             {
+                "cache_version": 2,
                 "push_cache": {
                     "dep-1": {
                         "dev": {"fingerprint": "f" * 64, "host_keys": [_VALID_KEY_LINE]}
                     }
-                }
+                },
             }
         )
     )
@@ -251,19 +258,22 @@ def test_stale_cache_version_forces_full_reverify_then_idempotent(tmp_config_dir
     loaded = web_adopt.load_push_cache()
     assert loaded == {}  # discarded wholesale -> first push re-verifies everything
 
-    # Saving now stamps cache_version: 2; a second load is idempotent.
+    # Saving now stamps cache_version: 3; a second load is idempotent.
     web_adopt.save_push_cache(
         {
-            "dep-1": {
-                "dev": web_adopt.CachedInstance(
-                    fingerprint=web_adopt.instance_fingerprint(_ssm_free_host()),
-                    host_keys=[_VALID_KEY_LINE],
-                )
-            }
+            "dep-1": web_adopt.DeploymentCache(
+                instances={
+                    "dev": web_adopt.CachedInstance(
+                        fingerprint=web_adopt.instance_fingerprint(_ssm_free_host()),
+                        host_keys=[_VALID_KEY_LINE],
+                    )
+                },
+                mirror_generation=1,
+            )
         }
     )
     reloaded = json.loads(cache_path.read_text())
-    assert reloaded["cache_version"] == 2
-    assert web_adopt.load_push_cache()["dep-1"]["dev"].fingerprint == web_adopt.instance_fingerprint(
-        _ssm_free_host()
-    )
+    assert reloaded["cache_version"] == 3
+    assert web_adopt.load_push_cache()["dep-1"].instances[
+        "dev"
+    ].fingerprint == web_adopt.instance_fingerprint(_ssm_free_host())

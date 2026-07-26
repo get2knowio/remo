@@ -9,9 +9,10 @@ WebSockets.
 
 The service can get its configuration two ways: **bind-mount mode** (read-only mounts of your
 workstation's registry and SSH key — the original deployment, unchanged) or **adopted mode**, where a
-fresh container generates its own service-scoped SSH identity and a single `remo web adopt` command
-from your workstation hands it your registry — your personal private key never leaves the
-workstation. See [Deployment modes](#deployment-modes-mounts-vs-adoption) and
+fresh container generates its own service-scoped SSH identity and a single `remo web push` command
+from your workstation hands it your registry — the first push adopts, every later push re-syncs, and
+your personal private key never leaves the workstation. See
+[Deployment modes](#deployment-modes-mounts-vs-adoption) and
 [CLI-to-web adoption](#cli-to-web-adoption).
 
 **A project opened in the browser and the same project opened with `remo shell -p <project>` attach
@@ -205,7 +206,8 @@ instance — your own LAN, your own tailnet, or behind a reverse proxy you contr
 > value set for that variable is now ignored. Setup access is authorized by an **ephemeral pairing
 > code** minted from the awaiting-adoption page, not a long-lived secret.
 
-The setup API (`/api/v1/setup/*`) used by `remo web adopt`/`remo web push` is **dormant** — every
+The setup API (`/api/v1/setup/*`) used by `remo web push` (and the deprecated `remo web adopt` alias)
+is **dormant** — every
 route returns `404`, byte-identical to an unknown route — unless a **pairing session** is live. A
 session exists only while an operator is on the awaiting-adoption page (or the dashboard's re-sync
 affordance): opening the page mints a short-lived, single-use pairing code (sliding idle TTL, default
@@ -251,7 +253,7 @@ var that can drift out of sync with reality):
 
 | | **Bind-mount mode** (original) | **Adopted mode** (011-web-adopt) |
 |---|---|---|
-| Registry | Your workstation's `~/.config/remo` bind-mounted **read-only** | Pushed by `remo web adopt`, stored in the writable state volume |
+| Registry | Your workstation's `~/.config/remo` bind-mounted **read-only** | Pushed by `remo web push`, stored in the writable state volume |
 | SSH identity | **Your personal private key** bind-mounted read-only | A **service-scoped keypair** the container generates itself on first boot (`web-identity/id_ed25519`, comment `remo-web@<deployment-id>`) |
 | Instance host keys | Your `~/.ssh/known_hosts` bind-mounted read-only | Verified host keys pushed by the CLI (`web-identity/known_hosts`) |
 | Volumes | Several read-only bind mounts | **One** writable named volume at `REMO_HOME` (`/home/remo/.config/remo`) — no registry mount, no `~/.ssh` mounts |
@@ -277,13 +279,23 @@ From these artifacts the service derives one of four states:
 |---|---|---|---|---|
 | `unconfigured` | `REMO_HOME` writable, no registry (service keypair may already exist — generated, awaiting first push) | PASS: `unconfigured — awaiting adoption; run 'remo web adopt <service-url>' from a workstation` | **`200`** `{"status": "unconfigured", ...}` — healthy-and-waiting must not fail the compose healthcheck or crash-loop `restart: unless-stopped` | "Awaiting adoption" page: explains the state, shows the `remo web adopt <origin>` command, and a **Copy pairing code** button (the code itself is never displayed). Flips to the dashboard automatically once adoption completes. No instance data, no terminals, no public-key display. |
 | `adopted` | `REMO_HOME` writable + service keypair + registry present | PASS: `adopted — configured via 'remo web adopt' (service identity in web-identity/)` | `200` `{"status": "ready", ...}` | Normal dashboard |
-| `mount_configured` | Registry present **and** (`REMO_HOME` not writable — the `:ro` bind mount — or a user SSH identity resolves via `REMO_WEB_SSH_IDENTITY_FILE`/`~/.ssh/id_*`). Explicit mounts are the operator's stated intent, so this wins even if a service keypair also exists. | PASS: `mount_configured — configured via read-only mounts` | `200` `{"status": "ready", ...}` | Normal dashboard |
+| `mount_configured` | Registry present **and** `REMO_HOME` **not writable** (the `:ro` bind mount). A non-writable `REMO_HOME` is now the *only* heuristic mount signal — a readable personal `~/.ssh/id_*` no longer forces this mode (017-web-adopt-simplify, US6), so bare-metal `remo web serve` on a writable home classifies as `adopted`, not `mount_configured`. | PASS: `mount_configured — configured via read-only mounts` | `200` `{"status": "ready", ...}` | Normal dashboard |
 | `broken` | Any required artifact present but unreadable, a half-pair service keypair, a registry on a writable volume with nothing able to authenticate, or a missing runtime prerequisite | FAIL with per-check remediation | `503` `{"status": "not_ready", ...}` with actionable detail — unchanged from today | Offline/error indicator |
 
 The distinction that matters operationally: a fresh configless container is **`unconfigured`
-(expected, actionable — run `remo web adopt`)**, never confused with **`broken` (something present
+(expected, actionable — run `remo web push`)**, never confused with **`broken` (something present
 but unusable)**. The container entrypoint's startup gate (`remo web check --skip-instance-checks` in
 [`docker/entrypoint.sh`](../docker/entrypoint.sh)) treats `unconfigured` as PASS for the same reason.
+
+**Explicit override (`REMO_WEB_MODE`).** When the heuristic above needs to be forced — most often to
+pin bare-metal `remo web serve` to `adopted`, or to be unambiguous in an unusual layout — set
+`REMO_WEB_MODE` to `adopted` or `mount_configured`. It is honored deterministically **after** the
+`broken` guards (a present-but-unreadable artifact or a half-pair service keypair still classifies as
+`broken`, override or not), and before the writable/keypair heuristic. An invalid value is a fail-fast
+startup error. Leaving it unset keeps the derivation above. Because the authoritative
+`mount_configured` signal is now a non-writable `REMO_HOME` (not the mere presence of a personal key),
+the override is rarely needed — bare-metal serve already lands on `adopted` — but it remains the
+deterministic escape hatch. See [Configuration reference](#configuration-reference).
 
 ## Docker Compose deployment
 
@@ -413,30 +425,41 @@ instances using your existing SSH access. Your personal private key, and your pr
 never leave the workstation — see
 [What is never transmitted or stored](#what-is-never-transmitted-or-stored).
 
+**One command: `remo web push`.** The *first* push to a not-yet-adopted deployment adopts it; every
+push after that re-syncs. You never choose between the two — the CLI auto-detects which case applies
+(from whether its non-secret push cache for that deployment is empty or populated) and there is a
+single code path behind both (`core/web_adopt.run_push`). `remo web adopt` still exists as a
+**deprecated alias**: it prints a one-line deprecation notice and then behaves exactly like
+`remo web push`. It is scheduled for removal one release later — use `remo web push`.
+
 Both commands live in the base CLI (`src/remo_cli/cli/web.py` → `src/remo_cli/core/web_adopt.py`,
 stdlib HTTP only) — the `web` extra is **not** required on the workstation:
 
 ```text
-remo web adopt [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes]
-remo web push  [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes]
+remo web push  [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes] [--force]
+remo web adopt [URL] [--token TEXT] [--via HOST] [--allow-empty] [--yes] [--force]   # DEPRECATED alias
+remo web status [--deployment ID]
 ```
 
 `--token` carries the **pairing code** (the option name is kept for
-compatibility). Nothing is saved between runs — each adopt/push obtains a fresh
-code from the page.
+compatibility). Nothing is saved between runs — each push obtains a fresh
+code from the page. `--force` re-scans and re-authorizes every direct-access instance (see
+[Forcing a full re-authorization](#forcing-a-full-re-authorization---force)); `remo web status`
+reports offline drift with no network access (see [`remo web status`](#remo-web-status-offline-drift)).
 
-### First-time adoption walkthrough
+### The push flow (adopt on first use, re-sync afterwards)
 
 **1. Deploy the container.** Via Compose (`docker compose --profile adopted up -d`, see
 [Docker Compose deployment](#docker-compose-deployment)) or as an **hola app** — set
 `REMO_WEB_OPERATOR_AUTH` (`forward` behind the hola app's SSO, plus `REMO_WEB_FORWARD_AUTH_HEADER`;
 or `none` for a loopback/dev deployment) so the page can mint pairing codes. Within ~30 seconds the
 container is up in the `unconfigured` state, has minted its service-scoped keypair, and the browser
-shows the "awaiting adoption" page.
+shows the "awaiting adoption" page. (Bare-metal `remo web serve` on a writable home is also adoptable
+now — see [How the service decides its mode](#how-the-service-decides-its-mode).)
 
-**2. Copy the pairing code and run `remo web adopt`.** On the awaiting-adoption page (reached through
-your SSO proxy), click **Copy pairing code** — the code lands on your clipboard and is never
-displayed. On the workstation, inputs resolve in this order:
+**2. Copy the pairing code and run `remo web push`.** On the awaiting-adoption page (or, after the
+first push, the dashboard's **Pair CLI to sync** affordance), click **Copy pairing code** — the code
+lands on your clipboard and is never displayed. On the workstation, inputs resolve in this order:
 
 | Input | Resolution order |
 |---|---|
@@ -444,16 +467,22 @@ displayed. On the workstation, inputs resolve in this order:
 | Pairing code | `--token` → `REMO_API_TOKEN` env var → interactive prompt (hidden input) |
 
 ```bash
-remo web adopt http://docker-host.lan:8080    # paste the code at the prompt
+remo web push http://docker-host.lan:8080    # paste the code at the prompt
 ```
 
-The flow then: checks the service's state (aborting clearly if the target is mount-configured or the
-code is no longer valid), fetches the service's public key and deployment id, and — per direct-access
-instance, with a bounded per-instance time budget so one slow instance delays only itself —
-`ssh-keyscan`s the host, verifies the scanned key against your own trusted `~/.ssh/known_hosts`
-record (`ssh-keygen -F`, so hashed known_hosts files work; the service itself **never** makes a
-trust-on-first-use decision), and installs the service's key into that instance's
-`~/.ssh/authorized_keys` idempotently. It finishes by pushing the registry mirror, triggering a
+The flow is identical whether this is the first push (adoption) or the hundredth (re-sync): it
+checks the service's state (aborting clearly if the target is mount-configured or the code is no
+longer valid), verifies the payload version, fetches the service's public key and deployment id, and
+— per direct-access instance, with a bounded per-instance time budget so one slow instance delays
+only itself — `ssh-keyscan`s the host, verifies the scanned key against your own trusted
+`~/.ssh/known_hosts` record (`ssh-keygen -F`, so hashed known_hosts files work; the service itself
+**never** makes a trust-on-first-use decision), and installs the service's key into that instance's
+`~/.ssh/authorized_keys` idempotently. Instances that are **unchanged since the last successful push**
+(their registry entry matches the non-secret push cache for this `deployment_id`) skip that
+keyscan/authorize work and reuse their cached host-key lines — reported `unchanged`. New or changed
+instances get the full trust treatment. The flow finishes by pushing the full registry mirror,
+best-effort revoking the service key on any removed instances (see
+[Removing an instance revokes its access](#removing-an-instance-revokes-its-access)), triggering a
 server-side verification pass, and rendering the report.
 
 **3. Read the summary.** Every registry entry gets exactly one outcome line, each with a one-line
@@ -462,31 +491,134 @@ remediation where applicable:
 | Outcome | Meaning |
 |---|---|
 | `adopted` | Host key verified and pushed; service key authorized on the instance. |
-| `skipped_unreachable` | Keyscan failed or timed out — instance down or unreachable from the workstation. Not fatal; re-run adopt when it's back. |
+| `unchanged` | The instance matches the push cache from the last successful push — keyscan/authorization skipped, cached host-key lines reused. (Never appears on the very first push; `--force` bypasses it.) |
+| `skipped_unreachable` | Keyscan failed or timed out — instance down or unreachable from the workstation. Not fatal; re-run push when it's back. |
 | `skipped_by_design` | SSM-routed instance (AWS-managed transport). No action needed — SSM instances are excluded from host-key and service-key push by design; see [Credentials and SSM](#credentials-and-ssm). |
 | `skipped_no_trust` | Your workstation has no trusted host-key record and the run was non-interactive (`--yes`), so nothing was pushed. Interactively, you're prompted to confirm the SHA256 fingerprint instead. |
-| `security_flagged` | **The scanned host key does not match your workstation's trusted record.** Rendered prominently as a potential MITM warning; nothing is pushed for that instance and the rest of the run continues. Investigate before trusting; if the instance was legitimately rebuilt, `ssh-keygen -R <host>`, reconnect once to re-trust it, then re-run adopt. |
-| `unchanged` | (`remo web push` only) The instance matches the delta cache from the last successful push — keyscan/authorization skipped. |
+| `security_flagged` | **The scanned host key does not match your workstation's trusted record.** Rendered prominently as a potential MITM warning; nothing is pushed for that instance and the rest of the run continues. Investigate before trusting; if the instance was legitimately rebuilt, `ssh-keygen -R <host>`, reconnect once to re-trust it, then re-run the push. |
+
+Removed instances (in the last push but no longer in the registry) get their own **Revocation**
+block below the summary — see
+[Removing an instance revokes its access](#removing-an-instance-revokes-its-access).
 
 **4. Read the verification report.** The service then re-checks itself and every pushed instance
 (`remo-host capabilities` round-trips over its *own* identity) and the CLI renders the per-instance
 PASS/FAIL lines. One outcome deserves a special mention: an instance the CLI just reached but the
 service cannot is annotated **"reachable from workstation but not from the service"** — an
 asymmetric-network case (e.g. the instance is only reachable via workstation-specific SSH client
-config such as ProxyJump, or a firewall between the container host and the instance), not an
-adoption failure.
+config such as ProxyJump, or a firewall between the container host and the instance), not a
+push failure.
 
-**5. No saved credentials.** Nothing durable is saved (there is no long-lived secret to save). A later
-`remo web push` obtains a fresh pairing code the same way. The workstation keeps only a **non-secret**
-push cache at `~/.config/remo/web-service.json` (mode `0600`): the service `deployment_id` mapped to
-per-instance host-key fingerprints, used to skip re-keyscanning unchanged instances. No URL and no
-code are ever stored.
+**5. No saved credentials.** Nothing durable is saved (there is no long-lived secret to save). Every
+push obtains a fresh pairing code the same way. The workstation keeps only a **non-secret** push
+cache at `~/.config/remo/web-service.json` (mode `0600`, `cache_version: 3`): per service
+`deployment_id`, the mirror generation it last observed (for flap detection) plus, per instance, a
+host-key fingerprint, the verified host-key lines, and a non-secret connection tuple
+(host/user/access/type/port). The fingerprint drives the `unchanged` fast path and the offline
+`remo web status` diff; the connection tuple lets a later push reach a *removed* instance for
+revocation. **No URL and no pairing code are ever stored.** A pre-017 cache (any version other than
+`3`) is treated as empty, forcing one full re-verification push after upgrade.
 
-The command exits `0` when the flow completes — per-instance skips/flags are reported in the
-summary, not fatal — and `1` only on hard failure (dormant setup surface / expired code,
-mount-configured target, empty registry without `--allow-empty`, tunnel failure, payload rejected).
-Re-running adopt (with a fresh code) is idempotent: same summary, zero changes, still exactly one
-`remo-web@` line per instance.
+The command exits `0` when the flow completes — per-instance skips/flags and revocation failures are
+reported in the summary, not fatal — and `1` only on hard failure (dormant setup surface / expired
+code, mount-configured target, empty registry without `--allow-empty`, tunnel failure, payload
+rejected, or a flap declined interactively). Re-running the push (with a fresh code) is idempotent:
+same summary, zero changes, still exactly one `remo-web@` line per instance.
+
+### `remo web status` (offline drift)
+
+Between pushes your local registry drifts from what the deployment last mirrored — you create,
+destroy, or change instances. `remo web status` shows that drift **entirely offline**: it compares
+the current registry against the non-secret push cache and reports each instance as `new`, `changed`,
+`removed`, or `in sync`, making **zero** network or SSH connections (typically < 2s). It never
+contacts the service, so it works with the deployment offline or unreachable.
+
+```bash
+remo web status
+```
+
+- **Deployment selection.** When the cache records exactly one deployment, status reports against it
+  implicitly. When it records more than one, pass `--deployment <id>` to choose (the reported-against
+  deployment id is always shown in the output).
+- **Exit codes.** Exits `0` in all normal cases — it is informational, so it exits `0` even when
+  drift exists. It exits `1` only when more than one deployment is cached and no `--deployment`
+  selector was given (the error lists the known deployment ids).
+- **Friendly edge cases.** "No prior push recorded from this workstation" (the cache is empty) and
+  "In sync — nothing to push" (the registry matches the last push) are explicit, non-error outcomes.
+
+### The out-of-date nudge
+
+So drift doesn't stay invisible until a terminal fails to open, any registry-mutating CLI command
+prints a single-line reminder **when — and only when — a push cache exists**:
+
+```text
+Your web deployment may now be out of date — run 'remo web status' to see what changed, or
+'remo web push' to re-sync.
+```
+
+It fires after a successful `remo <provider> create`/`destroy`, an **applied** `remo <provider> sync`
+(the shared reconcile/`run_sync` path), `remo add`, and `remo remove`. It never fires when this
+workstation has never pushed (no cache to be out of date against), on a dry-run or no-op `sync`, or
+on `remo aws stop`/`start`/`reboot` (which don't mutate the registry). The nudge is gated on cache
+existence only — a rare false positive after a no-op mutation is acceptable because `remo web status`
+is the cheap, authoritative follow-up.
+
+### Removing an instance revokes its access
+
+The push is an exact mirror: the workstation registry is the source of truth, so an instance you
+removed locally disappears from the service's registry, the dashboard, and discovery, and no new
+sessions can target it. Beyond that, the push now makes a **best-effort** attempt to strip the
+service's `remo-web@` line from that instance's `~/.ssh/authorized_keys`, using **your own ambient SSH
+access** (never the service identity) — the marker-scoped, atomic, idempotent edit that adoption uses
+to install the key, run in reverse. Only the `remo-web@` line is removed; all your other authorized
+keys are untouched, and re-running is a no-op.
+
+Each removed instance is reported in the push's **Revocation** block as one of:
+
+| Result | Meaning |
+|---|---|
+| `revoked` | The `remo-web@` line was removed from that instance's `authorized_keys`. |
+| `could_not_revoke` | Revocation couldn't be performed — the instance is unreachable, you no longer have SSH access, it is SSM-routed (AWS-managed transport, no ambient SSH path), or the cache holds no connection details for it (an older cache). The line is reported with manual-removal remediation. |
+
+Revocation is **never fatal**: the push still exits `0` even when every removal reports
+`could_not_revoke`. For those, remove the service's line manually — on the instance (or via
+`remo shell`), delete its single marker line, leaving your own access untouched:
+
+```bash
+sed -i '/ remo-web@/d' ~/.ssh/authorized_keys
+```
+
+Every entry the flow installs carries the `remo-web@<deployment-id>` comment marker, so it is always
+exactly one identifiable line (`grep remo-web@ ~/.ssh/authorized_keys` to audit).
+
+### Forcing a full re-authorization (`--force`)
+
+`remo web push --force` (also on the deprecated `adopt` alias) bypasses the fingerprint `unchanged`
+fast path and re-scans host keys and re-authorizes the service key on **every** direct-access
+instance, exactly as a first push would. Use it when an instance was rebuilt **out of band** — same
+registry entry, but brand-new host keys and a wiped `authorized_keys` — so its registry fingerprint
+is unchanged and a normal push would skip it as `unchanged` (leaving the service unable to reach it).
+`--force` changes only *which* instances are processed, not how failures are classified: per-instance
+skips/flags stay non-fatal.
+
+### Multi-workstation flap detection
+
+If you push to the same deployment from more than one workstation, the deployment reports a
+**mirror-identity marker** on `GET /api/v1/setup/status` (and updates it on each `PUT /setup/registry`
+apply): a monotonic generation counter plus a best-effort last-push descriptor (a timestamp and a
+"hostname/user" label). The marker exposes no secret and no instance contents, and is served only
+over the already-pairing-gated setup surface.
+
+Each push records the generation it last wrote in its push cache. When you push from workstation B and
+the deployment's generation is **greater** than what B last recorded — i.e. the mirror was advanced by
+another workstation since B's last push — the push **warns**, naming when/where the last push came
+from (to the extent that information is available), before overwriting:
+
+- **Interactive** run: you're prompted to confirm or abort before the overwrite (aborting exits `1`).
+- **`--yes`** run: the warning is printed and the push proceeds (so automation isn't deadlocked).
+
+A first-ever push to a fresh deployment, and consecutive pushes from the same workstation with no
+intervening external push, never warn.
 
 ### The setup API and pairing codes
 
@@ -505,37 +637,6 @@ is live; each route requires `Authorization: Bearer <pairing-code>`, compared in
   single-use per handoff — reopening the page mints a fresh one and invalidates the prior. There is no
   rotation to manage: codes are ephemeral by construction.
 
-### Ongoing pushes: `remo web push`
-
-After the initial adoption, local registry changes (a `remo <provider> sync`, a new `create`, a
-removal) are re-synced. Open the dashboard's **Pair CLI to sync** affordance, copy a fresh code, then:
-
-```bash
-remo incus sync my-incus-host                   # e.g. registers a new instance locally
-remo web push http://docker-host.lan:8080       # paste the code; re-sync to the service
-```
-
-`remo web push` resolves URL + code the same way `adopt` does (every run), reads the service's
-`deployment_id`, and runs the adopt flow with **delta behavior**: only new or changed instances are
-re-keyscanned and re-authorized; instances unchanged since the last successful push (per the non-secret
-push cache for that `deployment_id`) skip that work and are reported as `unchanged` (their previously
-verified host keys are reused, since every push replaces the service's host-keys file wholesale).
-
-**Mirror semantics — removals propagate, authorization does not.** The push is an exact mirror: the
-workstation registry is the source of truth, so an instance you removed locally disappears from the
-service's registry, the dashboard, and discovery, and no new sessions can target it. But the push
-does **not** de-authorize the service on that instance — the service's key line REMAINS in the
-instance's `~/.ssh/authorized_keys` until you remove it manually:
-
-```bash
-# On the instance (or via `remo shell`): revoke the service's access by
-# deleting its single marker line — your own access is untouched.
-sed -i '/ remo-web@/d' ~/.ssh/authorized_keys
-```
-
-Every entry the flow installs carries the `remo-web@<deployment-id>` comment marker, so it is always
-exactly one identifiable line (`grep remo-web@ ~/.ssh/authorized_keys` to audit).
-
 ### Service key rotation
 
 There is no dedicated rotation command in v1; rotation is a documented state-reset procedure:
@@ -544,25 +645,24 @@ There is no dedicated rotation command in v1; rotation is a documented state-res
    `docker volume rm <project>_remo-web-state` (or delete the hola app's volume).
 2. **Restart the container.** It boots `unconfigured` and mints a **new** identity (new keypair, new
    `deployment_id`).
-3. **Re-run `remo web adopt`.** Because the `authorized_keys` management filters on the
-   ` remo-web@` marker rather than the key material, the stale entry from the old identity is
-   *replaced*, not accumulated — each instance in the current registry again ends up with exactly
-   one service line. (`remo web push` alone won't do this: it detects the changed `deployment_id`
-   and directs you to re-adopt.)
+3. **Re-run `remo web push`.** The new `deployment_id` starts with an empty push cache, so this push
+   adopts from scratch. Because the `authorized_keys` management filters on the ` remo-web@` marker
+   rather than the key material, the stale entry from the old identity is *replaced*, not accumulated
+   — each instance in the current registry again ends up with exactly one service line.
 
 One caveat: instances **removed from your registry before the rotation** never get visited by the
-re-adopt, so the *old* identity's entry lingers there — clean those up with the manual
+re-adopting push, so the *old* identity's entry lingers there — clean those up with the manual
 de-authorization procedure above. The old private key is gone with the volume, so the stale entries
 are inert, but hygiene says remove them.
 
 ### Tunnel fallback: `--via <host>`
 
 When the service URL isn't directly reachable from the workstation (loopback-only port publish,
-firewalled segment, a reverse proxy in the way for the setup calls), tunnel the adoption over your
+firewalled segment, a reverse proxy in the way for the setup calls), tunnel the push over your
 existing SSH access to the deployment host:
 
 ```bash
-remo web adopt --via docker-host.lan
+remo web push --via docker-host.lan
 ```
 
 The CLI binds a free local port, opens `ssh -N -L <free-port>:127.0.0.1:<service-port> <host>`
@@ -661,13 +761,13 @@ interactive session (only `remo-host capabilities` is invoked, never `sessions a
 | Failure | What it means | Fix |
 |---|---|---|
 | `/api/v1/setup/*` returns `404` for everything | No pairing session is live — the surface is dormant (fail closed). | Open the awaiting-adoption page (through your SSO proxy) to mint a code; if the page can't mint, set `REMO_WEB_OPERATOR_AUTH` (`forward` + header, or `none` for loopback). |
-| `remo web adopt`/`push` fails: "pairing code is no longer valid … dormant" | The code expired (idle TTL), was rotated by reopening the page, or was already used. | Reopen the adopt page (or the dashboard's "Pair CLI to sync" affordance) for a fresh code and retry. |
+| `remo web push` (or the deprecated `adopt`) fails: "pairing code is no longer valid … dormant" | The code expired (idle TTL), was rotated by reopening the page, or was already used. | Reopen the awaiting-adoption page (or the dashboard's "Pair CLI to sync" affordance) for a fresh code and retry. |
 | Mint page shows "you are not signed in" / `POST /pairing/mint` returns `403` | Forward auth is required but the request reached the service without the trusted identity header. | Ensure the request goes through the SSO proxy that injects `REMO_WEB_FORWARD_AUTH_HEADER`; verify the proxy sets and strips it. |
 | adopt fails: deployment "configured via read-only mounts" | The target is a bind-mount deployment (`mount_configured`) — its configuration is operator-provided and read-only, so adoption does not apply. | Update the mounted files instead, or deploy the adopted-mode service (writable state volume, no mounts) if you want adoption. |
 | adopt refuses: empty registry | Your local registry has no instances — pushing would wipe a previously adopted service (a classic wrong-workstation accident). | Register/sync instances first, or pass `--allow-empty` if wiping is intentional. |
 | `--via` fails naming `REMO_WEB_ALLOWED_HOSTS` | Tunneled requests arrive with a `127.0.0.1` Host header, which the service's Host allowlist rejects. | Add `127.0.0.1` to `REMO_WEB_ALLOWED_HOSTS` (the default includes it). |
-| After a service state-volume reset, instances keep a stale `remo-web@` line | The reset service minted a new identity; a fresh `remo web adopt` authorizes the new key but does not remove the old line. | Re-run `remo web adopt`, then delete the stale `remo-web@<old-id>` line from each instance's `~/.ssh/authorized_keys`. |
-| Summary line `security_flagged` (potential MITM warning) | The instance's scanned host key doesn't match your workstation's trusted record; nothing was pushed for it. | Investigate before trusting. If the instance was legitimately rebuilt: `ssh-keygen -R <host>`, reconnect once to re-trust, re-run adopt. |
+| After a service state-volume reset, instances keep a stale `remo-web@` line | The reset service minted a new identity; a fresh `remo web push` authorizes the new key but does not remove the old-identity line from an instance no longer in the registry. | Re-run `remo web push` (revokes/replaces the marker on every current instance), then delete any stale `remo-web@<old-id>` line from instances you had already removed from the registry. |
+| Summary line `security_flagged` (potential MITM warning) | The instance's scanned host key doesn't match your workstation's trusted record; nothing was pushed for it. | Investigate before trusting. If the instance was legitimately rebuilt: `ssh-keygen -R <host>`, reconnect once to re-trust, re-run the push. |
 | Verify report: "reachable from workstation but not from the service" | Asymmetric reachability — the CLI reached the instance but the container cannot (DNS, routing, firewall, or workstation-only SSH config like ProxyJump). | Fix the network path from the container host to the instance; the adoption itself succeeded. |
 
 ## Upgrade compatibility
@@ -726,6 +826,7 @@ locally with zero configuration; a container overrides everything via env alone.
 | `REMO_WEB_SSH_CONTROL_DIR` | `/run/remo-ssh` | Writable directory for SSH ControlMaster sockets (must be tmpfs or otherwise writable under a read-only rootfs). |
 | `REMO_WEB_FRONTEND_DIST_DIR` | `<repo_root>/frontend/dist` (resolved relative to the installed package) | Directory the built frontend SPA is served from. The Docker image overrides this to `/app/frontend-dist`, matching where the multi-stage build actually copies the built assets. |
 | `REMO_WEB_SSH_IDENTITY_FILE` | *(unset — falls back to the service keypair under `web-identity/`, then `~/.ssh/id_ed25519`/`id_ecdsa`/`id_rsa`/`id_dsa`)* | Explicit path to the SSH private key used for readiness/`remo web check`'s identity check, when it isn't one of the conventional filenames. |
+| `REMO_WEB_MODE` | *(unset — derived from disk)* | Deterministic override for the service's configuration mode: `adopted` or `mount_configured`. Honored **after** the `broken` guards (an unreadable artifact or half-pair keypair still wins as `broken`) and before the writable/keypair heuristic; an invalid value is a fail-fast startup error. Left unset, the mode is derived from disk (a non-writable `REMO_HOME` = `mount_configured`, a service keypair on a writable `REMO_HOME` = `adopted`). Most useful to pin a bare-metal `remo web serve` to `adopted`. See [How the service decides its mode](#how-the-service-decides-its-mode). |
 | `REMO_WEB_OPERATOR_AUTH` | *(unset — minting disabled)* | Operator-authentication posture gating pairing-code minting (`POST /api/v1/pairing/mint`). `forward` requires a trusted proxy-injected identity header (`REMO_WEB_FORWARD_AUTH_HEADER`); `none` mints without operator auth (network-restricted — a loud, weaker posture for loopback/dev). While unset, minting is disabled and adoption is impossible (fail closed). |
 | `REMO_WEB_FORWARD_AUTH_HEADER` | *(unset)* | Name of the trusted identity header your forward-auth proxy injects (e.g. `X-Forwarded-User`, `Remote-User`). **Required** when `REMO_WEB_OPERATOR_AUTH=forward`; enabling forward auth without it is a fail-fast startup error. The proxy MUST set and strip this header. |
 | `REMO_WEB_PAIRING_TTL_S` | `900.0` | Sliding idle TTL (seconds) for a pairing session — it expires this long after the last successful setup call (default 15 min). |
@@ -736,9 +837,9 @@ locally with zero configuration; a container overrides everything via env alone.
 ### Workstation-side environment variables
 
 Two variables configure the **CLI** (not the service — hence no `REMO_WEB_` prefix), read by
-`remo web adopt`/`remo web push`:
+`remo web push` (and the deprecated `remo web adopt` alias):
 
 | Variable | Used as |
 |---|---|
 | `REMO_API_URL` | Service URL fallback when no URL argument is given (before falling back to an interactive prompt). |
-| `REMO_API_TOKEN` | Pairing-code fallback when `--token` is not given (before falling back to a hidden interactive prompt). Set it to a code freshly minted from the adopt page. |
+| `REMO_API_TOKEN` | Pairing-code fallback when `--token` is not given (before falling back to a hidden interactive prompt). Set it to a code freshly minted from the awaiting-adoption (or dashboard re-sync) page. |

@@ -161,9 +161,30 @@ class StateDirFactory:
         return self.home
 
     def mount_configured_user_identity(self) -> Path:
-        """Registry present + user SSH identity, no service keypair."""
+        """Registry present + user SSH identity, no service keypair.
+
+        NOTE (017 US6): a readable user identity NO LONGER triggers
+        ``mount_configured`` — this layout now detects as ``broken`` (registry
+        on a writable volume with nothing to authenticate). Retained under this
+        name for the state-detection tests that assert exactly that. Tests that
+        want a genuine mount-configured service use :meth:`mount_configured`.
+        """
         self.write_registry()
         self.add_user_identity()
+        return self.home
+
+    def mount_configured(self) -> Path:
+        """A genuine ``mount_configured`` service (017 US6).
+
+        Registry present + a mounted user SSH identity (what the service
+        authenticates with in this mode), with the mode forced deterministically
+        via the ``REMO_WEB_MODE`` override. Using the override (rather than a
+        read-only ``REMO_HOME``) keeps the layout root-safe: ``chmod 0555`` is
+        bypassed by root, but the explicit mode is honored regardless.
+        """
+        self.write_registry()
+        self.add_user_identity()
+        self._monkeypatch.setenv("REMO_WEB_MODE", "mount_configured")
         return self.home
 
     def broken_unreadable_registry(self) -> Path:
