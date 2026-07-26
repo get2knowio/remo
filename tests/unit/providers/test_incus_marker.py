@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from remo_cli.core.errors import OperationFailedError
 from remo_cli.providers import incus as providers_incus
 
 
@@ -72,7 +73,7 @@ class TestListWithMarker:
 
     def test_failure_raises(self, patch_host):
         patch_host.return_value = _completed(1, stderr="nope")
-        with pytest.raises(RuntimeError):
+        with pytest.raises(OperationFailedError):
             providers_incus._list_containers_with_marker("h", "u")
 
 
@@ -86,33 +87,31 @@ class TestCreateMarks:
         mocker.patch("remo_cli.providers.incus.run_playbook", return_value=0)
         mocker.patch("remo_cli.providers.incus.remove_known_host")
         mocker.patch("remo_cli.providers.incus.save_known_host")
-        mocker.patch("remo_cli.providers.incus.detect_timezone", return_value="")
+        mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
         mocker.patch(
-            "remo_cli.providers.incus.get_current_version", return_value="unknown"
+            "remo_cli.core.version.get_current_version", return_value="unknown"
         )
         apply = mocker.patch(
             "remo_cli.providers.incus._apply_managed_marker",
             return_value=(True, ""),
         )
-        rc = providers_incus.create(name="dev1", host="h", user="u")
-        assert rc == 0
+        providers_incus.create(name="dev1", host="h", user="u")
         apply.assert_called_once_with("h", "u", "dev1")
 
     def test_marker_failure_warns_but_create_succeeds(self, mocker):
         mocker.patch("remo_cli.providers.incus.run_playbook", return_value=0)
         mocker.patch("remo_cli.providers.incus.remove_known_host")
         mocker.patch("remo_cli.providers.incus.save_known_host")
-        mocker.patch("remo_cli.providers.incus.detect_timezone", return_value="")
+        mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
         mocker.patch(
-            "remo_cli.providers.incus.get_current_version", return_value="unknown"
+            "remo_cli.core.version.get_current_version", return_value="unknown"
         )
         mocker.patch(
             "remo_cli.providers.incus._apply_managed_marker",
             return_value=(False, "denied"),
         )
         warn = mocker.patch("remo_cli.providers.incus.print_warning")
-        rc = providers_incus.create(name="dev1", host="h", user="u")
-        assert rc == 0  # FR-005: create still succeeds
+        providers_incus.create(name="dev1", host="h", user="u")  # FR-005: create still succeeds
         assert warn.called
 
 
@@ -131,10 +130,9 @@ class TestUpdateBackfill:
             "remo_cli.providers.incus._resolve_container_ip", return_value="10.0.0.5"
         )
         mocker.patch("remo_cli.providers.incus.run_playbook", return_value=0)
-        mocker.patch("remo_cli.providers.incus.detect_timezone", return_value="")
+        mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
         mocker.patch(
-            "remo_cli.providers.incus.get_current_version", return_value="unknown"
+            "remo_cli.core.version.get_current_version", return_value="unknown"
         )
-        rc = providers_incus.update(name="dev1", host="h", user="u")
-        assert rc == 0
+        providers_incus.update(name="dev1", host="h", user="u")
         apply.assert_called_once_with("h", "u", "dev1")

@@ -16,10 +16,13 @@ import json
 import re
 import shlex
 import subprocess
-import sys
 from datetime import datetime, timezone
 
-from remo_cli.core.ansible_runner import run_playbook
+from remo_cli.core.ansible_runner import (
+    build_configure_extra_vars,
+    run_playbook,
+    run_resize_playbook as _run_resize_shared,
+)
 from remo_cli.core.config import PROXMOX_MANAGED_TAG
 from remo_cli.core.known_hosts import (
     get_known_hosts,
@@ -27,7 +30,7 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     save_known_host,
 )
-from remo_cli.core.output import confirm, print_error, print_info, print_warning
+from remo_cli.core.output import Column, confirm, print_error, print_info, print_warning, render_host_table
 from remo_cli.core.reconcile import (
     DiscoveredHost,
     ProbeError,
@@ -35,18 +38,13 @@ from remo_cli.core.reconcile import (
     SyncScope,
     run_sync,
 )
-from remo_cli.core.snapshot import (
-    handle_destroy_snapshot_cleanup,
-    validate_name as validate_snapshot_name,
-)
-from remo_cli.core.ssh import detect_timezone
+from remo_cli.core.snapshot import validate_name as validate_snapshot_name
 from remo_cli.core.validation import (
-    build_tool_args,
     parse_volume_size,
     resolve_devcontainer_runtime,
     validate_name,
 )
-from remo_cli.core.version import get_current_version
+from remo_cli.core.errors import OperationFailedError, PreconditionError
 from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
@@ -168,7 +166,7 @@ def _read_tags_by_vmid(host: str, user: str) -> dict[str, set[str]]:
         # An SSH failure here must be loud: silently treating an empty
         # tag map as "nothing is marked" turns a transient failure into a
         # proposed deletion of the node's entire fleet (research.md R5).
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip())
+        raise OperationFailedError(result.stderr.strip() or result.stdout.strip())
 
     mapping: dict[str, set[str]] = {}
     vmid: str | None = None
@@ -264,12 +262,12 @@ def _run_resize_playbook(
     memory: int = 0,
     vmid: str = "",
     verbose: bool = False,
-) -> int:
+) -> None:
     """Run proxmox_resize.yml against the given Proxmox host.
 
     Pass any combination of *volume_size*, *cores*, and *memory*; the
-    playbook adjusts only the axes whose value is set. Returns the
-    ansible-playbook exit code (0 on success, including no-op).
+    playbook adjusts only the axes whose value is set. Raises
+    :class:`OperationFailedError` on a nonzero ansible-playbook rc.
     """
     extra_vars: list[str] = ["-e", f"container_name={name}"]
     if volume_size:
@@ -286,7 +284,7 @@ def _run_resize_playbook(
     if user:
         extra_vars.extend(["-e", f"proxmox_host_user={user}"])
 
-    return run_playbook("proxmox_resize.yml", extra_vars, verbose=verbose)
+    _run_resize_shared("proxmox_resize.yml", extra_vars, verbose=verbose)
 
 
 def create(
@@ -307,17 +305,16 @@ def create(
     use_ip: bool = False,
     devcontainer_runtime: str | None = None,
     verbose: bool = False,
-) -> int:
+) -> None:
     """Create a new Proxmox LXC container and configure dev tools.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Raises :class:`OperationFailedError` on a nonzero playbook rc.
     """
     validate_name(name, "container name")
     volume_size = parse_volume_size(volume_size)
 
     if not host:
-        print_error("Proxmox host is required (use --host).")
-        return 1
+        raise PreconditionError("Proxmox host is required (use --host).")
 
     print_info(f"Creating Proxmox LXC container '{name}' on {host}...")
 
@@ -349,65 +346,61 @@ def create(
     if user:
         extra_vars.extend(["-e", f"proxmox_host_user={user}"])
 
-    tz = detect_timezone()
-    if tz:
-        extra_vars.extend(["-e", f"timezone={tz}"])
-
-    extra_vars.extend(build_tool_args(tools_only, tools_skip))
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
     runtime = resolve_devcontainer_runtime(devcontainer_runtime)
     extra_vars.extend(["-e", f"devcontainer_runtime={runtime}"])
-
-    current = get_current_version()
-    if current != "unknown":
-        extra_vars.extend(["-e", f"remo_version={current}"])
 
     # Clear any stale registry entry so _resolve_container_ip queries the
     # Proxmox host for the fresh IP instead of returning a cached value.
     remove_known_host("proxmox", f"{host}/{name}")
 
     rc = run_playbook("proxmox_site.yml", extra_vars, verbose=verbose)
-
-    if rc == 0:
-        vmid = _resolve_vmid(name, host, user)
-        if use_ip:
-            container_host = _resolve_container_ip(name, host, user, vmid=vmid) or name
-        else:
-            container_host = name
-        save_known_host(
-            KnownHost(
-                type="proxmox",
-                name=f"{host}/{name}",
-                host=container_host,
-                user="remo",
-                instance_id=vmid,
-                access_mode="direct",
-                region=user or "root",
-            )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to create Proxmox container '{name}' (playbook rc={rc})."
         )
 
-        # FR-001: mark the container as remo-managed. FR-005: a marking failure
-        # (including an unresolved VMID) warns but does not fail create.
-        if vmid:
-            ok, err = _apply_managed_marker(host, user, vmid)
-            if not ok:
-                print_warning(
-                    f"Container '{name}' was created but could not be marked "
-                    f"as remo-managed ({err}); a default `remo proxmox sync` "
-                    f"will skip it (use `--all` or `remo proxmox update`)."
-                )
-        else:
-            print_warning(
-                f"Container '{name}' was created but its VMID could not be "
-                f"resolved, so it was not marked as remo-managed; run "
-                f"`remo proxmox update --name {name} --host {host}` to mark it."
-            )
+    vmid = _resolve_vmid(name, host, user)
+    if use_ip:
+        container_host = _resolve_container_ip(name, host, user, vmid=vmid) or name
+    else:
+        container_host = name
+    save_known_host(
+        KnownHost(
+            type="proxmox",
+            name=f"{host}/{name}",
+            host=container_host,
+            user="remo",
+            instance_id=vmid,
+            access_mode="direct",
+            region=user or "root",
+        )
+    )
 
-        # If the container already existed, site.yml skipped pct create and
-        # did not apply the requested resource values. Run the resize
-        # playbook as a follow-up; idempotent (no-op when values match).
-        if volume_size or cores or memory:
-            rc = _run_resize_playbook(
+    # FR-001: mark the container as remo-managed. FR-005: a marking failure
+    # (including an unresolved VMID) warns but does not fail create.
+    if vmid:
+        ok, err = _apply_managed_marker(host, user, vmid)
+        if not ok:
+            print_warning(
+                f"Container '{name}' was created but could not be marked "
+                f"as remo-managed ({err}); a default `remo proxmox sync` "
+                f"will skip it (use `--all` or `remo proxmox update`)."
+            )
+    else:
+        print_warning(
+            f"Container '{name}' was created but its VMID could not be "
+            f"resolved, so it was not marked as remo-managed; run "
+            f"`remo proxmox update --name {name} --host {host}` to mark it."
+        )
+
+    # If the container already existed, site.yml skipped pct create and
+    # did not apply the requested resource values. Run the resize
+    # playbook as a follow-up; idempotent (no-op when values match).
+    if volume_size or cores or memory:
+        try:
+            _run_resize_playbook(
                 name=name,
                 host=host,
                 user=user,
@@ -417,94 +410,65 @@ def create(
                 vmid=vmid,
                 verbose=verbose,
             )
+        except OperationFailedError as e:
+            raise OperationFailedError(f"Container '{name}' was created but resizing failed: {e}") from e
 
-    return rc
 
-
-def destroy(
-    name: str,
-    host: str = "",
-    user: str = "",
-    purge: bool = False,
-    auto_confirm: bool = False,
+def teardown(
+    entry: KnownHost,
+    *,
     verbose: bool = False,
-) -> int:
-    """Destroy a Proxmox LXC container.
+    purge: bool = False,
+    **_ignored: object,
+) -> None:
+    """Destroy the Proxmox LXC container backing *entry* (Protocol Part A).
 
-    Returns the ansible-playbook exit code (0 on success).
+    Provider-destruction only (R-A3): the guard, snapshot pre-cleanup,
+    confirmation prompt, and registry removal all now live in
+    ``core.lifecycle.run_destroy``, which calls this as its one
+    provider-specific step. The generated CLI's ``destroy`` command also
+    forwards its ``--host``/``--user`` destroy-options through as keyword
+    arguments; they're accepted-but-ignored here (absorbed by
+    ``**_ignored``) since the resolved *entry* is the sole source of truth
+    for where the container lives (R-A2) -- ``host``/``user`` are already
+    baked into *entry* (or its stub) by the CLI's entry-resolution step.
+
+    Raises :class:`PreconditionError` if *entry* carries no Proxmox node
+    (unregistered container destroyed without ``--host``), or
+    :class:`OperationFailedError` on a nonzero playbook rc.
     """
-    validate_name(name, "container name")
-    guard_not_added_ssh_host(name, "proxmox")  # FR-012
+    node_host, sep, container = entry.name.partition("/")
+    if not sep:
+        node_host, container = "", entry.name
 
-    vmid = ""
-    if not host:
-        host, looked_up_user, vmid = _lookup_proxmox_host(name)
-        if not user and looked_up_user:
-            user = looked_up_user
-
-    if not host:
-        print_error(
-            f"Proxmox host for container '{name}' could not be determined.\n"
+    if not node_host:
+        raise PreconditionError(
+            f"Proxmox host for container '{container}' could not be determined.\n"
             "Use --host (and --user) to specify it explicitly."
         )
-        return 1
 
+    vmid = entry.instance_id
     # Proxmox node SSH defaults to root when nothing else is known.
-    if not user:
-        user = "root"
-
-    # FR-020 through FR-023: surface remo-managed snapshots before destroying.
-    if vmid:
-        try:
-            _pre = _list_snapshots_for_vmid(host, user, vmid, name)
-        except RuntimeError as e:
-            print_warning(
-                f"Could not list snapshots before destroy ({e}); "
-                f"proceeding without snapshot cleanup."
-            )
-            _pre = []
-        handle_destroy_snapshot_cleanup(
-            provider_label="Proxmox",
-            instance=name,
-            snapshots=_pre,
-            delete_one=lambda snap: snapshot_delete(
-                container=name,
-                host=host,
-                user=user,
-                vmid=vmid,
-                snap_name=snap.name,
-                auto_confirm=True,
-            ),
-            auto_confirm=auto_confirm,
-            show_status=False,
-        )
-
-    if not auto_confirm:
-        prompt = f"Destroy Proxmox LXC container '{name}' on {host}? This cannot be undone."
-        if not confirm(prompt):
-            print_info("Aborted.")
-            return 0
-
-    print_info(f"Destroying Proxmox LXC container '{name}' on {host}...")
+    user = entry.region or "root"
 
     extra_vars: list[str] = [
-        "-e", f"container_name={name}",
+        "-e", f"container_name={container}",
         "-e", f"purge={'true' if purge else 'false'}",
     ]
     if vmid:
         extra_vars.extend(["-e", f"container_vmid={vmid}"])
 
-    extra_vars.extend(["-i", f"{host},"])
+    extra_vars.extend(["-i", f"{node_host},"])
     extra_vars.extend(["-e", "target_hosts=all"])
     if user:
         extra_vars.extend(["-e", f"proxmox_host_user={user}"])
 
     rc = run_playbook("proxmox_teardown.yml", extra_vars, verbose=verbose)
 
-    # Best-effort registry cleanup regardless of rc.
-    remove_known_host("proxmox", f"{host}/{name}")
-
-    return rc
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to destroy Proxmox container '{container}' (playbook rc={rc})."
+        )
 
 
 def update(
@@ -518,14 +482,14 @@ def update(
     tools_skip: tuple[str, ...] = (),
     devcontainer_runtime: str | None = None,
     verbose: bool = False,
-) -> int:
+) -> None:
     """Re-configure dev tools on an existing Proxmox LXC container.
 
     When any of *volume_size*, *cores*, or *memory* is provided, apply
     those resource changes (via pct resize / pct set) before running the
     dev-tools configure playbook.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Raises :class:`OperationFailedError` on a nonzero playbook rc.
     """
     validate_name(name, "container name")
     guard_not_added_ssh_host(name, "proxmox")  # FR-012
@@ -538,11 +502,10 @@ def update(
             user = looked_up_user
 
     if not host:
-        print_error(
+        raise PreconditionError(
             f"Proxmox host for container '{name}' could not be determined.\n"
             "Use --host (and --user) to specify it explicitly."
         )
-        return 1
 
     if not user:
         user = "root"
@@ -574,7 +537,7 @@ def update(
         if memory:
             bits.append(f"memory={memory}MiB")
         print_info(f"Updating resources on '{name}' ({', '.join(bits)}) on {host}...")
-        rc = _run_resize_playbook(
+        _run_resize_playbook(
             name=name,
             host=host,
             user=user,
@@ -584,79 +547,77 @@ def update(
             vmid=vmid,
             verbose=verbose,
         )
-        if rc != 0:
-            return rc
 
     print_info(f"Looking up container '{name}' on {host}...")
 
     container_ip = _resolve_container_ip(name, host, user, vmid=vmid)
 
     if not container_ip:
-        print_error(f"Could not find IP for container '{name}'")
-        print_warning(
-            "Container may not exist, may be stopped, or may not have an IP yet"
-        )
         ssh_target = f"{user}@{host}" if user else host
-        print_warning(f"Check with: ssh {ssh_target} 'pct list'")
-        sys.exit(1)
+        raise PreconditionError(
+            f"Could not find IP for container '{name}'.\n"
+            "Container may not exist, may be stopped, or may not have an IP yet.\n"
+            f"Check with: ssh {ssh_target} 'pct list'"
+        )
 
     print_info(f"Found container at {container_ip}")
     print_info(f"Configuring container '{name}'...")
 
     extra_vars: list[str] = ["-e", f"container_ip={container_ip}"]
 
-    extra_vars.extend(build_tool_args(tools_only, tools_skip))
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
     runtime = resolve_devcontainer_runtime(devcontainer_runtime)
     extra_vars.extend(["-e", f"devcontainer_runtime={runtime}"])
 
-    tz = detect_timezone()
-    if tz:
-        extra_vars.extend(["-e", f"timezone={tz}"])
+    rc = run_playbook("proxmox_configure.yml", extra_vars, verbose=verbose)
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to update tools on '{name}' (playbook rc={rc})."
+        )
 
-    current = get_current_version()
-    if current != "unknown":
-        extra_vars.extend(["-e", f"remo_version={current}"])
 
-    return run_playbook("proxmox_configure.yml", extra_vars, verbose=verbose)
+def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
+    """Re-apply tool configuration to an existing container (Protocol Part A)."""
+    node_host, sep, container = entry.name.partition("/")
+    if not sep:
+        node_host, container = "", entry.name
+    update(name=container, host=node_host, user=entry.region, verbose=verbose)
+
+
+def _split_node_container(entry: KnownHost) -> tuple[str, str]:
+    if "/" in entry.name:
+        node, container = entry.name.split("/", maxsplit=1)
+        return node, container
+    return "", entry.name
+
+
+_LIST_COLUMNS = (
+    Column("CONTAINER", lambda e: _split_node_container(e)[1]),
+    Column("NODE", lambda e: _split_node_container(e)[0]),
+    Column("VMID", lambda e: e.instance_id or "-", width=8),
+    Column("SSH HOST", lambda e: e.host),
+    Column("SSH COMMAND", lambda e: f"ssh {e.user}@{e.host}"),
+)
 
 
 def list_hosts() -> None:
     """Print a formatted table of all registered Proxmox containers."""
     entries = get_known_hosts(type_filter="proxmox")
-
-    print(
-        f"{'CONTAINER':<20} {'NODE':<20} {'VMID':<8} {'SSH HOST':<20} SSH COMMAND"
-    )
-    print(
-        f"{'---------':<20} {'----':<20} {'----':<8} {'--------':<20} -----------"
+    render_host_table(
+        entries,
+        _LIST_COLUMNS,
+        empty_message="No Proxmox containers registered.\nCreate one with: remo proxmox create <name> --host <node>",
     )
 
-    for entry in entries:
-        if "/" in entry.name:
-            node, container = entry.name.split("/", maxsplit=1)
-        else:
-            node = ""
-            container = entry.name
 
-        vmid = entry.instance_id or "-"
-        ssh_host = entry.host
-        ssh_user = entry.user
-        ssh_cmd = f"ssh {ssh_user}@{ssh_host}"
-
-        print(f"{container:<20} {node:<20} {vmid:<8} {ssh_host:<20} {ssh_cmd}")
-
-    if not entries:
-        print("No Proxmox containers registered.")
-        print("Create one with: remo proxmox create <name> --host <node>")
-
-
-def info(name: str, host: str = "", user: str = "") -> int:
+def info(name: str, host: str = "", user: str = "") -> None:
     """Print detailed information about a Proxmox LXC container.
 
     Reads ``pct config`` and ``pct status`` over SSH on the Proxmox host,
-    then prints state, network, CPU, memory, and rootfs details. Returns
-    0 on success or 1 if the container could not be located.
+    then prints state, network, CPU, memory, and rootfs details. Raises
+    :class:`PreconditionError` if the container could not be located, or
+    :class:`OperationFailedError` if the SSH query fails.
     """
     validate_name(name, "container name")
 
@@ -667,11 +628,10 @@ def info(name: str, host: str = "", user: str = "") -> int:
             user = looked_up_user
 
     if not host:
-        print_error(
+        raise PreconditionError(
             f"Proxmox host for container '{name}' could not be determined.\n"
             "Use --host (and --user) to specify it explicitly."
         )
-        return 1
 
     if not user:
         user = "root"
@@ -679,17 +639,17 @@ def info(name: str, host: str = "", user: str = "") -> int:
     if not vmid:
         vmid = _resolve_vmid(name, host, user)
     if not vmid:
-        print_error(f"Container '{name}' was not found on Proxmox host '{host}'.")
-        return 1
+        raise PreconditionError(
+            f"Container '{name}' was not found on Proxmox host '{host}'."
+        )
 
     # Single SSH round-trip: combine config + status.
     cmd = f"pct config {vmid}; echo ---STATUS---; pct status {vmid}"
     result = _ssh_run(host, user, cmd)
     if result.returncode != 0:
-        print_error(
+        raise OperationFailedError(
             f"Failed to query container '{name}' on '{host}': {result.stderr.strip()}"
         )
-        return 1
 
     config_text, _, status_text = result.stdout.partition("---STATUS---")
 
@@ -726,8 +686,6 @@ def info(name: str, host: str = "", user: str = "") -> int:
         print(f"  Swap:       {swap} MiB")
     print(f"  Rootfs:     {rootfs_size or '?'}{f' ({rootfs_storage})' if rootfs_storage else ''}")
     print("")
-
-    return 0
 
 
 def _parse_pct_config_field(config_text: str, field: str) -> str:
@@ -779,7 +737,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
         # (correctly) treats as a failure -- turning a legitimate empty node
         # into a spurious probe error instead of a clean reconcile.
         tags_by_vmid = _read_tags_by_vmid(scope.host, user) if containers else {}
-    except RuntimeError as exc:
+    except OperationFailedError as exc:
         # A tag-read failure must abort the whole probe, not silently treat
         # every container as unmarked (the bug this phase fixes -- R5 #1).
         raise ProbeError(
@@ -864,14 +822,13 @@ def bootstrap(
     storage: str = "",
     template: str = "",
     verbose: bool = False,
-) -> int:
+) -> None:
     """Verify a Proxmox node is ready and download the default template.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Raises :class:`OperationFailedError` on a nonzero playbook rc.
     """
     if not host:
-        print_error("Proxmox host is required (use --host).")
-        return 1
+        raise PreconditionError("Proxmox host is required (use --host).")
 
     extra_vars: list[str] = ["-i", f"{host},", "-e", "target_hosts=all"]
     if user:
@@ -883,7 +840,11 @@ def bootstrap(
     if template:
         extra_vars.extend(["-e", f"proxmox_template={template}"])
 
-    return run_playbook("proxmox_bootstrap.yml", extra_vars, verbose=verbose)
+    rc = run_playbook("proxmox_bootstrap.yml", extra_vars, verbose=verbose)
+    if rc != 0:
+        raise OperationFailedError(
+            f"Proxmox bootstrap failed on '{host}' (playbook rc={rc})."
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1012,20 +973,20 @@ def _list_snapshots_for_vmid(
     """Return the snapshots of LXC *vmid* on the Proxmox *host*.
 
     Reads ``/etc/pve/lxc/<vmid>.conf`` over SSH and parses the
-    ``[<snap>]`` sections.  Raises :class:`RuntimeError` on SSH failure
-    so the caller can surface it per FR-011.
+    ``[<snap>]`` sections.  Raises :class:`OperationFailedError` on SSH
+    failure so the caller can surface it per FR-011.
     """
     cmd = f"cat /etc/pve/lxc/{shlex.quote(vmid)}.conf"
     result = _ssh_run(host, user, cmd)
     if result.returncode != 0:
-        raise RuntimeError(
+        raise OperationFailedError(
             f"reading /etc/pve/lxc/{vmid}.conf failed (rc={result.returncode}): "
             f"{result.stderr.strip() or result.stdout.strip()}"
         )
     return _parse_pct_conf_snapshots(result.stdout, container_name)
 
 
-def snapshot_create(
+def snapshot_create_legacy(
     container: str,
     host: str,
     user: str,
@@ -1058,7 +1019,7 @@ def snapshot_create(
 
     try:
         existing = _list_snapshots_for_vmid(host, user, vmid, container)
-    except RuntimeError as e:
+    except OperationFailedError as e:
         print_error(str(e))
         return 1
     if any(s.name == snap_name for s in existing):
@@ -1099,7 +1060,7 @@ def _get_pct_status(host: str, user: str, vmid: str) -> str:
     return ""
 
 
-def snapshot_restore(
+def snapshot_restore_legacy(
     container: str,
     host: str,
     user: str,
@@ -1116,7 +1077,7 @@ def snapshot_restore(
     guard_not_added_ssh_host(container, "proxmox")  # FR-012
     try:
         existing = _list_snapshots_for_vmid(host, user, vmid, container)
-    except RuntimeError as e:
+    except OperationFailedError as e:
         print_error(str(e))
         return 1
 
@@ -1172,7 +1133,7 @@ def snapshot_restore(
     return 0
 
 
-def snapshot_delete(
+def snapshot_delete_legacy(
     container: str,
     host: str,
     user: str,
@@ -1184,7 +1145,7 @@ def snapshot_delete(
     guard_not_added_ssh_host(container, "proxmox")  # FR-012
     try:
         existing = _list_snapshots_for_vmid(host, user, vmid, container)
-    except RuntimeError as e:
+    except OperationFailedError as e:
         print_error(str(e))
         return 1
 
@@ -1220,3 +1181,76 @@ def snapshot_delete(
 
     print_info(f"Deleted snapshot '{snap_name}' of {container}.")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Entry-based snapshot verbs (contracts/provider-protocol.md Part A)
+#
+# These are the Protocol-conformant public surface: they take a resolved
+# registry entry and absorb all Proxmox name-format knowledge (host/container
+# split from ``entry.name``, VMID from ``entry.instance_id``, node SSH user
+# from ``entry.region`` -- R-A2), delegating to the legacy rc-returning
+# helpers above and converting failure into ``OperationFailedError`` (R-A1).
+# ---------------------------------------------------------------------------
+
+
+def snapshot_create(entry: KnownHost, snapshot_name: str, *, description: str = "") -> None:
+    """Create a snapshot of *entry*'s container."""
+    node_host, _, container = entry.name.partition("/")
+    rc = snapshot_create_legacy(
+        container=container,
+        host=node_host,
+        user=entry.region,
+        vmid=entry.instance_id,
+        snap_name=snapshot_name,
+        description=description,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to create snapshot '{snapshot_name}' for '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_restore(entry: KnownHost, snapshot_name: str) -> None:
+    """Restore *entry*'s container to *snapshot_name*."""
+    node_host, _, container = entry.name.partition("/")
+    rc = snapshot_restore_legacy(
+        container=container,
+        host=node_host,
+        user=entry.region,
+        vmid=entry.instance_id,
+        snap_name=snapshot_name,
+        auto_confirm=True,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to restore snapshot '{snapshot_name}' for '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_delete(entry: KnownHost, snapshot_name: str) -> None:
+    """Delete *snapshot_name* from *entry*'s container."""
+    node_host, _, container = entry.name.partition("/")
+    rc = snapshot_delete_legacy(
+        container=container,
+        host=node_host,
+        user=entry.region,
+        vmid=entry.instance_id,
+        snap_name=snapshot_name,
+        auto_confirm=True,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to delete snapshot '{snapshot_name}' for '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_list(entry: KnownHost) -> list[Snapshot]:
+    """List snapshots of *entry*'s container (R-A5: public on every provider)."""
+    node_host, _, container = entry.name.partition("/")
+    try:
+        return _list_snapshots_for_vmid(node_host, entry.region, entry.instance_id, container)
+    except OperationFailedError as e:
+        raise OperationFailedError(
+            f"Failed to list snapshots for '{entry.name}': {e}"
+        ) from e

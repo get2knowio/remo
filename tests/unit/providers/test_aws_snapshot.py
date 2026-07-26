@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from remo_cli.models.snapshot import Snapshot, SnapshotStatus
+from remo_cli.models.snapshot import SnapshotStatus
 from remo_cli.providers import aws as providers_aws
 
 
@@ -151,7 +151,7 @@ class TestSnapshotCreate:
         ec2.describe_snapshots.return_value = {"Snapshots": []}
         ec2.create_snapshot.return_value = {"SnapshotId": "snap-new"}
 
-        rc = providers_aws.snapshot_create(
+        rc = providers_aws.snapshot_create_legacy(
             instance_name="dev1",
             snap_name="pre-x",
             description="before x",
@@ -171,7 +171,7 @@ class TestSnapshotCreate:
         mocker.patch(
             "remo_cli.providers.aws._get_running_instance", return_value=None
         )
-        rc = providers_aws.snapshot_create(
+        rc = providers_aws.snapshot_create_legacy(
             instance_name="dev1", snap_name="pre-x"
         )
         assert rc == 1
@@ -187,7 +187,7 @@ class TestSnapshotCreate:
         ec2.describe_instances.return_value = _instance_describe_response()
         ec2.describe_volumes.return_value = _volume_describe_response()
         ec2.describe_snapshots.return_value = _snapshot_describe_response(snap_name="pre-x")
-        rc = providers_aws.snapshot_create(
+        rc = providers_aws.snapshot_create_legacy(
             instance_name="dev1", snap_name="pre-x"
         )
         assert rc == 1
@@ -256,7 +256,7 @@ def _setup_restore_mocks(
 class TestSnapshotRestore:
     def test_pending_snapshot_fails_fast(self, ec2, mocker, capsys):
         _setup_restore_mocks(ec2, mocker, snapshot_state="pending")
-        rc = providers_aws.snapshot_restore(
+        rc = providers_aws.snapshot_restore_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 1
@@ -267,7 +267,7 @@ class TestSnapshotRestore:
     def test_missing_snapshot(self, ec2, mocker, capsys):
         _setup_restore_mocks(ec2, mocker)
         ec2.describe_snapshots.return_value = {"Snapshots": []}
-        rc = providers_aws.snapshot_restore(
+        rc = providers_aws.snapshot_restore_legacy(
             instance_name="dev1", snap_name="ghost", auto_confirm=True
         )
         assert rc == 1
@@ -277,7 +277,7 @@ class TestSnapshotRestore:
     def test_confirm_decline(self, ec2, mocker):
         _setup_restore_mocks(ec2, mocker)
         mocker.patch("remo_cli.providers.aws.confirm", return_value=False)
-        rc = providers_aws.snapshot_restore(
+        rc = providers_aws.snapshot_restore_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=False
         )
         assert rc == 1
@@ -285,7 +285,7 @@ class TestSnapshotRestore:
 
     def test_happy_path_volume_swap(self, ec2, mocker, capsys):
         _setup_restore_mocks(ec2, mocker)
-        rc = providers_aws.snapshot_restore(
+        rc = providers_aws.snapshot_restore_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 0
@@ -308,7 +308,7 @@ class TestSnapshotRestore:
     def test_larger_current_volume_resize2fs_hint(self, ec2, mocker, capsys):
         # Snapshot recorded at 20 GiB, current volume already grown to 50 GiB.
         _setup_restore_mocks(ec2, mocker, cur_size=50, snap_size=20)
-        rc = providers_aws.snapshot_restore(
+        rc = providers_aws.snapshot_restore_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 0
@@ -329,7 +329,7 @@ class TestSnapshotDelete:
         ec2.describe_instances.return_value = _instance_describe_response()
         ec2.describe_volumes.return_value = _volume_describe_response()
         ec2.describe_snapshots.return_value = _snapshot_describe_response(state="pending")
-        rc = providers_aws.snapshot_delete(
+        rc = providers_aws.snapshot_delete_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 1
@@ -339,7 +339,7 @@ class TestSnapshotDelete:
         ec2.describe_instances.return_value = _instance_describe_response()
         ec2.describe_volumes.return_value = _volume_describe_response()
         ec2.describe_snapshots.return_value = {"Snapshots": []}
-        rc = providers_aws.snapshot_delete(
+        rc = providers_aws.snapshot_delete_legacy(
             instance_name="dev1", snap_name="ghost", auto_confirm=True
         )
         assert rc == 1
@@ -350,7 +350,7 @@ class TestSnapshotDelete:
         ec2.describe_volumes.return_value = _volume_describe_response()
         ec2.describe_snapshots.return_value = _snapshot_describe_response()
         mocker.patch("remo_cli.providers.aws.confirm", return_value=False)
-        rc = providers_aws.snapshot_delete(
+        rc = providers_aws.snapshot_delete_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=False
         )
         assert rc == 1
@@ -360,7 +360,7 @@ class TestSnapshotDelete:
         ec2.describe_instances.return_value = _instance_describe_response()
         ec2.describe_volumes.return_value = _volume_describe_response()
         ec2.describe_snapshots.return_value = _snapshot_describe_response(snap_id="snap-1")
-        rc = providers_aws.snapshot_delete(
+        rc = providers_aws.snapshot_delete_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=True
         )
         assert rc == 0
@@ -368,97 +368,103 @@ class TestSnapshotDelete:
 
 
 # ---------------------------------------------------------------------------
-# destroy integration (FR-020 — FR-023)
+# teardown (Protocol Part A) — provider-destruction only, contracts/lifecycle-
+# templates.md; guard/snapshot-cleanup/confirm/registry-removal are covered
+# generically by tests/unit/core/test_lifecycle.py.
 # ---------------------------------------------------------------------------
 
 
-def _aws_snap(name: str = "pre-x") -> Snapshot:
-    return Snapshot(
-        provider="aws",
-        instance_name="dev1",
-        name=name,
-        backend_id=f"snap-{name}",
-        created_at=datetime(2026, 5, 24, tzinfo=timezone.utc),
-        size_bytes=20 * 1024**3,
-        description="",
-        status=SnapshotStatus.AVAILABLE,
-    )
+class TestTeardown:
+    """``teardown()`` is provider-destruction only (R-A3) — guard, snapshot
+    pre-cleanup, confirmation, and registry removal now live in
+    ``core.lifecycle.run_destroy`` (see tests/unit/core/test_lifecycle.py for
+    that generic coverage). These tests cover only what's AWS-specific:
+    extra_vars shape, the region fallback, and nonzero-rc handling."""
 
+    def test_builds_expected_extra_vars(self, mocker):
+        from remo_cli.models.host import KnownHost
 
-class TestDestroySnapshotCleanup:
-    def test_no_snapshots_no_extra_prompt(self, mocker):
-        mocker.patch(
-            "remo_cli.providers.aws.snapshot_list", return_value=[]
+        spy = mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        entry = KnownHost(
+            type="aws", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
         )
-        mocker.patch(
-            "remo_cli.providers.aws.run_playbook", return_value=0
-        )
-        mock_confirm = mocker.patch(
-            "remo_cli.providers.aws.confirm", return_value=True
-        )
-        spy = mocker.patch(
-            "remo_cli.providers.aws.snapshot_delete", return_value=0
-        )
-        mocker.patch("remo_cli.providers.aws.remove_known_host")
-        rc = providers_aws.destroy(name="dev1")
-        assert rc == 0
-        assert mock_confirm.call_count == 1
-        spy.assert_not_called()
 
-    def test_cleanup_accepted(self, mocker):
-        mocker.patch(
-            "remo_cli.providers.aws.snapshot_list",
-            return_value=[_aws_snap("a"), _aws_snap("b")],
-        )
-        mocker.patch(
-            "remo_cli.providers.aws.run_playbook", return_value=0
-        )
-        mocker.patch("remo_cli.core.snapshot.confirm", return_value=True)
-        mocker.patch("remo_cli.providers.aws.confirm", return_value=True)
-        spy = mocker.patch(
-            "remo_cli.providers.aws.snapshot_delete", return_value=0
-        )
-        mocker.patch("remo_cli.providers.aws.remove_known_host")
-        rc = providers_aws.destroy(name="dev1")
-        assert rc == 0
-        assert spy.call_count == 2
+        providers_aws.teardown(entry, verbose=True, remove_storage=True)
 
-    def test_cleanup_declined_warns(self, mocker, capsys):
-        mocker.patch(
-            "remo_cli.providers.aws.snapshot_list",
-            return_value=[_aws_snap()],
+        spy.assert_called_once_with(
+            "aws_teardown.yml",
+            [
+                "-e", "aws_resource_name=dev1",
+                "-e", "remove_storage=true",
+                "-e", "aws_region=us-east-1",
+            ],
+            verbose=True,
         )
-        mocker.patch(
-            "remo_cli.providers.aws.run_playbook", return_value=0
+
+    def test_remove_storage_false_by_default(self, mocker):
+        from remo_cli.models.host import KnownHost
+
+        spy = mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        entry = KnownHost(
+            type="aws", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
         )
-        mocker.patch("remo_cli.core.snapshot.confirm", return_value=False)
-        mocker.patch("remo_cli.providers.aws.confirm", return_value=True)
-        spy = mocker.patch(
-            "remo_cli.providers.aws.snapshot_delete", return_value=0
+
+        providers_aws.teardown(entry)
+
+        spy.assert_called_once_with(
+            "aws_teardown.yml",
+            [
+                "-e", "aws_resource_name=dev1",
+                "-e", "remove_storage=false",
+                "-e", "aws_region=us-east-1",
+            ],
+            verbose=False,
         )
-        mocker.patch("remo_cli.providers.aws.remove_known_host")
-        rc = providers_aws.destroy(name="dev1")
-        assert rc == 0
-        spy.assert_not_called()
+
+    def test_remove_storage_warns(self, mocker, capsys):
+        from remo_cli.models.host import KnownHost
+
+        mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        entry = KnownHost(
+            type="aws", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
+        )
+
+        providers_aws.teardown(entry, remove_storage=True)
+
         out = capsys.readouterr().out
-        assert "Snapshots will remain on AWS" in out
+        assert "remove-storage will destroy all data" in out
 
-    def test_auto_confirm_keeps(self, mocker, capsys):
-        mocker.patch(
-            "remo_cli.providers.aws.snapshot_list",
-            return_value=[_aws_snap()],
+    def test_region_falls_back_to_get_aws_region_when_blank(
+        self, mocker, tmp_config_dir, monkeypatch
+    ):
+        from remo_cli.models.host import KnownHost
+
+        monkeypatch.setenv("AWS_REGION", "eu-central-1")
+        spy = mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        entry = KnownHost(
+            type="aws", name="dev1", host="1.2.3.4", user="remo", region=""
         )
-        mocker.patch(
-            "remo_cli.providers.aws.run_playbook", return_value=0
+
+        providers_aws.teardown(entry)
+
+        spy.assert_called_once_with(
+            "aws_teardown.yml",
+            [
+                "-e", "aws_resource_name=dev1",
+                "-e", "remove_storage=false",
+                "-e", "aws_region=eu-central-1",
+            ],
+            verbose=False,
         )
-        spy = mocker.patch(
-            "remo_cli.providers.aws.snapshot_delete", return_value=0
+
+    def test_nonzero_rc_raises_operation_failed_error(self, mocker):
+        from remo_cli.core.errors import OperationFailedError
+        from remo_cli.models.host import KnownHost
+
+        mocker.patch("remo_cli.providers.aws.run_playbook", return_value=1)
+        entry = KnownHost(
+            type="aws", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
         )
-        mock_confirm = mocker.patch("remo_cli.providers.aws.confirm")
-        mocker.patch("remo_cli.providers.aws.remove_known_host")
-        rc = providers_aws.destroy(name="dev1", auto_confirm=True)
-        assert rc == 0
-        mock_confirm.assert_not_called()
-        spy.assert_not_called()
-        out = capsys.readouterr().out
-        assert "--yes is set" in out
+
+        with pytest.raises(OperationFailedError, match="rc=1"):
+            providers_aws.teardown(entry)

@@ -9,13 +9,42 @@ import subprocess
 import sys
 import termios
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from remo_cli.core.config import DEFAULT_SSH_PORT
-from remo_cli.core.known_hosts import get_aws_region, get_known_hosts, resolve_remo_host_by_name
+from remo_cli.core.known_hosts import get_known_hosts, resolve_remo_host_by_name
 from remo_cli.core.output import print_info
 from remo_cli.core.picker import pick_environment
 from remo_cli.core.validation import validate_port, validate_project_name
 from remo_cli.models.host import KnownHost
+
+if TYPE_CHECKING:
+    from remo_cli.core.provider_registry import SshProxyPlan
+
+
+def _resolve_ssh_proxy_plan(host: KnownHost) -> SshProxyPlan | None:
+    """Resolve *host*'s provider-declared ``ConnectionSpec.proxy_hook`` (018
+    T046). Returns ``None`` for the ``ssh`` pseudo-type (short-circuits
+    before any registry lookup), an unregistered/unknown type, a provider
+    with no hook, or a hook that itself returns ``None`` (e.g. an AWS host
+    in direct rather than SSM access mode)."""
+    if host.type == "ssh":
+        return None
+
+    import importlib
+
+    from remo_cli.core.provider_registry import get_descriptor, is_provider_type
+
+    if not is_provider_type(host.type):
+        return None
+
+    hook_path = get_descriptor(host.type).connection.proxy_hook
+    if not hook_path:
+        return None
+
+    module_path, _, func_name = hook_path.rpartition(".")
+    hook = getattr(importlib.import_module(module_path), func_name)
+    return hook(host)  # type: ignore[no-any-return]
 
 
 def resolve_ssh_control_dir(control_dir: str | None = None) -> str:
@@ -98,32 +127,16 @@ def build_ssh_opts(
         ]
 
     # ------------------------------------------------------------------
-    # Access-mode-specific options and target
+    # Access-mode-specific options and target (descriptor-declared
+    # ConnectionSpec.proxy_hook, 018 T046 — absorbs the SSM ProxyCommand
+    # construction that used to be hardcoded here; direct-target hosts and
+    # every provider without a hook fall through to the `else` unchanged)
     # ------------------------------------------------------------------
-    if host.access_mode == "ssm":
-        ssh_opts += [
-            "-o", "StrictHostKeyChecking=no",
-            "-o", "UserKnownHostsFile=/dev/null",
-        ]
-
-        region = get_aws_region(host.name)
-        proxy_cmd = (
-            f"aws ssm start-session"
-            f" --region {region}"
-            f" --target %h"
-            f" --document-name AWS-StartSSHSession"
-            f" --parameters 'portNumber=%p'"
-        )
-
-        aws_profile = os.environ.get("AWS_PROFILE", "")
-        if aws_profile:
-            proxy_cmd = (
-                f"env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY="
-                f" AWS_PROFILE={aws_profile} {proxy_cmd}"
-            )
-
-        ssh_opts += ["-o", f"ProxyCommand={proxy_cmd}"]
-        ssh_target = f"{host.user}@{host.instance_id}"
+    proxy_plan = _resolve_ssh_proxy_plan(host)
+    if proxy_plan is not None:
+        ssh_opts += list(proxy_plan.extra_opts)
+        ssh_opts += ["-o", f"ProxyCommand={proxy_plan.proxy_command}"]
+        ssh_target = proxy_plan.ssh_target
     else:
         ssh_target = f"{host.user}@{host.host}"
         # Manually-added SSH host (feature 014, type=ssh): apply a non-default

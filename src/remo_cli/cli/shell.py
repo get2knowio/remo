@@ -94,7 +94,13 @@ def shell(
     host = resolve_remo_host(name)
 
     # Auto-start stopped AWS instances before connecting
-    host = auto_start_aws_if_stopped(host)
+    from remo_cli.core.errors import ProviderError  # noqa: PLC0415
+
+    try:
+        host = auto_start_aws_if_stopped(host)
+    except ProviderError as e:
+        print_error(str(e))
+        raise SystemExit(e.exit_code) from e
 
     # Pre-shell remote version check.
     #
@@ -141,20 +147,20 @@ def shell(
                 )
 
             if should_update:
-                rc = _run_provider_update(host)
-                if rc != 0:
+                from remo_cli.core.errors import ProviderError  # noqa: PLC0415
+
+                try:
+                    _run_provider_update(host)
+                except ProviderError as e:
                     # The playbook log has already been dumped, but the SSH
                     # connection (and any remote project picker) would scroll
                     # it offscreen immediately. Pause so the user can read it.
-                    print_error(
-                        f"Tools update for '{host.name}' failed "
-                        f"(ansible-playbook exit code {rc})."
-                    )
+                    print_error(f"Tools update for '{host.name}' failed: {e}")
                     if not confirm(
                         "Connect anyway?",
                         default=False,
                     ):
-                        raise SystemExit(rc)
+                        raise SystemExit(e.exit_code) from e
 
     shell_connect(
         host,
@@ -166,37 +172,22 @@ def shell(
     )
 
 
-def _run_provider_update(host) -> int:  # noqa: ANN001
+def _run_provider_update(host) -> None:  # noqa: ANN001
     """Run the appropriate provider update for the given host.
 
-    Returns the provider update's exit code (0 on success).
+    Raises :class:`~remo_cli.core.errors.ProviderError` on failure (including
+    an unrecognized provider type — no more silent no-op).
     """
+    from remo_cli.core.errors import PreconditionError  # noqa: PLC0415
     from remo_cli.core.output import print_info  # noqa: PLC0415
+    from remo_cli.core.provider_registry import get_provider, is_provider_type  # noqa: PLC0415
 
     print_info(f"Updating instance '{host.name}'...")
 
-    if host.type == "aws":
-        from remo_cli.providers.aws import update as aws_update  # noqa: PLC0415
-        return aws_update(name=host.name)
-    if host.type == "hetzner":
-        from remo_cli.providers.hetzner import update as hetzner_update  # noqa: PLC0415
-        return hetzner_update(name=host.name)
-    if host.type == "incus":
-        from remo_cli.providers.incus import update as incus_update  # noqa: PLC0415
-        # Incus name in known_hosts is "host/container" — extract just the container name
-        container_name = host.name.split("/", maxsplit=1)[-1] if "/" in host.name else host.name
-        return incus_update(name=container_name)
-    if host.type == "proxmox":
-        from remo_cli.providers.proxmox import update as proxmox_update  # noqa: PLC0415
-        # Proxmox name in known_hosts is "node/container".
-        # The proxmox SSH user is stored in the region slot (see providers.proxmox.create).
-        proxmox_host, _, container_name = host.name.partition("/")
-        if not container_name:
-            container_name = host.name
-            proxmox_host = ""
-        return proxmox_update(
-            name=container_name,
-            host=proxmox_host,
-            user=host.region or "",
+    if not is_provider_type(host.type):
+        raise PreconditionError(
+            f"Unknown provider type '{host.type}' for '{host.name}'; cannot update tools."
         )
-    return 0
+
+    module = get_provider(host.type)
+    module.update_entry(host)

@@ -100,9 +100,17 @@ class TestSsmArgvParity:
         monkeypatch.delenv("TZ", raising=False)
         monkeypatch.setattr("remo_cli.core.ssh.detect_timezone", lambda: "")
 
+    @pytest.fixture(autouse=True)
+    def _isolated_remo_home(self, tmp_config_dir):
+        """WebSettings() (constructed on demand by build_attach_argv when no
+        explicit `settings=` is passed) resolves web-identity/ from the real
+        ambient REMO_HOME unless isolated -- this test asserts CLI/web argv
+        *shape* parity for an unadopted service, not whatever adoption state
+        happens to exist on the machine running the suite."""
+
     @pytest.fixture
     def ssm_host(self, mocker):
-        mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         return KnownHost(
             type="aws",
             name="devbox",
@@ -561,27 +569,35 @@ class TestOutOfDateNudge:
     # -- provider create / destroy -----------------------------------------
 
     @pytest.mark.parametrize(
-        "mock_target, command_import, argv",
+        "type_name, verb, argv",
         [
-            ("remo_cli.providers.incus.create", "remo_cli.cli.providers.incus:create", []),
-            ("remo_cli.providers.incus.destroy", "remo_cli.cli.providers.incus:destroy", []),
-            ("remo_cli.providers.proxmox.create", "remo_cli.cli.providers.proxmox:create",
-             ["--host", "pve1"]),
-            ("remo_cli.providers.proxmox.destroy", "remo_cli.cli.providers.proxmox:destroy", []),
-            ("remo_cli.providers.hetzner.create", "remo_cli.cli.providers.hetzner:create", []),
-            ("remo_cli.providers.hetzner.destroy", "remo_cli.cli.providers.hetzner:destroy", []),
-            ("remo_cli.providers.aws.create", "remo_cli.cli.providers.aws:create", []),
-            ("remo_cli.providers.aws.destroy", "remo_cli.cli.providers.aws:destroy", []),
+            ("incus", "create", []),
+            ("incus", "destroy", []),
+            ("proxmox", "create", ["--host", "pve1"]),
+            ("proxmox", "destroy", []),
+            ("hetzner", "create", []),
+            ("hetzner", "destroy", []),
+            ("aws", "create", []),
+            ("aws", "destroy", []),
         ],
     )
     def test_provider_create_destroy_nudges_with_cache(
-        self, tmp_config_dir, mocker, mock_target, command_import, argv
+        self, tmp_config_dir, mocker, type_name, verb, argv
     ):
-        import importlib
+        from remo_cli.cli.providers.factory import build_provider_group
+        from remo_cli.core.provider_registry import get_descriptor
 
-        module_path, attr = command_import.split(":")
-        command = getattr(importlib.import_module(module_path), attr)
-        mocker.patch(mock_target, return_value=0)
+        command = build_provider_group(get_descriptor(type_name)).commands[verb]
+        if verb == "destroy":
+            # Shared destroy template (018-provider-abstraction T038):
+            # module.destroy() no longer exists -- core/lifecycle.run_destroy
+            # drives module.teardown()/snapshot_list() and gates on its own
+            # confirmation prompt instead.
+            mocker.patch(f"remo_cli.providers.{type_name}.teardown", return_value=None)
+            mocker.patch(f"remo_cli.providers.{type_name}.snapshot_list", return_value=[])
+            mocker.patch("remo_cli.core.lifecycle.confirm", return_value=True)
+        else:
+            mocker.patch(f"remo_cli.providers.{type_name}.{verb}", return_value=0)
 
         _seed_push_cache()
         result = CliRunner().invoke(command, argv)
@@ -589,8 +605,10 @@ class TestOutOfDateNudge:
         assert _NUDGE in result.output
 
     def test_provider_create_absent_without_cache(self, tmp_config_dir, mocker):
-        from remo_cli.cli.providers.incus import create
+        from remo_cli.cli.providers.factory import build_provider_group
+        from remo_cli.core.provider_registry import get_descriptor
 
+        create = build_provider_group(get_descriptor("incus")).commands["create"]
         mocker.patch("remo_cli.providers.incus.create", return_value=0)
         # No cache seeded.
         result = CliRunner().invoke(create, [])
@@ -598,8 +616,10 @@ class TestOutOfDateNudge:
         assert _NUDGE not in result.output
 
     def test_provider_create_absent_on_failure(self, tmp_config_dir, mocker):
-        from remo_cli.cli.providers.incus import create
+        from remo_cli.cli.providers.factory import build_provider_group
+        from remo_cli.core.provider_registry import get_descriptor
 
+        create = build_provider_group(get_descriptor("incus")).commands["create"]
         mocker.patch("remo_cli.providers.incus.create", return_value=1)
         _seed_push_cache()
         result = CliRunner().invoke(create, [])
@@ -638,11 +658,13 @@ class TestOutOfDateNudge:
 
     @pytest.mark.parametrize("cmd_attr", ["stop", "start", "reboot"])
     def test_aws_power_commands_never_nudge(self, tmp_config_dir, mocker, cmd_attr):
-        import remo_cli.cli.providers.aws as aws_cli
+        from remo_cli.cli.providers.factory import build_provider_group
+        from remo_cli.core.provider_registry import get_descriptor
 
+        command = build_provider_group(get_descriptor("aws")).commands[cmd_attr]
         mocker.patch(f"remo_cli.providers.aws.{cmd_attr}", return_value=None)
         _seed_push_cache()
-        result = CliRunner().invoke(getattr(aws_cli, cmd_attr), [])
+        result = CliRunner().invoke(command, [])
         assert _NUDGE not in result.output
 
     # -- sync (run_sync apply path) ----------------------------------------

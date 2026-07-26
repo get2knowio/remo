@@ -78,7 +78,7 @@ def _no_aws_profile(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _mock_aws_region(mocker):
-    mocker.patch("remo_cli.core.ssh.get_aws_region", return_value="us-west-2")
+    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
 
 
 # The exact ProxyCommand string the SSM branch emits today (no AWS_PROFILE).

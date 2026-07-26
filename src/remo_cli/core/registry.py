@@ -107,6 +107,40 @@ class _ParsedDocument:
 # ---------------------------------------------------------------------------
 
 
+def _provider_nested_fields(type_: str, instance_id: str, region: str) -> dict[str, Any]:
+    """Per-type nested registry v2 fields (018 T048), driven by
+    ``ProviderDescriptor.registry_fields`` — replaces the hardcoded
+    incus/proxmox/aws if/elif chain (the ``ssh`` pseudo-type is not a
+    provider and keeps its own local mapping, including the int ``port``
+    conversion, at each call site).
+
+    Falls back to serializing whatever is non-empty under its raw attribute
+    name for an unrecognized type (Edge Case "Unknown host type") — a
+    hand-edited registry with a not-yet-supported type must never crash
+    serialization; the mismatch surfaces as a warning instead.
+    """
+    from remo_cli.core.provider_registry import get_descriptor, is_provider_type  # noqa: PLC0415
+
+    if is_provider_type(type_):
+        values = {"instance_id": instance_id, "region": region}
+        nested: dict[str, Any] = {}
+        for attr_name, json_key in get_descriptor(type_).registry_fields:
+            value = values.get(attr_name, "")
+            if value:
+                nested[json_key] = value
+        return nested
+
+    from remo_cli.core.output import print_warning  # noqa: PLC0415
+
+    print_warning(f"Unknown host type {type_!r}; serializing instance_id/region verbatim.")
+    nested = {}
+    if instance_id:
+        nested["instance_id"] = instance_id
+    if region:
+        nested["region"] = region
+    return nested
+
+
 def known_host_to_entry(host: KnownHost) -> dict[str, Any]:
     """Serialize a :class:`KnownHost` into a v2 hostEntry dict (key order fixed)."""
     entry: dict[str, Any] = {
@@ -117,21 +151,8 @@ def known_host_to_entry(host: KnownHost) -> dict[str, Any]:
         "access": host.access_mode or "direct",
     }
 
-    nested: dict[str, Any] = {}
-    if host.type == "incus":
-        if host.instance_id:
-            nested["host_user"] = host.instance_id
-    elif host.type == "proxmox":
-        if host.instance_id:
-            nested["vmid"] = host.instance_id
-        if host.region:
-            nested["node_user"] = host.region
-    elif host.type == "aws":
-        if host.instance_id:
-            nested["instance_id"] = host.instance_id
-        if host.region:
-            nested["region"] = host.region
-    elif host.type == "ssh":
+    if host.type == "ssh":
+        nested: dict[str, Any] = {}
         if host.instance_id:
             try:
                 nested["port"] = int(host.instance_id)
@@ -139,7 +160,8 @@ def known_host_to_entry(host: KnownHost) -> dict[str, Any]:
                 pass
         if host.region:
             nested["identity_file"] = host.region
-    # hetzner: no nested fields today.
+    else:
+        nested = _provider_nested_fields(host.type, host.instance_id, host.region)
 
     if nested:
         entry[host.type] = nested
@@ -251,20 +273,7 @@ def legacy_fields_to_entry(
     }
 
     nested: dict[str, Any] = {}
-    if type_ == "incus":
-        if instance_id:
-            nested["host_user"] = instance_id
-    elif type_ == "proxmox":
-        if instance_id:
-            nested["vmid"] = instance_id
-        if region:
-            nested["node_user"] = region
-    elif type_ == "aws":
-        if instance_id:
-            nested["instance_id"] = instance_id
-        if region:
-            nested["region"] = region
-    elif type_ == "ssh":
+    if type_ == "ssh":
         if instance_id:
             try:
                 nested["port"] = int(instance_id)
@@ -272,6 +281,8 @@ def legacy_fields_to_entry(
                 pass
         if region:
             nested["identity_file"] = region
+    else:
+        nested = _provider_nested_fields(type_, instance_id, region)
 
     if nested:
         entry[type_] = nested

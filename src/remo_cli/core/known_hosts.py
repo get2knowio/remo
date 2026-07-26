@@ -21,6 +21,16 @@ from remo_cli.models.host import KnownHost
 _migration_notice_shown = False
 
 
+def _is_host_scoped_type(type_name: str) -> bool:
+    """True when *type_name* is a registered provider using "host/container"
+    names (018 T048 — replaces the literal ``{"incus", "proxmox"}`` checks).
+    ``False`` for the ``ssh`` pseudo-type and any unregistered/unknown type.
+    """
+    from remo_cli.core.provider_registry import NameFormat, get_descriptor, is_provider_type  # noqa: PLC0415
+
+    return is_provider_type(type_name) and get_descriptor(type_name).name_format is NameFormat.HOST_SCOPED
+
+
 def _print_migration_notice(report: MigrationReport) -> None:
     """Print the one-time plain-language migration notice (FR-025/FR-026)."""
     from remo_cli.core.output import print_info, print_warning
@@ -151,13 +161,15 @@ def guard_not_added_ssh_host(name: str, provider: str) -> None:
             continue
         if host.name == name:
             return
-        # incus/proxmox short-name match (container part of "host/container").
-        if provider in {"incus", "proxmox"} and "/" in host.name:
+        # HOST_SCOPED-type short-name match (container part of "host/container").
+        if _is_host_scoped_type(provider) and "/" in host.name:
             if host.name.split("/", maxsplit=1)[1] == name:
                 return
 
-    sys.exit(
-        f"Error: '{name}' is a manually-registered SSH host (added via "
+    from remo_cli.core.errors import PreconditionError  # noqa: PLC0415
+
+    raise PreconditionError(
+        f"'{name}' is a manually-registered SSH host (added via "
         f"'remo add') with no managed {provider} infrastructure. "
         f"Use 'remo remove {name}' to deregister it."
     )
@@ -181,9 +193,9 @@ def resolve_remo_host_by_name(name: str) -> KnownHost:
         if host.name == name:
             return host
 
-    # Second pass: incus/proxmox short-name match (container part of "host/container").
+    # Second pass: HOST_SCOPED-type short-name match (container part of "host/container").
     for host in all_hosts:
-        if host.type in {"incus", "proxmox"} and "/" in host.name:
+        if _is_host_scoped_type(host.type) and "/" in host.name:
             _, container = host.name.split("/", maxsplit=1)
             if container == name:
                 return host

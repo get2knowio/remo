@@ -10,6 +10,7 @@ HTTP is mocked via `_hetzner_api`; no live Hetzner project is required.
 
 from __future__ import annotations
 
+from remo_cli.core.errors import OperationFailedError, PreconditionError
 from remo_cli.providers import hetzner as providers_hetzner
 
 
@@ -63,7 +64,7 @@ class TestApplyManagedLabel:
         mocker.patch.object(
             providers_hetzner,
             "_hetzner_api",
-            side_effect=RuntimeError("No Hetzner server found named 'dev1'."),
+            side_effect=PreconditionError("No Hetzner server found named 'dev1'."),
         )
 
         ok, err = providers_hetzner._apply_managed_label("dev1")
@@ -76,7 +77,7 @@ class TestApplyManagedLabel:
         mocker.patch.object(
             providers_hetzner,
             "_hetzner_api",
-            side_effect=[get_response, RuntimeError("Hetzner API PUT failed: 503")],
+            side_effect=[get_response, OperationFailedError("Hetzner API PUT failed: 503")],
         )
 
         ok, err = providers_hetzner._apply_managed_label("dev1")
@@ -98,9 +99,9 @@ class TestUpdateWarnsWithoutFailing:
             providers_hetzner, "run_playbook", return_value=0
         )
 
-        rc = providers_hetzner.update(name="dev1")
+        result = providers_hetzner.update(name="dev1")
 
-        assert rc == 0
+        assert result is None
         run_playbook.assert_called_once()
         assert warn.call_count == 1
         assert "dev1" in warn.call_args.args[0]

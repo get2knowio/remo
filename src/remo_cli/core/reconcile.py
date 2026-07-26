@@ -27,6 +27,7 @@ from enum import Enum
 
 from remo_cli.core import web_drift
 from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.provider_registry import NameFormat, get_descriptor, is_provider_type
 from remo_cli.core.registry import mutate_registry, read_registry
 from remo_cli.models.host import KnownHost
 
@@ -68,7 +69,12 @@ class ScopeError(ReconcileError):
 # SyncScope
 # ---------------------------------------------------------------------------
 
-_HOST_SCOPED_TYPES = ("incus", "proxmox")
+
+def _requires_region(type_name: str) -> bool:
+    """True when *type_name*'s descriptor declares a ``--region`` sync
+    option (018 T047) -- drives the FLAT-provider host/region requirement
+    generically instead of hardcoding "aws"."""
+    return any(opt.name == "--region" for opt in get_descriptor(type_name).sync_options)
 
 
 @dataclass(frozen=True)
@@ -78,29 +84,26 @@ class SyncScope:
     region: str = ""
 
     def __post_init__(self) -> None:
-        if self.type in _HOST_SCOPED_TYPES:
+        if not is_provider_type(self.type):
+            raise ScopeError(f"unknown provider type for sync scope: {self.type!r}")
+        if get_descriptor(self.type).name_format is NameFormat.HOST_SCOPED:
             if not self.host:
                 raise ScopeError(f"{self.type} sync scope requires a non-empty host")
-        elif self.type == "aws":
+        elif _requires_region(self.type):
             if not self.region:
-                raise ScopeError("aws sync scope requires a non-empty region")
-        elif self.type == "hetzner":
-            if self.host or self.region:
-                raise ScopeError("hetzner sync scope must not carry a host or region")
-        else:
-            raise ScopeError(f"unknown provider type for sync scope: {self.type!r}")
+                raise ScopeError(f"{self.type} sync scope requires a non-empty region")
+        elif self.host or self.region:
+            raise ScopeError(f"{self.type} sync scope must not carry a host or region")
 
     def in_update_scope(self, entry: KnownHost) -> bool:
-        if self.type in _HOST_SCOPED_TYPES:
+        if get_descriptor(self.type).name_format is NameFormat.HOST_SCOPED:
             return entry.type == self.type and entry.name.startswith(f"{self.host}/")
-        if self.type == "hetzner":
-            return entry.type == "hetzner"
         if self.type == "aws":
             # A region-less legacy AWS entry matches every region's update
             # scope, so a hit against the queried region self-heals it --
             # but it can never be *removed* while region-less (see below).
             return entry.type == "aws" and entry.region in (self.region, "")
-        return False
+        return entry.type == self.type
 
     def in_removal_scope(self, entry: KnownHost) -> bool:
         if self.type == "aws":
@@ -108,15 +111,14 @@ class SyncScope:
         return self.in_update_scope(entry)
 
     def describe(self) -> str:
+        descriptor = get_descriptor(self.type)
         if self.type == "aws":
             return f"aws region {self.region}"
         if self.type == "incus":
             return f"incus host {self.host} (default project)"
         if self.type == "proxmox":
             return f"proxmox node {self.host} (this node only)"
-        if self.type == "hetzner":
-            return "hetzner (all servers in project)"
-        raise ScopeError(f"unknown provider type for sync scope: {self.type!r}")  # pragma: no cover
+        return f"{descriptor.display_name.lower()} (all servers in project)"
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +136,13 @@ class DiscoveredHost:
     # in scope"); a provider with a narrower adoption convention -- AWS's
     # remo-* naming, per research.md R7 -- sets this per host instead.
     adopted: bool = True
+    # Which KnownHost field names the provider actually observed (018,
+    # contracts/sync-merge.md, closes #87). None = legacy semantics: every
+    # non-empty field on `entry` counts as observed (existing Incus/Proxmox/
+    # Hetzner probes need no change). A frozenset marks only the fields the
+    # provider genuinely read; others carry defaults/fillers and must not
+    # overwrite a hand-edited registry value on merge.
+    observed: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -153,17 +162,33 @@ ProbeFn = Callable[[], ProbeResult]
 # ---------------------------------------------------------------------------
 
 
-def merge_entry(existing: KnownHost, discovered: KnownHost) -> KnownHost:
+def merge_entry(
+    existing: KnownHost, discovered: KnownHost, observed: frozenset[str] | None = None
+) -> KnownHost:
+    """Merge *discovered* into *existing* (contracts/sync-merge.md, #87).
+
+    For each mergeable field: take *discovered*'s value iff the field is
+    observed (``observed is None`` -> legacy semantics, every non-empty
+    field counts as observed) and non-empty; otherwise keep *existing*'s.
+    """
+
+    def pick(field_name: str, discovered_value: str) -> str:
+        if observed is None:
+            return discovered_value or getattr(existing, field_name)
+        if field_name in observed and discovered_value:
+            return discovered_value
+        return getattr(existing, field_name)  # type: ignore[no-any-return]
+
     return KnownHost(
         type=existing.type,
         name=existing.name,
-        host=discovered.host or existing.host,
+        host=pick("host", discovered.host),
         # Always the existing value: every provider hardcodes "remo" here,
         # so preserving it only ever helps a hand-edited registry.
         user=existing.user,
-        instance_id=discovered.instance_id or existing.instance_id,
-        access_mode=discovered.access_mode or existing.access_mode,
-        region=discovered.region or existing.region,
+        instance_id=pick("instance_id", discovered.instance_id),
+        access_mode=pick("access_mode", discovered.access_mode),
+        region=pick("region", discovered.region),
     )
 
 
@@ -227,7 +252,7 @@ def build_plan(
                 plan.skipped_unmarked.append(name)
             continue
 
-        merged = merge_entry(existing, discovered.entry)
+        merged = merge_entry(existing, discovered.entry, discovered.observed)
         if merged != existing:
             plan.updated.append((existing, merged))
         else:
@@ -305,7 +330,7 @@ def render_plan(
     # Only the host-scoped providers (incus, proxmox) accept `--host` on
     # `update`; aws and hetzner do not, so the hint must not suggest it there.
     mark_cmd = f"remo {plan.scope.type} update --name <n>"
-    if plan.scope.type in _HOST_SCOPED_TYPES:
+    if get_descriptor(plan.scope.type).name_format is NameFormat.HOST_SCOPED:
         mark_cmd += " --host <h>"
 
     if plan.retained_unmarked:

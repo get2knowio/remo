@@ -14,20 +14,33 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sys
 import time
 
-from remo_cli.core.ansible_runner import run_playbook
+from remo_cli.core.ansible_runner import build_configure_extra_vars, run_playbook
+from remo_cli.core.errors import (
+    MissingDependencyError,
+    OperationFailedError,
+    PreconditionError,
+    UserAbortedError,
+)
 from remo_cli.core.known_hosts import (
     get_aws_region,
     get_known_hosts,
     guard_not_added_ssh_host,
-    remove_known_host,
     save_known_host,
 )
 from datetime import datetime, timezone
 
-from remo_cli.core.output import confirm, print_error, print_info, print_success, print_warning
+from remo_cli.core.output import (
+    Column,
+    confirm,
+    print_error,
+    print_info,
+    print_success,
+    print_warning,
+    render_host_table,
+)
+from remo_cli.core.provider_registry import SshProxyPlan
 from remo_cli.core.reconcile import (
     DiscoveredHost,
     ProbeError,
@@ -36,12 +49,10 @@ from remo_cli.core.reconcile import (
     run_sync,
 )
 from remo_cli.core.snapshot import (
-    handle_destroy_snapshot_cleanup,
     validate_name as validate_snapshot_name,
 )
-from remo_cli.core.ssh import detect_timezone, require_session_manager_plugin
-from remo_cli.core.validation import build_tool_args, parse_volume_size, validate_name
-from remo_cli.core.version import get_current_version
+from remo_cli.core.ssh import require_session_manager_plugin
+from remo_cli.core.validation import parse_volume_size, validate_name
 from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
@@ -68,9 +79,8 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
 
     Raises
     ------
-    SystemExit
-        If the instance is in the ``"stopping"`` state, or if boto3 is not
-        available.
+    PreconditionError
+        If the instance is in the ``"stopping"`` state.
     """
     if host.type != "aws" or not host.instance_id:
         return host
@@ -153,8 +163,8 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
         return updated_host
 
     elif inst_state == "stopping":
-        raise SystemExit(
-            f"Error: Instance {host.instance_id} is currently stopping. "
+        raise PreconditionError(
+            f"Instance {host.instance_id} is currently stopping. "
             "Please wait and try again."
         )
 
@@ -168,17 +178,16 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
 
 
 def _require_boto3():  # noqa: ANN202
-    """Lazy-import and return the ``boto3`` module, or exit with guidance."""
+    """Lazy-import and return the ``boto3`` module, or raise with guidance."""
     try:
         import boto3  # noqa: PLC0415
 
         return boto3
     except ImportError:
-        print_error(
-            "boto3 is not installed.  Try reinstalling remo:\n"
-            "  uv tool install remo-cli"
-        )
-        sys.exit(1)
+        raise MissingDependencyError(
+            "boto3 is not installed. Install the AWS extra: "
+            "uv sync --extra aws (or: pip install 'remo-cli[aws]')."
+        ) from None
 
 
 def _boto3_session(region: str):  # noqa: ANN202
@@ -283,11 +292,12 @@ def select_ssm_instance_profile(
 
     # Multiple profiles -- use fzf picker
     if not shutil.which("fzf"):
-        print_error("Multiple IAM profiles found but fzf is not installed.")
-        print("Available profiles:")
-        for p in profiles:
-            print(f"  {p['name']} (role: {p['role']})")
-        sys.exit(1)
+        profile_list = "\n".join(f"  {p['name']} (role: {p['role']})" for p in profiles)
+        raise PreconditionError(
+            "Multiple IAM instance profiles found but fzf is not installed to "
+            f"pick one:\n{profile_list}\n"
+            "Install fzf, or pass one explicitly with --iam-profile <name>."
+        )
 
     import subprocess
 
@@ -303,8 +313,7 @@ def select_ssm_instance_profile(
 
     choice = result.stdout.strip()
     if not choice:
-        print("No selection made.")
-        sys.exit(0)
+        raise UserAbortedError("Aborted.")
 
     if choice == "Create new SSM role and profile":
         return _create_ssm_resources(iam, resource_name)
@@ -375,14 +384,11 @@ def _create_ssm_resources(iam, resource_name: str) -> str:  # noqa: ANN001
         return ip_name
 
     except Exception as exc:
-        print_error(f"Failed to create IAM resources: {exc}")
-        print("")
-        print(
-            "You may need to create an IAM instance profile manually with the\n"
-            "AmazonSSMManagedInstanceCore policy attached, then re-run with "
-            "--iam-profile <name>."
-        )
-        sys.exit(1)
+        raise OperationFailedError(
+            f"Failed to create IAM resources: {exc}. You may need to create an "
+            "IAM instance profile manually with the AmazonSSMManagedInstanceCore "
+            "policy attached, then re-run with --iam-profile <name>."
+        ) from exc
 
 
 def create(
@@ -395,10 +401,11 @@ def create(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
-) -> int:
+) -> None:
     """Create a new AWS EC2 instance and configure it with dev tools.
 
-    Returns the ansible-playbook exit code (0 on success).
+    Returns ``None`` on success; raises :class:`OperationFailedError` on a
+    nonzero ansible-playbook rc.
     """
     if name:
         validate_name(name, "instance name")
@@ -437,20 +444,14 @@ def create(
     if use_spot:
         extra_vars.extend(["-e", "aws_use_spot=true"])
 
-    tz = detect_timezone()
-    if tz:
-        extra_vars.extend(["-e", f"timezone={tz}"])
-
-    extra_vars.extend(build_tool_args(tools_only, tools_skip))
-
-    current = get_current_version()
-    if current != "unknown":
-        extra_vars.extend(["-e", f"remo_version={current}"])
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
     rc = run_playbook("aws_site.yml", extra_vars, verbose=verbose)
 
     if rc != 0:
-        return rc
+        raise OperationFailedError(
+            f"AWS instance creation failed (ansible-playbook rc={rc})."
+        )
 
     # Save to known_hosts on success -- get the instance IP and ID.
     instance = _get_running_instance(resource_name, effective_region)
@@ -503,82 +504,75 @@ def create(
     print_success("==================================================")
     print("")
 
-    return rc
 
+def ssh_proxy_hook(host: KnownHost) -> SshProxyPlan | None:
+    """SSM ProxyCommand plan for *host* (ConnectionSpec.proxy_hook, T046).
 
-def destroy(
-    name: str = "",
-    auto_confirm: bool = False,
-    remove_storage: bool = False,
-    verbose: bool = False,
-) -> int:
-    """Destroy an AWS EC2 instance.
-
-    Returns the ansible-playbook exit code (0 on success).
+    Returns ``None`` for a direct-mode AWS host (SSH connects straight to
+    its public IP, no proxy); the caller falls back to the default direct
+    path exactly as if this provider had no hook at all.
     """
-    if name:
-        validate_name(name, "instance name")
+    if host.access_mode != "ssm":
+        return None
+
+    region = get_aws_region(host.name)
+    proxy_cmd = (
+        f"aws ssm start-session"
+        f" --region {region}"
+        f" --target %h"
+        f" --document-name AWS-StartSSHSession"
+        f" --parameters 'portNumber=%p'"
+    )
+
+    aws_profile = os.environ.get("AWS_PROFILE", "")
+    if aws_profile:
+        proxy_cmd = (
+            f"env AWS_ACCESS_KEY_ID= AWS_SECRET_ACCESS_KEY="
+            f" AWS_PROFILE={aws_profile} {proxy_cmd}"
+        )
+
+    return SshProxyPlan(
+        proxy_command=proxy_cmd,
+        ssh_target=f"{host.user}@{host.instance_id}",
+        extra_opts=("-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null"),
+    )
+
+
+def teardown(
+    entry: KnownHost,
+    *,
+    verbose: bool = False,
+    remove_storage: bool = False,
+) -> None:
+    """Destroy the AWS EC2 instance for *entry* (Protocol Part A).
+
+    Provider-destruction only (R-A3): guard, snapshot pre-cleanup,
+    confirmation, and registry removal are ``core.lifecycle.run_destroy``'s
+    job. AWS is FLAT -- ``entry.name`` is the resource name directly, no
+    host-prefix parsing needed.
+
+    Raises :class:`OperationFailedError` on a nonzero ansible-playbook rc.
+    """
+    resource_name = entry.name
+    region = entry.region or get_aws_region(resource_name)
 
     if remove_storage:
         print_warning(
             "WARNING: --remove-storage will destroy all data on the storage volume!"
         )
 
-    resource_name = name or os.environ.get("USER", "remo")
-    guard_not_added_ssh_host(resource_name, "aws")  # FR-012
-    region = get_aws_region(resource_name)
-
-    # FR-020 through FR-023: surface remo-managed EBS snapshots before destroy.
-    # Failure to enumerate (instance already gone, no creds, etc.) downgrades
-    # to a warning so the destroy itself can still proceed.
-    try:
-        _pre = snapshot_list(instance_name=resource_name, region=region)
-    except Exception as e:  # noqa: BLE001
-        print_warning(
-            f"Could not list snapshots before destroy ({e}); "
-            f"proceeding without snapshot cleanup."
-        )
-        _pre = []
-    handle_destroy_snapshot_cleanup(
-        provider_label="AWS",
-        instance=resource_name,
-        snapshots=_pre,
-        delete_one=lambda snap: snapshot_delete(
-            instance_name=resource_name,
-            snap_name=snap.name,
-            region=region,
-            auto_confirm=True,
-        ),
-        auto_confirm=auto_confirm,
-        show_status=True,
-    )
-
-    if not auto_confirm:
-        prompt = (
-            f"Destroy AWS EC2 instance for 'remo-{resource_name}' in {region}? "
-            "This cannot be undone."
-        )
-        if not confirm(prompt):
-            print_info("Aborted.")
-            return 0
-
-    print_info("Destroying AWS EC2 instance...")
-
-    extra_vars: list[str] = []
-
-    if name:
-        extra_vars.extend(["-e", f"aws_resource_name={name}"])
-    extra_vars.extend(
-        ["-e", f"remove_storage={'true' if remove_storage else 'false'}"]
-    )
-    extra_vars.extend(["-e", f"aws_region={region}"])
+    extra_vars: list[str] = [
+        "-e", f"aws_resource_name={resource_name}",
+        "-e", f"remove_storage={'true' if remove_storage else 'false'}",
+        "-e", f"aws_region={region}",
+    ]
 
     rc = run_playbook("aws_teardown.yml", extra_vars, verbose=verbose)
 
-    # Remove from known_hosts.
-    remove_known_host("aws", resource_name)
-
-    return rc
+    if rc != 0:
+        raise OperationFailedError(
+            f"AWS instance teardown failed (ansible-playbook rc={rc})."
+        )
 
 
 def update(
@@ -587,7 +581,7 @@ def update(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
-) -> int:
+) -> None:
     """Re-configure dev tools on an existing AWS EC2 instance.
 
     Queries boto3 for the running instance to get current IP and instance
@@ -595,7 +589,9 @@ def update(
     When *volume_size* is provided, grow the EBS volume and the filesystem
     first (idempotent — no-op when sizes match).
 
-    Returns the ansible-playbook exit code (0 on success).
+    Returns ``None`` on success; raises :class:`PreconditionError` if no
+    running instance is found, or :class:`OperationFailedError` on a
+    nonzero ansible-playbook rc.
     """
     if name:
         validate_name(name, "instance name")
@@ -609,9 +605,10 @@ def update(
     instance = _get_running_instance(resource_name, region)
 
     if not instance:
-        print_error(f"Could not find running AWS instance for '{resource_name}'")
-        print(f"Run 'remo aws info --name {resource_name}' to check instance status.")
-        sys.exit(1)
+        raise PreconditionError(
+            f"Could not find running AWS instance for '{resource_name}'. "
+            f"Run 'remo aws info --name {resource_name}' to check instance status."
+        )
 
     instance_ip = instance.get("PublicIpAddress", "")
     instance_id = instance.get("InstanceId", "")
@@ -639,7 +636,9 @@ def update(
         ]
         rc = run_playbook("aws_resize.yml", resize_vars, verbose=verbose)
         if rc != 0:
-            return rc
+            raise OperationFailedError(
+                f"AWS EBS volume resize failed (ansible-playbook rc={rc})."
+            )
 
     extra_vars: list[str] = [
         "-e", "aws_access_mode=ssm",
@@ -647,19 +646,20 @@ def update(
         "-e", f"instance_ip={instance_id}",
     ]
 
-    extra_vars.extend(build_tool_args(tools_only, tools_skip))
-
-    tz = detect_timezone()
-    if tz:
-        extra_vars.extend(["-e", f"timezone={tz}"])
-
-    current = get_current_version()
-    if current != "unknown":
-        extra_vars.extend(["-e", f"remo_version={current}"])
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
     print_info(f"Updating AWS instance {instance_id} via SSM...")
 
-    return run_playbook("aws_configure.yml", extra_vars, verbose=verbose)
+    rc = run_playbook("aws_configure.yml", extra_vars, verbose=verbose)
+    if rc != 0:
+        raise OperationFailedError(
+            f"AWS instance update failed (ansible-playbook rc={rc})."
+        )
+
+
+def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
+    """Re-apply tool configuration to an existing instance (Protocol Part A)."""
+    update(name=entry.name, verbose=verbose)
 
 
 # ---------------------------------------------------------------------------
@@ -691,23 +691,25 @@ def _find_remo_instance(
 # ---------------------------------------------------------------------------
 
 
+_LIST_COLUMNS = (
+    Column("NAME", lambda e: e.name),
+    Column("INSTANCE", lambda e: e.instance_id or "N/A"),
+    Column("CONNECT", lambda e: "remo shell"),
+)
+
+
 def list_hosts() -> None:
     """Print a formatted table of all registered AWS instances."""
     hosts = get_known_hosts(type_filter="aws")
-
-    if not hosts:
-        print_info("No AWS instances registered.")
-        print("Hint: Use 'remo aws create' to create a new instance,")
-        print("      or 'remo aws sync' to import existing instances.")
-        return
-
-    # Header
-    print(f"{'NAME':<20} {'INSTANCE':<20} CONNECT")
-    print(f"{'----':<20} {'--------':<20} -------")
-
-    for host in hosts:
-        instance_id = host.instance_id or "N/A"
-        print(f"{host.name:<20} {instance_id:<20} remo shell")
+    render_host_table(
+        hosts,
+        _LIST_COLUMNS,
+        empty_message=(
+            "No AWS instances registered.\n"
+            "Hint: Use 'remo aws create' to create a new instance,\n"
+            "      or 'remo aws sync' to import existing instances."
+        ),
+    )
 
 
 def _paginate_instances(ec2) -> tuple[list[dict], bool]:  # noqa: ANN001
@@ -807,6 +809,14 @@ def _probe(scope: SyncScope, include_all: bool) -> ProbeResult:
             access_mode=tags.get("remo_access_mode", "ssm"),
             region=scope.region,
         )
+        # #87 / contracts/sync-merge.md: host/instance_id/region are always
+        # genuinely read from the API response, so they're always observed.
+        # access_mode is only observed when the instance actually carries
+        # the remo_access_mode tag -- otherwise the "ssm" above is a filler
+        # default that must never clobber a hand-edited existing value.
+        observed = {"host", "instance_id", "region"}
+        if "remo_access_mode" in tags:
+            observed.add("access_mode")
         hosts.append(
             DiscoveredHost(
                 entry=entry,
@@ -816,6 +826,7 @@ def _probe(scope: SyncScope, include_all: bool) -> ProbeResult:
                 # without needing a core/reconcile.py change.
                 state=state if state != "running" else "",
                 adopted=tags.get("Name", "").startswith("remo-"),
+                observed=frozenset(observed),
             )
         )
 
@@ -872,8 +883,7 @@ def stop(name: str = "", auto_confirm: bool = False) -> None:
     )
 
     if not instance:
-        print_error(f"No AWS instance found for '{resource_name}'.")
-        sys.exit(1)
+        raise PreconditionError(f"No AWS instance found for '{resource_name}'.")
 
     instance_id = instance["InstanceId"]
     state = instance["State"]["Name"]
@@ -883,15 +893,13 @@ def stop(name: str = "", auto_confirm: bool = False) -> None:
         return
 
     if state in ("stopping", "pending"):
-        print_error(
+        raise PreconditionError(
             f"Instance {instance_id} is currently {state}. Please wait and try again."
         )
-        sys.exit(1)
 
     if not auto_confirm:
         if not confirm(f"Stop instance {instance_id} (remo-{resource_name})?"):
-            print_info("Aborted.")
-            return
+            raise UserAbortedError("Aborted.")
 
     print_info(f"Stopping instance {instance_id}...")
 
@@ -926,8 +934,7 @@ def start(name: str = "") -> None:
     )
 
     if not instance:
-        print_error(f"No AWS instance found for '{resource_name}'.")
-        sys.exit(1)
+        raise PreconditionError(f"No AWS instance found for '{resource_name}'.")
 
     instance_id = instance["InstanceId"]
     state = instance["State"]["Name"]
@@ -937,10 +944,9 @@ def start(name: str = "") -> None:
         return
 
     if state in ("stopping", "pending"):
-        print_error(
+        raise PreconditionError(
             f"Instance {instance_id} is currently {state}. Please wait and try again."
         )
-        sys.exit(1)
 
     print_info(f"Starting instance {instance_id}...")
 
@@ -1017,22 +1023,19 @@ def reboot(name: str = "", auto_confirm: bool = False) -> None:
     )
 
     if not instance:
-        print_error(f"No AWS instance found for '{resource_name}'.")
-        sys.exit(1)
+        raise PreconditionError(f"No AWS instance found for '{resource_name}'.")
 
     instance_id = instance["InstanceId"]
     state = instance["State"]["Name"]
 
     if state != "running":
-        print_error(
+        raise PreconditionError(
             f"Instance {instance_id} is {state}. Can only reboot a running instance."
         )
-        sys.exit(1)
 
     if not auto_confirm:
         if not confirm(f"Reboot instance {instance_id} (remo-{resource_name})?"):
-            print_info("Aborted.")
-            return
+            raise UserAbortedError("Aborted.")
 
     print_info(f"Rebooting instance {instance_id}...")
 
@@ -1066,8 +1069,7 @@ def info(name: str = "") -> None:
     )
 
     if not instance:
-        print_error(f"No AWS instance found for '{resource_name}'.")
-        sys.exit(1)
+        raise PreconditionError(f"No AWS instance found for '{resource_name}'.")
 
     instance_id = instance["InstanceId"]
     state = instance["State"]["Name"]
@@ -1250,7 +1252,7 @@ def _list_snapshots_for_volume(
     return snapshots
 
 
-def snapshot_create(
+def snapshot_create_legacy(
     instance_name: str,
     snap_name: str,
     description: str = "",
@@ -1348,7 +1350,7 @@ def _wait_for_volume_state(
     return False
 
 
-def snapshot_restore(
+def snapshot_restore_legacy(
     instance_name: str,
     snap_name: str,
     region: str = "",
@@ -1527,7 +1529,7 @@ def snapshot_restore(
     return 0
 
 
-def snapshot_list(instance_name: str, region: str = "") -> list[Snapshot]:
+def snapshot_list_legacy(instance_name: str, region: str = "") -> list[Snapshot]:
     """Return remo-managed snapshots for *instance_name*'s root volume.
 
     Raises :class:`RuntimeError` when the instance lookup fails so the CLI
@@ -1556,7 +1558,7 @@ def snapshot_list(instance_name: str, region: str = "") -> list[Snapshot]:
     return _list_snapshots_for_volume(ec2, volume_id, instance_name)
 
 
-def snapshot_delete(
+def snapshot_delete_legacy(
     instance_name: str,
     snap_name: str,
     region: str = "",
@@ -1622,3 +1624,76 @@ def snapshot_delete(
 
     print_info(f"Deleted snapshot '{snap_name}' of {instance_name}.")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# Protocol Part A -- entry-based snapshot verbs (contracts/provider-protocol.md)
+# ---------------------------------------------------------------------------
+#
+# AWS is FLAT (name_format): entry.name is the instance name directly and
+# entry.region carries the region -- no host-prefix parsing needed here.
+# These wrap the legacy multi-kwarg, rc-returning functions above, converting
+# a nonzero rc (or a caught RuntimeError for snapshot_list_legacy) into a
+# raised OperationFailedError per R-A1.
+
+
+def snapshot_create(
+    entry: KnownHost, snapshot_name: str, *, description: str = ""
+) -> None:
+    """Create an EBS snapshot of *entry*'s root volume (Protocol Part A)."""
+    rc = snapshot_create_legacy(
+        instance_name=entry.name,
+        snap_name=snapshot_name,
+        description=description,
+        region=entry.region,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to create snapshot '{snapshot_name}' for '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_restore(entry: KnownHost, snapshot_name: str) -> None:
+    """Restore *entry* via in-place EBS volume swap (Protocol Part A).
+
+    No interactive prompt in this entry-based path -- confirmation is the
+    caller's responsibility -- so the legacy call is made with
+    ``auto_confirm=True``.
+    """
+    rc = snapshot_restore_legacy(
+        instance_name=entry.name,
+        snap_name=snapshot_name,
+        region=entry.region,
+        auto_confirm=True,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to restore snapshot '{snapshot_name}' to '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_delete(entry: KnownHost, snapshot_name: str) -> None:
+    """Delete a remo-managed AWS snapshot by its user-facing name (Protocol Part A).
+
+    No interactive prompt in this entry-based path -- confirmation is the
+    caller's responsibility -- so the legacy call is made with
+    ``auto_confirm=True``.
+    """
+    rc = snapshot_delete_legacy(
+        instance_name=entry.name,
+        snap_name=snapshot_name,
+        region=entry.region,
+        auto_confirm=True,
+    )
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to delete snapshot '{snapshot_name}' of '{entry.name}' (rc={rc})."
+        )
+
+
+def snapshot_list(entry: KnownHost) -> list[Snapshot]:
+    """Return remo-managed snapshots for *entry*'s root volume (Protocol Part A)."""
+    try:
+        return snapshot_list_legacy(instance_name=entry.name, region=entry.region)
+    except RuntimeError as e:
+        raise OperationFailedError(str(e)) from e

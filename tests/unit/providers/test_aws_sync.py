@@ -24,6 +24,7 @@ from remo_cli.core.reconcile import (
     ProbeResult,
     SyncScope,
     build_plan,
+    merge_entry,
 )
 from remo_cli.models.host import KnownHost
 from remo_cli.providers import aws as providers_aws
@@ -478,3 +479,121 @@ class TestStoppedInstance:
         plan = build_plan([existing], probe, scope, include_all=False)
 
         assert "gone" in {h.name for h in plan.removed}
+
+
+# ---------------------------------------------------------------------------
+# T045 / #87 / contracts/sync-merge.md: observed-vs-default merge semantics
+# ---------------------------------------------------------------------------
+
+
+class TestProbeObservedFields:
+    def test_access_mode_observed_when_tag_present(self, ec2, scope):
+        page = _page(
+            [
+                _instance(
+                    "i-1",
+                    tags={"remo_resource_name": "dev1", "remo_access_mode": "ssm"},
+                )
+            ]
+        )
+        ec2.get_paginator.return_value.paginate.return_value = [page]
+        result = providers_aws._probe(scope, include_all=False)
+        assert result.hosts[0].observed is not None
+        assert "access_mode" in result.hosts[0].observed
+
+    def test_access_mode_not_observed_when_tag_absent(self, ec2, scope):
+        page = _page([_instance("i-1", tags={"remo_resource_name": "dev1"})])
+        ec2.get_paginator.return_value.paginate.return_value = [page]
+        result = providers_aws._probe(scope, include_all=False)
+        assert result.hosts[0].observed is not None
+        assert "access_mode" not in result.hosts[0].observed
+
+    def test_host_instance_id_region_always_observed(self, ec2, scope):
+        page = _page([_instance("i-1", tags={"remo_resource_name": "dev1"})])
+        ec2.get_paginator.return_value.paginate.return_value = [page]
+        result = providers_aws._probe(scope, include_all=False)
+        observed = result.hosts[0].observed
+        assert observed is not None
+        assert {"host", "instance_id", "region"} <= observed
+
+
+class TestSyncMergeAcceptance:
+    """The four contracts/sync-merge.md acceptance cases (#87, SC-007)."""
+
+    def test_case_1_untagged_instance_preserves_hand_set_access_mode(self, ec2, scope):
+        """Existing entry access_mode='ssh', instance untagged -> preserved,
+        no phantom '~ updated' line (i.e. plan.updated is empty)."""
+        existing = KnownHost(
+            type="aws", name="dev1", host="1.2.3.4", user="remo",
+            instance_id="i-1", access_mode="ssh", region="us-west-2",
+        )
+        page = _page([_instance("i-1", tags={"remo_resource_name": "dev1", "remo": "true"})])
+        ec2.get_paginator.return_value.paginate.return_value = [page]
+        probe = providers_aws._probe(scope, include_all=False)
+
+        plan = build_plan([existing], probe, scope, include_all=False)
+
+        assert plan.updated == []
+        assert plan.unchanged == [existing]
+
+    def test_case_2_tagged_instance_updates_access_mode(self, ec2, scope):
+        """Instance tagged remo_access_mode=ssm, entry says ssh -> updates
+        to ssm (observed wins)."""
+        existing = KnownHost(
+            type="aws", name="dev1", host="1.2.3.4", user="remo",
+            instance_id="i-1", access_mode="ssh", region="us-west-2",
+        )
+        page = _page(
+            [
+                _instance(
+                    "i-1",
+                    tags={"remo_resource_name": "dev1", "remo": "true", "remo_access_mode": "ssm"},
+                )
+            ]
+        )
+        ec2.get_paginator.return_value.paginate.return_value = [page]
+        probe = providers_aws._probe(scope, include_all=False)
+
+        plan = build_plan([existing], probe, scope, include_all=False)
+
+        assert len(plan.updated) == 1
+        _, merged = plan.updated[0]
+        assert merged.access_mode == "ssm"
+
+    def test_case_3_untagged_new_instance_adopted_defaults_to_ssm(self, ec2, scope):
+        """Untagged new instance adopted via --all -> entry created with
+        access_mode='ssm' (additions use discovered wholesale)."""
+        page = _page(
+            [_instance("i-1", tags={"remo_resource_name": "dev1", "Name": "remo-dev1"})]
+        )
+        ec2.get_paginator.return_value.paginate.return_value = [page]
+        probe = providers_aws._probe(scope, include_all=False)
+
+        plan = build_plan([], probe, scope, include_all=True)
+
+        assert len(plan.added) == 1
+        assert plan.added[0].access_mode == "ssm"
+
+    def test_case_4_plan_idempotence_across_two_consecutive_syncs(self, ec2, scope):
+        """Two consecutive syncs with no provider-side changes produce an
+        empty second plan."""
+        existing = KnownHost(
+            type="aws", name="dev1", host="1.2.3.4", user="remo",
+            instance_id="i-1", access_mode="ssh", region="us-west-2",
+        )
+        page = _page([_instance("i-1", ip="1.2.3.4", tags={"remo_resource_name": "dev1", "remo": "true"})])
+        ec2.get_paginator.return_value.paginate.return_value = [page]
+
+        probe1 = providers_aws._probe(scope, include_all=False)
+        plan1 = build_plan([existing], probe1, scope, include_all=False)
+        assert plan1.is_noop
+
+        # Second sync: registry now reflects plan1 (merge_entry against the
+        # same discovered state); re-probing (fresh paginate call) must
+        # again yield a no-op plan.
+        registry_after = [merge_entry(existing, probe1.hosts[0].entry, probe1.hosts[0].observed)]
+        ec2.get_paginator.return_value.paginate.return_value = [page]
+        probe2 = providers_aws._probe(scope, include_all=False)
+        plan2 = build_plan(registry_after, probe2, scope, include_all=False)
+
+        assert plan2.is_noop
