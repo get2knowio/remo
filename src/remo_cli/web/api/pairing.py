@@ -21,6 +21,7 @@ import logging
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from remo_cli.web.operator_auth import OperatorAuthProvider
 from remo_cli.web.pairing import PairingOrigin, PairingSessionManager
@@ -28,6 +29,18 @@ from remo_cli.web.pairing import PairingOrigin, PairingSessionManager
 logger = logging.getLogger("remo_cli.web.pairing")
 
 router = APIRouter(prefix="/pairing")
+
+
+class MintPairingResponse(BaseModel):
+    code: str
+    expires_in: int
+
+
+class DetailResponse(BaseModel):
+    """The `{"detail": ...}` shape this router's 403 actually returns --
+    deliberately NOT the `{"error": {...}}` ErrorEnvelope (data-model.md §2)."""
+
+    detail: str
 
 
 def _manager(request: Request) -> PairingSessionManager:
@@ -38,7 +51,11 @@ def _provider(request: Request) -> OperatorAuthProvider | None:
     return getattr(request.app.state, "operator_auth_provider", None)
 
 
-@router.post("/mint")
+@router.post(
+    "/mint",
+    response_model=MintPairingResponse,
+    responses={403: {"model": DetailResponse}},
+)
 def mint(request: Request) -> Response:
     """Mint a fresh pairing code (rotation-on-open, FR-003), operator-auth gated."""
     provider = _provider(request)
@@ -74,7 +91,7 @@ def mint(request: Request) -> Response:
     return response
 
 
-@router.post("/end")
+@router.post("/end", status_code=204)
 def end(request: Request) -> Response:
     """Best-effort end of the live pairing session (page-hide beacon, FR-004)."""
     _manager(request).end()

@@ -23,10 +23,21 @@ import logging
 
 from fastapi import APIRouter, Request, Response, WebSocket
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
+from remo_cli.web.api.hosts import ErrorEnvelope
 from remo_cli.web.discovery import DiscoveryService
+from remo_cli.web.frames import (
+    INBOUND_FRAME_ADAPTER,
+    ErrorFrame,
+    ExitFrame,
+    OutboundFrame,
+    PingFrame,
+    PongFrame,
+    ReadyFrame,
+    ResizeFrame,
+)
 from remo_cli.web.models import TerminalState
 from remo_cli.web.terminal import (
     MAX_DIMENSION,
@@ -137,7 +148,17 @@ def _error(status_code: int, code: str, message: str, *, remediation: str, retry
 # ---------------------------------------------------------------------------
 
 
-@router.post("/terminals", status_code=201)
+@router.post(
+    "/terminals",
+    status_code=201,
+    response_model=CreateTerminalResponse,
+    responses={
+        400: {"model": ErrorEnvelope},
+        404: {"model": ErrorEnvelope},
+        429: {"model": ErrorEnvelope},
+        503: {"model": ErrorEnvelope},
+    },
+)
 async def create_terminal(request: Request, body: CreateTerminalRequest):
     settings = request.app.state.settings
 
@@ -221,7 +242,11 @@ async def list_terminals(request: Request) -> TerminalsListResponse:
     )
 
 
-@router.delete("/terminals/{terminal_id}", status_code=204)
+@router.delete(
+    "/terminals/{terminal_id}",
+    status_code=204,
+    responses={404: {"model": ErrorEnvelope}},
+)
 async def delete_terminal(request: Request, terminal_id: str):
     registry = _registry(request.app)
     if registry.get(terminal_id) is None:
@@ -307,12 +332,13 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str) -> None:
     except Exception:  # noqa: BLE001 - any spawn failure is surfaced + reaped.
         await _send_control(
             websocket,
-            {
-                "v": 1,
-                "type": "error",
-                "class": ErrorClass.REMOTE_LAUNCH.value,
-                "message": _ERROR_MESSAGES[ErrorClass.REMOTE_LAUNCH],
-            },
+            # mypy only synthesizes the alias ("class") as the constructor
+            # keyword for a Field(alias=...) member, even with
+            # populate_by_name=True allowing "class_" at runtime too.
+            ErrorFrame(  # type: ignore[call-arg]
+                class_=ErrorClass.REMOTE_LAUNCH,
+                message=_ERROR_MESSAGES[ErrorClass.REMOTE_LAUNCH],
+            ),
         )
         if session is not None:
             await session.close()
@@ -321,7 +347,7 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str) -> None:
         return
 
     registry.attach_session(terminal_id, session)
-    await _send_control(websocket, {"v": 1, "type": "ready"})
+    await _send_control(websocket, ReadyFrame())
     registry.set_state(terminal_id, TerminalState.READY)
 
     # 6/7. Pump until the process exits, the client disconnects, or a stall.
@@ -393,15 +419,10 @@ async def _send_loop(
             if err is not None:
                 await _send_control(
                     websocket,
-                    {
-                        "v": 1,
-                        "type": "error",
-                        "class": err.value,
-                        "message": _ERROR_MESSAGES[err],
-                    },
+                    ErrorFrame(class_=err, message=_ERROR_MESSAGES[err]),  # type: ignore[call-arg]
                 )
             else:
-                await _send_control(websocket, {"v": 1, "type": "exit", "code": rc})
+                await _send_control(websocket, ExitFrame(code=rc))
             return "process_exit"
         try:
             await websocket.send_bytes(chunk)
@@ -442,11 +463,16 @@ async def _handle_control(websocket: WebSocket, session: TerminalSession, text: 
         return
     if not isinstance(payload, dict):
         return
-    msg_type = payload.get("type")
-    if msg_type == "resize":
-        session.resize(payload.get("cols", 80), payload.get("rows", 24))
-    elif msg_type == "ping":
-        await _send_control(websocket, {"v": 1, "type": "pong"})
+    try:
+        frame = INBOUND_FRAME_ADAPTER.validate_python(payload)
+    except ValidationError:
+        # F-3: malformed/unrecognized inbound frames are silently dropped --
+        # never raise, never close the socket.
+        return
+    if isinstance(frame, ResizeFrame):
+        session.resize(frame.cols, frame.rows)
+    elif isinstance(frame, PingFrame):
+        await _send_control(websocket, PongFrame())
 
 
 async def _stall_watchdog(websocket: WebSocket, session: TerminalSession) -> str:
@@ -461,9 +487,12 @@ async def _stall_watchdog(websocket: WebSocket, session: TerminalSession) -> str
 # ---------------------------------------------------------------------------
 
 
-async def _send_control(websocket: WebSocket, payload: dict) -> None:
+async def _send_control(websocket: WebSocket, frame: OutboundFrame) -> None:
     try:
-        await websocket.send_text(json.dumps(payload))
+        # `json.dumps` (not `model_dump_json`, whose default separators
+        # don't match) on the plain dict preserves today's exact bytes,
+        # key order included (F-4).
+        await websocket.send_text(json.dumps(frame.model_dump(mode="json", by_alias=True)))
     except (WebSocketDisconnect, RuntimeError):
         pass
 

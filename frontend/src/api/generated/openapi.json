@@ -1,0 +1,1170 @@
+{
+  "components": {
+    "schemas": {
+      "CapabilityOut": {
+        "properties": {
+          "host_tools_version": {
+            "title": "Host Tools Version",
+            "type": "string"
+          },
+          "projects_root": {
+            "title": "Projects Root",
+            "type": "string"
+          },
+          "protocol_version": {
+            "title": "Protocol Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "protocol_version",
+          "host_tools_version",
+          "projects_root"
+        ],
+        "title": "CapabilityOut",
+        "type": "object"
+      },
+      "CreateTerminalRequest": {
+        "properties": {
+          "cols": {
+            "title": "Cols",
+            "type": "integer"
+          },
+          "rows": {
+            "title": "Rows",
+            "type": "integer"
+          },
+          "session_target_id": {
+            "title": "Session Target Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_target_id",
+          "cols",
+          "rows"
+        ],
+        "title": "CreateTerminalRequest",
+        "type": "object"
+      },
+      "CreateTerminalResponse": {
+        "properties": {
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "terminal_id": {
+            "title": "Terminal Id",
+            "type": "string"
+          },
+          "ws_subprotocol": {
+            "title": "Ws Subprotocol",
+            "type": "string"
+          },
+          "ws_token": {
+            "title": "Ws Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "terminal_id",
+          "ws_token",
+          "ws_subprotocol",
+          "expires_in",
+          "state"
+        ],
+        "title": "CreateTerminalResponse",
+        "type": "object"
+      },
+      "DetailResponse": {
+        "description": "The `{\"detail\": ...}` shape this router's 403 actually returns --\ndeliberately NOT the `{\"error\": {...}}` ErrorEnvelope (data-model.md \u00a72).",
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "DetailResponse",
+        "type": "object"
+      },
+      "DevcontainerRunning": {
+        "description": "Devcontainer running state for a project.\n\n``UNKNOWN`` covers hosts where docker is unavailable and the state\ncannot be determined (see :class:`~remo_cli.models.capability.RemoteCapability.docker`).",
+        "enum": [
+          "running",
+          "stopped",
+          "unknown"
+        ],
+        "title": "DevcontainerRunning",
+        "type": "string"
+      },
+      "ErrorEnvelope": {
+        "description": "The `{\"error\": {...}}` wire envelope every failure response that\nactually returns it uses (`terminals.py`, `setup.py`, the `app.py`\nmiddleware). Declared only on routes that return this exact shape \u2014\n`pairing.py`'s 403 returns `{\"detail\": ...}` instead (data-model.md \u00a72).",
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorOut"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorEnvelope",
+        "type": "object"
+      },
+      "ErrorOut": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "remediation": {
+            "title": "Remediation",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retryable",
+          "remediation"
+        ],
+        "title": "ErrorOut",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "HostsResponse": {
+        "properties": {
+          "instances": {
+            "items": {
+              "$ref": "#/components/schemas/InstanceOut"
+            },
+            "title": "Instances",
+            "type": "array"
+          }
+        },
+        "required": [
+          "instances"
+        ],
+        "title": "HostsResponse",
+        "type": "object"
+      },
+      "IdentityResponse": {
+        "properties": {
+          "deployment_id": {
+            "title": "Deployment Id",
+            "type": "string"
+          },
+          "public_key": {
+            "title": "Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "deployment_id",
+          "public_key"
+        ],
+        "title": "IdentityResponse",
+        "type": "object"
+      },
+      "InstanceOut": {
+        "properties": {
+          "capability": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CapabilityOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ErrorOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "instance_name": {
+            "title": "Instance Name",
+            "type": "string"
+          },
+          "instance_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnownProviderType"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Instance Type"
+          },
+          "refreshed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Refreshed At"
+          },
+          "region": {
+            "default": "",
+            "title": "Region",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InstanceStatus"
+          }
+        },
+        "required": [
+          "instance_id",
+          "instance_type",
+          "instance_name",
+          "status"
+        ],
+        "title": "InstanceOut",
+        "type": "object"
+      },
+      "InstanceStatus": {
+        "description": "Typed outcome of discovery against a single instance.",
+        "enum": [
+          "ok",
+          "unreachable",
+          "auth_failed",
+          "no_remo_host",
+          "incompatible_protocol",
+          "malformed",
+          "timeout"
+        ],
+        "title": "InstanceStatus",
+        "type": "string"
+      },
+      "KnownProviderType": {
+        "description": "The built-in provider types (data-model.md \u00a71).\n\nFixed by the built-in set, not derived from `core.provider_registry.\nall_descriptors()` at import time (FR-004a/SC-011): a third-party\nprovider install must never perturb the exported OpenAPI artifact.\n`tests/unit/test_schema_drift.py` (T-8) asserts this enum's members\nequal the built-in descriptor names, so a first-party provider addition\nfails loudly instead of silently drifting from reality.\n\nEvery field this annotates stays typed `KnownProviderType | str`\n(FR-014, SC-009): the wire value is unconstrained (any provider type\nname is valid data); this enum only makes the *known* vocabulary a\nreferenceable OpenAPI component for the console to enumerate.",
+        "enum": [
+          "incus",
+          "hetzner",
+          "aws",
+          "proxmox"
+        ],
+        "title": "KnownProviderType",
+        "type": "string"
+      },
+      "LastPush": {
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "workstation": {
+            "title": "Workstation",
+            "type": "string"
+          }
+        },
+        "required": [
+          "at",
+          "workstation"
+        ],
+        "title": "LastPush",
+        "type": "object"
+      },
+      "MintPairingResponse": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "expires_in": {
+            "title": "Expires In",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code",
+          "expires_in"
+        ],
+        "title": "MintPairingResponse",
+        "type": "object"
+      },
+      "ReadinessResponse": {
+        "properties": {
+          "checks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Checks",
+            "type": "object"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ],
+        "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "RefreshRequest": {
+        "properties": {
+          "instance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instance Id"
+          }
+        },
+        "title": "RefreshRequest",
+        "type": "object"
+      },
+      "RefreshResponse": {
+        "properties": {
+          "refreshing": {
+            "title": "Refreshing",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "refreshing"
+        ],
+        "title": "RefreshResponse",
+        "type": "object"
+      },
+      "RegistryApplyResponse": {
+        "properties": {
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "host_key_instances": {
+            "title": "Host Key Instances",
+            "type": "integer"
+          },
+          "mirror_generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mirror Generation"
+          },
+          "registry_instances": {
+            "title": "Registry Instances",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "applied",
+          "registry_instances",
+          "host_key_instances"
+        ],
+        "title": "RegistryApplyResponse",
+        "type": "object"
+      },
+      "SessionTargetOut": {
+        "properties": {
+          "devcontainer_running": {
+            "$ref": "#/components/schemas/DevcontainerRunning"
+          },
+          "discovered_at": {
+            "title": "Discovered At",
+            "type": "string"
+          },
+          "git_ahead": {
+            "default": 0,
+            "title": "Git Ahead",
+            "type": "integer"
+          },
+          "git_behind": {
+            "default": 0,
+            "title": "Git Behind",
+            "type": "integer"
+          },
+          "git_dirty": {
+            "default": false,
+            "title": "Git Dirty",
+            "type": "boolean"
+          },
+          "git_tracked": {
+            "default": false,
+            "title": "Git Tracked",
+            "type": "boolean"
+          },
+          "has_devcontainer": {
+            "title": "Has Devcontainer",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "instance_name": {
+            "title": "Instance Name",
+            "type": "string"
+          },
+          "instance_type": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/KnownProviderType"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Instance Type"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          },
+          "zellij_state": {
+            "$ref": "#/components/schemas/ZellijState"
+          }
+        },
+        "required": [
+          "id",
+          "instance_type",
+          "instance_name",
+          "project",
+          "has_devcontainer",
+          "zellij_state",
+          "devcontainer_running",
+          "discovered_at"
+        ],
+        "title": "SessionTargetOut",
+        "type": "object"
+      },
+      "SessionsResponse": {
+        "properties": {
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/SessionTargetOut"
+            },
+            "title": "Targets",
+            "type": "array"
+          }
+        },
+        "required": [
+          "targets"
+        ],
+        "title": "SessionsResponse",
+        "type": "object"
+      },
+      "SetupStatusResponse": {
+        "properties": {
+          "deployment_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deployment Id"
+          },
+          "last_push": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastPush"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mirror_generation": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mirror Generation"
+          },
+          "payload_versions": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Payload Versions",
+            "type": "array"
+          },
+          "public_key_available": {
+            "title": "Public Key Available",
+            "type": "boolean"
+          },
+          "registry_instances": {
+            "title": "Registry Instances",
+            "type": "integer"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "deployment_id",
+          "public_key_available",
+          "registry_instances"
+        ],
+        "title": "SetupStatusResponse",
+        "type": "object"
+      },
+      "TerminalOut": {
+        "properties": {
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "last_activity_at": {
+            "title": "Last Activity At",
+            "type": "string"
+          },
+          "session_target_id": {
+            "title": "Session Target Id",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          },
+          "terminal_id": {
+            "title": "Terminal Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "terminal_id",
+          "session_target_id",
+          "state",
+          "created_at",
+          "last_activity_at"
+        ],
+        "title": "TerminalOut",
+        "type": "object"
+      },
+      "TerminalsListResponse": {
+        "properties": {
+          "terminals": {
+            "items": {
+              "$ref": "#/components/schemas/TerminalOut"
+            },
+            "title": "Terminals",
+            "type": "array"
+          }
+        },
+        "required": [
+          "terminals"
+        ],
+        "title": "TerminalsListResponse",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VerifyCheckOut": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "remediation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remediation"
+          }
+        },
+        "required": [
+          "name",
+          "passed",
+          "detail"
+        ],
+        "title": "VerifyCheckOut",
+        "type": "object"
+      },
+      "VerifyResponse": {
+        "properties": {
+          "all_passed": {
+            "title": "All Passed",
+            "type": "boolean"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/VerifyCheckOut"
+            },
+            "title": "Results",
+            "type": "array"
+          }
+        },
+        "required": [
+          "results",
+          "all_passed"
+        ],
+        "title": "VerifyResponse",
+        "type": "object"
+      },
+      "ZellijState": {
+        "description": "Zellij session state for a project, as reported by ``remo-host``.",
+        "enum": [
+          "active",
+          "exited",
+          "absent"
+        ],
+        "title": "ZellijState",
+        "type": "string"
+      }
+    }
+  },
+  "info": {
+    "title": "Remo Web Session Interface",
+    "version": "0.1.0",
+    "x-generated-by": "GENERATED FILE -- do not hand-edit. Regenerate with: uv run python scripts/export_openapi.py. See docs/maintaining-generated-types.md."
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/discovery/refresh": {
+      "post": {
+        "description": "`POST /api/v1/discovery/refresh` -- kick off a fresh discovery run.\n\nNever blocks on the discovery run itself (FR-035): the refresh is\nscheduled as a `BackgroundTasks` job and results land in the cache\nincrementally, visible on subsequent `GET /hosts`/`GET /sessions` calls.",
+        "operationId": "post_discovery_refresh_api_v1_discovery_refresh_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RefreshRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefreshResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Post Discovery Refresh"
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "description": "Liveness probe: the process is up. Never checks configuration.",
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
+      }
+    },
+    "/api/v1/hosts": {
+      "get": {
+        "description": "`GET /api/v1/hosts` -- current `DiscoverySnapshot` per instance, from cache.",
+        "operationId": "get_hosts_api_v1_hosts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Hosts"
+      }
+    },
+    "/api/v1/pairing/end": {
+      "post": {
+        "description": "Best-effort end of the live pairing session (page-hide beacon, FR-004).",
+        "operationId": "end_api_v1_pairing_end_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "End"
+      }
+    },
+    "/api/v1/pairing/mint": {
+      "post": {
+        "description": "Mint a fresh pairing code (rotation-on-open, FR-003), operator-auth gated.",
+        "operationId": "mint_api_v1_pairing_mint_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MintPairingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetailResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          }
+        },
+        "summary": "Mint"
+      }
+    },
+    "/api/v1/ready": {
+      "get": {
+        "description": "Readiness probe: configuration state + registry/identity/runtime/executables.",
+        "operationId": "ready_api_v1_ready_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Ready"
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "description": "`GET /api/v1/sessions` -- flattened `SessionTarget[]` across `ok` instances.",
+        "operationId": "get_sessions_api_v1_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Sessions"
+      }
+    },
+    "/api/v1/setup/identity": {
+      "get": {
+        "description": "`GET /api/v1/setup/identity` -- deployment id + public key.\n\nA mount-configured service has no service identity to authorize -> 409\n(FR-017). Otherwise the identity is generated on first call when absent\n(idempotent: an existing keypair is loaded, NEVER regenerated, FR-002).",
+        "operationId": "get_identity_api_v1_setup_identity_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Identity"
+      }
+    },
+    "/api/v1/setup/registry": {
+      "put": {
+        "description": "`PUT /api/v1/setup/registry` -- apply the adoption mirror atomically.\n\nAccepts payload v1 (legacy fields, mapped through the shared legacy->v2\nmapper) and v2 (registry-file-v2.md hostEntry shape); always stores v2\n(FR-020/FR-022). Validates the FULL payload before writing anything\n(FR-019); a mount-configured deployment is read-only via this API (409,\nFR-017); an empty registry requires the explicit ``allow_empty=true``\nopt-out (defense-in-depth for the CLI-side FR-016 guard); an unsupported\n``version`` is rejected with the prior mirror left completely intact\n(400 ``unsupported_payload_version``, FR-021).",
+        "operationId": "put_registry_api_v1_setup_registry_put",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "allow_empty",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Allow Empty",
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryApplyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Registry"
+      }
+    },
+    "/api/v1/setup/status": {
+      "get": {
+        "description": "`GET /api/v1/setup/status` -- service mode + identity presence. Cheap.\n\nAlso surfaces the mirror-identity marker (017) when a mirror has ever been\napplied; a missing/unreadable marker omits both fields (``exclude_none``),\nso a never-pushed service stays byte-identical to a pre-017 response.",
+        "operationId": "get_status_api_v1_setup_status_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Status"
+      }
+    },
+    "/api/v1/setup/verify": {
+      "post": {
+        "description": "`POST /api/v1/setup/verify` -- the existing check pass, as JSON.\n\nThin wrapper over `web.check.run_checks()` (research R4: verify reuses\nthe check module, never duplicates it), instance round-trips included.\nDeliberately a sync route: FastAPI executes it in a threadpool, so the\nup-to-~5s-per-unreachable-instance runtime never blocks the event loop.",
+        "operationId": "post_verify_api_v1_setup_verify_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Post Verify"
+      }
+    },
+    "/api/v1/terminals": {
+      "get": {
+        "operationId": "list_terminals_api_v1_terminals_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Terminals"
+      },
+      "post": {
+        "operationId": "create_terminal_api_v1_terminals_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTerminalRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateTerminalResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Create Terminal"
+      }
+    },
+    "/api/v1/terminals/{terminal_id}": {
+      "delete": {
+        "operationId": "delete_terminal_api_v1_terminals__terminal_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "terminal_id",
+            "required": true,
+            "schema": {
+              "title": "Terminal Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Terminal"
+      }
+    }
+  }
+}
