@@ -4,7 +4,21 @@ Auto-generated from all feature plans. Last updated: 2026-07-27
 
 ## Constitution
 
-See `.specify/memory/constitution.md` for project principles and non-negotiable standards.
+See `.specify/memory/constitution.md` (v2.0.0) for the full text. The eight
+non-negotiable principles, in short:
+
+| # | Principle | One-line rule |
+|---|-----------|---------------|
+| I | Layered Architecture with One-Way Dependencies | `cli/` → `providers/` → `core/`, never backwards |
+| II | Providers Are Declared, Not Special-Cased | A new provider = one module + one descriptor, zero edits elsewhere |
+| III | Typed Errors, One Exit Boundary, Actionable Messages | Raise `core/errors.py`; only `provider_command` maps to an exit code |
+| IV | Contracts Are Generated, Never Hand-Authored | The FastAPI app is the source of truth for every shape `frontend/` consumes |
+| V | Defensive Variable Access (Ansible) | Every registered-variable access uses `\| default()` |
+| VI | Test Every Path That Can Skip or Fail | Error/skip/abort paths are covered, not just the happy path |
+| VII | Idempotent and Re-runnable by Default | A second run is a no-op; registry writes go through `core/registry.py` |
+| VIII | Documentation Reflects Reality, and CI Proves It | Structure diagrams and docs ship in the same change as the code |
+
+Principles I, IV, and VIII are machine-enforced — see [Quality Gates](#quality-gates).
 
 ## Active Technologies
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (existing), Incus CLI (local) (002-incus-container-support)
@@ -124,7 +138,7 @@ scripts/                   # Repo-root utility scripts (not part of the installe
 pyproject.toml             # Build config, dependencies (incl. `web` extra), console_scripts entry point
 ```
 
-## Ansible Standards (from Constitution)
+## Ansible Standards (Constitution Principle V)
 
 ### Variable Access - CRITICAL
 
@@ -140,9 +154,9 @@ when: my_result.rc | default(1) == 0
 msg: "{{ my_result.stdout | default('N/A') }}"
 ```
 
-### Pre-Commit Checklist
+### Ansible Pre-Commit Checklist
 
-Before committing Ansible code:
+Before committing Ansible code (the repo-wide checklist is under [Quality Gates](#quality-gates)):
 
 1. Grep for unsafe patterns: `grep -r '\.rc ==' ansible/` and `grep -r '\.stdout' ansible/`
 2. Verify all matches use `| default()`
@@ -209,17 +223,86 @@ npm run test                      # Vitest unit/component suite (jsdom, no backe
 npm run test:e2e                  # Playwright (needs REMO_E2E_BASE_URL -> live remo web serve)
 ```
 
-## Architecture (Three-Layer)
+## Architecture
+
+### System layers
+
+| Layer | Path | Depends on |
+|-------|------|------------|
+| Browser console (React/TS SPA) | `frontend/` | The web service's **generated** types only |
+| Web service (FastAPI, optional `web` extra) | `src/remo_cli/web/` | `core/`, `models/`, `providers/` (catches `ProviderError` directly) |
+| CLI package (Python) | `src/remo_cli/{cli,providers,core,models}/` | Ansible via subprocess |
+| Configuration (Ansible roles) | `ansible/` | — |
+
+The service is an optional extra: `remo --help` and every non-web command work
+without it installed, and web imports are lazy (NFR-008).
+
+### Python package (three layers, one-way)
 
 - **cli/** → Click commands, argument parsing only. No business logic.
-- **providers/** → Business logic. No Click imports. Called by cli layer.
+- **providers/** → Business logic. No Click imports. No `sys.exit`. Called by cli layer.
 - **core/** → Shared utilities. No provider knowledge. Used by both layers.
+
+`tests/unit/test_architecture.py` enforces this with zero-tolerance (empty)
+allowlists: no `sys.exit` in `providers/`, and no `cli/` reach-ins to a
+`providers/` module's private helpers.
+
+Provider-varying behavior lives behind a `ProviderDescriptor` field or hook —
+never a `host.type` string literal in `core/`. AWS's SSM `ProxyCommand` is the
+worked example: it sits in `providers/aws.py:ssh_proxy_hook`, reached via
+`descriptor.connection.proxy_hook`.
+
+Failures raise the `core/errors.py` taxonomy (`MissingDependencyError`,
+`PreconditionError`, `OperationFailedError`, `UserAbortedError`).
+`cli/providers/factory.py`'s `provider_command` wrapper is the *only*
+exception-to-exit-code boundary: `0` success, `1` failure, `3` user-aborted.
 
 Provider implementation modules are lazily imported by `core/provider_registry.get_provider()`; an `ImportError` during that import becomes a `MissingDependencyError` naming `descriptor.sdk_extra` (e.g. "aws", "hetzner") and the `uv sync --extra <name>` install command. In practice `boto3` and `hcloud` are both unconditional dependencies today, so this `ImportError` branch is currently unreachable for the built-in providers — the message is aspirational pending issue #94, which would introduce real optional extras; `descriptor.sdk_extra` itself is unchanged and the mechanism is exercised by third-party providers that do have an optional SDK.
 
+## Quality Gates
+
+These run in CI and must pass before merge. None may be skipped, `xfail`ed, or
+made conditional to get a build green — fix the code or amend the gate by PR.
+
+| Gate | Command | Enforces |
+|------|---------|----------|
+| Tests (3.11/3.12/3.13) | `uv run pytest` | Principles III, VI, VII |
+| Architecture | `uv run pytest tests/unit/test_architecture.py` | Principle I |
+| Docs structure | `uv run pytest tests/unit/test_docs_structure.py` | Principle VIII |
+| Schema drift (Python) | `uv run pytest tests/unit/test_schema_drift.py` | Principle IV |
+| Schema drift (Node) | `cd frontend && npm run check:types-fresh` | Principle IV |
+| Lint | `uv run ruff check src/remo_cli` | Code Style |
+| Frontend | `cd frontend && npm run lint && npm run test && npm run build` | Code Style |
+| Packaging | wheel install smoke, Docker amd64+arm64 | Distribution integrity |
+| Security | CodeQL, dependency review | Supply chain |
+
+**`mypy` is not yet a CI job** but is configured (`[tool.mypy]`, `files = ["src"]`)
+and must pass locally: `uv run mypy src/remo_cli`.
+
+### Repo-wide pre-commit checklist
+
+1. **Layer boundaries** — no Click in `providers/`, no provider names in `core/`, no `sys.exit` in `providers/`.
+2. **Variable safety (Ansible)** — grep for `.rc ==` and `.stdout` without `| default`.
+3. **Conditional coverage** — every branch touched has both sides exercised.
+4. **Regeneration** — a service model or WS frame change regenerates and commits all four artifacts.
+5. **Documentation sync** — `README.md`, `docs/*.md`, and the structure diagrams above match the change.
+6. **Idempotency** — the mutating path runs twice; the second run is a no-op.
+
 ## Code Style
 
-- Python: Type hints, `from __future__ import annotations`, no docstrings on obvious methods
+- Python: Type hints, `from __future__ import annotations`, no docstrings on obvious methods.
+  Docstrings explain *why*, and cite the spec/contract they implement when one exists.
+- Web service: every route declares a response model; a route returning a `Response`
+  subclass must still construct that model (FastAPI skips `response_model` otherwise).
+  Closed domains are enums; open wire fields are `KnownEnum | str`. Enums exported into
+  the OpenAPI artifact are fixed at their declared set, never derived from a live registry.
+- Frontend: service-shaped types come from `src/api/generated/`; console-owned shapes may be
+  hand-written and are commented as such. Presentation maps key off a generated union via
+  `Record<GeneratedUnion, …>` so a new member is a compile error — while keeping the runtime
+  fallback for off-union values (deleting that fallback is a defect, not a cleanup).
+- Generated artifacts (`openapi.json`, `terminal-frames.json`, `schema.d.ts`,
+  `terminal-frames.d.ts`) are checked in but never hand-edited. See
+  `docs/maintaining-generated-types.md`.
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
