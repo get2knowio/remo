@@ -4,7 +4,7 @@ Auto-generated from all feature plans. Last updated: 2026-07-27
 
 ## Constitution
 
-See `.specify/memory/constitution.md` (v2.0.0) for the full text. The eight
+See `.specify/memory/constitution.md` (v2.0.1) for the full text. The eight
 non-negotiable principles, in short:
 
 | # | Principle | One-line rule |
@@ -272,12 +272,16 @@ made conditional to get a build green — fix the code or amend the gate by PR.
 | Schema drift (Python) | `uv run pytest tests/unit/test_schema_drift.py` | Principle IV |
 | Schema drift (Node) | `cd frontend && npm run check:types-fresh` | Principle IV |
 | Lint | `uv run ruff check src/remo_cli` | Code Style |
+| Types | `uv run mypy src/remo_cli` | Code Style |
 | Frontend | `cd frontend && npm run lint && npm run test && npm run build` | Code Style |
 | Packaging | wheel install smoke, Docker amd64+arm64 | Distribution integrity |
 | Security | CodeQL, dependency review | Supply chain |
 
-**`mypy` is not yet a CI job** but is configured (`[tool.mypy]`, `files = ["src"]`)
-and must pass locally: `uv run mypy src/remo_cli`.
+`ruff` and `mypy` share the one `Lint & Types` job. That job must keep
+installing the `web` extra (`uv sync --all-extras`): with
+`ignore_missing_imports = true`, an uninstalled FastAPI/pydantic would degrade
+every `src/remo_cli/web/` module to `Any` and leave the type gate passing while
+checking nothing.
 
 ### Repo-wide pre-commit checklist
 

@@ -41,10 +41,33 @@
   - CLAUDE.md: ✅ updated (Architecture + Quality Gates sections)
   - AGENTS.md: ✅ updated (mirrors CLAUDE.md)
 
-  Follow-up TODOs:
-  - mypy is configured in pyproject.toml but is NOT yet a CI gate (see Quality
-    Gates → Known gap). Closing that gap is tracked work, not a constitution
-    deferral.
+  Follow-up TODOs: None
+-->
+
+<!--
+  Sync Impact Report
+  ===================
+  Version change: 2.0.0 → 2.0.1 (PATCH)
+
+  Bump rationale: no principle changed. v2.0.0 shipped with a stated "Known
+  gap" — mypy configured but not run in CI, with reviewers asked to compensate
+  manually. That gap is now closed by a real gate, so the note is replaced by a
+  table row. Refinement of an existing section, not a new constraint: PATCH.
+
+  Modified sections:
+  - Quality Gates: added the `Types` row (`uv run mypy src/remo_cli`); replaced
+    the "Known gap" paragraph with the `web`-extra requirement that keeps the
+    gate from silently passing on Any.
+  - Technology Standards → Python: ruff/mypy are now stated as CI gates, not
+    local-only expectations.
+
+  Templates requiring updates:
+  - .specify/templates/plan-template.md: ✅ no changes needed (gate table is
+    keyed to principles, not to individual CI jobs)
+  - CLAUDE.md: ✅ updated (Quality Gates table)
+  - AGENTS.md: ✅ updated (mirrors CLAUDE.md)
+
+  Follow-up TODOs: None
 -->
 
 # Remo Project Constitution
@@ -278,8 +301,8 @@ and diagrams drift fastest.
 - No docstrings on obvious methods; docstrings SHOULD explain *why*, and
   SHOULD cite the spec/contract they implement when one exists.
 - `ruff` (line length 100, `src = ["src"]`) and `mypy`
-  (`python_version = "3.11"`, `files = ["src"]`) MUST both pass locally before
-  commit.
+  (`python_version = "3.11"`, `files = ["src"]`) MUST both pass. Both are CI
+  gates; run them locally before commit rather than discovering them in CI.
 - Runtime dependencies MUST be justified. An SDK used only by an Ansible
   collection MUST say so in `pyproject.toml`.
 
@@ -354,6 +377,7 @@ These gates run in CI and MUST pass before merge. None may be skipped,
 | Schema drift (Python) | `tests/unit/test_schema_drift.py` | Principle IV |
 | Schema drift (Node) | `npm run check:types-fresh` | Principle IV |
 | Lint | `uv run ruff check src/remo_cli` | Technology Standards |
+| Types | `uv run mypy src/remo_cli` | Technology Standards |
 | Frontend | `npm run lint && npm run test && npm run build` | Technology Standards |
 | Packaging | wheel install smoke, Docker amd64+arm64 | Distribution integrity |
 | Security | CodeQL, dependency review | Supply chain |
@@ -365,9 +389,10 @@ uv run python scripts/export_openapi.py   # openapi.json + terminal-frames.json
 cd frontend && npm run generate:types      # schema.d.ts + terminal-frames.d.ts
 ```
 
-**Known gap:** `mypy` is configured in `pyproject.toml` and MUST pass locally,
-but is not yet wired into a CI job. Until it is, reviewers MUST treat a type
-regression as a blocking finding.
+The `Lint & Types` job MUST install the `web` extra (`uv sync --all-extras`).
+With `ignore_missing_imports = true`, an uninstalled FastAPI/pydantic would
+silently degrade every `web/` module to `Any` and leave the type gate passing
+while checking nothing.
 
 ## Development Workflow
 
@@ -433,4 +458,4 @@ is the defect.
 (current tree, commands, recent changes). They elaborate this constitution;
 they never override it.
 
-**Version**: 2.0.0 | **Ratified**: 2026-01-06 | **Last Amended**: 2026-07-27
+**Version**: 2.0.1 | **Ratified**: 2026-01-06 | **Last Amended**: 2026-07-27
