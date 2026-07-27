@@ -71,6 +71,28 @@ def _lookup_proxmox_host(name: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def _ssh_target(host: str, user: str) -> str:
+    """Render the SSH destination exactly as :func:`_ssh_run` builds it.
+
+    Kept in lockstep with ``_ssh_run`` so a warning never advertises a
+    destination we did not actually try (an empty *user* means "let ssh_config
+    decide", which prints as a bare host, not ``@host``).
+    """
+    return f"{user}@{host}" if user else host
+
+
+def _node_access_desc(host: str, user: str) -> str:
+    """Describe how :func:`_run_on_node` reaches *host*, for warning text.
+
+    Mirrors ``_run_on_node``'s localhost branch: node-side work on
+    ``localhost`` runs as a local subprocess, so a warning must not claim an
+    SSH hop that never happened.
+    """
+    if host == "localhost":
+        return "locally"
+    return f"over ssh {_ssh_target(host, user)}"
+
+
 def _ssh_run(host: str, user: str, command: str) -> subprocess.CompletedProcess[str]:
     """Run *command* on *host* via SSH and return the completed process.
 
@@ -383,8 +405,12 @@ def create(
         ok, err = _apply_managed_marker(host, user, vmid)
         if not ok:
             print_warning(
-                f"Container '{name}' was created but could not be marked "
-                f"as remo-managed ({err}); a default `remo proxmox sync` "
+                f"Container '{name}' was created, but could not be tagged as "
+                f"remo-managed on Proxmox node '{host}' "
+                f"({_node_access_desc(host, user)}, needed for `pct set`): "
+                f"{err}\n"
+                f"  The container is fine. Until it carries the "
+                f"'{PROXMOX_MANAGED_TAG}' tag, a default `remo proxmox sync` "
                 f"will skip it (use `--all` or `remo proxmox update`)."
             )
     else:
@@ -518,8 +544,15 @@ def update(
         ok, err = _apply_managed_marker(host, user, vmid)
         if not ok:
             print_warning(
-                f"Could not mark container '{name}' as remo-managed ({err}); "
-                f"it may not be picked up by a default `remo proxmox sync`."
+                f"Could not tag container '{name}' as remo-managed on Proxmox "
+                f"node '{host}' ({_node_access_desc(host, user)}, needed for "
+                f"`pct set`): "
+                f"{err}\n"
+                f"  This is a node-side bookkeeping step only — the update "
+                f"itself continues. Until '{name}' carries the "
+                f"'{PROXMOX_MANAGED_TAG}' tag, a default `remo proxmox sync` "
+                f"will skip it; use `remo proxmox sync --all`, or add the tag "
+                f"in the Proxmox UI."
             )
     else:
         print_warning(

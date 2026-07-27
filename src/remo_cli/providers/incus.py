@@ -296,9 +296,13 @@ def create(
     ok, err = _apply_managed_marker(host, user, name)
     if not ok:
         print_warning(
-            f"Container '{name}' was created but could not be marked as "
-            f"remo-managed ({err}). A default `remo incus sync` will skip "
-            f"it; use `--all` or re-run `remo incus update` to include it."
+            f"Container '{name}' was created, but could not be marked as "
+            f"remo-managed on Incus host '{host}' "
+            f"({_host_access_desc(host, user)}, needed for "
+            f"`incus config set`): {err}\n"
+            f"  The container is fine. Until the marker is set, a default "
+            f"`remo incus sync` will skip it; use `--all` or re-run "
+            f"`remo incus update` to include it."
         )
 
     if volume_size or cores or memory:
@@ -400,8 +404,12 @@ def update(
     ok, err = _apply_managed_marker(host, user, name)
     if not ok:
         print_warning(
-            f"Could not mark container '{name}' as remo-managed ({err}); "
-            f"it may not be picked up by a default `remo incus sync`."
+            f"Could not mark container '{name}' as remo-managed on Incus host "
+            f"'{host}' ({_host_access_desc(host, user)}, needed for "
+            f"`incus config set`): {err}\n"
+            f"  This is a host-side bookkeeping step only — the update itself "
+            f"continues. Until the marker is set, a default `remo incus sync` "
+            f"will skip it; use `remo incus sync --all`."
         )
 
     if volume_size or cores or memory:
@@ -694,6 +702,19 @@ def bootstrap(
 # ---------------------------------------------------------------------------
 # Snapshots
 # ---------------------------------------------------------------------------
+
+
+def _host_access_desc(host: str, user: str) -> str:
+    """Describe how :func:`_ssh_run_on_incus_host` reaches *host*, for warnings.
+
+    Mirrors that helper's localhost branch: host-side work on ``localhost``
+    runs as a local subprocess, so a warning must not claim an SSH hop that
+    never happened. An empty *user* means "let ssh_config decide" and prints
+    as a bare host, not ``@host``.
+    """
+    if host == "localhost":
+        return "locally"
+    return f"over ssh {user}@{host}" if user else f"over ssh {host}"
 
 
 def _ssh_run_on_incus_host(

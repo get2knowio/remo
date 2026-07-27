@@ -39,6 +39,17 @@ NETWORK_TYPE = OptionSpec(
     help="Network type for Incus host.",
 )
 
+# The shared catalog's USER reads "SSH user for the remote host", which is
+# ambiguous here: for Incus it is the login on the *Incus host*, used to run
+# host-side `incus` commands -- NOT the account you land in inside the
+# container (that is always `remo`, set at create/sync time and not
+# configurable). Overridden so `--help` says which of the two machines it means.
+HOST_USER = replace(
+    USER,
+    help="SSH user on the Incus host, for host-side incus commands. "
+    "Not the container login, which is always 'remo'.",
+)
+
 DESCRIPTOR = ProviderDescriptor(
     type_name="incus",
     display_name="Incus",
@@ -50,7 +61,7 @@ DESCRIPTOR = ProviderDescriptor(
     sdk_extra=None,
     create_options=(
         replace(HOST, default="localhost"),
-        USER,
+        HOST_USER,
         DOMAIN,
         IMAGE,
         CORES,
@@ -59,23 +70,23 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     update_options=(
         replace(HOST, default=""),
-        USER,
+        HOST_USER,
         CORES,
         MEMORY,
     ),
     destroy_options=(
         replace(HOST, default=""),
-        USER,
+        HOST_USER,
         REMOVE_STORAGE,
     ),
     sync_options=(
         replace(HOST, default="localhost"),
-        USER,
+        HOST_USER,
         USE_IP,
     ),
     info_options=(
         replace(HOST, default=""),
-        USER,
+        HOST_USER,
     ),
     snapshot_region_scoped=False,
     extra_commands=(
@@ -85,7 +96,7 @@ DESCRIPTOR = ProviderDescriptor(
             impl="bootstrap",
             options=(
                 replace(HOST, default="localhost"),
-                USER,
+                HOST_USER,
                 NETWORK_TYPE,
                 VERBOSE,
             ),

@@ -75,7 +75,7 @@ remo incus info --name dev1
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--host <host>` | `localhost` | Incus host to connect to |
-| `--user <user>` | (current user) | SSH user for the Incus host |
+| `--user <user>` | (current user) | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 | `--domain <domain>` | (none) | Domain for FQDN (e.g., `int.example.com`) |
 | `--image <image>` | `images:ubuntu/24.04/cloud` | Cloud image to use |
 | `--volume-size <GiB>` | (profile default) | Override the root disk size via `incus config device override root size=...` |
@@ -92,7 +92,7 @@ remo incus info --name dev1
 | `--cores <n>` | Set CPU core limit (`limits.cpu`); live on cgroup v2 |
 | `--memory <MiB>` | Set memory limit (`limits.memory`); live on cgroup v2 |
 | `--host <host>` | Incus host |
-| `--user <user>` | SSH user for host |
+| `--user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
@@ -103,7 +103,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `--yes`, `-y` | Skip confirmation prompt |
 | `--remove-storage` | Also remove host mount directories (e.g. `/home`, `/workspace`) bound into the container. Without this flag, mount directories on the host are preserved. |
 | `--host <host>` | Incus host |
-| `--user <user>` | SSH user for host |
+| `--user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 
 ### Sync
 
@@ -140,7 +140,7 @@ only. To mark one permanently instead, use `remo incus update --name <n>
 | Option | Description |
 |--------|-------------|
 | `--host <host>` | Incus host (default: `localhost`) |
-| `--user <user>` | SSH user for remote Incus host |
+| `--user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 | `--use-ip` | Store each container's resolved IP instead of its name |
 | `--all` | Also register containers without the managed marker (this run only) |
 | `--yes`, `-y` | Skip the removal confirmation prompt |
