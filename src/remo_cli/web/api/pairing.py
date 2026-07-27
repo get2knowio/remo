@@ -86,7 +86,13 @@ def mint(request: Request) -> Response:
     # Record WHO minted (FR-012) — never the code (FR-016).
     logger.info("pairing code minted for %s (origin=%s)", identity.subject, origin)
 
-    response = JSONResponse(content={"code": code, "expires_in": int(ttl_s)})
+    # Constructed through the declared response_model (not a hand-built dict)
+    # so MintPairingResponse is the actual single source of truth for the
+    # wire shape, matching create_terminal()'s pattern in terminals.py --
+    # response_model itself is skipped by FastAPI for a returned Response
+    # subclass, so building the model instance is what makes the annotation
+    # more than decorative.
+    response = JSONResponse(content=MintPairingResponse(code=code, expires_in=int(ttl_s)).model_dump())
     response.headers["Cache-Control"] = "no-store"
     return response
 

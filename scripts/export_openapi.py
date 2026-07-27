@@ -27,6 +27,7 @@ the document is built or serialized.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -48,19 +49,28 @@ GENERATED_NOTICE = (
 )
 
 
-def _create_app_factory() -> Any:
-    """Import and return `create_app`, failing actionably if the `web`
-    extra is not installed (FR-008)."""
+def _import_web_attr(module_path: str, attr: str) -> Any:
+    """Import ``attr`` from ``module_path``, failing actionably (not with a
+    raw traceback) if the ``web`` extra is not installed (FR-008). Shared by
+    every entry point below so the "web extra missing" message can't
+    word-drift between call sites -- only ``module_path`` (named in the
+    message) varies per caller."""
     try:
-        from remo_cli.web.app import create_app
+        module = importlib.import_module(module_path)
     except ImportError as exc:
         print(
-            "error: could not import remo_cli.web -- the 'web' extra is not installed.\n"
-            "Install it with: uv sync --extra web",
+            f"error: could not import {module_path} -- the 'web' extra is not "
+            "installed.\nInstall it with: uv sync --extra web",
             file=sys.stderr,
         )
         raise SystemExit(1) from exc
-    return create_app
+    return getattr(module, attr)
+
+
+def _create_app_factory() -> Any:
+    """Import and return `create_app`, failing actionably if the `web`
+    extra is not installed (FR-008)."""
+    return _import_web_attr("remo_cli.web.app", "create_app")
 
 
 def build_openapi_document() -> dict[str, Any]:
@@ -85,17 +95,13 @@ def build_frames_document() -> dict[str, Any]:
     """
     from pydantic import TypeAdapter
 
-    try:
-        from remo_cli.web.frames import InboundFrame, OutboundFrame
-    except ImportError as exc:
-        print(
-            "error: could not import remo_cli.web.frames -- the 'web' extra is not "
-            "installed.\nInstall it with: uv sync --extra web",
-            file=sys.stderr,
-        )
-        raise SystemExit(1) from exc
+    # Reuses the module-level `INBOUND_FRAME_ADAPTER` frames.py already builds
+    # (and `_handle_control` relies on not being rebuilt per-message) instead
+    # of constructing a second, independent `TypeAdapter(InboundFrame)` here.
+    inbound_adapter = _import_web_attr("remo_cli.web.frames", "INBOUND_FRAME_ADAPTER")
+    OutboundFrame = _import_web_attr("remo_cli.web.frames", "OutboundFrame")
 
-    inbound_schema = TypeAdapter(InboundFrame).json_schema()
+    inbound_schema = inbound_adapter.json_schema()
     outbound_schema = TypeAdapter(OutboundFrame).json_schema()
     return {
         "protocol": "remo-terminal.v1",

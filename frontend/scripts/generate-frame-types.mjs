@@ -52,6 +52,38 @@ const GENERATED_HEADER = `/**
  */
 `;
 
+// Matches a "$ref"/discriminator-mapping pointer string EXACTLY (the whole
+// value, not a substring) -- e.g. "#/$defs/ResizeFrame". A real JSON Schema
+// pointer is always the entire string; free-text `description`/`title`
+// values are never rewritten even if they happen to mention "#/$defs/" as
+// prose, since a partial match against DEFS_REF_PATTERN never occurs.
+const DEFS_REF_PATTERN = /^#\/\$defs\/([A-Za-z0-9_]+)$/;
+
+/** Recursively rewrites every "#/$defs/X" pointer (both `$ref` values and
+ * `discriminator.mapping` values use this exact shape) to
+ * "#/components/schemas/X", now that these schemas are hoisted into an
+ * OpenAPI `components.schemas` object. Walks the structure instead of doing
+ * a whole-document string replace, so an unrelated string value (e.g. a
+ * `description` that happens to contain the substring "#/$defs/" as prose)
+ * is never corrupted. */
+function rewriteDefsRefs(node) {
+  if (Array.isArray(node)) {
+    return node.map(rewriteDefsRefs);
+  }
+  if (node !== null && typeof node === "object") {
+    const out = {};
+    for (const [key, value] of Object.entries(node)) {
+      out[key] = rewriteDefsRefs(value);
+    }
+    return out;
+  }
+  if (typeof node === "string") {
+    const match = node.match(DEFS_REF_PATTERN);
+    return match ? `#/components/schemas/${match[1]}` : node;
+  }
+  return node;
+}
+
 /** Builds the synthetic, in-memory OpenAPI 3.1 document openapi-typescript
  * needs, from the frame contract's raw JSON text. Never touches disk. */
 export function buildSyntheticOpenApiDoc(framesJsonText) {
@@ -73,11 +105,7 @@ export function buildSyntheticOpenApiDoc(framesJsonText) {
     discriminator: framesDoc.outbound?.discriminator,
   };
 
-  // Rewrite every "#/$defs/X" ref to "#/components/schemas/X" now that these
-  // schemas are hoisted into an OpenAPI components.schemas object.
-  const rewritten = JSON.parse(
-    JSON.stringify(schemas).replaceAll("#/$defs/", "#/components/schemas/"),
-  );
+  const rewritten = rewriteDefsRefs(schemas);
 
   return {
     openapi: "3.1.0",

@@ -193,6 +193,30 @@ def _path_operations(doc: dict[str, Any]) -> set[tuple[str, str]]:
     return ops
 
 
+def _diff_named_schemas(
+    live_map: dict[str, Any],
+    artifact_map: dict[str, Any],
+    *,
+    added_kind: str,
+    removed_kind: str,
+    differ_kind: str,
+) -> list[Finding]:
+    """Three-way name-keyed diff (added / removed / differ) shared by the
+    REST check's `components.schemas` comparison and the frame check's
+    per-direction `$defs` comparison below -- the only difference between the
+    two call sites is which name->schema map is being compared and what to
+    call each kind of drift."""
+    findings: list[Finding] = []
+    for name in sorted(set(live_map) - set(artifact_map)):
+        findings.append(Finding(added_kind, name))
+    for name in sorted(set(artifact_map) - set(live_map)):
+        findings.append(Finding(removed_kind, name))
+    for name in sorted(set(live_map) & set(artifact_map)):
+        if live_map[name] != artifact_map[name]:
+            findings.append(Finding(differ_kind, name))
+    return findings
+
+
 def compute_findings(live_doc: dict[str, Any], artifact_doc: dict[str, Any]) -> list[Finding]:
     """Semantic diff used only to build a helpful message (M-3) once R-2's
     byte comparison has already determined that drift exists."""
@@ -216,16 +240,15 @@ def compute_findings(live_doc: dict[str, Any], artifact_doc: dict[str, Any]) -> 
             )
         )
 
-    live_components = live_doc.get("components", {}).get("schemas", {})
-    artifact_components = artifact_doc.get("components", {}).get("schemas", {})
-
-    for name in sorted(set(live_components) - set(artifact_components)):
-        findings.append(Finding("Component schemas added but not in the checked-in schema", name))
-    for name in sorted(set(artifact_components) - set(live_components)):
-        findings.append(Finding("Component schemas removed from the app", name))
-    for name in sorted(set(live_components) & set(artifact_components)):
-        if live_components[name] != artifact_components[name]:
-            findings.append(Finding("Component schemas that differ", name))
+    findings.extend(
+        _diff_named_schemas(
+            live_doc.get("components", {}).get("schemas", {}),
+            artifact_doc.get("components", {}).get("schemas", {}),
+            added_kind="Component schemas added but not in the checked-in schema",
+            removed_kind="Component schemas removed from the app",
+            differ_kind="Component schemas that differ",
+        )
+    )
 
     return findings
 
@@ -309,24 +332,18 @@ def compute_frame_findings(live_doc: dict[str, Any], artifact_doc: dict[str, Any
         live_defs = _frame_defs(live_schema)
         artifact_defs = _frame_defs(artifact_schema)
 
-        for name in sorted(set(live_defs) - set(artifact_defs)):
-            findings.append(
-                Finding(
-                    f"Frames added to the {direction} union but not in the checked-in artifact",
-                    name,
-                )
-            )
-        for name in sorted(set(artifact_defs) - set(live_defs)):
-            findings.append(
-                Finding(
+        findings.extend(
+            _diff_named_schemas(
+                live_defs,
+                artifact_defs,
+                added_kind=f"Frames added to the {direction} union but not in the checked-in artifact",
+                removed_kind=(
                     f"Frames present in the checked-in {direction} artifact but removed "
-                    "from the union",
-                    name,
-                )
+                    "from the union"
+                ),
+                differ_kind=f"Frame schemas that differ ({direction})",
             )
-        for name in sorted(set(live_defs) & set(artifact_defs)):
-            if live_defs[name] != artifact_defs[name]:
-                findings.append(Finding(f"Frame schemas that differ ({direction})", name))
+        )
 
         if live_schema.get("discriminator") != artifact_schema.get(
             "discriminator"

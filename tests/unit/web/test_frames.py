@@ -145,6 +145,28 @@ def test_inbound_adapter_rejects_unknown_type():
         INBOUND_FRAME_ADAPTER.validate_python({"v": 1, "type": "nonexistent"})
 
 
+@pytest.mark.parametrize(
+    ("cols", "rows", "expected"),
+    [
+        (None, 24, (1, 24)),  # e.g. `JSON.stringify(NaN)` -> `null` client-side
+        ("abc", 24, (1, 24)),
+        (80.5, 24, (80, 24)),
+        (-5, 24, (1, 24)),
+        (24, 5000, (24, 1000)),
+    ],
+)
+def test_inbound_adapter_clamps_malformed_resize_values_instead_of_dropping(cols, rows, expected):
+    """A present-but-malformed cols/rows value must be clamped (matching
+    `TerminalSession.resize()`'s pre-existing `clamp_dimension()` tolerance
+    and contracts/terminal-frames-v1.md's "Clamped to safe bounds by existing
+    logic"), NOT cause the whole frame to fail validation and be dropped --
+    F-3 only authorizes dropping malformed JSON/non-object/unknown-type
+    frames, not a well-typed resize with a bad field value."""
+    frame = INBOUND_FRAME_ADAPTER.validate_python({"v": 1, "type": "resize", "cols": cols, "rows": rows})
+    assert isinstance(frame, ResizeFrame)
+    assert (frame.cols, frame.rows) == expected
+
+
 # ---------------------------------------------------------------------------
 # _handle_control: silent-drop invariant (F-3) -- the single most important
 # test in this file.
@@ -191,6 +213,18 @@ async def test_handle_control_valid_resize_still_resizes():
     session = _ResizeRecordingSession()
     await _handle_control(ws, session, json.dumps({"v": 1, "type": "resize", "cols": 120, "rows": 40}))
     assert session.resize_calls == [(120, 40)]
+
+
+@pytest.mark.asyncio
+async def test_handle_control_resize_with_malformed_cols_still_resizes_clamped():
+    """A resize frame with a well-known type but a malformed field value
+    (e.g. `cols: null`, as produced by `JSON.stringify(NaN)` client-side) must
+    still call `session.resize()` with a clamped value, not be silently
+    dropped like a genuinely malformed/unknown frame."""
+    ws = _RecordingWebSocket()
+    session = _ResizeRecordingSession()
+    await _handle_control(ws, session, json.dumps({"v": 1, "type": "resize", "cols": None, "rows": 40}))
+    assert session.resize_calls == [(1, 40)]
 
 
 @pytest.mark.asyncio

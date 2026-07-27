@@ -13,7 +13,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test --config ../playwright.config.ts",
-    "generate:types": "openapi-typescript src/api/generated/openapi.json -o src/api/generated/schema.d.ts && node scripts/generate-frame-types.mjs",
+    "generate:types": "node scripts/generate-schema-types.mjs && node scripts/generate-frame-types.mjs",
     "check:types-fresh": "node scripts/check-types-fresh.mjs"
   },
   "dependencies": {

@@ -70,6 +70,14 @@ _ERROR_MESSAGES: dict[ErrorClass, str] = {
 }
 
 
+def _error_frame(cls: ErrorClass) -> ErrorFrame:
+    # mypy only synthesizes the alias ("class") as the constructor keyword
+    # for a Field(alias=...) member, even with populate_by_name=True allowing
+    # "class_" at runtime too -- one `# type: ignore[call-arg]` here instead
+    # of one per call site.
+    return ErrorFrame(class_=cls, message=_ERROR_MESSAGES[cls])  # type: ignore[call-arg]
+
+
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
@@ -330,16 +338,7 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str) -> None:
         session = TerminalSession(argv, cols=attachment.cols, rows=attachment.rows)
         await session.start()
     except Exception:  # noqa: BLE001 - any spawn failure is surfaced + reaped.
-        await _send_control(
-            websocket,
-            # mypy only synthesizes the alias ("class") as the constructor
-            # keyword for a Field(alias=...) member, even with
-            # populate_by_name=True allowing "class_" at runtime too.
-            ErrorFrame(  # type: ignore[call-arg]
-                class_=ErrorClass.REMOTE_LAUNCH,
-                message=_ERROR_MESSAGES[ErrorClass.REMOTE_LAUNCH],
-            ),
-        )
+        await _send_control(websocket, _error_frame(ErrorClass.REMOTE_LAUNCH))
         if session is not None:
             await session.close()
         registry.set_state(terminal_id, TerminalState.ERROR)
@@ -417,10 +416,7 @@ async def _send_loop(
             err = session.error_class
             registry.record_exit(terminal_id, rc, err.value if err else None)
             if err is not None:
-                await _send_control(
-                    websocket,
-                    ErrorFrame(class_=err, message=_ERROR_MESSAGES[err]),  # type: ignore[call-arg]
-                )
+                await _send_control(websocket, _error_frame(err))
             else:
                 await _send_control(websocket, ExitFrame(code=rc))
             return "process_exit"
@@ -458,13 +454,11 @@ async def _recv_loop(
 
 async def _handle_control(websocket: WebSocket, session: TerminalSession, text: str) -> None:
     try:
-        payload = json.loads(text)
-    except (ValueError, TypeError):
-        return
-    if not isinstance(payload, dict):
-        return
-    try:
-        frame = INBOUND_FRAME_ADAPTER.validate_python(payload)
+        # `validate_json` parses and validates in one native pass (malformed
+        # JSON, a non-object payload, and an unknown/invalid frame all raise
+        # the same ValidationError), instead of a separate `json.loads` +
+        # `isinstance(dict)` + `validate_python` walk over the same data.
+        frame = INBOUND_FRAME_ADAPTER.validate_json(text)
     except ValidationError:
         # F-3: malformed/unrecognized inbound frames are silently dropped --
         # never raise, never close the socket.
@@ -490,9 +484,15 @@ async def _stall_watchdog(websocket: WebSocket, session: TerminalSession) -> str
 async def _send_control(websocket: WebSocket, frame: OutboundFrame) -> None:
     try:
         # `json.dumps` (not `model_dump_json`, whose default separators
-        # don't match) on the plain dict preserves today's exact bytes,
-        # key order included (F-4).
-        await websocket.send_text(json.dumps(frame.model_dump(mode="json", by_alias=True)))
+        # don't match) on the plain dict preserves today's exact bytes, key
+        # order included (F-4). Plain `model_dump(by_alias=True)` (mode=
+        # "python", the default) rather than `mode="json"`: every outbound
+        # frame field is already a JSON-native value at the Python level (int,
+        # a Literal[str], or a `(str, Enum)` member `json.dumps` serializes
+        # natively via its own string data) -- `mode="json"`'s extra
+        # normalization walk would be a no-op here, just repeated work on a
+        # per-message hot path.
+        await websocket.send_text(json.dumps(frame.model_dump(by_alias=True)))
     except (WebSocketDisconnect, RuntimeError):
         pass
 

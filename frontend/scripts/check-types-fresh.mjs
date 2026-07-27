@@ -4,9 +4,12 @@
 //
 // REST half (check B): regenerates `src/api/generated/schema.d.ts` from the
 // checked-in `src/api/generated/openapi.json` into a TEMPORARY file (never a
-// tracked path — R-1/FR-019) using the exact same CLI invocation as the
-// `generate:types` npm script, then byte-compares (R-2) the result against
-// the checked-in `schema.d.ts`.
+// tracked path — R-1/FR-019), by calling `generateSchemaTypes()` from
+// `generate-schema-types.mjs` directly (in-process, not shelled out) with a
+// temporary output path — the exact same single implementation `generate:types`
+// itself calls, so the two can never independently drift (e.g. a future
+// openapi-typescript CLI flag added to only one of two copies) — then
+// byte-compares (R-2) the result against the checked-in `schema.d.ts`.
 //
 // Frame half (check C-node, T054): regenerates
 // `src/api/generated/terminal-frames.d.ts` from the checked-in
@@ -21,18 +24,17 @@
 // Run standalone: `node scripts/check-types-fresh.mjs` from `frontend/`.
 // Wired as `npm run check:types-fresh`.
 
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateFrameTypes, FRAMES_JSON } from "./generate-frame-types.mjs";
+import { generateSchemaTypes, OPENAPI_JSON } from "./generate-schema-types.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const frontendRoot = join(__dirname, "..");
 const repoRoot = join(frontendRoot, "..");
 
-const OPENAPI_JSON = join(frontendRoot, "src", "api", "generated", "openapi.json");
 const CHECKED_IN_SCHEMA = join(frontendRoot, "src", "api", "generated", "schema.d.ts");
 const CHECKED_IN_FRAMES_DTS = join(
   frontendRoot,
@@ -40,12 +42,6 @@ const CHECKED_IN_FRAMES_DTS = join(
   "api",
   "generated",
   "terminal-frames.d.ts",
-);
-const OPENAPI_TYPESCRIPT_BIN = join(
-  frontendRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "openapi-typescript.cmd" : "openapi-typescript",
 );
 
 const DOC_LINK = "docs/maintaining-generated-types.md";
@@ -159,41 +155,28 @@ async function run() {
     fail(missingArtifactMessage(CHECKED_IN_SCHEMA, `Could not read the file: ${err.message}`));
   }
 
-  // R-1: regenerate into a throwaway temp directory outside the repo tree.
-  // Never write to any tracked path.
+  // R-1: regenerate into a throwaway temp directory outside the repo tree,
+  // using the in-process generator function directly (not shelled out) --
+  // the exact same function `npm run generate:types` itself calls -- never
+  // write to any tracked path.
   const tempDir = mkdtempSync(join(tmpdir(), "remo-check-types-fresh-"));
   try {
     const tempSchema = join(tempDir, "schema.d.ts");
 
+    let regeneratedText;
     try {
-      execFileSync(OPENAPI_TYPESCRIPT_BIN, [OPENAPI_JSON, "-o", tempSchema], {
-        cwd: frontendRoot,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      regeneratedText = await generateSchemaTypes(tempSchema);
     } catch (err) {
-      // execFileSync throws on nonzero exit or spawn failure (e.g. missing
-      // binary because `npm install` was never run).
-      const detail = err.stderr ? err.stderr.toString("utf8") : err.message;
       fail(
-        `Failed to run openapi-typescript to check type freshness.\n\n  ${detail}\n\n` +
+        `Failed to run openapi-typescript (via generate-schema-types.mjs) to check ` +
+          `type freshness.\n\n  ${err.message}\n\n` +
           `Make sure dependencies are installed (\`npm install\` from ` +
           `${relative(frontendRoot)}), then re-run \`npm run check:types-fresh\`.`,
       );
     }
 
-    let regeneratedBytes;
-    try {
-      regeneratedBytes = readFileSync(tempSchema);
-    } catch (err) {
-      fail(
-        `openapi-typescript did not produce an output file at the expected temp ` +
-          `path (${err.message}). This is a generator failure, not a type-freshness ` +
-          `finding — see ${DOC_LINK}.`,
-      );
-    }
-
     // R-2: exact byte comparison, not a semantic/structural diff.
-    if (!regeneratedBytes.equals(checkedInSchemaBytes)) {
+    if (!Buffer.from(regeneratedText).equals(checkedInSchemaBytes)) {
       fail(staleArtifactMessage());
     }
   } finally {
