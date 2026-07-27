@@ -34,7 +34,14 @@ def test_require_boto3_raises_missing_dependency_error(boto3_absent) -> None:
 
     with pytest.raises(MissingDependencyError) as exc_info:
         _require_boto3()
-    assert "aws" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "boto3" in message
+    # The remediation must not point at `uv sync --extra aws`: pyproject.toml
+    # declares no `aws` extra, so that command fails with an unknown-extra
+    # error. Until issue #94 introduces real optional extras, a reinstall is
+    # the only advice that actually works.
+    assert "--extra aws" not in message
+    assert "uv sync" in message
 
 
 @pytest.mark.parametrize("verb, argv", [("sync", ["sync", "--region", "us-west-2"])])

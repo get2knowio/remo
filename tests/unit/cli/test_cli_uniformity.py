@@ -89,32 +89,50 @@ def test_destroy_accepts_yes_and_short_y_uniformly() -> None:
         assert set(opt.opts) == {"--yes", "-y"}
 
 
-def test_create_yes_is_accepted_deprecated_and_never_forwarded() -> None:
+def test_create_yes_is_rejected_as_unknown_option() -> None:
+    """019-hygiene-deps-docs US5: `--yes` never had any effect on `create`
+    (there is no confirmation prompt to skip) and has been removed from the
+    option surface entirely. See contracts/cli-surface-delta.md V-1: exit 2,
+    "No such option: --yes" — Click's standard unknown-option behavior."""
     for type_name in ALL_TYPE_NAMES:
         descriptor = get_descriptor_by_type(type_name)
         group = build_provider_group(descriptor)
 
-        fake_module = types.ModuleType(f"fake_{type_name}")
-        received: dict[str, object] = {}
+        received: dict = {}
 
-        def create(**kwargs: object) -> int:
+        def _create(**kwargs):
             received.update(kwargs)
             return 0
 
-        fake_module.create = create  # type: ignore[attr-defined]
+        fake_module = types.ModuleType(f"fake_{type_name}")
+        fake_module.create = _create  # type: ignore[attr-defined]
 
         import remo_cli.core.provider_registry as pr
 
         pr._MODULE_CACHE[type_name] = fake_module
         try:
             runner = CliRunner()
-            args = ["create", "--yes"]
-            for p in group.commands["create"].params:
-                if isinstance(p, click.Option) and p.required:
-                    args.extend([p.opts[0], "dummy"])
-            result = runner.invoke(group, args)
+            result = runner.invoke(group, ["create", "--yes"])
+            assert result.exit_code == 2, result.output
+            assert "No such option: --yes" in result.output
+            assert received == {}, "create() must not run when parsing fails"
+
+            # The happy path still has to work, and its kwargs still have to
+            # reach the provider. Removing the flag meant deleting a
+            # `kwargs.pop` from _build_create.run, so without this the file
+            # would pass even if that edit had dropped or renamed a kwarg.
+            required_args: list[str] = []
+            for opt in descriptor.create_options:
+                if opt.required and not opt.is_flag:
+                    required_args += [opt.name.split("/")[0], "x"]
+            result = runner.invoke(group, ["create", *required_args])
             assert result.exit_code == 0, result.output
-            assert "Deprecated" in result.output
+            assert received, "create() was never invoked"
             assert "auto_confirm" not in received
+            for opt in descriptor.create_options:
+                assert opt.param in received, (
+                    f"{type_name} create dropped {opt.param} on the way to "
+                    f"the provider"
+                )
         finally:
             pr._MODULE_CACHE.pop(type_name, None)

@@ -384,7 +384,9 @@ Create a default VPC in the AWS Console: VPC → Your VPCs → Actions → Creat
 Spot instances can be interrupted by AWS. Your EBS data is preserved. Run `remo aws create --spot` again.
 
 **boto3 not found?**
-Run `remo init` to install Python dependencies.
+`boto3` is installed automatically as part of the `remo-cli` package; reinstall
+or upgrade the package (e.g. `uv tool install --force remo-cli` or `pip install
+--upgrade remo-cli`) to restore it.
 
 **SSM agent not coming online?**
 The SSM agent may take 2-5 minutes to register after instance launch. Ensure the IAM instance profile has the `AmazonSSMManagedInstanceCore` policy and the instance has outbound HTTPS access.

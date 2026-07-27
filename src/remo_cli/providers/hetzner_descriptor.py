@@ -8,7 +8,6 @@ Registered by ``providers/builtin.py``. Must stay importable with the
 from __future__ import annotations
 
 from remo_cli.core.provider_registry import (
-    CREATE_YES_DEPRECATION,
     LOCATION,
     ConnectionSpec,
     NameFormat,
@@ -47,7 +46,6 @@ DESCRIPTOR = ProviderDescriptor(
     sync_options=(),
     info_options=(),
     extra_commands=(),
-    deprecated_options=(CREATE_YES_DEPRECATION,),
     snapshot_region_scoped=False,
     snapshot_async=True,
 )

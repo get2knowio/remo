@@ -10,10 +10,11 @@ uv tool install remo-cli
 
 # Or with pip
 pip install remo-cli
-
-# Initialize (installs Ansible collections)
-remo init
 ```
+
+Ansible collections required by the provider playbooks install automatically the
+first time you run a provider command (e.g. `remo incus create`); no separate
+setup step is needed.
 
 ### Prerequisites
 
@@ -274,9 +275,6 @@ remo cp :/var/log/app.log ./        # Download file
 remo cp -r ./dir :/home/remo/       # Recursive copy
 remo cp --progress big.tar :/tmp/   # Show progress
 
-# Setup
-remo init                           # Install Ansible collections
-
 # Register an SSH-reachable host (provider-neutral; needs only SSH access)
 remo add NAME [user@]host[:port]    # Register a single SSH host
 remo add NAME host --port 2222 --identity ~/.ssh/key   # Custom port + key
@@ -450,9 +448,10 @@ ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa
 ```
 
 **Ansible collection not found?**
-```bash
-remo init  # Reinstalls dependencies
-```
+Ansible collections reinstall automatically whenever `ansible/requirements.yml`
+changes. To force a reinstall manually, delete the `collections.lock` marker
+file in `REMO_HOME` (defaults to `~/.config/remo`) and re-run any provider
+command.
 
 **Platform-specific issues?**
 See troubleshooting sections in:

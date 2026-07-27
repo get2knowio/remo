@@ -21,6 +21,15 @@ positional argument is suffixed with ``"?"`` (e.g. ``"INSTANCE?"``).
 Subcommands of a provider's ``snapshot`` group are keyed as
 ``"snapshot create"``, ``"snapshot restore"``, ``"snapshot delete"``,
 ``"snapshot list"``.
+
+Deliberate divergence from the 2026-07-26 capture (019-hygiene-deps-docs,
+US5, the sole FR-026 carve-out): ``"--yes"``/``"-y"`` were removed from each
+provider's ``create`` list. The flag never had any effect on create (there
+is no confirmation prompt to skip); its removal is an intentional CLI
+break, not baseline corruption. See
+``specs/019-hygiene-deps-docs/contracts/cli-surface-delta.md``. ``--yes``/
+``-y`` are unchanged everywhere else (destroy/sync/snapshot restore/
+snapshot delete).
 """
 
 from __future__ import annotations
@@ -39,8 +48,6 @@ SURFACE: dict[str, dict[str, list[str]]] = {
             "--only",
             "--skip",
             "--use-ip",
-            "--yes",
-            "-y",
             "-v",
             "--verbose",
         ],
@@ -102,8 +109,6 @@ SURFACE: dict[str, dict[str, list[str]]] = {
             "--skip",
             "--use-ip",
             "--devcontainer-runtime",
-            "--yes",
-            "-y",
             "-v",
             "--verbose",
         ],
@@ -165,8 +170,6 @@ SURFACE: dict[str, dict[str, list[str]]] = {
             "--iam-profile",
             "--only",
             "--skip",
-            "--yes",
-            "-y",
             "-v",
             "--verbose",
         ],
@@ -191,8 +194,6 @@ SURFACE: dict[str, dict[str, list[str]]] = {
             "--volume-size",
             "--only",
             "--skip",
-            "--yes",
-            "-y",
             "-v",
             "--verbose",
         ],
@@ -224,13 +225,14 @@ DEFAULT_INSTANCE_NAMES: dict[str, str | None] = {
     "hetzner": "remo",
 }
 
-# Providers whose destroy/create/sync accept --yes/-y for auto-confirmation
-# (all four, uniformly) — recorded explicitly for FR-012 cross-checks.
+# Providers whose destroy/sync accept --yes/-y for auto-confirmation (all
+# four, uniformly) — recorded explicitly for FR-012 cross-checks. `create`
+# was removed from this list in 019-hygiene-deps-docs US5: the flag never
+# had any effect there and has been removed from create entirely.
 CONFIRMABLE_COMMANDS: dict[str, list[str]] = {
-    "incus": ["create", "destroy", "sync", "snapshot restore", "snapshot delete"],
-    "proxmox": ["create", "destroy", "sync", "snapshot restore", "snapshot delete"],
+    "incus": ["destroy", "sync", "snapshot restore", "snapshot delete"],
+    "proxmox": ["destroy", "sync", "snapshot restore", "snapshot delete"],
     "aws": [
-        "create",
         "destroy",
         "sync",
         "stop",
@@ -238,5 +240,5 @@ CONFIRMABLE_COMMANDS: dict[str, list[str]] = {
         "snapshot restore",
         "snapshot delete",
     ],
-    "hetzner": ["create", "destroy", "sync", "snapshot restore", "snapshot delete"],
+    "hetzner": ["destroy", "sync", "snapshot restore", "snapshot delete"],
 }

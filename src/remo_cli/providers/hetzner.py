@@ -61,30 +61,19 @@ def _query_hetzner_server_ip(server_name: str) -> str:
     when the token is missing, the API call fails, or no matching server is
     found.
     """
-    token = os.environ.get("HETZNER_API_TOKEN", "")
-    if not token:
+    qs = urllib.parse.urlencode({"name": server_name})
+    try:
+        data = _hetzner_api("GET", f"/servers?{qs}", timeout=15)
+    except ProviderError:
         return ""
 
-    url = f"https://api.hetzner.cloud/v1/servers?name={server_name}"
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-        servers = data.get("servers", [])
-        if servers:
-            return (
-                servers[0]
-                .get("public_net", {})
-                .get("ipv4", {})
-                .get("ip", "")
-            )
-    except (urllib.error.URLError, json.JSONDecodeError, KeyError, IndexError):
-        pass
-
+    servers = data.get("servers", [])
+    if servers:
+        # `or {}` rather than a chained .get(k, {}): an IPv6-only server reports
+        # public_net.ipv4 as null (key present, value None), which a plain chain
+        # would follow into AttributeError. Same guard as _probe() and info().
+        public_net = servers[0].get("public_net") or {}
+        return (public_net.get("ipv4") or {}).get("ip", "")
     return ""
 
 
@@ -296,22 +285,19 @@ def info(name: str = "") -> None:
     Raises :class:`PreconditionError` if the token is missing or the server
     is not found, or :class:`OperationFailedError` if the API request fails.
     """
-    token = os.environ.get("HETZNER_API_TOKEN", "")
-    if not token:
-        raise PreconditionError("HETZNER_API_TOKEN is not set.")
-
+    # No local HETZNER_API_TOKEN check: _hetzner_api performs the same one and
+    # raises the same PreconditionError. Keeping a second copy here meant two
+    # divergent strings for one condition -- exactly the drift consolidating
+    # onto the helper was meant to remove.
     server_name = name or "remo"
 
-    server_url = f"https://api.hetzner.cloud/v1/servers?name={server_name}"
-    server_req = urllib.request.Request(
-        server_url,
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    try:
-        with urllib.request.urlopen(server_req, timeout=15) as resp:
-            server_data = json.loads(resp.read().decode())
-    except urllib.error.URLError as e:
-        raise OperationFailedError(f"Hetzner API request failed: {e}") from e
+    server_qs = urllib.parse.urlencode({"name": server_name})
+    # _hetzner_api's own "Hetzner API GET /servers?... failed: ..." message is
+    # strictly more informative than info()'s former "Hetzner API request
+    # failed: ..." wrapper, and re-wrapping printed the prefix twice (the
+    # helper raises `from None`, so the wrapped {e} was already a formatted
+    # message). Let it through unchanged.
+    server_data = _hetzner_api("GET", f"/servers?{server_qs}", timeout=15)
 
     servers = server_data.get("servers", [])
     if not servers:
@@ -324,19 +310,14 @@ def info(name: str = "") -> None:
     location = (server.get("datacenter") or {}).get("location", {}).get("name", "")
 
     volume_name = f"{server_name}-home"
-    volume_url = f"https://api.hetzner.cloud/v1/volumes?name={volume_name}"
-    volume_req = urllib.request.Request(
-        volume_url,
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    volume_qs = urllib.parse.urlencode({"name": volume_name})
     volume_size = ""
     try:
-        with urllib.request.urlopen(volume_req, timeout=15) as resp:
-            volume_data = json.loads(resp.read().decode())
+        volume_data = _hetzner_api("GET", f"/volumes?{volume_qs}", timeout=15)
         volumes = volume_data.get("volumes", [])
         if volumes:
             volume_size = f"{volumes[0].get('size', '?')} GB"
-    except urllib.error.URLError:
+    except ProviderError:
         # Volume lookup is best-effort; don't fail the whole info call.
         pass
 
@@ -486,7 +467,16 @@ def _hetzner_api(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode()
-            return json.loads(raw) if raw else {}
+            try:
+                return json.loads(raw) if raw else {}
+            except ValueError as e:
+                # A 2xx carrying a non-JSON body (proxy/CDN error page, truncated
+                # response) must surface as a ProviderError like any other API
+                # failure: call sites that swallow ProviderError to degrade
+                # gracefully depend on nothing else escaping this helper.
+                raise OperationFailedError(
+                    f"Hetzner API {method} {path} returned an unparseable body: {e}"
+                ) from None
     except urllib.error.HTTPError as e:
         try:
             err_body = json.loads(e.read().decode())

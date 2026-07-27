@@ -97,7 +97,6 @@ DESCRIPTOR = ProviderDescriptor(
     sync_options=(REGION,),
     info_options=(),
     extra_commands=(),
-    deprecated_options=(),
     snapshot_region_scoped=False,
 )
 ```
@@ -173,9 +172,9 @@ catch-and-swallow into a generic `ProviderError`.
 ## Worked example: reusing the shared option catalog
 
 `src/remo_cli/providers/hetzner_descriptor.py` shows the two building
-blocks in play. It reuses `LOCATION` and `CREATE_YES_DEPRECATION` straight
-from the catalog, and declares two extras — `--type`/`server_type` and
-`--remove-volume`/`remove_volume` — that no other provider needs:
+blocks in play. It reuses `LOCATION` straight from the catalog, and declares
+two extras — `--type`/`server_type` and `--remove-volume`/`remove_volume` —
+that no other provider needs:
 
 ```python
 _SERVER_TYPE = OptionSpec(
@@ -190,7 +189,6 @@ DESCRIPTOR = ProviderDescriptor(
     ...
     create_options=(_SERVER_TYPE, LOCATION),
     destroy_options=(_REMOVE_VOLUME,),
-    deprecated_options=(CREATE_YES_DEPRECATION,),
 )
 ```
 

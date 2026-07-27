@@ -12,7 +12,6 @@ the numeric VMID.
 
 from __future__ import annotations
 
-import json
 import re
 import shlex
 import subprocess
@@ -845,23 +844,6 @@ def bootstrap(
         raise OperationFailedError(
             f"Proxmox bootstrap failed on '{host}' (playbook rc={rc})."
         )
-
-
-# ---------------------------------------------------------------------------
-# Internal: kept around for symmetry with providers.incus, may be useful
-# for a future `--output-format json` flag on `list`/`sync`.
-# ---------------------------------------------------------------------------
-
-
-def _parse_pct_json(stdout: str) -> list[dict[str, str]]:
-    """Parse the JSON output of ``pvesh get /nodes/<node>/lxc --output-format json``."""
-    try:
-        data = json.loads(stdout)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(data, list):
-        return []
-    return data
 
 
 # ---------------------------------------------------------------------------

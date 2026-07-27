@@ -185,7 +185,6 @@ main() {
 
     echo "  Get started:"
     echo "    remo --version"
-    echo "    remo init            # Set up SSH keys, Ansible, etc."
     echo "    remo --help"
     echo ""
 
