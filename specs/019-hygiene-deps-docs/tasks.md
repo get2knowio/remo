@@ -207,6 +207,8 @@ hits; `create --yes` exits 2; every pre-existing Hetzner test passes unmodified.
 - [X] T054 [P] Add the `create --yes` removal to the commit body as a `BREAKING CHANGE:` trailer so release-please surfaces it in the changelog, using the wording in `contracts/cli-surface-delta.md` §6
 - [X] T055 Walk `specs/019-hygiene-deps-docs/quickstart.md` steps 1–11 end to end
 - [ ] T059 Close SC-006 / FR-003, the feature's only success criterion with no other task: run quickstart step 12 — build a clean venv (`uv venv /tmp/v-clean && VIRTUAL_ENV=/tmp/v-clean uv pip install .`), confirm `import hcloud, boto3` both succeed there, then trigger the repository's Hetzner smoke workflow exercising `create`, `destroy`, and `resize`. Confirm order-independence explicitly: `destroy` and `resize` must work when run **first**, since neither playbook has the `hcloud` preflight that `roles/hetzner_server/tasks/main.yml` has (gap deferred to #94). Needs live Hetzner credentials — if unavailable, mark the criterion explicitly unverified in the PR rather than silently skipping it
+  - **Partially verified as of PR #95.** The `hetzner` job in `.github/workflows/smoke-test.yml` ran against live credentials and passed: `create` → SSH → `info` → `snapshot create/list/delete` → `destroy --remove-volume`, against a plain wheel install. That establishes the `destroy` half — `ansible/hetzner_teardown.yml` has no `hcloud` preflight, so teardown succeeding proves the unconditional dependency is what carries it.
+  - **Still open, tracked in #96:** (a) `resize` has no smoke coverage at all (`grep -rn resize .github/workflows/` returns nothing); (b) order-independence is not actually exercised, because the smoke job always runs `create` first — and the create path's pip fallback in `roles/hetzner_server/tasks/main.yml` can mask a missing `hcloud` for every later step. Closing this task requires both, per #96's checklist.
 - [X] T056 Confirm the two documented deferrals are visible to a future reader: issue #94 is referenced from `pyproject.toml`, `providers/aws.py` (both sites), and `core/provider_registry.py`
 - [X] T057 Update `CLAUDE.md`'s `## Recent Changes` with a 019 entry summarizing: dependency annotations (no reclassification), `remo init` removal, structure/commands/AGENTS.md correction, the new drift check, and the `create --yes` breaking change
 
@@ -223,7 +225,7 @@ hits; `create --yes` exits 2; every pre-existing Hetzner test passes unmodified.
 - **US3 (Phase 5)**: needs T003
 - **US4 (Phase 6)**: needs T003; T027's real-repository case needs US3 complete
 - **US5 (Phase 7)**: independent — can start immediately after Setup
-- **Polish (Phase 8)**: needs all desired stories. T059 (SC-006) needs live Hetzner credentials and may lag the rest — it is the one criterion that cannot be closed from a workstation alone
+- **Polish (Phase 8)**: needs all desired stories. T059 (SC-006) needs live Hetzner credentials and may lag the rest — it is the one criterion that cannot be closed from a workstation alone. It outlived the feature: partially verified by PR #95's smoke run, remainder tracked in #96
 
 ### The one cross-story dependency
 
