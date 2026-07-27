@@ -194,9 +194,16 @@ def _require_boto3():  # noqa: ANN202
         # practice. A future optional-boto3 change (issue #94) would re-arm
         # it; see also the silent-return missing-boto3 path above (~line 88),
         # which mirrors legacy bash behavior and is the other such site.
+        # The remediation names a plain reinstall, not `uv sync --extra aws`:
+        # there is no `aws` extra in pyproject.toml today, so that command
+        # would fail with an unknown-extra error and strand the user. The
+        # branch is unreachable on a *clean* install, but a partially
+        # installed or corrupted boto3/botocore still lands here.
         raise MissingDependencyError(
-            "boto3 is not installed. Install the AWS extra: "
-            "uv sync --extra aws (or: pip install 'remo-cli[aws]')."
+            "boto3 could not be imported, but it is an unconditional "
+            "dependency of remo-cli — this usually means a broken or partial "
+            "install. Reinstall with: uv sync "
+            "(or: pip install --force-reinstall remo-cli)."
         ) from None
 
 

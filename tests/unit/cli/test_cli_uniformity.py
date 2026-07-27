@@ -98,8 +98,14 @@ def test_create_yes_is_rejected_as_unknown_option() -> None:
         descriptor = get_descriptor_by_type(type_name)
         group = build_provider_group(descriptor)
 
+        received: dict = {}
+
+        def _create(**kwargs):
+            received.update(kwargs)
+            return 0
+
         fake_module = types.ModuleType(f"fake_{type_name}")
-        fake_module.create = lambda **kwargs: 0  # type: ignore[attr-defined]
+        fake_module.create = _create  # type: ignore[attr-defined]
 
         import remo_cli.core.provider_registry as pr
 
@@ -109,5 +115,24 @@ def test_create_yes_is_rejected_as_unknown_option() -> None:
             result = runner.invoke(group, ["create", "--yes"])
             assert result.exit_code == 2, result.output
             assert "No such option: --yes" in result.output
+            assert received == {}, "create() must not run when parsing fails"
+
+            # The happy path still has to work, and its kwargs still have to
+            # reach the provider. Removing the flag meant deleting a
+            # `kwargs.pop` from _build_create.run, so without this the file
+            # would pass even if that edit had dropped or renamed a kwarg.
+            required_args: list[str] = []
+            for opt in descriptor.create_options:
+                if opt.required and not opt.is_flag:
+                    required_args += [opt.name.split("/")[0], "x"]
+            result = runner.invoke(group, ["create", *required_args])
+            assert result.exit_code == 0, result.output
+            assert received, "create() was never invoked"
+            assert "auto_confirm" not in received
+            for opt in descriptor.create_options:
+                assert opt.param in received, (
+                    f"{type_name} create dropped {opt.param} on the way to "
+                    f"the provider"
+                )
         finally:
             pr._MODULE_CACHE.pop(type_name, None)

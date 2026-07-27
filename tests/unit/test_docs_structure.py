@@ -325,8 +325,17 @@ def check_document(
 def test_real_repository_structure_matches_docs(doc_name: str) -> None:
     text = (REPO_ROOT / doc_name).read_text(encoding="utf-8")
     result = check_document(text, doc_name)
-    if result.skipped:
-        pytest.skip(f'{doc_name} has no "{HEADING}" heading')
+    # NOT pytest.skip: `skipped` is the right answer for an *arbitrary*
+    # document (T-8), but these two are hardcoded governed documents. Letting
+    # them skip would silently disable the gate the moment someone renamed or
+    # dropped the heading -- CI would stay green with zero coverage, which
+    # contradicts docs/maintaining-claude-md.md's "no way to turn this off".
+    assert not result.skipped, (
+        f'{doc_name} has no "{HEADING}" heading, so the structure drift check '
+        f"cannot run against it. This document is required to carry that "
+        f"section -- restore the heading rather than removing the check. "
+        f"See docs/maintaining-claude-md.md."
+    )
     assert result.failure_message is None, result.failure_message
 
 

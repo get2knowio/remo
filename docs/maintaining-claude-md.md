@@ -92,7 +92,9 @@ Rules the check enforces on this set, so it can't rot into a place to hide real 
   one.
 
 This is the only escape hatch. There is no flag or environment variable that disables
-the check.
+the check, and deleting or renaming a document's `## Project Structure` heading does not
+work either — `CLAUDE.md` and `AGENTS.md` are asserted to carry that section, so removing
+it fails the build rather than quietly skipping the document.
 
 ## Where the check lives
 

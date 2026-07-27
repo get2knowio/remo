@@ -19,10 +19,13 @@ dependencies = [
     "boto3",
     # hcloud is never imported anywhere in src/remo_cli/ — its real consumer
     # is the hetzner.hcloud Ansible collection (pinned >=6.7.0 in
-    # ansible/requirements.yml), whose modules `import hcloud` under
-    # ansible_playbook_python, deliberately pinned to the CLI's own Python
-    # environment (see ansible/hetzner_site.yml:10 and
-    # ansible/hetzner_teardown.yml:14). See issue #94.
+    # ansible/requirements.yml), whose modules `import hcloud` under the
+    # `ansible_python_interpreter: {{ ansible_playbook_python }}` set by
+    # ansible/hetzner_site.yml and ansible/hetzner_teardown.yml — i.e. the
+    # CLI's own Python environment. roles/hetzner_server/tasks/main.yml
+    # pip-installs it as a fallback, but only on the create path; the
+    # teardown and resize playbooks have no such preflight, so it must be
+    # present up front. See issue #94.
     "hcloud",
     "ansible-core>=2.18.0,<2.20.0",
 ]

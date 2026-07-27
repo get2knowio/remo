@@ -12,9 +12,9 @@ contract:
   not set.")` on a missing token and `PreconditionError("No Hetzner server
   found with name '<n>'.")` when no server matches -- both strings are
   subtly different from `_hetzner_api`'s and `_get_server_by_name`'s own
-  wording and must NOT be substituted. Its transport-error text is
-  `f"Hetzner API request failed: {e}"`, again different from
-  `_hetzner_api`'s own message. 15s timeout.
+  wording and must NOT be substituted. Its transport-error text is now
+  `_hetzner_api`'s own message, surfaced unchanged -- re-wrapping it printed
+  the "Hetzner API" prefix twice. 15s timeout.
 - `info()`'s volume lookup: best-effort -- any failure is swallowed, leaving
   `volume_size` empty rather than failing the whole `info()` call. 15s
   timeout.
@@ -99,6 +99,37 @@ class TestQueryHetznerServerIp:
 
         assert urlopen.call_args.kwargs.get("timeout") == 15
 
+    def test_returns_empty_string_on_unparseable_body(self, monkeypatch, mocker):
+        """A 2xx carrying a non-JSON body (proxy/CDN HTML error page, truncated
+        response) must still hit the silent-"" contract. The hand-rolled site
+        caught `json.JSONDecodeError` explicitly; consolidation moved that
+        responsibility into `_hetzner_api`, which now raises
+        `OperationFailedError` -- a `ProviderError` this site swallows."""
+        monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
+        resp = MagicMock()
+        resp.__enter__.return_value = resp
+        resp.__exit__.return_value = False
+        resp.read.return_value = b"<html>502 Bad Gateway</html>"
+        mocker.patch(
+            "remo_cli.providers.hetzner.urllib.request.urlopen", return_value=resp
+        )
+
+        assert providers_hetzner._query_hetzner_server_ip("dev1") == ""
+
+    def test_returns_empty_string_for_ipv6_only_server(self, monkeypatch, mocker):
+        """Hetzner reports an IPv6-only server as `public_net.ipv4 = null` --
+        key present, value None. A chained `.get(k, {})` returns None from the
+        second hop and raises AttributeError on the third, crashing `create()`
+        after the VM is already provisioned but before it is registered."""
+        monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
+        payload = {"servers": [{"public_net": {"ipv4": None, "ipv6": {"ip": "2a01::/64"}}}]}
+        mocker.patch(
+            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            return_value=_fake_response(payload),
+        )
+
+        assert providers_hetzner._query_hetzner_server_ip("dev1") == ""
+
 
 # ---------------------------------------------------------------------------
 # info(): server lookup -- raises with its own wording
@@ -107,12 +138,18 @@ class TestQueryHetznerServerIp:
 
 class TestInfoServerLookup:
     def test_raises_precondition_error_when_token_missing(self, monkeypatch):
+        """info() no longer keeps its own duplicate token check -- it now
+        surfaces `_hetzner_api`'s single canonical message. Two divergent
+        strings for one condition was the drift consolidation set out to
+        remove; the error *class* is unchanged."""
         monkeypatch.delenv("HETZNER_API_TOKEN", raising=False)
 
         with pytest.raises(PreconditionError) as exc_info:
             providers_hetzner.info("dev1")
 
-        assert str(exc_info.value) == "HETZNER_API_TOKEN is not set."
+        assert str(exc_info.value) == (
+            "HETZNER_API_TOKEN is not set; cannot reach the Hetzner Cloud API."
+        )
 
     def test_raises_precondition_error_when_no_server_found(self, monkeypatch, mocker):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
@@ -138,16 +175,16 @@ class TestInfoServerLookup:
 
         assert str(exc_info.value) == "No Hetzner server found with name 'remo'."
 
-    def test_transport_error_message_uses_infos_own_prefix(self, monkeypatch, mocker):
-        """Pinned per T049: info()'s server lookup now funnels through the
-        canonical `_hetzner_api()`, which raises `from None` (severing
-        `__cause__`) with its own "Hetzner API {method} {path} failed: ..."
-        text. `info()` re-wraps that with its own historical
-        "Hetzner API request failed: ..." prefix rather than adopting
-        `_hetzner_api`'s template outright -- research.md R3 notes no
-        pre-existing test pinned the byte-exact old string (which depended
-        on a raw urllib error), so this nested-but-prefixed message is the
-        accepted, deliberately chosen wording."""
+    def test_transport_error_message_uses_canonical_helper_prefix(
+        self, monkeypatch, mocker
+    ):
+        """info()'s server lookup funnels through the canonical
+        `_hetzner_api()` and surfaces its message unchanged. It used to
+        re-wrap with its own "Hetzner API request failed: " prefix, which
+        printed the prefix twice (`_hetzner_api` raises `from None`, so the
+        interpolated error was already a formatted message). research.md R3
+        notes no pre-existing test pinned the byte-exact old string, and the
+        helper's method+path text is strictly more informative."""
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         err = urllib.error.URLError("boom")
         mocker.patch(
@@ -159,8 +196,8 @@ class TestInfoServerLookup:
             providers_hetzner.info("dev1")
 
         message = str(exc_info.value)
-        assert message.startswith("Hetzner API request failed: ")
-        assert "Hetzner API GET /servers?name=dev1 failed:" in message
+        assert message.startswith("Hetzner API GET /servers?name=dev1 failed:")
+        assert message.count("Hetzner API") == 1, f"prefix duplicated: {message}"
         assert "boom" in message
 
     def test_uses_15s_timeout_for_server_lookup(self, monkeypatch, mocker):
