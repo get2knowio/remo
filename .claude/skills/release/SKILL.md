@@ -40,17 +40,31 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
 ## Stable lane (release-please owns the version + tag)
 
 1. `git checkout main && git pull --ff-only`.
-2. Find the open release PR (release-please titles it `chore(main): release X.Y.Z`):
+2. Find the open release PR (release-please titles it `chore(main): release X.Y.Z`
+   and pushes it to a `release-please--…` branch). Match on either signal —
+   do **not** pass the title to `--search`, whose parser silently drops
+   `chore(main):` and returns zero results even when the PR exists:
    ```bash
-   gh pr list --state open --json number,title,headRefName,url \
-     --search 'chore(main): release in:title'
+   gh pr list --state open --limit 100 --json number,title,headRefName,url --jq \
+     '.[] | select((.headRefName | startswith("release-please--"))
+                   or (.title | startswith("chore(main): release")))
+      | "\(.number)\t\(.title)\t\(.url)"'
    ```
    If none exists, tell the user release-please has not opened one (no
    releasable `feat:`/`fix:` commits since the last release) and **stop**.
-3. Show the proposed bump + changelog for review:
+   Before concluding that, sanity-check with a bare `gh pr list --state open`:
+   a filter bug and a genuinely absent PR look identical from here, and
+   wrongly reporting "no release PR" strands a real one.
+3. Show the proposed bump + changelog for review. `gh pr diff` takes no
+   pathspec (`gh pr diff <n> -- <files>` fails with "accepts at most 1 arg"),
+   so select the files from the API instead:
    ```bash
-   gh pr diff <number> -- pyproject.toml CHANGELOG.md
+   gh api repos/{owner}/{repo}/pulls/<number>/files --paginate --jq \
+     '.[] | select(.filename == "pyproject.toml" or .filename == "CHANGELOG.md")
+      | "=== \(.filename) ===\n\(.patch)"'
    ```
+   Read the `⚠ BREAKING CHANGES` block carefully — it is what drives a major
+   bump, and a spurious entry there is the usual cause of an unintended one.
 4. **Run the validation gate (Step V) on the PR's head branch** so you build the
    exact version that will publish.
 5. **Only on explicit approval**, merge it (release-please then tags `vX.Y.Z`,
@@ -62,7 +76,11 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
    the tag will not trigger the publish. If it's missing, warn the user and let
    them decide.
 6. Return to `main`, `git pull --ff-only`, report the new tag, and offer to watch
-   the release CI (`gh run watch` / `gh pr checks`).
+   the release CI. `gh run watch` needs an explicit run id outside a TTY:
+   ```bash
+   gh run watch "$(gh run list --workflow=release.yml --limit 1 \
+                     --json databaseId --jq '.[0].databaseId')"
+   ```
 
 ---
 
@@ -75,24 +93,46 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
    - `N` increments from the last `vX.Y.Z-rcM` tag for the same `X.Y.Z`
      (`git tag --list "vX.Y.Z-rc*"`), else `1`.
    - Confirm the chosen version with the user.
-3. Bump `pyproject.toml` `[project].version` to `X.Y.ZrcN` (optionally run
-   `uv lock` to keep the lockfile's version in step).
+3. Confirm these two files carry no pre-existing edits, then bump
+   `pyproject.toml` `[project].version` to `X.Y.ZrcN` (optionally run `uv lock`
+   to keep the lockfile's version in step):
+   ```bash
+   git diff --quiet -- pyproject.toml uv.lock \
+     || { echo "pyproject.toml/uv.lock already modified — STOP"; }
+   ```
+   Step 0 already required a clean tree, but re-assert it here: the revert in
+   Step 5 discards whatever is in these files, and the gap between Step 0 and
+   Step 5 spans a full test run.
 4. **Run the validation gate (Step V).**
 5. Ask the user which outcome they want:
-   - **Local test only (default, no PyPI):** revert the bump
-     (`git checkout pyproject.toml uv.lock`), then hand off the built wheel
-     (`dist/*.whl`) or the git-install one-liner
+   - **Local test only (default, no PyPI):** revert the bump, then hand off the
+     built wheel (`dist/*.whl`) or the git-install one-liner
      (`uv tool install --force "git+https://github.com/get2knowio/remo.git@<branch>"`).
      Nothing is committed, tagged, or published.
+
+     Look before discarding — never `git checkout`/`git restore` these paths
+     blind. Print the diff, confirm it is **only** the version bump you made in
+     Step 3, and only then restore:
+     ```bash
+     git diff -- pyproject.toml uv.lock   # MUST show only the X.Y.ZrcN bump
+     git restore --source=HEAD --worktree -- pyproject.toml uv.lock
+     ```
+     If that diff contains anything else, stop and surface it: something edited
+     these files during the run, and discarding it destroys unrecoverable work.
    - **CI dev build for cross-machine testing (no PyPI):** trigger the
      `dev-build.yml` workflow, which builds the wheel in clean CI and uploads it
      as a run artifact. The stamped version carries a `+g<sha>` local segment, so
      it is unique and can never reach PyPI. Nothing is committed or tagged.
      ```bash
      gh workflow run dev-build.yml -f version=X.Y.ZrcN   # omit -f for an auto dev version
-     gh run watch                                        # wait for it to finish
+     # `gh run watch` with no argument fails outside a TTY ("run ID required
+     # when not running interactively"), so resolve the run id first. Give the
+     # dispatch a couple of seconds to register before listing.
+     RUN_ID="$(gh run list --workflow=dev-build.yml --limit 1 \
+                 --json databaseId --jq '.[0].databaseId')"
+     gh run watch "$RUN_ID"
      # then, on ANY machine:
-     gh run download <run-id> -n remo-wheel -D ./dl
+     gh run download "$RUN_ID" -n remo-wheel -D ./dl
      uv tool install --force ./dl/remo_cli-*.whl
      ```
    - **Publish a prerelease (only on explicit approval):**
