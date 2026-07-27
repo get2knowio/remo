@@ -93,7 +93,7 @@ jobs:
           EOF
 
   lint:
-    name: Lint
+    name: Lint & Types
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -105,6 +105,13 @@ jobs:
 
       - name: Ruff check
         run: uv run ruff check src/remo_cli
+
+      # mypy analyses against python_version = "3.11" from [tool.mypy], so the
+      # result is independent of whichever interpreter uv resolves here. The
+      # `web` extra must be installed (it is, via --all-extras) or every
+      # src/remo_cli/web/ module degrades to Any and the gate goes blind.
+      - name: Mypy check
+        run: uv run mypy src/remo_cli
 
   frontend:
     name: Frontend (typecheck + unit + build)

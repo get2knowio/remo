@@ -40,7 +40,19 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Source: `.specify/memory/constitution.md` (v2.0.0). Mark each row PASS / N/A /
+VIOLATION. Any VIOLATION must be justified in Complexity Tracking below.
+
+| # | Principle | Check for this feature |
+|---|-----------|------------------------|
+| I | Layered Architecture | No Click in `providers/`, no provider names in `core/`, no `cli/` → private `providers/` reach-ins |
+| II | Providers Are Declared | Any provider-varying behavior is driven by a `ProviderDescriptor` field, not a `host.type` literal |
+| III | Typed Errors, One Exit Boundary | Business layer raises `core/errors.py` types; messages name the fix |
+| IV | Generated Contracts | Service model / WS frame changes regenerate the four artifacts; no hand-mirrored types |
+| V | Defensive Variable Access | Every registered Ansible variable access uses `\| default()` |
+| VI | Test Skip/Fail Paths | Error, skip, and abort paths are covered; refactors are pinned by characterization tests first |
+| VII | Idempotent & Re-runnable | Mutating paths converge on a second run; registry writes go through `core/registry.py` |
+| VIII | Docs Reflect Reality | Structure diagrams, README, and `docs/*.md` updated in this change |
 
 ## Project Structure
 
