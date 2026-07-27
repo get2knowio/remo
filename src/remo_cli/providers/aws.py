@@ -89,7 +89,12 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
     try:
         import boto3  # noqa: PLC0415
     except ImportError:
-        # Mirror the bash behavior: silently return when boto3 is missing
+        # Mirror the bash behavior: silently return when boto3 is missing.
+        # NOTE: currently unreachable — boto3 is an unconditional dependency
+        # (see pyproject.toml), so this ImportError branch cannot fire in
+        # practice. A future optional-boto3 change (issue #94) would re-arm
+        # it; see also the second missing-boto3 path in _require_boto3()
+        # below, which behaves differently (raises instead of returning).
         return host
 
     region = get_aws_region(host.name)
@@ -184,6 +189,11 @@ def _require_boto3():  # noqa: ANN202
 
         return boto3
     except ImportError:
+        # NOTE: currently unreachable — boto3 is an unconditional dependency
+        # (see pyproject.toml), so this ImportError branch cannot fire in
+        # practice. A future optional-boto3 change (issue #94) would re-arm
+        # it; see also the silent-return missing-boto3 path above (~line 88),
+        # which mirrors legacy bash behavior and is the other such site.
         raise MissingDependencyError(
             "boto3 is not installed. Install the AWS extra: "
             "uv sync --extra aws (or: pip install 'remo-cli[aws]')."

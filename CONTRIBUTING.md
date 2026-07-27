@@ -7,8 +7,8 @@
 git clone https://github.com/get2knowio/remo.git
 cd remo
 
-# Initialize
-./remo init
+# Install with all optional deps + dev tools
+uv sync --all-extras
 ```
 
 ## Making Changes

@@ -11,7 +11,6 @@ from dataclasses import replace
 
 from remo_cli.core.provider_registry import (
     CORES,
-    CREATE_YES_DEPRECATION,
     DOMAIN,
     HOST,
     IMAGE,
@@ -92,5 +91,4 @@ DESCRIPTOR = ProviderDescriptor(
             ),
         ),
     ),
-    deprecated_options=(CREATE_YES_DEPRECATION,),
 )

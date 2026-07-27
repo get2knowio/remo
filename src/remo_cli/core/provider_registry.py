@@ -69,7 +69,7 @@ def resolve_default_name(default: DefaultName) -> str:
 
 
 # ---------------------------------------------------------------------------
-# OptionSpec / CommandSpec / DeprecatedOption
+# OptionSpec / CommandSpec
 # ---------------------------------------------------------------------------
 
 
@@ -101,15 +101,6 @@ class CommandSpec:
     impl: str  # function name in the provider implementation module
     options: tuple[OptionSpec, ...] = ()
     confirmable: bool = False  # injects --yes/-y -> auto_confirm kwarg
-
-
-@dataclass(frozen=True)
-class DeprecatedOption:
-    """A one-release-window deprecation notice (FR-010)."""
-
-    name: str
-    notice: str
-    removal_release: str = "next release"
 
 
 @dataclass(frozen=True)
@@ -156,7 +147,6 @@ class ProviderDescriptor:
     snapshot_region_scoped: bool = False
     snapshot_async: bool = False  # True when creation is async and status is meaningful (AWS/Hetzner)
     extra_commands: tuple[CommandSpec, ...] = field(default_factory=tuple)
-    deprecated_options: tuple[DeprecatedOption, ...] = field(default_factory=tuple)
     sdk_extra: str | None = None
 
     def __post_init__(self) -> None:
@@ -228,6 +218,12 @@ def get_provider(type_name: str) -> ModuleType:
         module = importlib.import_module(descriptor.implementation)
     except ImportError as exc:
         if descriptor.sdk_extra:
+            # NOTE: descriptor.sdk_extra values (e.g. "aws", "hetzner") name
+            # extras that do not currently exist in pyproject.toml's
+            # [project.optional-dependencies] — boto3/hcloud are still
+            # unconditional runtime dependencies (see pyproject.toml, issue
+            # #94). This message is aspirational until #94 introduces those
+            # extras; descriptor.sdk_extra itself is left unchanged.
             raise MissingDependencyError(
                 f"{descriptor.display_name} support requires the '{descriptor.sdk_extra}' extra. "
                 f"Install it with: uv sync --extra {descriptor.sdk_extra} "
@@ -316,11 +312,3 @@ ALL_FLAG = OptionSpec(
     help="Discover every instance, including those without the remo managed marker.",
 )
 
-# Shared one-release deprecation notice for `create --yes` (FR-010) — every
-# built-in descriptor references this same object so the printed text can
-# never drift between providers.
-CREATE_YES_DEPRECATION = DeprecatedOption(
-    name="--yes",
-    notice="Deprecated: --yes has no effect on create and will be removed in a future release.",
-    removal_release="next release",
-)

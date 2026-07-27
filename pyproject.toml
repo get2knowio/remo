@@ -12,7 +12,17 @@ requires-python = ">=3.11"
 dependencies = [
     "click>=8.1",
     "InquirerPy>=0.3.4",
+    # boto3 has two consumers: the CLI's own lazy `import boto3` in
+    # providers/aws.py, AND the amazon.aws/community.aws Ansible collections,
+    # which import it under ansible_playbook_python (pinned to this same
+    # environment). It stays unconditional per FR-004 pending issue #94.
     "boto3",
+    # hcloud is never imported anywhere in src/remo_cli/ — its real consumer
+    # is the hetzner.hcloud Ansible collection (pinned >=6.7.0 in
+    # ansible/requirements.yml), whose modules `import hcloud` under
+    # ansible_playbook_python, deliberately pinned to the CLI's own Python
+    # environment (see ansible/hetzner_site.yml:10 and
+    # ansible/hetzner_teardown.yml:14). See issue #94.
     "hcloud",
     "ansible-core>=2.18.0,<2.20.0",
 ]
@@ -28,6 +38,11 @@ dev = [
     # suite builds on. Starlette does not depend on it (the service itself
     # never makes HTTP client calls), so without this the web tests fail at
     # collection, not as assertions.
+    #
+    # NOT a misspelling of httpx: httpx2 is a real, separate pydantic-org
+    # package (github.com/pydantic/httpx2). Starlette 1.3.1's testclient
+    # tries `import httpx2 as httpx` first and falls back to `httpx` only if
+    # httpx2 is absent.
     "httpx2",
 ]
 web = [

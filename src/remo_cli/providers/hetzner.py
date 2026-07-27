@@ -61,30 +61,20 @@ def _query_hetzner_server_ip(server_name: str) -> str:
     when the token is missing, the API call fails, or no matching server is
     found.
     """
-    token = os.environ.get("HETZNER_API_TOKEN", "")
-    if not token:
+    qs = urllib.parse.urlencode({"name": server_name})
+    try:
+        data = _hetzner_api("GET", f"/servers?{qs}", timeout=15)
+    except ProviderError:
         return ""
 
-    url = f"https://api.hetzner.cloud/v1/servers?name={server_name}"
-    req = urllib.request.Request(
-        url,
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode())
-        servers = data.get("servers", [])
-        if servers:
-            return (
-                servers[0]
-                .get("public_net", {})
-                .get("ipv4", {})
-                .get("ip", "")
-            )
-    except (urllib.error.URLError, json.JSONDecodeError, KeyError, IndexError):
-        pass
-
+    servers = data.get("servers", [])
+    if servers:
+        return (
+            servers[0]
+            .get("public_net", {})
+            .get("ipv4", {})
+            .get("ip", "")
+        )
     return ""
 
 
@@ -302,15 +292,17 @@ def info(name: str = "") -> None:
 
     server_name = name or "remo"
 
-    server_url = f"https://api.hetzner.cloud/v1/servers?name={server_name}"
-    server_req = urllib.request.Request(
-        server_url,
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    server_qs = urllib.parse.urlencode({"name": server_name})
     try:
-        with urllib.request.urlopen(server_req, timeout=15) as resp:
-            server_data = json.loads(resp.read().decode())
-    except urllib.error.URLError as e:
+        server_data = _hetzner_api("GET", f"/servers?{server_qs}", timeout=15)
+    except OperationFailedError as e:
+        # Preserve info()'s own "Hetzner API request failed: ..." prefix
+        # instead of switching to _hetzner_api's "Hetzner API {method} {path}
+        # failed: ..." template (research.md R3). _hetzner_api raises `from
+        # None`, severing __cause__, so {e} here is its own formatted
+        # message rather than the raw transport error -- no pre-existing
+        # test pinned the exact old string, so this is the accepted
+        # deliberate, tested wording per research.md's "pragmatic reading."
         raise OperationFailedError(f"Hetzner API request failed: {e}") from e
 
     servers = server_data.get("servers", [])
@@ -324,19 +316,14 @@ def info(name: str = "") -> None:
     location = (server.get("datacenter") or {}).get("location", {}).get("name", "")
 
     volume_name = f"{server_name}-home"
-    volume_url = f"https://api.hetzner.cloud/v1/volumes?name={volume_name}"
-    volume_req = urllib.request.Request(
-        volume_url,
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    volume_qs = urllib.parse.urlencode({"name": volume_name})
     volume_size = ""
     try:
-        with urllib.request.urlopen(volume_req, timeout=15) as resp:
-            volume_data = json.loads(resp.read().decode())
+        volume_data = _hetzner_api("GET", f"/volumes?{volume_qs}", timeout=15)
         volumes = volume_data.get("volumes", [])
         if volumes:
             volume_size = f"{volumes[0].get('size', '?')} GB"
-    except urllib.error.URLError:
+    except ProviderError:
         # Volume lookup is best-effort; don't fail the whole info call.
         pass
 

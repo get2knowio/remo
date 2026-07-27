@@ -89,32 +89,25 @@ def test_destroy_accepts_yes_and_short_y_uniformly() -> None:
         assert set(opt.opts) == {"--yes", "-y"}
 
 
-def test_create_yes_is_accepted_deprecated_and_never_forwarded() -> None:
+def test_create_yes_is_rejected_as_unknown_option() -> None:
+    """019-hygiene-deps-docs US5: `--yes` never had any effect on `create`
+    (there is no confirmation prompt to skip) and has been removed from the
+    option surface entirely. See contracts/cli-surface-delta.md V-1: exit 2,
+    "No such option: --yes" — Click's standard unknown-option behavior."""
     for type_name in ALL_TYPE_NAMES:
         descriptor = get_descriptor_by_type(type_name)
         group = build_provider_group(descriptor)
 
         fake_module = types.ModuleType(f"fake_{type_name}")
-        received: dict[str, object] = {}
-
-        def create(**kwargs: object) -> int:
-            received.update(kwargs)
-            return 0
-
-        fake_module.create = create  # type: ignore[attr-defined]
+        fake_module.create = lambda **kwargs: 0  # type: ignore[attr-defined]
 
         import remo_cli.core.provider_registry as pr
 
         pr._MODULE_CACHE[type_name] = fake_module
         try:
             runner = CliRunner()
-            args = ["create", "--yes"]
-            for p in group.commands["create"].params:
-                if isinstance(p, click.Option) and p.required:
-                    args.extend([p.opts[0], "dummy"])
-            result = runner.invoke(group, args)
-            assert result.exit_code == 0, result.output
-            assert "Deprecated" in result.output
-            assert "auto_confirm" not in received
+            result = runner.invoke(group, ["create", "--yes"])
+            assert result.exit_code == 2, result.output
+            assert "No such option: --yes" in result.output
         finally:
             pr._MODULE_CACHE.pop(type_name, None)

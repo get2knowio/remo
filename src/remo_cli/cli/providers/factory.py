@@ -158,16 +158,8 @@ def _build_create(descriptor: ProviderDescriptor) -> click.Command:
     name_opt = _name_option(descriptor, completable=False)
     options = [name_opt, VOLUME_SIZE, ONLY, SKIP, *descriptor.create_options, VERBOSE]
     params: list[click.Parameter] = [_click_option(o, descriptor) for o in options]
-    params.append(_click_option(YES, descriptor))
 
     def run(**kwargs: Any) -> int | None:
-        used_yes = kwargs.pop("auto_confirm", False)
-        if used_yes:
-            from remo_cli.core.output import print_warning
-
-            for dep in descriptor.deprecated_options:
-                if dep.name == "--yes":
-                    print_warning(dep.notice)
         module = get_provider(descriptor.type_name)
         rc: int | None = module.create(**kwargs)
         # create() always returns None now (raises OperationFailedError on

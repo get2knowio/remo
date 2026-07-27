@@ -15,7 +15,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 from remo_cli.core.provider_registry import (
-    CREATE_YES_DEPRECATION,
     LOGIN_USER,
     NAME,
     REGION,
@@ -96,5 +95,4 @@ DESCRIPTOR = ProviderDescriptor(
             confirmable=True,
         ),
     ),
-    deprecated_options=(CREATE_YES_DEPRECATION,),
 )
