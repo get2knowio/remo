@@ -378,6 +378,7 @@ def update(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
+    apply_marker: bool = True,
 ) -> None:
     """Re-configure dev tools on an existing Incus container.
 
@@ -388,6 +389,13 @@ def update(
     Raises :class:`PreconditionError` if the container's IP could not be
     resolved, or :class:`OperationFailedError` on a nonzero
     ansible-playbook rc.
+    
+    *apply_marker* gates the managed-marker backfill. Explicit
+    ``remo incus update`` backfills it (True); ``update_entry`` -- the
+    ``remo shell`` tools-update path -- passes False, so `remo shell` never
+    performs a provider-side write the user did not ask for. Instances that
+    predate tagging are pointed at ``sync`` by the one-time post-migration
+    notice instead (core/known_hosts._print_tagging_notice).
     """
     validate_name(name, "container name")
     guard_not_added_ssh_host(name, "incus")  # FR-012
@@ -401,16 +409,17 @@ def update(
 
     # FR-004: `update` doubles as the backfill path — ensure the managed marker
     # is present (idempotent). FR-005: warn on failure but do not fail update.
-    ok, err = _apply_managed_marker(host, user, name)
-    if not ok:
-        print_warning(
-            f"Could not mark container '{name}' as remo-managed on Incus host "
-            f"'{host}' ({_host_access_desc(host, user)}, needed for "
-            f"`incus config set`): {err}\n"
-            f"  This is a host-side bookkeeping step only — the update itself "
-            f"continues. Until the marker is set, a default `remo incus sync` "
-            f"will skip it; use `remo incus sync --all`."
-        )
+    if apply_marker:
+        ok, err = _apply_managed_marker(host, user, name)
+        if not ok:
+            print_warning(
+                f"Could not mark container '{name}' as remo-managed on Incus "
+                f"host '{host}' ({_host_access_desc(host, user)}, needed for "
+                f"`incus config set`): {err}\n"
+                f"  This is a host-side bookkeeping step only — the update "
+                f"itself continues. Until the marker is set, a default "
+                f"`remo incus sync` will skip it; use `remo incus sync --all`."
+            )
 
     if volume_size or cores or memory:
         bits: list[str] = []
@@ -470,7 +479,13 @@ def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
     incus_host, sep, container = entry.name.partition("/")
     if not sep:
         incus_host, container = "localhost", entry.name
-    update(name=container, host=incus_host, user=entry.instance_id, verbose=verbose)
+    update(
+        name=container,
+        host=incus_host,
+        user=entry.instance_id,
+        verbose=verbose,
+        apply_marker=False,
+    )
 
 
 def _split_host_container(entry: KnownHost) -> tuple[str, str]:

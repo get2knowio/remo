@@ -35,12 +35,12 @@ class TestUpdateEntry:
         spy = mocker.patch("remo_cli.providers.hetzner.update", return_value=None)
         result = providers_hetzner.update_entry(_entry(), verbose=True)
         assert result is None
-        spy.assert_called_once_with(name="dev1", verbose=True)
+        spy.assert_called_once_with(name="dev1", verbose=True, apply_marker=False)
 
     def test_default_verbose_false(self, mocker):
         spy = mocker.patch("remo_cli.providers.hetzner.update", return_value=None)
         providers_hetzner.update_entry(_entry())
-        spy.assert_called_once_with(name="dev1", verbose=False)
+        spy.assert_called_once_with(name="dev1", verbose=False, apply_marker=False)
 
     def test_update_failure_propagates(self, mocker):
         mocker.patch(

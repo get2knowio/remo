@@ -137,6 +137,13 @@ By default only containers carrying the `user.remo=true` managed marker are
 only. To mark one permanently instead, use `remo incus update --name <n>
 --host <h>`.
 
+> **`remo shell` does not tag.** When `remo shell` offers a tools update, it
+> configures the instance only — it never writes provider-side state, because
+> tagging means reaching the hypervisor (a machine you did not name at the
+> prompt). Only explicit `remo incus update` and `remo incus sync` apply the marker. If
+> `sync` reports instances as unmarked, that is why, and either command fixes
+> it permanently.
+
 | Option | Description |
 |--------|-------------|
 | `--host <host>` | Incus host (default: `localhost`) |

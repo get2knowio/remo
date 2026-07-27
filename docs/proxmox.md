@@ -140,6 +140,13 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 > `remo proxmox sync --host <node> --user <you>` — passing `--user` to `update`
 > alone is a one-shot override and is not persisted.
 
+> **`remo shell` does not tag.** When `remo shell` offers a tools update, it
+> configures the instance only — it never writes provider-side state, because
+> tagging means reaching the hypervisor (a machine you did not name at the
+> prompt). Only explicit `remo proxmox update` and `remo proxmox sync` apply the marker. If
+> `sync` reports instances as unmarked, that is why, and either command fixes
+> it permanently.
+
 ## Features
 
 | Feature | Description |

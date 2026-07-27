@@ -13,6 +13,7 @@ import pytest
 
 from remo_cli.core.errors import OperationFailedError
 from remo_cli.providers import proxmox as providers_proxmox
+from remo_cli.models.host import KnownHost
 
 
 def _completed(rc: int, stdout: str = "", stderr: str = "") -> MagicMock:
@@ -165,6 +166,72 @@ class TestCreateUpdateWiring:
         )
         result = providers_proxmox.update(name="dev1", host="node", user="root")
         assert result is None
+        apply.assert_called_once_with("node", "root", "100")
+
+    def test_update_entry_does_not_touch_the_node(self, mocker):
+        """`remo shell`'s tools-update path must not write provider-side state.
+
+        update_entry is the ONLY caller of update() from `remo shell`
+        (cli/shell.py). Tagging is a node-side write over SSH to the
+        hypervisor -- a machine the user never named at the prompt -- so it is
+        gated off here and the post-migration notice points at `sync` instead.
+        """
+        resolve_vmid = mocker.patch(
+            "remo_cli.providers.proxmox._resolve_vmid", return_value="100"
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox._resolve_container_ip", return_value="10.0.0.9"
+        )
+        mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=0)
+        mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
+        mocker.patch(
+            "remo_cli.core.version.get_current_version", return_value="unknown"
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox.resolve_devcontainer_runtime",
+            return_value="devcontainer",
+        )
+        apply = mocker.patch(
+            "remo_cli.providers.proxmox._apply_managed_marker",
+            return_value=(True, ""),
+        )
+
+        entry = KnownHost(
+            type="proxmox",
+            name="node/dev1",
+            host="10.0.0.9",
+            user="remo",
+            instance_id="100",
+            access_mode="direct",
+            region="root",
+        )
+        providers_proxmox.update_entry(entry)
+
+        apply.assert_not_called()
+        # The VMID is only needed for tagging or a resize; neither applies, so
+        # the SSH round-trip that resolves it must not happen either.
+        resolve_vmid.assert_not_called()
+
+    def test_explicit_update_still_backfills(self, mocker):
+        """The gate must not disarm the explicit `remo proxmox update` path."""
+        mocker.patch("remo_cli.providers.proxmox._resolve_vmid", return_value="100")
+        mocker.patch(
+            "remo_cli.providers.proxmox._resolve_container_ip", return_value="10.0.0.9"
+        )
+        mocker.patch("remo_cli.providers.proxmox.run_playbook", return_value=0)
+        mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
+        mocker.patch(
+            "remo_cli.core.version.get_current_version", return_value="unknown"
+        )
+        mocker.patch(
+            "remo_cli.providers.proxmox.resolve_devcontainer_runtime",
+            return_value="devcontainer",
+        )
+        apply = mocker.patch(
+            "remo_cli.providers.proxmox._apply_managed_marker",
+            return_value=(True, ""),
+        )
+        providers_proxmox.update(name="dev1", host="node", user="root")
         apply.assert_called_once_with("node", "root", "100")
 
 

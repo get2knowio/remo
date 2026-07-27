@@ -42,14 +42,14 @@ class TestUpdateEntry:
         result = providers_incus.update_entry(_entry(), verbose=True)
         assert result is None
         spy.assert_called_once_with(
-            name="dev1", host="lab1", user="root", verbose=True
+            name="dev1", host="lab1", user="root", verbose=True, apply_marker=False
         )
 
     def test_localhost_entry_parses_host_and_container(self, mocker):
         spy = mocker.patch("remo_cli.providers.incus.update", return_value=0)
         providers_incus.update_entry(_entry(name="localhost/dev2", instance_id=""))
         spy.assert_called_once_with(
-            name="dev2", host="localhost", user="", verbose=False
+            name="dev2", host="localhost", user="", verbose=False, apply_marker=False
         )
 
     def test_underlying_failure_propagates(self, mocker):

@@ -46,6 +46,7 @@ DESCRIPTOR = ProviderDescriptor(
     sync_options=(),
     info_options=(),
     extra_commands=(),
+    supports_managed_marker=True,
     snapshot_region_scoped=False,
     snapshot_async=True,
 )

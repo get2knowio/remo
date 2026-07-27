@@ -53,7 +53,9 @@ class TestUpdateEntry:
         spy = mocker.patch("remo_cli.providers.proxmox.update", return_value=None)
         result = providers_proxmox.update_entry(_entry(), verbose=True)
         assert result is None
-        spy.assert_called_once_with(name="dev1", host="lab1", user="root", verbose=True)
+        spy.assert_called_once_with(
+            name="dev1", host="lab1", user="root", verbose=True, apply_marker=False
+        )
 
     def test_failure_raises_operation_failed_error(self, mocker):
         mocker.patch(

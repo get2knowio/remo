@@ -109,6 +109,7 @@ DESCRIPTOR = ProviderDescriptor(
         replace(HOST, default=""),
         _NODE_USER,
     ),
+    supports_managed_marker=True,
     snapshot_region_scoped=False,
     extra_commands=(
         CommandSpec(
