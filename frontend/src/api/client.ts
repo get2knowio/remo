@@ -1,79 +1,42 @@
 // Typed REST client for the Remo web service (`/api/v1`).
 //
-// Types mirror `specs/010-web-session-interface/data-model.md` and
-// `specs/010-web-session-interface/contracts/rest-api.md` exactly.
+// Request/response types below are generated from the FastAPI service's
+// OpenAPI contract, not hand-mirrored from a spec doc. The source of truth
+// is `frontend/src/api/generated/schema.d.ts` (produced by `openapi-typescript`
+// from `frontend/src/api/generated/openapi.json`). To refresh both, run
+// `uv run python scripts/export_openapi.py` (regenerates the OpenAPI source
+// from the service) followed by `npm run generate:types` (regenerates the
+// TypeScript) from `frontend/`. See docs/maintaining-generated-types.md.
 
-// ---- Discovery types (data-model.md) ----
+import type { components } from "./generated/schema";
 
-export type ZellijState = "active" | "exited" | "absent";
-export type DevcontainerRunning = "running" | "stopped" | "unknown";
+// ---- Discovery types (generated from the service's OpenAPI contract) ----
 
-export interface SessionTarget {
-  id: string;
-  instance_type: string;
-  instance_name: string;
-  project: string;
-  has_devcontainer: boolean;
-  zellij_state: ZellijState;
-  devcontainer_running: DevcontainerRunning;
-  discovered_at: string;
-  // Read-only git status (added by hosts running the newer remo-host agent;
-  // older hosts omit these and the server defaults them to false/0, so the
-  // rail simply shows no git glyphs). ahead/behind may be stale — discovery
-  // never runs `git fetch`.
-  git_tracked: boolean;
-  git_dirty: boolean;
-  git_ahead: number;
-  git_behind: number;
-}
+export type ZellijState = components["schemas"]["ZellijState"];
+export type DevcontainerRunning = components["schemas"]["DevcontainerRunning"];
 
-export type InstanceStatus =
-  | "ok"
-  | "unreachable"
-  | "auth_failed"
-  | "no_remo_host"
-  | "incompatible_protocol"
-  | "malformed"
-  | "timeout";
+/**
+ * A session target's git fields (git_tracked/git_dirty/git_ahead/git_behind)
+ * are read-only status added by hosts running the newer remo-host agent;
+ * older hosts omit these and the server defaults them to false/0, so the
+ * rail simply shows no git glyphs. ahead/behind may be stale — discovery
+ * never runs `git fetch`.
+ */
+export type SessionTarget = components["schemas"]["SessionTargetOut"];
 
-export interface RemoteCapability {
-  protocol_version: number;
-  host_tools_version: string;
-  projects_root: string;
-  operations: string[];
-  zellij: boolean;
-  docker: boolean;
-}
+export type InstanceStatus = components["schemas"]["InstanceStatus"];
 
-export interface TypedError {
-  code: string;
-  message: string;
-  retryable: boolean;
-  remediation: string;
-}
+export type RemoteCapability = components["schemas"]["CapabilityOut"];
 
-export interface DiscoveryInstance {
-  instance_id: string;
-  instance_type: string;
-  instance_name: string;
-  status: InstanceStatus;
-  region: string;
-  capability?: RemoteCapability;
-  error?: TypedError;
-  refreshed_at: string;
-}
+export type TypedError = components["schemas"]["ErrorOut"];
 
-export interface HostsResponse {
-  instances: DiscoveryInstance[];
-}
+export type DiscoveryInstance = components["schemas"]["InstanceOut"];
 
-export interface SessionsResponse {
-  targets: SessionTarget[];
-}
+export type HostsResponse = components["schemas"]["HostsResponse"];
 
-export interface RefreshResponse {
-  refreshing: boolean;
-}
+export type SessionsResponse = components["schemas"]["SessionsResponse"];
+
+export type RefreshResponse = components["schemas"]["RefreshResponse"];
 
 // ---- Error handling ----
 
@@ -97,9 +60,7 @@ export class ApiError extends Error {
   }
 }
 
-interface ErrorEnvelope {
-  error: TypedError;
-}
+type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 
 // ---- Forward-auth (SSO proxy) re-authentication ----
 //
@@ -307,10 +268,7 @@ export async function getReady(): Promise<ReadinessResponse> {
 // by mintPairingCode() at runtime — never embedded in the bundle (FR-016) — and
 // the caller MUST hold it out of the DOM (copy-only, never displayed).
 
-export interface MintPairingResponse {
-  code: string;
-  expires_in: number;
-}
+export type MintPairingResponse = components["schemas"]["MintPairingResponse"];
 
 /**
  * `POST /api/v1/pairing/mint` — mint a fresh code (rotation-on-open, FR-003).
@@ -381,25 +339,11 @@ export function endPairing(): void {
 // subprotocol list (never the URL/query string, FR-049) — see
 // openTerminalSocket() below.
 
-export interface CreateTerminalResponse {
-  terminal_id: string;
-  ws_token: string;
-  ws_subprotocol: string;
-  expires_in: number;
-  state: string;
-}
+export type CreateTerminalResponse = components["schemas"]["CreateTerminalResponse"];
 
-export interface TerminalSummary {
-  terminal_id: string;
-  session_target_id: string;
-  state: string;
-  created_at: string;
-  last_activity_at: string;
-}
+export type TerminalSummary = components["schemas"]["TerminalOut"];
 
-export interface ListTerminalsResponse {
-  terminals: TerminalSummary[];
-}
+export type ListTerminalsResponse = components["schemas"]["TerminalsListResponse"];
 
 /** `POST /api/v1/terminals` — request a terminal for an opaque target id. */
 export async function createTerminal(

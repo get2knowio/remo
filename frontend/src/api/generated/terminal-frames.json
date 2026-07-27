@@ -1,0 +1,199 @@
+{
+  "frame_version": 1,
+  "inbound": {
+    "$defs": {
+      "PingFrame": {
+        "properties": {
+          "type": {
+            "const": "ping",
+            "default": "ping",
+            "title": "Type",
+            "type": "string"
+          },
+          "v": {
+            "const": 1,
+            "default": 1,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "title": "PingFrame",
+        "type": "object"
+      },
+      "ResizeFrame": {
+        "properties": {
+          "cols": {
+            "default": 80,
+            "title": "Cols",
+            "type": "integer"
+          },
+          "rows": {
+            "default": 24,
+            "title": "Rows",
+            "type": "integer"
+          },
+          "type": {
+            "const": "resize",
+            "default": "resize",
+            "title": "Type",
+            "type": "string"
+          },
+          "v": {
+            "const": 1,
+            "default": 1,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "title": "ResizeFrame",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "ping": "#/$defs/PingFrame",
+        "resize": "#/$defs/ResizeFrame"
+      },
+      "propertyName": "type"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/ResizeFrame"
+      },
+      {
+        "$ref": "#/$defs/PingFrame"
+      }
+    ]
+  },
+  "outbound": {
+    "$defs": {
+      "ErrorClass": {
+        "description": "Classified terminal exit/setup errors surfaced to *this* terminal only.\n\nMatches the WS control-frame ``error.class`` enum (FR-023):\n``auth|network|remote_capability|missing_project|remote_launch``.",
+        "enum": [
+          "auth",
+          "network",
+          "remote_capability",
+          "missing_project",
+          "remote_launch"
+        ],
+        "title": "ErrorClass",
+        "type": "string"
+      },
+      "ErrorFrame": {
+        "properties": {
+          "class": {
+            "$ref": "#/$defs/ErrorClass"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "const": "error",
+            "default": "error",
+            "title": "Type",
+            "type": "string"
+          },
+          "v": {
+            "const": 1,
+            "default": 1,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "class",
+          "message"
+        ],
+        "title": "ErrorFrame",
+        "type": "object"
+      },
+      "ExitFrame": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "integer"
+          },
+          "type": {
+            "const": "exit",
+            "default": "exit",
+            "title": "Type",
+            "type": "string"
+          },
+          "v": {
+            "const": 1,
+            "default": 1,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "ExitFrame",
+        "type": "object"
+      },
+      "PongFrame": {
+        "properties": {
+          "type": {
+            "const": "pong",
+            "default": "pong",
+            "title": "Type",
+            "type": "string"
+          },
+          "v": {
+            "const": 1,
+            "default": 1,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "title": "PongFrame",
+        "type": "object"
+      },
+      "ReadyFrame": {
+        "properties": {
+          "type": {
+            "const": "ready",
+            "default": "ready",
+            "title": "Type",
+            "type": "string"
+          },
+          "v": {
+            "const": 1,
+            "default": 1,
+            "title": "V",
+            "type": "integer"
+          }
+        },
+        "title": "ReadyFrame",
+        "type": "object"
+      }
+    },
+    "discriminator": {
+      "mapping": {
+        "error": "#/$defs/ErrorFrame",
+        "exit": "#/$defs/ExitFrame",
+        "pong": "#/$defs/PongFrame",
+        "ready": "#/$defs/ReadyFrame"
+      },
+      "propertyName": "type"
+    },
+    "oneOf": [
+      {
+        "$ref": "#/$defs/ReadyFrame"
+      },
+      {
+        "$ref": "#/$defs/ExitFrame"
+      },
+      {
+        "$ref": "#/$defs/ErrorFrame"
+      },
+      {
+        "$ref": "#/$defs/PongFrame"
+      }
+    ]
+  },
+  "protocol": "remo-terminal.v1",
+  "x-generated-by": "GENERATED FILE -- do not hand-edit. Regenerate with: uv run python scripts/export_openapi.py. See docs/maintaining-generated-types.md."
+}

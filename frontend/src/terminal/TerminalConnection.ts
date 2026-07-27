@@ -19,6 +19,12 @@ import {
   openTerminalSocket,
   type TypedError,
 } from "../api/client";
+// Generated from the service-side `remo-terminal.v1` frame contract
+// (src/remo_cli/web/frames.py -> frontend/src/api/generated/terminal-frames.json
+// -> terminal-frames.d.ts). Regenerate with `npm run generate:types`; see
+// docs/maintaining-generated-types.md. This is the service->browser
+// direction, which is what handleControlMessage() below parses.
+import type { components } from "../api/generated/terminal-frames";
 
 export type TerminalConnectionState =
   | "connecting"
@@ -28,13 +34,7 @@ export type TerminalConnectionState =
   | "closed"
   | "error";
 
-interface ControlMessage {
-  v: 1;
-  type: "ready" | "exit" | "error" | "pong";
-  code?: number;
-  class?: "auth" | "network" | "remote_capability" | "missing_project" | "remote_launch";
-  message?: string;
-}
+type ControlMessage = components["schemas"]["OutboundFrame"];
 
 const MAX_AUTO_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BACKOFF_MS = [500, 1500, 3500];

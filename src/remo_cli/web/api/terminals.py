@@ -23,10 +23,21 @@ import logging
 
 from fastapi import APIRouter, Request, Response, WebSocket
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from starlette.websockets import WebSocketDisconnect, WebSocketState
 
+from remo_cli.web.api.hosts import ErrorEnvelope
 from remo_cli.web.discovery import DiscoveryService
+from remo_cli.web.frames import (
+    INBOUND_FRAME_ADAPTER,
+    ErrorFrame,
+    ExitFrame,
+    OutboundFrame,
+    PingFrame,
+    PongFrame,
+    ReadyFrame,
+    ResizeFrame,
+)
 from remo_cli.web.models import TerminalState
 from remo_cli.web.terminal import (
     MAX_DIMENSION,
@@ -57,6 +68,14 @@ _ERROR_MESSAGES: dict[ErrorClass, str] = {
     ErrorClass.MISSING_PROJECT: "The project is no longer available on the instance.",
     ErrorClass.REMOTE_LAUNCH: "The project session failed to launch on the instance.",
 }
+
+
+def _error_frame(cls: ErrorClass) -> ErrorFrame:
+    # mypy only synthesizes the alias ("class") as the constructor keyword
+    # for a Field(alias=...) member, even with populate_by_name=True allowing
+    # "class_" at runtime too -- one `# type: ignore[call-arg]` here instead
+    # of one per call site.
+    return ErrorFrame(class_=cls, message=_ERROR_MESSAGES[cls])  # type: ignore[call-arg]
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +156,17 @@ def _error(status_code: int, code: str, message: str, *, remediation: str, retry
 # ---------------------------------------------------------------------------
 
 
-@router.post("/terminals", status_code=201)
+@router.post(
+    "/terminals",
+    status_code=201,
+    response_model=CreateTerminalResponse,
+    responses={
+        400: {"model": ErrorEnvelope},
+        404: {"model": ErrorEnvelope},
+        429: {"model": ErrorEnvelope},
+        503: {"model": ErrorEnvelope},
+    },
+)
 async def create_terminal(request: Request, body: CreateTerminalRequest):
     settings = request.app.state.settings
 
@@ -221,7 +250,11 @@ async def list_terminals(request: Request) -> TerminalsListResponse:
     )
 
 
-@router.delete("/terminals/{terminal_id}", status_code=204)
+@router.delete(
+    "/terminals/{terminal_id}",
+    status_code=204,
+    responses={404: {"model": ErrorEnvelope}},
+)
 async def delete_terminal(request: Request, terminal_id: str):
     registry = _registry(request.app)
     if registry.get(terminal_id) is None:
@@ -305,15 +338,7 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str) -> None:
         session = TerminalSession(argv, cols=attachment.cols, rows=attachment.rows)
         await session.start()
     except Exception:  # noqa: BLE001 - any spawn failure is surfaced + reaped.
-        await _send_control(
-            websocket,
-            {
-                "v": 1,
-                "type": "error",
-                "class": ErrorClass.REMOTE_LAUNCH.value,
-                "message": _ERROR_MESSAGES[ErrorClass.REMOTE_LAUNCH],
-            },
-        )
+        await _send_control(websocket, _error_frame(ErrorClass.REMOTE_LAUNCH))
         if session is not None:
             await session.close()
         registry.set_state(terminal_id, TerminalState.ERROR)
@@ -321,7 +346,7 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str) -> None:
         return
 
     registry.attach_session(terminal_id, session)
-    await _send_control(websocket, {"v": 1, "type": "ready"})
+    await _send_control(websocket, ReadyFrame())
     registry.set_state(terminal_id, TerminalState.READY)
 
     # 6/7. Pump until the process exits, the client disconnects, or a stall.
@@ -391,17 +416,9 @@ async def _send_loop(
             err = session.error_class
             registry.record_exit(terminal_id, rc, err.value if err else None)
             if err is not None:
-                await _send_control(
-                    websocket,
-                    {
-                        "v": 1,
-                        "type": "error",
-                        "class": err.value,
-                        "message": _ERROR_MESSAGES[err],
-                    },
-                )
+                await _send_control(websocket, _error_frame(err))
             else:
-                await _send_control(websocket, {"v": 1, "type": "exit", "code": rc})
+                await _send_control(websocket, ExitFrame(code=rc))
             return "process_exit"
         try:
             await websocket.send_bytes(chunk)
@@ -437,16 +454,19 @@ async def _recv_loop(
 
 async def _handle_control(websocket: WebSocket, session: TerminalSession, text: str) -> None:
     try:
-        payload = json.loads(text)
-    except (ValueError, TypeError):
+        # `validate_json` parses and validates in one native pass (malformed
+        # JSON, a non-object payload, and an unknown/invalid frame all raise
+        # the same ValidationError), instead of a separate `json.loads` +
+        # `isinstance(dict)` + `validate_python` walk over the same data.
+        frame = INBOUND_FRAME_ADAPTER.validate_json(text)
+    except ValidationError:
+        # F-3: malformed/unrecognized inbound frames are silently dropped --
+        # never raise, never close the socket.
         return
-    if not isinstance(payload, dict):
-        return
-    msg_type = payload.get("type")
-    if msg_type == "resize":
-        session.resize(payload.get("cols", 80), payload.get("rows", 24))
-    elif msg_type == "ping":
-        await _send_control(websocket, {"v": 1, "type": "pong"})
+    if isinstance(frame, ResizeFrame):
+        session.resize(frame.cols, frame.rows)
+    elif isinstance(frame, PingFrame):
+        await _send_control(websocket, PongFrame())
 
 
 async def _stall_watchdog(websocket: WebSocket, session: TerminalSession) -> str:
@@ -461,9 +481,18 @@ async def _stall_watchdog(websocket: WebSocket, session: TerminalSession) -> str
 # ---------------------------------------------------------------------------
 
 
-async def _send_control(websocket: WebSocket, payload: dict) -> None:
+async def _send_control(websocket: WebSocket, frame: OutboundFrame) -> None:
     try:
-        await websocket.send_text(json.dumps(payload))
+        # `json.dumps` (not `model_dump_json`, whose default separators
+        # don't match) on the plain dict preserves today's exact bytes, key
+        # order included (F-4). Plain `model_dump(by_alias=True)` (mode=
+        # "python", the default) rather than `mode="json"`: every outbound
+        # frame field is already a JSON-native value at the Python level (int,
+        # a Literal[str], or a `(str, Enum)` member `json.dumps` serializes
+        # natively via its own string data) -- `mode="json"`'s extra
+        # normalization walk would be a no-op here, just repeated work on a
+        # per-message hot path.
+        await websocket.send_text(json.dumps(frame.model_dump(by_alias=True)))
     except (WebSocketDisconnect, RuntimeError):
         pass
 

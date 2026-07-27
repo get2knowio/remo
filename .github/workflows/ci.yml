@@ -131,6 +131,9 @@ jobs:
       - name: Typecheck
         run: npm run lint
 
+      - name: Check generated types are fresh
+        run: npm run check:types-fresh
+
       - name: Unit tests
         run: npm run test
 

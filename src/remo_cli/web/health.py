@@ -26,12 +26,23 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from remo_cli.core.config import get_known_hosts_path_readonly
 from remo_cli.web.config import WebSettings
 from remo_cli.web.state import ConfigurationState, detect_state
 
 router = APIRouter()
+
+
+class HealthResponse(BaseModel):
+    status: str
+
+
+class ReadinessResponse(BaseModel):
+    status: str
+    checks: dict[str, str]
+    detail: str | None = None
 
 _SSH_IDENTITY_CANDIDATES = ("id_ed25519", "id_ecdsa", "id_rsa", "id_dsa")
 
@@ -49,13 +60,16 @@ _BROKEN_DETAIL = (
 )
 
 
-@router.get("/health")
+@router.get("/health", response_model=HealthResponse)
 async def health() -> dict:
     """Liveness probe: the process is up. Never checks configuration."""
     return {"status": "alive"}
 
 
-@router.get("/ready")
+@router.get(
+    "/ready",
+    responses={200: {"model": ReadinessResponse}, 503: {"model": ReadinessResponse}},
+)
 async def ready(request: Request) -> JSONResponse:
     """Readiness probe: configuration state + registry/identity/runtime/executables."""
     settings: WebSettings = getattr(request.app.state, "settings", None) or WebSettings()

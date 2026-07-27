@@ -29,6 +29,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PROVIDERS_DIR = REPO_ROOT / "src" / "remo_cli" / "providers"
 CLI_DIR = REPO_ROOT / "src" / "remo_cli" / "cli"
+TERMINALS_API_FILE = REPO_ROOT / "src" / "remo_cli" / "web" / "api" / "terminals.py"
 
 
 def _relpath(path: Path) -> str:
@@ -243,4 +244,60 @@ def test_private_provider_reachins_are_marked_and_allowlisted() -> None:
     assert not stale, (
         "Transitional SLF001 allowlist entries no longer found in source "
         f"(remove them from SLF001_ALLOWLIST): {sorted(stale)}."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Gate 3: ad-hoc control-frame dict literals in web/api/terminals.py
+# ---------------------------------------------------------------------------
+#
+# See specs/020-openapi-type-generation/contracts/terminal-frames-v1.md (F-2,
+# SC-012): every WS control frame must be constructed through a
+# remo_cli.web.frames model, never a bare dict literal. Every one of the
+# frame literals this replaces shared exactly one trait: a `"v"` key. Walking
+# the file's AST for any `ast.Dict` node with a `"v"` key catches the whole
+# family without depending on the rest of each literal's shape.
+
+
+def _find_frame_dict_literals(path: Path) -> set[int]:
+    """Return line numbers of every `ast.Dict` node with a `"v"` key in *path*."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key in node.keys:
+            if isinstance(key, ast.Constant) and key.value == "v":
+                found.add(node.lineno)
+                break
+    return found
+
+
+# Zero-tolerance from day one (SC-012): the T051 refactor eliminated all 5
+# pre-existing ad-hoc frame literals, so there is no transitional debt to
+# allowlist here, unlike Gates 1/2 above.
+FRAME_DICT_LITERAL_ALLOWLIST: set[int] = set()
+
+
+def test_no_adhoc_control_frame_dict_literals_in_terminals_api() -> None:
+    """Gate 3 (terminal-frames-v1.md F-2): no bare `{"v": 1, ...}` literals.
+
+    All six WS control frames must be constructed via remo_cli.web.frames
+    models (ResizeFrame/PingFrame/ReadyFrame/ExitFrame/ErrorFrame/PongFrame),
+    never as ad-hoc dict literals in web/api/terminals.py.
+    """
+    found = _find_frame_dict_literals(TERMINALS_API_FILE)
+
+    unexpected = found - FRAME_DICT_LITERAL_ALLOWLIST
+    assert not unexpected, (
+        'Ad-hoc control-frame dict literal(s) (a dict with a "v" key) found in '
+        f"{_relpath(TERMINALS_API_FILE)} at line(s) {sorted(unexpected)}. "
+        "Construct control frames through remo_cli.web.frames models instead "
+        "(see specs/020-openapi-type-generation/contracts/terminal-frames-v1.md)."
+    )
+
+    stale = FRAME_DICT_LITERAL_ALLOWLIST - found
+    assert not stale, (
+        "Transitional frame-dict-literal allowlist entries no longer found "
+        f"in source (remove them from FRAME_DICT_LITERAL_ALLOWLIST): {sorted(stale)}."
     )

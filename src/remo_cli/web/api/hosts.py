@@ -11,11 +11,13 @@ validation/OpenAPI docs, and a shared `DiscoveryService` singleton read from
 
 from __future__ import annotations
 
+from enum import Enum
+
 from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
 
-from remo_cli.models.discovery import DiscoverySnapshot
-from remo_cli.models.session_target import SessionTarget
+from remo_cli.models.discovery import DiscoverySnapshot, InstanceStatus
+from remo_cli.models.session_target import DevcontainerRunning, SessionTarget, ZellijState
 from remo_cli.web.discovery import DiscoveryService
 
 router = APIRouter()
@@ -24,6 +26,28 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # Response/request models
 # ---------------------------------------------------------------------------
+
+
+class KnownProviderType(str, Enum):
+    """The built-in provider types (data-model.md §1).
+
+    Fixed by the built-in set, not derived from `core.provider_registry.
+    all_descriptors()` at import time (FR-004a/SC-011): a third-party
+    provider install must never perturb the exported OpenAPI artifact.
+    `tests/unit/test_schema_drift.py` (T-8) asserts this enum's members
+    equal the built-in descriptor names, so a first-party provider addition
+    fails loudly instead of silently drifting from reality.
+
+    Every field this annotates stays typed `KnownProviderType | str`
+    (FR-014, SC-009): the wire value is unconstrained (any provider type
+    name is valid data); this enum only makes the *known* vocabulary a
+    referenceable OpenAPI component for the console to enumerate.
+    """
+
+    INCUS = "incus"
+    HETZNER = "hetzner"
+    AWS = "aws"
+    PROXMOX = "proxmox"
 
 
 class CapabilityOut(BaseModel):
@@ -39,11 +63,20 @@ class ErrorOut(BaseModel):
     remediation: str
 
 
+class ErrorEnvelope(BaseModel):
+    """The `{"error": {...}}` wire envelope every failure response that
+    actually returns it uses (`terminals.py`, `setup.py`, the `app.py`
+    middleware). Declared only on routes that return this exact shape —
+    `pairing.py`'s 403 returns `{"detail": ...}` instead (data-model.md §2)."""
+
+    error: ErrorOut
+
+
 class InstanceOut(BaseModel):
     instance_id: str
-    instance_type: str
+    instance_type: KnownProviderType | str
     instance_name: str
-    status: str
+    status: InstanceStatus
     region: str = ""
     capability: CapabilityOut | None = None
     error: ErrorOut | None = None
@@ -56,12 +89,12 @@ class HostsResponse(BaseModel):
 
 class SessionTargetOut(BaseModel):
     id: str
-    instance_type: str
+    instance_type: KnownProviderType | str
     instance_name: str
     project: str
     has_devcontainer: bool
-    zellij_state: str
-    devcontainer_running: str
+    zellij_state: ZellijState
+    devcontainer_running: DevcontainerRunning
     discovered_at: str
     git_tracked: bool = False
     git_dirty: bool = False
@@ -108,7 +141,7 @@ def _instance_out(snapshot: DiscoverySnapshot) -> InstanceOut:
         instance_id=snapshot.instance_id,
         instance_type=snapshot.instance_type,
         instance_name=snapshot.instance_name,
-        status=snapshot.status.value,
+        status=snapshot.status,
         region=snapshot.region,
         capability=capability_out,
         error=error_out,
@@ -123,8 +156,8 @@ def _target_out(target: SessionTarget) -> SessionTargetOut:
         instance_name=target.instance_name,
         project=target.project,
         has_devcontainer=target.has_devcontainer,
-        zellij_state=target.zellij_state.value,
-        devcontainer_running=target.devcontainer_running.value,
+        zellij_state=target.zellij_state,
+        devcontainer_running=target.devcontainer_running,
         discovered_at=target.discovered_at,
         git_tracked=target.git_tracked,
         git_dirty=target.git_dirty,
