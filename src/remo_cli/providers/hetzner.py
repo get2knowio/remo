@@ -189,6 +189,7 @@ def update(
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
+    apply_marker: bool = True,
 ) -> None:
     """Re-configure dev tools on an existing Hetzner VM.
 
@@ -197,6 +198,13 @@ def update(
 
     Raises :class:`PreconditionError` if the server is not registered, or
     :class:`OperationFailedError` if a playbook fails.
+    
+    *apply_marker* gates the managed-marker backfill. Explicit
+    ``remo hetzner update`` backfills it (True); ``update_entry`` -- the
+    ``remo shell`` tools-update path -- passes False, so `remo shell` never
+    performs a provider-side write the user did not ask for. Instances that
+    predate tagging are pointed at ``sync`` by the one-time post-migration
+    notice instead (core/known_hosts._print_tagging_notice).
     """
     if name:
         validate_name(name, "server name")
@@ -209,12 +217,14 @@ def update(
     # (T058) -- API-only, so it runs before/independent of the SSH-reachable
     # steps below and is not skipped by a later playbook failure. Warn on
     # failure but do not fail the whole update (FR-005 parity).
-    ok, err = _apply_managed_label(server_name)
-    if not ok:
-        print_warning(
-            f"Could not mark server '{server_name}' as remo-managed ({err}); "
-            f"it may not be picked up by a default `remo hetzner sync`."
-        )
+    if apply_marker:
+        ok, err = _apply_managed_label(server_name)
+        if not ok:
+            print_warning(
+                f"Could not mark server '{server_name}' as remo-managed "
+                f"({err}); it may not be picked up by a default "
+                f"`remo hetzner sync`."
+            )
 
     # Get server address from known_hosts.
     server_host = _lookup_hetzner_host(server_name)
@@ -256,7 +266,7 @@ def update(
 
 def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
     """Re-apply tool configuration to an existing VM (Protocol Part A)."""
-    update(name=entry.name, verbose=verbose)
+    update(name=entry.name, verbose=verbose, apply_marker=False)
 
 
 _LIST_COLUMNS = (

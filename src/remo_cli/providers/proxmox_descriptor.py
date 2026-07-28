@@ -27,6 +27,17 @@ from remo_cli.core.provider_registry import (
     ProviderDescriptor,
 )
 
+# The shared catalog's USER reads "SSH user for the remote host", which is
+# ambiguous here: for Proxmox it is the login on the *hypervisor node*, used to
+# run host-side `pct` commands -- NOT the account you land in inside the
+# container (that is always `remo`, set at create/sync time and not
+# configurable). Overridden so `--help` says which of the two machines it means.
+_NODE_USER = replace(
+    USER,
+    help="SSH user on the Proxmox node, for host-side pct commands "
+    "(default: root). Not the container login, which is always 'remo'.",
+)
+
 _NODE = OptionSpec(
     name="--node", param="node", default="", help="Proxmox cluster node name (default: --host)."
 )
@@ -65,7 +76,7 @@ DESCRIPTOR = ProviderDescriptor(
     sdk_extra=None,
     create_options=(
         replace(HOST, required=True, default=None),
-        USER,
+        _NODE_USER,
         _NODE,
         _BRIDGE,
         _STORAGE,
@@ -79,25 +90,26 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     update_options=(
         replace(HOST, default=""),
-        USER,
+        _NODE_USER,
         CORES,
         MEMORY,
         DEVCONTAINER_RUNTIME,
     ),
     destroy_options=(
         replace(HOST, default=""),
-        USER,
+        _NODE_USER,
         _PURGE,
     ),
     sync_options=(
         replace(HOST, required=True, default=None),
-        USER,
+        _NODE_USER,
         USE_IP,
     ),
     info_options=(
         replace(HOST, default=""),
-        USER,
+        _NODE_USER,
     ),
+    supports_managed_marker=True,
     snapshot_region_scoped=False,
     extra_commands=(
         CommandSpec(
@@ -106,7 +118,7 @@ DESCRIPTOR = ProviderDescriptor(
             impl="bootstrap",
             options=(
                 replace(HOST, required=True, default=None),
-                USER,
+                _NODE_USER,
                 _BRIDGE,
                 _STORAGE,
                 _TEMPLATE,

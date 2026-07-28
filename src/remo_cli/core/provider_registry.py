@@ -144,6 +144,11 @@ class ProviderDescriptor:
     destroy_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
     sync_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
     info_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
+    # True when the provider backfills a remo-managed marker on `update`/`sync`
+    # (incus/proxmox config keys and tags, hetzner labels). AWS has no backfill.
+    # Drives the post-migration tagging notice; keeps the type literals here
+    # rather than in core/ (Principle II).
+    supports_managed_marker: bool = False
     snapshot_region_scoped: bool = False
     snapshot_async: bool = False  # True when creation is async and status is meaningful (AWS/Hetzner)
     extra_commands: tuple[CommandSpec, ...] = field(default_factory=tuple)

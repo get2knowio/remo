@@ -56,6 +56,45 @@ def _print_migration_notice(report: MigrationReport) -> None:
         "Note: the next `remo web push` will re-verify all instances (the "
         "registry format changed)."
     )
+    _print_tagging_notice(report)
+
+
+def _print_tagging_notice(report: MigrationReport) -> None:
+    """Point at the command that backfills managed tags (feature 013).
+
+    Managed tagging and registry v2 are unrelated features that ship in the
+    same release, so every instance in a migrating registry predates tagging
+    and a default `sync` will list it as unmarked. Migration is the one moment
+    that reaches exactly that population exactly once, so the notice rides
+    along here rather than being discovered later.
+
+    This replaces the implicit backfill that used to run whenever `remo shell`
+    offered a tools update: tagging is a provider-side write (an SSH hop to the
+    hypervisor for incus/proxmox), and `remo shell` should touch the instance
+    only. Explicit `remo <type> update` and `remo <type> sync` still tag.
+
+    Says "may not be" rather than "are not": we cannot know an instance's tag
+    state without reaching the provider, which is the very thing being avoided.
+    """
+    from remo_cli.core.output import print_info  # noqa: PLC0415
+    from remo_cli.core.provider_registry import get_descriptor, is_provider_type  # noqa: PLC0415
+
+    taggable = [
+        t
+        for t in report.migrated_types
+        if is_provider_type(t) and get_descriptor(t).supports_managed_marker
+    ]
+    if not taggable:
+        return
+
+    print_info(
+        "Note: instances created before this release may not be tagged as "
+        "remo-managed, so a default `sync` will list them as unmarked. Tag "
+        "them with:"
+    )
+    for type_name in taggable:
+        scope = " --host <host>" if _is_host_scoped_type(type_name) else ""
+        print_info(f"  remo {type_name} sync{scope}")
 
 
 def _migrate_and_notify() -> None:

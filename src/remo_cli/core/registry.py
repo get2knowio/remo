@@ -84,6 +84,10 @@ class MigrationReport:
     migrated_count: int
     backup_path: Path
     skipped_lines: list[str]
+    # Provider types present among the migrated entries, sorted. Lets the
+    # one-time notice name the providers the user actually has instead of
+    # listing all four (see core/known_hosts._print_migration_notice).
+    migrated_types: tuple[str, ...] = ()
 
 
 @dataclass
@@ -725,6 +729,7 @@ def _migrate_locked() -> MigrationReport | None:
         migrated_count=len(valid_hosts) + len(legacy_result.unknown_raw),
         backup_path=backup_path,
         skipped_lines=skipped,
+        migrated_types=tuple(sorted({h.type for h in valid_hosts})),
     )
 
 

@@ -101,6 +101,14 @@ def test_descriptor_signature_conformance(type_name: str, registered: None) -> N
         if verb == "create":
             # --yes is accepted (deprecated) but never forwarded to impl.
             click_params.discard("auto_confirm")
+        if verb == "update":
+            # `apply_marker` is deliberately internal: it gates the
+            # managed-marker backfill so `update_entry` (the `remo shell`
+            # tools-update path) can decline a provider-side write the user
+            # never asked for. Exposing it as a flag would be noise. Named
+            # explicitly rather than loosening the rule, so any *other*
+            # impl-only parameter still fails this gate.
+            sig_params.discard("apply_marker")
         assert click_params <= sig_params, (
             f"{type_name} {verb}: CLI declares params impl doesn't accept: {click_params - sig_params}"
         )

@@ -71,6 +71,28 @@ def _lookup_proxmox_host(name: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
+def _ssh_target(host: str, user: str) -> str:
+    """Render the SSH destination exactly as :func:`_ssh_run` builds it.
+
+    Kept in lockstep with ``_ssh_run`` so a warning never advertises a
+    destination we did not actually try (an empty *user* means "let ssh_config
+    decide", which prints as a bare host, not ``@host``).
+    """
+    return f"{user}@{host}" if user else host
+
+
+def _node_access_desc(host: str, user: str) -> str:
+    """Describe how :func:`_run_on_node` reaches *host*, for warning text.
+
+    Mirrors ``_run_on_node``'s localhost branch: node-side work on
+    ``localhost`` runs as a local subprocess, so a warning must not claim an
+    SSH hop that never happened.
+    """
+    if host == "localhost":
+        return "locally"
+    return f"over ssh {_ssh_target(host, user)}"
+
+
 def _ssh_run(host: str, user: str, command: str) -> subprocess.CompletedProcess[str]:
     """Run *command* on *host* via SSH and return the completed process.
 
@@ -383,8 +405,12 @@ def create(
         ok, err = _apply_managed_marker(host, user, vmid)
         if not ok:
             print_warning(
-                f"Container '{name}' was created but could not be marked "
-                f"as remo-managed ({err}); a default `remo proxmox sync` "
+                f"Container '{name}' was created, but could not be tagged as "
+                f"remo-managed on Proxmox node '{host}' "
+                f"({_node_access_desc(host, user)}, needed for `pct set`): "
+                f"{err}\n"
+                f"  The container is fine. Until it carries the "
+                f"'{PROXMOX_MANAGED_TAG}' tag, a default `remo proxmox sync` "
                 f"will skip it (use `--all` or `remo proxmox update`)."
             )
     else:
@@ -481,6 +507,7 @@ def update(
     tools_skip: tuple[str, ...] = (),
     devcontainer_runtime: str | None = None,
     verbose: bool = False,
+    apply_marker: bool = True,
 ) -> None:
     """Re-configure dev tools on an existing Proxmox LXC container.
 
@@ -489,6 +516,13 @@ def update(
     dev-tools configure playbook.
 
     Raises :class:`OperationFailedError` on a nonzero playbook rc.
+    
+    *apply_marker* gates the managed-marker backfill. Explicit
+    ``remo proxmox update`` backfills it (True); ``update_entry`` -- the
+    ``remo shell`` tools-update path -- passes False, so `remo shell` never
+    performs a provider-side write the user did not ask for. Instances that
+    predate tagging are pointed at ``sync`` by the one-time post-migration
+    notice instead (core/known_hosts._print_tagging_notice).
     """
     validate_name(name, "container name")
     guard_not_added_ssh_host(name, "proxmox")  # FR-012
@@ -512,20 +546,33 @@ def update(
     # FR-004: `update` is the backfill path — ensure the managed marker is
     # present (idempotent, preserving existing tags). FR-005: warn on failure
     # but do not fail update. Resolve the VMID if the registry did not have it.
-    if not vmid:
+    # Resolve the VMID only when something actually needs it — tagging below,
+    # or a resize. Resolving costs an SSH round-trip to the node, and a
+    # tools-only update from `remo shell` needs neither, so it must not pay for
+    # one. (`_resolve_container_ip` further down resolves lazily on its own if
+    # the registry has no cached address.)
+    if not vmid and (apply_marker or volume_size or cores or memory):
         vmid = _resolve_vmid(name, host, user)
-    if vmid:
-        ok, err = _apply_managed_marker(host, user, vmid)
-        if not ok:
+
+    if apply_marker:
+        if vmid:
+            ok, err = _apply_managed_marker(host, user, vmid)
+            if not ok:
+                print_warning(
+                    f"Could not tag container '{name}' as remo-managed on "
+                    f"Proxmox node '{host}' ({_node_access_desc(host, user)}, "
+                    f"needed for `pct set`): {err}\n"
+                    f"  This is a node-side bookkeeping step only — the update "
+                    f"itself continues. Until '{name}' carries the "
+                    f"'{PROXMOX_MANAGED_TAG}' tag, a default `remo proxmox "
+                    f"sync` will skip it; use `remo proxmox sync --all`, or "
+                    f"add the tag in the Proxmox UI."
+                )
+        else:
             print_warning(
-                f"Could not mark container '{name}' as remo-managed ({err}); "
-                f"it may not be picked up by a default `remo proxmox sync`."
+                f"Could not resolve a VMID for '{name}'; it was not marked as "
+                f"remo-managed."
             )
-    else:
-        print_warning(
-            f"Could not resolve a VMID for '{name}'; it was not marked as "
-            f"remo-managed."
-        )
 
     if volume_size or cores or memory:
         bits: list[str] = []
@@ -581,7 +628,13 @@ def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
     node_host, sep, container = entry.name.partition("/")
     if not sep:
         node_host, container = "", entry.name
-    update(name=container, host=node_host, user=entry.region, verbose=verbose)
+    update(
+        name=container,
+        host=node_host,
+        user=entry.region,
+        verbose=verbose,
+        apply_marker=False,
+    )
 
 
 def _split_node_container(entry: KnownHost) -> tuple[str, str]:

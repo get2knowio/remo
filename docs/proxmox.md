@@ -89,7 +89,7 @@ remo proxmox info --name dev1
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--host <host>` | (required) | SSH host for the Proxmox node |
-| `--user <user>` | (current user) | SSH user for the Proxmox host |
+| `--user <user>` | (ssh_config; recorded as `root`) | SSH user on the **Proxmox node**, for host-side `pct` commands — not the container login (always `remo`) |
 | `--node <node>` | `--host` | Proxmox cluster node name (only differs in clusters) |
 | `--bridge <name>` | `vmbr0` | Linux bridge to attach the container to |
 | `--storage <name>` | `local-lvm` | Storage pool for the rootfs volume |
@@ -111,7 +111,7 @@ remo proxmox info --name dev1
 | `--cores <n>` | Set CPU core count via `pct set` (live; cgroup v2) |
 | `--memory <MiB>` | Set memory limit via `pct set` (live) |
 | `--host <host>` | Proxmox host (auto-detected from registry if omitted) |
-| `--user <user>` | SSH user for the Proxmox host |
+| `--user <user>` | SSH user on the **Proxmox node** (default: `root`), for host-side `pct` commands — not the container login (always `remo`) |
 | `--devcontainer-runtime <name>` | `devcontainer` or `deacon` (experimental). Re-provisions the launcher scripts to use the chosen runtime. |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
@@ -123,7 +123,29 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `--yes`, `-y` | Skip confirmation prompt |
 | `--purge` | Pass `--purge` to `pct destroy`: also remove the container from backup/replication/HA job configs. The rootfs is destroyed regardless of this flag. |
 | `--host <host>` | Proxmox host |
-| `--user <user>` | SSH user for the Proxmox host |
+| `--user <user>` | SSH user on the **Proxmox node** (default: `root`), for host-side `pct` commands — not the container login (always `remo`) |
+
+> **`--user` is the *node* login, not the container login.** It is the account
+> remo SSHes into the Proxmox node as, to run host-side `pct` commands
+> (creating the container, resolving its VMID, and applying the `remo` tag).
+> The account you land in *inside* the container is always `remo` and is not
+> configurable. `pct` normally requires `root` on the node.
+>
+> Note the defaults differ by command: `create`/`sync` leave `--user` empty and
+> let your `ssh_config` decide, but record `node_user: root` in the registry;
+> `update`/`destroy`/`info` read that recorded value and fall back to `root`.
+> So a container created without `--user` may be reached as you at create time
+> and as `root` later. If root SSH is blocked (e.g. a Tailscale SSH policy),
+> re-record the right user with
+> `remo proxmox sync --host <node> --user <you>` — passing `--user` to `update`
+> alone is a one-shot override and is not persisted.
+
+> **`remo shell` does not tag.** When `remo shell` offers a tools update, it
+> configures the instance only — it never writes provider-side state, because
+> tagging means reaching the hypervisor (a machine you did not name at the
+> prompt). Only explicit `remo proxmox update` and `remo proxmox sync` apply the marker. If
+> `sync` reports instances as unmarked, that is why, and either command fixes
+> it permanently.
 
 ## Features
 

@@ -15,6 +15,7 @@ import pytest
 
 from remo_cli.core.errors import OperationFailedError
 from remo_cli.providers import incus as providers_incus
+from remo_cli.models.host import KnownHost
 
 
 def _completed(rc: int, stdout: str = "", stderr: str = "") -> MagicMock:
@@ -136,3 +137,40 @@ class TestUpdateBackfill:
         )
         providers_incus.update(name="dev1", host="h", user="u")
         apply.assert_called_once_with("h", "u", "dev1")
+
+
+class TestUpdateEntryDoesNotTouchHost:
+    """`remo shell`'s tools-update path must not write host-side state."""
+
+    def _patch_update_internals(self, mocker):
+        mocker.patch(
+            "remo_cli.providers.incus._resolve_container_ip", return_value="10.0.0.9"
+        )
+        mocker.patch("remo_cli.providers.incus.run_playbook", return_value=0)
+        mocker.patch("remo_cli.core.ssh.detect_timezone", return_value="")
+        mocker.patch(
+            "remo_cli.core.version.get_current_version", return_value="unknown"
+        )
+        return mocker.patch(
+            "remo_cli.providers.incus._apply_managed_marker",
+            return_value=(True, ""),
+        )
+
+    def test_update_entry_skips_marker(self, mocker):
+        apply = self._patch_update_internals(mocker)
+        entry = KnownHost(
+            type="incus",
+            name="myhost/dev1",
+            host="10.0.0.9",
+            user="remo",
+            instance_id="paul",
+            access_mode="direct",
+            region="",
+        )
+        providers_incus.update_entry(entry)
+        apply.assert_not_called()
+
+    def test_explicit_update_still_backfills(self, mocker):
+        apply = self._patch_update_internals(mocker)
+        providers_incus.update(name="dev1", host="myhost", user="paul")
+        apply.assert_called_once_with("myhost", "paul", "dev1")
