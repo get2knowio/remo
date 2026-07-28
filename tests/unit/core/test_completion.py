@@ -7,8 +7,11 @@ on never touching an rc file without consent.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
+from remo_cli.core import completion
 from remo_cli.core.completion import (
     SHELLS,
     detect_shell,
@@ -87,20 +90,102 @@ class TestLayout:
 
 
 class TestDetectShell:
+    @pytest.fixture
+    def no_parent(self, monkeypatch):
+        """Make the process-tree walk find nothing, isolating the $SHELL path."""
+        monkeypatch.setattr(completion, "_shell_from_parent", lambda: None)
+
     @pytest.mark.parametrize("shell", SHELLS)
-    def test_reads_login_shell_from_env(self, monkeypatch, shell):
+    def test_falls_back_to_env_when_parent_is_not_a_shell(
+        self, monkeypatch, no_parent, shell
+    ):
         monkeypatch.setenv("SHELL", f"/usr/bin/{shell}")
-        assert detect_shell() == shell
+        d = detect_shell()
+        assert (d.shell, d.source, d.conflict) == (shell, "$SHELL", None)
 
-    def test_unset_env_returns_none(self, monkeypatch):
+    def test_unset_env_returns_none(self, monkeypatch, no_parent):
         monkeypatch.delenv("SHELL", raising=False)
-        assert detect_shell() is None
+        assert detect_shell().shell is None
 
-    def test_unsupported_shell_returns_none(self, monkeypatch):
+    def test_unsupported_shell_returns_none(self, monkeypatch, no_parent):
         """Returning None (not a guess) is what lets the CLI ask instead of
         writing completion for the wrong shell."""
         monkeypatch.setenv("SHELL", "/usr/bin/nushell")
-        assert detect_shell() is None
+        assert detect_shell().shell is None
+
+    def test_parent_process_wins_over_env(self, monkeypatch):
+        """The macOS case that motivated this: zsh is the login shell, but the
+        user is typing into fish. $SHELL alone confidently installs zsh
+        completion for a fish user and reports success."""
+        monkeypatch.setattr(completion, "_shell_from_parent", lambda: "fish")
+        monkeypatch.setenv("SHELL", "/bin/zsh")
+        d = detect_shell()
+        assert d.shell == "fish"
+        assert d.source == "parent process"
+        # Reported, not silently resolved — the CLI turns this into a warning.
+        assert d.conflict == "zsh"
+
+    def test_no_conflict_reported_when_both_agree(self, monkeypatch):
+        monkeypatch.setattr(completion, "_shell_from_parent", lambda: "fish")
+        monkeypatch.setenv("SHELL", "/usr/bin/fish")
+        assert detect_shell().conflict is None
+
+    def test_no_conflict_reported_when_env_is_unusable(self, monkeypatch):
+        """An unset or exotic $SHELL is not a disagreement worth warning about."""
+        monkeypatch.setattr(completion, "_shell_from_parent", lambda: "fish")
+        monkeypatch.setenv("SHELL", "/usr/bin/nushell")
+        assert detect_shell().conflict is None
+
+
+class TestShellFromParent:
+    def test_walks_past_non_shell_ancestors(self, monkeypatch):
+        """Console-script shims and `uv tool` wrappers sit between remo and the
+        shell, so checking only the immediate parent finds nothing."""
+        tree = {100: ("python", 99), 99: ("remo", 98), 98: ("-fish", 1)}
+
+        def fake_ps(pid, field):
+            if pid not in tree:
+                return None
+            comm, ppid = tree[pid]
+            return comm if field == "comm=" else str(ppid)
+
+        monkeypatch.setattr(os, "getppid", lambda: 100)
+        monkeypatch.setattr(completion, "_ps_field", fake_ps)
+        # "-fish" is how a login shell appears in ps; the dash must not defeat
+        # the match.
+        assert completion._shell_from_parent() == "fish"
+
+    def test_gives_up_rather_than_looping(self, monkeypatch):
+        monkeypatch.setattr(os, "getppid", lambda: 5)
+        monkeypatch.setattr(
+            completion,
+            "_ps_field",
+            lambda pid, field: "someproc" if field == "comm=" else "5",
+        )
+        assert completion._shell_from_parent(max_depth=3) is None
+
+    def test_ps_failure_is_not_fatal(self, monkeypatch):
+        """ps is absent or restricted in some containers; falling back to
+        $SHELL is correct there, crashing is not."""
+        monkeypatch.setattr(os, "getppid", lambda: 100)
+        monkeypatch.setattr(completion, "_ps_field", lambda pid, field: None)
+        assert completion._shell_from_parent() is None
+
+
+class TestStaleShells:
+    def test_reports_every_stale_shell(self, home):
+        install("bash", SCRIPT, edit_rc=False, home=home)
+        install("fish", SCRIPT, edit_rc=False, home=home)
+        assert completion.stale_shells("10.0.0", home=home) == ["bash", "fish"]
+
+    def test_empty_when_nothing_installed(self, home):
+        """The post-command nudge must stay silent for anyone who never opted
+        into completion."""
+        assert completion.stale_shells("10.0.0", home=home) == []
+
+    def test_empty_when_current(self, home):
+        install("bash", SCRIPT, edit_rc=False, home=home)
+        assert completion.stale_shells("9.9.9", home=home) == []
 
 
 # ---------------------------------------------------------------------------

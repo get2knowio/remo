@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -98,17 +99,96 @@ def layout_for(shell: str, *, home: Path | None = None) -> ShellLayout:
     )
 
 
-def detect_shell() -> str | None:
-    """Best-effort detection of the user's login shell from ``$SHELL``.
+@dataclass(frozen=True)
+class ShellDetection:
+    """What shell we think the user is in, and how confident we should sound."""
 
-    Returns None when ``$SHELL`` is unset or names a shell remo cannot
-    generate completions for, so callers can ask rather than guess wrong.
-    """
-    shell_env = os.environ.get("SHELL", "")
-    if not shell_env:
-        return None
-    name = Path(shell_env).name
+    shell: str | None
+    # "parent process" or "$SHELL" — surfaced to the user, because a detection
+    # they can't see the basis of is one they can't correct.
+    source: str
+    # The other candidate when the two disagree. macOS ships zsh as the login
+    # shell and many fish users launch fish from their terminal emulator
+    # instead of via chsh, so $SHELL says zsh while they type into fish. That
+    # disagreement is common enough to report rather than silently resolve.
+    conflict: str | None = None
+
+
+def _shell_from_env() -> str | None:
+    name = Path(os.environ.get("SHELL", "")).name
     return name if name in SHELLS else None
+
+
+def _ps_field(pid: int, field: str) -> str | None:
+    """Read one ps field for ``pid``. Returns None on any failure.
+
+    Uses ps rather than /proc so this works on macOS, where the whole
+    login-shell-vs-interactive-shell mismatch is most common.
+    """
+    try:
+        proc = subprocess.run(
+            ["ps", "-p", str(pid), "-o", field],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
+
+
+def _shell_from_parent(max_depth: int = 5) -> str | None:
+    """Walk up the process tree looking for a shell remo can complete for.
+
+    Answers "what am I being typed into", which is the question that actually
+    matters here — unlike $SHELL, which answers "what is configured as the
+    login shell". Walks rather than checking only the immediate parent because
+    console-script shims and `uv tool` wrappers can sit in between.
+    """
+    pid: int | None = os.getppid()
+    for _ in range(max_depth):
+        if pid is None or pid <= 1:
+            return None
+        comm = _ps_field(pid, "comm=")
+        if comm is None:
+            return None
+        # Login shells appear as "-fish"/"-zsh"; ps may give a full path.
+        name = Path(comm).name.lstrip("-")
+        if name in SHELLS:
+            return name
+        ppid = _ps_field(pid, "ppid=")
+        pid = int(ppid) if ppid and ppid.isdigit() else None
+    return None
+
+
+def detect_shell() -> ShellDetection:
+    """Best-effort detection of the shell the user is actually working in.
+
+    Parent process first, ``$SHELL`` as fallback. An earlier version consulted
+    only ``$SHELL``, reasoning that "which rc file do I edit" is a question
+    about the configured login shell. That holds for the rc edit and is wrong
+    for the question that matters — on macOS it confidently installs zsh
+    completion for someone sitting in fish, and reports success.
+    """
+    from_parent = _shell_from_parent()
+    from_env = _shell_from_env()
+
+    if from_parent is not None:
+        conflict = from_env if from_env and from_env != from_parent else None
+        return ShellDetection(from_parent, "parent process", conflict)
+    return ShellDetection(from_env, "$SHELL")
+
+
+def stale_shells(current_version: str, *, home: Path | None = None) -> list[str]:
+    """Every shell with an installed completion script this remo did not write.
+
+    Checks all shells rather than detecting one: this feeds the nudge that runs
+    after every command, where the process-tree walk would be far too costly,
+    and "which shell is stale" is answerable by three stat calls anyway.
+    """
+    return [s for s in SHELLS if is_stale(s, current_version, home=home)]
 
 
 def installed_version(shell: str, *, home: Path | None = None) -> str | None:

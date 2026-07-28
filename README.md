@@ -30,10 +30,16 @@ Tab completion for subcommands, flags, and known instance/container names is ava
 remo completion install
 ```
 
-That detects your shell from `$SHELL`, writes the activation script, and — for
-bash and zsh — offers to add the single line that loads it. Pass `--yes` to skip
-the prompt, or name a shell explicitly (`remo completion install fish`). fish
-needs no rc change at all, since its completions directory is a drop-in.
+That detects the shell you're actually running (from the process tree, falling
+back to `$SHELL`), writes the activation script, and — for bash and zsh — offers
+to add the single line that loads it. Pass `--yes` to skip the prompt, or name a
+shell explicitly (`remo completion install fish`). fish needs no rc change at
+all, since its completions directory is a drop-in.
+
+The two can disagree: macOS ships zsh as the login shell, so `$SHELL` says zsh
+even when you launch fish from your terminal emulator. remo prefers the shell
+you're typing into and warns when `$SHELL` differs, so naming one explicitly is
+never necessary but always wins.
 
 `install.sh` offers to do this for you at the end of an install. It can't happen
 automatically on `uv tool install`, though: Python wheels have no post-install
