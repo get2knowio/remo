@@ -1,2 +1,10 @@
 ---
 nodejs_version: "24"
+
+# Pinned fingerprint of the vendored NodeSource signing key
+# (files/nodesource-repo.gpg.key, "NSolid <nsolid-gpg@nodesource.com>").
+# The key is vendored rather than downloaded because deb.nodesource.com
+# returns HTTP 403 to CI runner egress (see issue #109); the fingerprint is
+# verified at provision time so a corrupted or substituted file fails loudly.
+# To rotate: replace the file, then update this value to match.
+nodejs_gpg_fingerprint: "6F71F525282841EEDAF851B42F59B5F99B1BE0B4"

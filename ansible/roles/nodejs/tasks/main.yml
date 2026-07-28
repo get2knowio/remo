@@ -18,20 +18,45 @@
     state: directory
     mode: '0755'
 
-- name: Download NodeSource GPG key
-  ansible.builtin.get_url:
-    url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
-    dest: /tmp/nodesource.gpg.key
+# The key is vendored (files/nodesource-repo.gpg.key) rather than fetched:
+# deb.nodesource.com answers HTTP 403 to GitHub Actions runner egress, which is
+# a policy block, not a transient fault — retrying a blocked request only fails
+# slower. Pinning also means provisioning trusts a reviewed key rather than
+# whatever the CDN serves at run time. See issue #109.
+- name: Install NodeSource GPG key
+  ansible.builtin.copy:
+    src: nodesource-repo.gpg.key
+    dest: /etc/apt/keyrings/nodesource.asc
     mode: '0644'
+    owner: root
+    group: root
 
-- name: De-armor NodeSource GPG key
-  ansible.builtin.command: gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg /tmp/nodesource.gpg.key
-  args:
-    creates: /etc/apt/keyrings/nodesource.gpg
+- name: Read NodeSource GPG key fingerprint
+  ansible.builtin.command: gpg --show-keys --with-colons /etc/apt/keyrings/nodesource.asc
+  register: nodejs_key_info
+  changed_when: false
+
+- name: Verify NodeSource GPG key matches the pinned fingerprint
+  ansible.builtin.assert:
+    that:
+      - nodejs_key_info.stdout | default('') is search(nodejs_gpg_fingerprint)
+    fail_msg: >-
+      Vendored NodeSource key does not match the pinned fingerprint
+      {{ nodejs_gpg_fingerprint }}. If NodeSource rotated its signing key,
+      replace ansible/roles/nodejs/files/nodesource-repo.gpg.key and update
+      nodejs_gpg_fingerprint in ansible/roles/nodejs/defaults/main.yml.
+    success_msg: "NodeSource key fingerprint verified."
+
+# Superseded by nodesource.asc above; removed so a rotated key cannot leave a
+# stale trusted key behind on an already-provisioned machine.
+- name: Remove superseded de-armored NodeSource keyring
+  ansible.builtin.file:
+    path: /etc/apt/keyrings/nodesource.gpg
+    state: absent
 
 - name: Add NodeSource repository
   ansible.builtin.apt_repository:
-    repo: "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_{{ nodejs_version }}.x nodistro main"
+    repo: "deb [signed-by=/etc/apt/keyrings/nodesource.asc] https://deb.nodesource.com/node_{{ nodejs_version }}.x nodistro main"
     filename: nodesource
     state: present
 
@@ -39,7 +64,13 @@
   ansible.builtin.apt:
     name: nodejs
     state: present
+    # Ride out a transient deb.nodesource.com index fetch miss, the same way
+    # the docker role does for download.docker.com (#91).
     update_cache: true
+  register: nodejs_pkg_install
+  until: nodejs_pkg_install is succeeded
+  retries: 3
+  delay: 10
 
 - name: Verify Node.js installation
   ansible.builtin.command: node --version

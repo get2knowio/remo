@@ -13,6 +13,10 @@
     url: https://cli.github.com/packages/githubcli-archive-keyring.gpg
     dest: /etc/apt/keyrings/githubcli-archive-keyring.gpg
     mode: '0644'
+  register: github_cli_gpg_key
+  until: github_cli_gpg_key is succeeded
+  retries: 3
+  delay: 10
 
 - name: Get system architecture
   ansible.builtin.command: dpkg --print-architecture
