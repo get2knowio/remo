@@ -79,12 +79,22 @@ if ! remo completion install fish; then
     exit 1
 fi
 
-SCRIPT="$FISH_HOME/.config/fish/completions/remo.fish"
+# Ask fish where it actually reads completions from, rather than assuming.
+# remo and fish must agree on this: fish honours $XDG_CONFIG_HOME, and a remo
+# that hardcodes ~/.config writes somewhere fish never looks — which fish
+# reports only by silently completing filenames. That exact mismatch is what
+# this job caught on its first run.
+FISH_COMPLETIONS_DIR="$(fish_run 'echo $__fish_config_dir')/completions"
+SCRIPT="$FISH_COMPLETIONS_DIR/remo.fish"
 if [[ ! -f "$SCRIPT" ]]; then
-    red "FAIL: no completion script at $SCRIPT"
+    red "FAIL: no completion script where fish reads them."
+    red "  fish reads:  $FISH_COMPLETIONS_DIR"
+    red "  remo wrote:  $(find "$FISH_HOME" "${XDG_CONFIG_HOME:-$FISH_HOME}" \
+                          -name 'remo.fish' 2>/dev/null | head -3 | tr '\n' ' ')"
+    red "  XDG_CONFIG_HOME=${XDG_CONFIG_HOME:-<unset>}  HOME=$HOME"
     exit 1
 fi
-green "PASS: completion script installed"
+green "PASS: completion script installed where fish reads it ($FISH_COMPLETIONS_DIR)"
 
 # --- Helper ----------------------------------------------------------------
 # Runs one completion in real fish and checks three things at once:
