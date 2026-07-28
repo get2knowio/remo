@@ -96,7 +96,7 @@ command:
 | Verb | Descriptor field(s) | Factory-injected extras | Notes |
 |---|---|---|---|
 | `upgrade` | `upgrade_options` | `--only`/`--skip`/`-v` + positional `NAME` | Refreshes dev tools via the configure playbook; no provider-side state transition by invariant. |
-| `resize` | `resize_dimensions`, `resize_options` | `-v` + positional `NAME` | Changes resource limits/volume size. The callback raises `PreconditionError` (listing the dimension flag names, e.g. `--volume-size, --cores, --memory`) if **none** of `resize_dimensions`' params were passed — one check, in the factory, not duplicated per provider. |
+| `resize` | `resize_dimensions`, `resize_options` | `-v` + positional `NAME` | Changes resource limits/volume size; generated only when `resize_dimensions` is non-empty (a provider with nothing to resize gets no `resize` command). The callback raises `PreconditionError` (listing the dimension flag names, e.g. `--volume-size, --cores, --memory`) if **none** of `resize_dimensions`' params were passed — one check, in the factory, not duplicated per provider. |
 | `tag` | `tag_options` | positional `NAME` | Marks an instance remo-managed; generated only when `supports_managed_marker=True`. Read-before-write: already-tagged is a reported no-op (exit 0), a write failure is a strict `OperationFailedError` (exit 1) — unlike `create`'s best-effort warn-and-continue. |
 
 `__post_init__` validates `resize_dimensions` and `resize_options` together

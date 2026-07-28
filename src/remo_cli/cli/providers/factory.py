@@ -1,10 +1,12 @@
 """Generates provider CLI command groups from registered descriptors.
 
-``build_provider_group(descriptor)`` builds the six shared commands
-(create/destroy/update/list/info/sync), the ``snapshot`` subgroup, and any
-descriptor-declared ``extra_commands`` (bootstrap/stop/start/reboot). Every
-callback is wrapped by :func:`provider_command`, the single CLI-layer
-exit-code translation boundary (contracts/errors.md).
+``build_provider_group(descriptor)`` builds the shared commands
+(create/destroy/upgrade/list/info/sync), the descriptor-gated ones
+(``resize`` iff ``resize_dimensions``, ``tag`` iff ``supports_managed_marker``,
+a ``host`` subgroup iff ``host_commands``), the ``snapshot`` subgroup, and any
+descriptor-declared ``extra_commands`` (stop/start/reboot). Every callback is
+wrapped by :func:`provider_command`, the single CLI-layer exit-code
+translation boundary (contracts/errors.md).
 """
 
 from __future__ import annotations
@@ -62,8 +64,8 @@ def provider_command(fn: Callable[..., Any]) -> Callable[..., None]:
     driver and keeps returning ``EXIT_OK``/``EXIT_FAILURE``/``EXIT_ABORTED``
     directly (contracts/errors.md), never raising for its own outcome. Every
     other generated command's impl now returns ``None`` on success and raises
-    instead (create/destroy/update/info/bootstrap/extra_commands all migrated
-    off int returns in Phases 3/5/6)."""
+    instead (create/destroy/upgrade/resize/tag/info/host commands/extra_commands
+    all migrated off int returns in Phases 3/5/6)."""
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> None:
@@ -133,10 +135,12 @@ def _instance_argument(
     return click.Argument([param], **kwargs)
 
 
-def _target_argument(target: ArgumentSpec) -> click.Argument:
+def _target_argument(target: ArgumentSpec, descriptor: ProviderDescriptor) -> click.Argument:
     kwargs: dict[str, Any] = {"required": target.required}
     if not target.required:
         kwargs["default"] = target.default
+    if target.completion is CompletionKind.INSTANCE_NAME:
+        kwargs["shell_complete"] = _make_name_completer(descriptor)
     return click.Argument([target.name], **kwargs)
 
 
@@ -372,7 +376,7 @@ def _build_extra_command(descriptor: ProviderDescriptor, spec: CommandSpec) -> c
         options = [*options, YES]
     params: list[click.Parameter] = []
     if spec.target is not None:
-        params.append(_target_argument(spec.target))
+        params.append(_target_argument(spec.target, descriptor))
     params.extend(_click_option(o, descriptor) for o in options)
 
     def run(**kwargs: Any) -> int | None:
@@ -525,12 +529,17 @@ def build_provider_group(descriptor: ProviderDescriptor) -> click.Group:
         _build_create(descriptor),
         _build_destroy(descriptor),
         _build_upgrade(descriptor),
-        _build_resize(descriptor),
         _build_list(descriptor),
         _build_info(descriptor),
         _build_sync(descriptor),
     ):
         group.add_command(command)
+    # `resize`'s only job is to apply a dimension flag, so a provider that
+    # declares no dimensions must not advertise the verb -- otherwise every
+    # invocation dead-ends in "at least one dimension flag: " with an empty
+    # list. Same gating shape as `tag` and the `host` subgroup below.
+    if descriptor.resize_dimensions:
+        group.add_command(_build_resize(descriptor))
     if descriptor.supports_managed_marker:
         group.add_command(_build_tag(descriptor))
     for spec in descriptor.extra_commands:

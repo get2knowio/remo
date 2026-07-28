@@ -274,7 +274,9 @@ def tag(name: str = "") -> None:
         print_info(f"Server '{server_name}' is already marked as remo-managed.")
         return
 
-    ok, err = _apply_managed_label(server_name)
+    # Hand the already-fetched record down so the write is one API call, not a
+    # second GET /servers inside _apply_managed_label.
+    ok, err = _apply_managed_label(server_name, server)
     if not ok:
         raise OperationFailedError(
             f"Could not mark server '{server_name}' as remo-managed: {err}"
@@ -536,7 +538,9 @@ def _get_server_by_name(server_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _apply_managed_label(server_name: str) -> tuple[bool, str]:
+def _apply_managed_label(
+    server_name: str, server: dict | None = None
+) -> tuple[bool, str]:
     """Backfill the ``remo: "true"`` label onto an existing server (host-side).
 
     `create` now applies the label via Ansible at creation time, but a server
@@ -550,11 +554,16 @@ def _apply_managed_label(server_name: str) -> tuple[bool, str]:
     ``(ok, err)`` -- never raises, never exits -- matching
     ``_apply_managed_marker`` in the other providers; callers warn but do not
     fail the whole command on this alone.
+
+    *server* lets a caller that has already fetched the record (``tag``, which
+    needs the label map to tell "already labelled" from "just labelled") hand
+    it in, so the write costs one API call instead of two.
     """
-    try:
-        server = _get_server_by_name(server_name)
-    except ProviderError as e:
-        return False, str(e)
+    if server is None:
+        try:
+            server = _get_server_by_name(server_name)
+        except ProviderError as e:
+            return False, str(e)
 
     labels = server.get("labels", {}) or {}
     if labels.get("remo") == "true":

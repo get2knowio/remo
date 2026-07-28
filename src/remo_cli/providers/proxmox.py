@@ -137,7 +137,9 @@ def _parse_container_tags(config_text: str) -> list[str]:
     return [t for t in re.split(r"[;, ]+", line.strip()) if t]
 
 
-def _apply_managed_marker(host: str, user: str, vmid: str) -> tuple[bool, str]:
+def _apply_managed_marker(
+    host: str, user: str, vmid: str, current_tags: list[str] | None = None
+) -> tuple[bool, str]:
     """Apply the remo managed tag to Proxmox LXC *vmid* (host-side).
 
     Reads the current tag set from ``pct config <vmid>`` and, only when the
@@ -146,15 +148,21 @@ def _apply_managed_marker(host: str, user: str, vmid: str) -> tuple[bool, str]:
     appended). When ``remo`` is already present this is a strict no-op (FR-002,
     SC-005). Returns ``(ok, err)``; a failure warns but does not fail the
     enclosing command on its own (FR-005).
+
+    *current_tags* lets a caller that has already run ``pct config`` (``tag``,
+    which needs the tag set to tell "already marked" from "just marked") hand
+    the parsed tags in, so the write costs one SSH round-trip instead of two.
     """
     if not vmid:
         return False, "VMID could not be resolved"
 
-    cfg = _run_on_node(host, user, f"pct config {shlex.quote(vmid)}")
-    if cfg.returncode != 0:
-        return False, (cfg.stderr.strip() or cfg.stdout.strip())
+    if current_tags is None:
+        cfg = _run_on_node(host, user, f"pct config {shlex.quote(vmid)}")
+        if cfg.returncode != 0:
+            return False, (cfg.stderr.strip() or cfg.stdout.strip())
+        current_tags = _parse_container_tags(cfg.stdout)
 
-    tags = _parse_container_tags(cfg.stdout)
+    tags = current_tags
     if PROXMOX_MANAGED_TAG in tags:
         return True, ""  # already marked — no-op, no reorder
 
@@ -401,6 +409,9 @@ def create(
 
     # FR-001: mark the container as remo-managed. FR-005: a marking failure
     # (including an unresolved VMID) warns but does not fail create.
+    # `tag` takes NAME positionally (spec 021) and has no `--name` option, so
+    # both remedies below must be spelled exactly as Click accepts them.
+    tag_cmd = f"remo proxmox tag {name} --host {host}"
     if vmid:
         ok, err = _apply_managed_marker(host, node_user, vmid)
         if not ok:
@@ -411,13 +422,13 @@ def create(
                 f"{err}\n"
                 f"  The container is fine. Until it carries the "
                 f"'{PROXMOX_MANAGED_TAG}' tag, a default `remo proxmox sync` "
-                f"will skip it (use `--all` or `remo proxmox tag`)."
+                f"will skip it (use `--all`, or `{tag_cmd}`)."
             )
     else:
         print_warning(
             f"Container '{name}' was created but its VMID could not be "
             f"resolved, so it was not marked as remo-managed; run "
-            f"`remo proxmox tag --name {name} --host {host}` to mark it."
+            f"`{tag_cmd}` to mark it."
         )
 
     # If the container already existed, site.yml skipped pct create and
@@ -655,11 +666,14 @@ def tag(name: str, host: str = "", node_user: str = "") -> None:
             f"Could not read tags for container '{name}': "
             f"{cfg.stderr.strip() or cfg.stdout.strip()}"
         )
-    if PROXMOX_MANAGED_TAG in _parse_container_tags(cfg.stdout):
+    current_tags = _parse_container_tags(cfg.stdout)
+    if PROXMOX_MANAGED_TAG in current_tags:
         print_info(f"Container '{name}' is already marked as remo-managed.")
         return
 
-    ok, err = _apply_managed_marker(host, node_user, vmid)
+    # Hand the already-read tags down so the write is one round-trip, not a
+    # second `pct config` inside _apply_managed_marker.
+    ok, err = _apply_managed_marker(host, node_user, vmid, current_tags)
     if not ok:
         raise OperationFailedError(
             f"Could not tag container '{name}' as remo-managed on Proxmox "
@@ -925,7 +939,10 @@ def bootstrap(
     Raises :class:`OperationFailedError` on a nonzero playbook rc.
     """
     if not host:
-        raise PreconditionError("Proxmox host is required (use --host).")
+        # Click enforces the positional HOST for `remo proxmox host bootstrap`
+        # (spec 021 -- there is no `--host` flag on this command any more);
+        # this guard only covers direct programmatic calls.
+        raise PreconditionError("Proxmox host is required.")
 
     extra_vars: list[str] = ["-i", f"{host},", "-e", "target_hosts=all"]
     if node_user:

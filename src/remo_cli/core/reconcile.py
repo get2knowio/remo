@@ -327,11 +327,19 @@ def render_plan(
         names = ", ".join(h.name for h in plan.removed)
         print_info(f"  - removed    {len(plan.removed)}   {names}")
 
-    # Only the host-scoped providers (incus, proxmox) accept `--host` on
-    # `tag`; aws and hetzner do not, so the hint must not suggest it there.
-    mark_cmd = f"remo {plan.scope.type} tag <n>"
-    if get_descriptor(plan.scope.type).name_format is NameFormat.HOST_SCOPED:
-        mark_cmd += " --host <h>"
+    # The `tag` command is generated only for providers that can write a
+    # managed marker (descriptor.supports_managed_marker) -- `remo aws tag`
+    # does not exist, so the remedy must stay silent there rather than name a
+    # command Click would reject (SC-003: every printed remedy is executable).
+    # Of the marker-supporting providers only the host-scoped ones (incus,
+    # proxmox) accept `--host` on `tag`, so the hint must not suggest it
+    # elsewhere.
+    descriptor = get_descriptor(plan.scope.type)
+    mark_cmd = ""
+    if descriptor.supports_managed_marker:
+        mark_cmd = f"remo {plan.scope.type} tag <n>"
+        if descriptor.name_format is NameFormat.HOST_SCOPED:
+            mark_cmd += " --host <h>"
 
     if plan.retained_unmarked:
         names = ", ".join(plan.retained_unmarked)
@@ -339,7 +347,8 @@ def render_plan(
         print_info(
             f"{len(plan.retained_unmarked)} retained {entries} not remo-marked: {names}"
         )
-        print_info(f"Mark permanently: {mark_cmd}")
+        if mark_cmd:
+            print_info(f"Mark permanently: {mark_cmd}")
 
     if plan.skipped_unmarked:
         names = ", ".join(plan.skipped_unmarked)
@@ -347,7 +356,8 @@ def render_plan(
             f"Skipped {len(plan.skipped_unmarked)} unmarked instance(s): {names}"
         )
         print_info("Adopt this run: rerun with --all")
-        print_info(f"Mark permanently: {mark_cmd}")
+        if mark_cmd:
+            print_info(f"Mark permanently: {mark_cmd}")
 
     if include_all and adoption_criteria:
         print_info(f"--all: {adoption_criteria}")

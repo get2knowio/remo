@@ -159,7 +159,9 @@ class TestCreateUpdateWiring:
         )
         result = providers_proxmox.tag(name="dev1", host="node", node_user="root")
         assert result is None
-        apply.assert_called_once_with("node", "root", "100")
+        # The already-parsed tag set is handed down so the write costs one SSH
+        # round-trip, not a second `pct config` inside _apply_managed_marker.
+        apply.assert_called_once_with("node", "root", "100", ["mytag"])
 
     def test_tag_is_a_noop_when_already_marked(self, mocker):
         mocker.patch("remo_cli.providers.proxmox._resolve_vmid", return_value="100")

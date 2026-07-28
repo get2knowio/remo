@@ -59,17 +59,17 @@ remo aws create --name alice --type t3.large --region us-east-1
 # List registered instances
 remo aws list
 
-# Update dev tools on existing instance
-remo aws upgrade
+# Update dev tools on existing instance (NAME is positional and required)
+remo aws upgrade alice
 
 # Update only specific tools
-remo aws upgrade --only zellij --only fzf
+remo aws upgrade alice --only zellij --only fzf
 
 # Update but skip specific tools
-remo aws upgrade --skip docker --skip nodejs
+remo aws upgrade alice --skip docker --skip nodejs
 
 # Grow the persistent EBS volume (and the filesystem) in place
-remo aws resize --volume-size 100
+remo aws resize alice --volume-size 100
 
 # Show instance information (type, cores, memory, EBS volume size)
 remo aws info
@@ -111,7 +111,7 @@ remo aws snapshot delete <instance> <snap-name> [-y]    # Remove snapshot
 |--------|-------------|
 | `--only <tool>` | Only update specified tool (can repeat) |
 | `--skip <tool>` | Skip specified tool (can repeat) |
-| `--name <name>` | Resource namespace (default: `$USER`) |
+| `NAME` | Positional, required. Resource namespace (the instance's `remo` name). |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
@@ -122,7 +122,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | Option | Description |
 |--------|-------------|
 | `--volume-size <GB>` | Required. Grow the persistent EBS volume to this size and grow the ext4 filesystem in place via SSH-over-SSM. AWS only supports growing. |
-| `--name <name>` | Resource namespace (default: `$USER`) |
+| `NAME` | Positional, required. Resource namespace (the instance's `remo` name). |
 
 `remo aws resize` never runs the configure/dev-tools play.
 

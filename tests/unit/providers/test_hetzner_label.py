@@ -97,8 +97,9 @@ class TestTag:
     """
 
     def test_untagged_server_gets_exactly_one_label_write(self, mocker):
+        server = _server(labels={})
         mocker.patch.object(
-            providers_hetzner, "_get_server_by_name", return_value=_server(labels={})
+            providers_hetzner, "_get_server_by_name", return_value=server
         )
         apply_label = mocker.patch.object(
             providers_hetzner, "_apply_managed_label", return_value=(True, "")
@@ -107,7 +108,9 @@ class TestTag:
         result = providers_hetzner.tag(name="dev1")
 
         assert result is None
-        apply_label.assert_called_once_with("dev1")
+        # The already-fetched record is handed down so the write costs one API
+        # call, not a second GET /servers inside _apply_managed_label.
+        apply_label.assert_called_once_with("dev1", server)
 
     def test_already_tagged_server_is_a_noop_zero_writes(self, mocker):
         mocker.patch.object(

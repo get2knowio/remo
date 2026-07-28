@@ -178,6 +178,15 @@ def _upgrade_command_hint(host) -> str:  # noqa: ANN001
 
     Names the precise command the accepted prompt runs (SC-003) so the
     remedy is always executable and truthful.
+
+    Host-scoped providers need the host-user flag spelled out too: accepting
+    the prompt runs ``update_entry``, which reads the host SSH user off the
+    registry entry, but passing ``--host`` on the command line short-circuits
+    that registry lookup and would silently fall back to the provider default
+    (``""``/``root``). The flag and the attribute both come from the
+    descriptor's ``registry_fields`` entry whose JSON key ends in ``_user``
+    (``instance_id``/``host_user`` for Incus, ``region``/``node_user`` for
+    Proxmox) — no provider literals here.
     """
     from remo_cli.core.provider_registry import (  # noqa: PLC0415
         NameFormat,
@@ -189,7 +198,15 @@ def _upgrade_command_hint(host) -> str:  # noqa: ANN001
         descriptor = get_descriptor(host.type)
         if descriptor.name_format is NameFormat.HOST_SCOPED and "/" in host.name:
             host_part, _, short_name = host.name.partition("/")
-            return f"remo {host.type} upgrade {short_name} --host {host_part}"
+            cmd = f"remo {host.type} upgrade {short_name} --host {host_part}"
+            for attr, json_key in descriptor.registry_fields:
+                if json_key.endswith("_user"):
+                    user_value = getattr(host, attr, "")
+                    if user_value:
+                        flag = "--" + json_key.replace("_", "-")
+                        cmd += f" {flag} {user_value}"
+                    break
+            return cmd
     return f"remo {host.type} upgrade {host.name}"
 
 

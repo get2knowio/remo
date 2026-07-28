@@ -302,8 +302,8 @@ def create(
             f"({_host_access_desc(host, host_user)}, needed for "
             f"`incus config set`): {err}\n"
             f"  The container is fine. Until the marker is set, a default "
-            f"`remo incus sync` will skip it; use `--all` or re-run "
-            f"`remo incus tag` to include it."
+            f"`remo incus sync` will skip it; use `--all`, or run "
+            f"`remo incus tag {name} --host {host}` to include it."
         )
 
     if volume_size or cores or memory:

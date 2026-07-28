@@ -182,6 +182,31 @@ class TestShellVersionCheck:
         assert "remo incus upgrade dev1 --host lab1" in prompt
 
     @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_prompt_names_host_user_when_registry_carries_one(self, runner, mocker):
+        """Passing `--host` short-circuits the registry lookup inside
+        `upgrade`, so the hint must also name the host-user flag whenever the
+        entry carries one -- otherwise the printed command silently falls back
+        to the provider default and is not what accepting the prompt runs."""
+        incus_host = KnownHost(
+            type="incus",
+            name="lab1/dev1",
+            host="192.168.1.50",
+            user="remo",
+            instance_id="paul",  # incus stores the Incus-host SSH user here
+        )
+        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=incus_host)
+        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=incus_host)
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
+        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
+
+        result = runner.invoke(shell, [])
+
+        assert result.exit_code == 0
+        prompt = mock_confirm.call_args[0][0]
+        assert "remo incus upgrade dev1 --host lab1 --host-user paul" in prompt
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
     def test_ssh_error_skips_update_prompt(self, runner, mocker):
         """When SSH itself fails, the user is warned and not prompted to update."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
