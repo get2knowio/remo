@@ -80,6 +80,8 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── web_drift.py       # Offline registry-vs-push-cache diff + shared out-of-date nudge (stdlib + core/models only; no web extra)
 │   ├── ansible_runner.py  # Ansible playbook subprocess; build_configure_extra_vars() (timezone+tools+version, replaces 8 inline copies) and run_resize_playbook() (raises OperationFailedError on nonzero rc)
 │   ├── snapshot.py        # Name generation/validation/table formatting; list_all_snapshots(type_name, lister) aggregates across a provider's registry slice (replaces 4 CLI-layer loops)
+│   ├── completion.py      # Shell-completion layout/detect/install/staleness ($SHELL-based;
+│   │                      #   drop-in file + one idempotent rc `source` line, never a `>>` dump)
 │   ├── picker.py          # InquirerPy fuzzy picker
 │   ├── rsync.py           # File transfer
 │   └── version.py         # Version check, passive update notification
