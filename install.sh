@@ -161,6 +161,56 @@ install_remo() {
     fi
 }
 
+# Offer to install shell completion.
+#
+# Python wheels have no post-install hook, so this installer is the closest
+# thing to one. It still asks: writing to a user's rc file is not something to
+# do silently just because they ran an installer.
+setup_completion() {
+    command -v remo &>/dev/null || return 0
+
+    # $SHELL is the login shell — the right answer for "which rc do I edit".
+    # The parent process here is always bash (curl | bash), so inspecting it
+    # would tell every fish user they run bash.
+    local shell_name
+    shell_name="$(basename "${SHELL:-}")"
+    case "${shell_name}" in
+        bash|zsh|fish) ;;
+        *) return 0 ;;
+    esac
+
+    # fish needs no rc edit — its completions directory is a drop-in.
+    if [ "${shell_name}" = "fish" ]; then
+        remo completion install fish >/dev/null 2>&1 &&
+            print_success "Installed ${shell_name} tab completion."
+        echo ""
+        return 0
+    fi
+
+    # Non-interactive (piped installer with no TTY): write the script but
+    # leave the rc file alone, and say what is left to do.
+    if [ ! -t 0 ]; then
+        remo completion install "${shell_name}" >/dev/null 2>&1 || return 0
+        print_info "Shell completion script written. To enable it, run:"
+        echo "    remo completion install ${shell_name} --yes"
+        echo ""
+        return 0
+    fi
+
+    local answer
+    read -r -p "  Install ${shell_name} tab completion? (adds one line to your rc) [Y/n] " answer
+    if [ "${answer}" = "n" ] || [ "${answer}" = "N" ]; then
+        print_info "Skipped. Enable it later with: remo completion install"
+        echo ""
+        return 0
+    fi
+
+    if remo completion install "${shell_name}" --yes; then
+        print_success "Installed ${shell_name} tab completion."
+    fi
+    echo ""
+}
+
 # Main
 main() {
     echo ""
@@ -182,6 +232,8 @@ main() {
         echo "  Your existing config in ${CONFIG_DIR}/ was preserved."
         echo ""
     fi
+
+    setup_completion
 
     echo "  Get started:"
     echo "    remo --version"
