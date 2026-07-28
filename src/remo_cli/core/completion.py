@@ -53,6 +53,20 @@ class ShellLayout:
     source_line: str | None
 
 
+def fish_config_dir(home: Path) -> Path:
+    """Mirror fish's own config-directory resolution.
+
+    fish uses ``$XDG_CONFIG_HOME/fish`` when that variable is set and
+    ``~/.config/fish`` otherwise. Hardcoding the latter writes the script
+    somewhere fish never reads, and fish's way of reporting that is to silently
+    complete filenames instead — indistinguishable, from the user's seat, from
+    a script that is simply broken. Getting this wrong is invisible until
+    someone reports "tab gives me a file listing".
+    """
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    return Path(xdg) / "fish" if xdg else home / ".config" / "fish"
+
+
 def layout_for(shell: str, *, home: Path | None = None) -> ShellLayout:
     """Return the on-disk layout for ``shell``.
 
@@ -66,7 +80,7 @@ def layout_for(shell: str, *, home: Path | None = None) -> ShellLayout:
     if shell == "fish":
         return ShellLayout(
             shell="fish",
-            script_path=home / ".config" / "fish" / "completions" / "remo.fish",
+            script_path=fish_config_dir(home) / "completions" / "remo.fish",
             rc_path=None,
             source_line=None,
         )

@@ -277,6 +277,7 @@ made conditional to get a build green — fix the code or amend the gate by PR.
 | Lint | `uv run ruff check src/remo_cli` | Code Style |
 | Types | `uv run mypy src/remo_cli` | Code Style |
 | Frontend | `cd frontend && npm run lint && npm run test && npm run build` | Code Style |
+| Fish completion | `./tests/integration/fish_completion.sh` | Principle VI (completion runs, not just reads) |
 | Packaging | wheel install smoke, Docker amd64+arm64 | Distribution integrity |
 | Security | CodeQL, dependency review | Supply chain |
 

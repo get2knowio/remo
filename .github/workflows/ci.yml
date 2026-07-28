@@ -92,6 +92,32 @@ jobs:
           print("OK: ansible playbooks found in installed wheel")
           EOF
 
+  fish-completion:
+    name: Fish completion (real shell)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+
+      - name: Install fish
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fish
+
+      # The activation script shells out to `remo` by name, so it has to be a
+      # real binary on PATH — `uv run remo` would never be found by fish.
+      - name: Install remo onto PATH
+        run: |
+          uv sync
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      # Asserting on the text of the generated script is not enough: the bug
+      # this guards against (a2542e9) produced a script that read fine and
+      # emitted a screenful of errors the moment fish executed it.
+      - name: Run completions in a real fish shell
+        run: ./tests/integration/fish_completion.sh
+
   lint:
     name: Lint & Types
     runs-on: ubuntu-latest
