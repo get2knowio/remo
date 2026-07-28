@@ -250,6 +250,10 @@
     dest: /etc/apt/keyrings/zabbly.asc
     mode: "0644"
   when: ansible_os_family == 'Debian'
+  register: incus_zabbly_gpg_key
+  until: incus_zabbly_gpg_key is succeeded
+  retries: 3
+  delay: 10
   tags:
     - packages
     - incus_install

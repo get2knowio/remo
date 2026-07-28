@@ -36,6 +36,10 @@
     url: https://download.docker.com/linux/ubuntu/gpg
     dest: /etc/apt/keyrings/docker.asc
     mode: '0644'
+  register: docker_gpg_key
+  until: docker_gpg_key is succeeded
+  retries: 3
+  delay: 10
 
 - name: Get system architecture
   ansible.builtin.command: dpkg --print-architecture
