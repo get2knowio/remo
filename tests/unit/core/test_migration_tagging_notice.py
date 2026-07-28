@@ -47,7 +47,7 @@ def _report(*types: str) -> MigrationReport:
 def test_names_only_the_providers_present(capsys):
     known_hosts._print_tagging_notice(_report("proxmox"))
     out = _plain(capsys.readouterr())
-    assert "remo proxmox sync --host <host>" in out
+    assert "remo proxmox tag <name> --host <host>" in out
     # Not a menu of every provider -- only what the user actually has.
     assert "incus" not in out
     assert "hetzner" not in out
@@ -56,9 +56,9 @@ def test_names_only_the_providers_present(capsys):
 def test_host_scoped_providers_get_the_host_flag(capsys):
     known_hosts._print_tagging_notice(_report("incus", "hetzner"))
     out = _plain(capsys.readouterr())
-    assert "remo incus sync --host <host>" in out
+    assert "remo incus tag <name> --host <host>" in out
     # hetzner is flat-named: suggesting --host there would be wrong.
-    assert "remo hetzner sync\n" in out
+    assert "remo hetzner tag <name>\n" in out
 
 
 def test_silent_when_no_provider_supports_tagging(capsys):
@@ -86,4 +86,4 @@ def test_rides_along_with_the_main_migration_notice(capsys):
     known_hosts._print_migration_notice(_report("proxmox"))
     out = _plain(capsys.readouterr())
     assert "Migrated 1 registry entry" in out
-    assert "remo proxmox sync" in out
+    assert "remo proxmox tag <name>" in out

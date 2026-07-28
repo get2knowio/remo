@@ -68,7 +68,7 @@ class TestIncusSyncSafetyMatrix:
         )
         mocker.patch("sys.stdin.isatty", return_value=False)
 
-        rc = providers_incus.sync(host="myhost", user="paul", auto_confirm=False)
+        rc = providers_incus.sync(host="myhost", host_user="paul", auto_confirm=False)
 
         assert rc == reconcile.EXIT_ABORTED
         assert _registry_bytes(tmp_config_dir) == before
@@ -86,7 +86,7 @@ class TestIncusSyncSafetyMatrix:
         mocker.patch("sys.stdin.isatty", return_value=True)
         mocker.patch("remo_cli.core.reconcile.confirm", return_value=False)
 
-        rc = providers_incus.sync(host="myhost", user="paul", auto_confirm=False)
+        rc = providers_incus.sync(host="myhost", host_user="paul", auto_confirm=False)
 
         assert rc == reconcile.EXIT_ABORTED
         assert _registry_bytes(tmp_config_dir) == before
@@ -101,7 +101,7 @@ class TestIncusSyncSafetyMatrix:
             return_value=_completed(0, stdout=""),
         )
 
-        rc = providers_incus.sync(host="myhost", user="paul", auto_confirm=True)
+        rc = providers_incus.sync(host="myhost", host_user="paul", auto_confirm=True)
 
         assert rc == reconcile.EXIT_OK
         registry = read_registry_hosts(tmp_config_dir)
@@ -120,7 +120,7 @@ class TestIncusSyncSafetyMatrix:
             return_value=_completed(1, stderr="ssh: connection refused"),
         )
 
-        rc = providers_incus.sync(host="myhost", user="paul", auto_confirm=True)
+        rc = providers_incus.sync(host="myhost", host_user="paul", auto_confirm=True)
 
         assert rc == reconcile.EXIT_FAILURE
         assert _registry_bytes(tmp_config_dir) == before
@@ -137,7 +137,7 @@ class TestIncusSyncSafetyMatrix:
         )
         confirm_spy = mocker.patch("remo_cli.core.reconcile.confirm")
 
-        rc = providers_incus.sync(host="myhost", user="paul", dry_run=True)
+        rc = providers_incus.sync(host="myhost", host_user="paul", dry_run=True)
 
         assert rc == reconcile.EXIT_OK
         assert _registry_bytes(tmp_config_dir) == before
@@ -156,7 +156,7 @@ class TestIncusSyncSafetyMatrix:
         confirm_spy = mocker.patch("remo_cli.core.reconcile.confirm")
         mocker.patch("sys.stdin.isatty", return_value=False)
 
-        rc = providers_incus.sync(host="myhost", user="paul", auto_confirm=False)
+        rc = providers_incus.sync(host="myhost", host_user="paul", auto_confirm=False)
 
         assert rc == reconcile.EXIT_OK
         confirm_spy.assert_not_called()
@@ -172,7 +172,7 @@ class TestIncusSyncSafetyMatrix:
             return_value=_completed(0, stdout=""),
         )
 
-        rc = providers_incus.sync(host="myhost", user="paul", auto_confirm=False)
+        rc = providers_incus.sync(host="myhost", host_user="paul", auto_confirm=False)
 
         assert rc == reconcile.EXIT_OK
         assert _registry_bytes(tmp_config_dir) == before

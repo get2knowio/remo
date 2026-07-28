@@ -84,7 +84,11 @@ def test_teardown_present(type_name: str, registered: None) -> None:
 
 
 def _option_param_names(cmd: click.Command) -> set[str]:
-    return {p.name for p in cmd.params if isinstance(p, click.Option) and p.name is not None}
+    return {
+        p.name
+        for p in cmd.params
+        if isinstance(p, (click.Option, click.Argument)) and p.name is not None
+    }
 
 
 @pytest.mark.parametrize("type_name", ALL_TYPE_NAMES)
@@ -93,7 +97,10 @@ def test_descriptor_signature_conformance(type_name: str, registered: None) -> N
     module = get_provider(type_name)
     group = build_provider_group(descriptor)
 
-    for verb in ("create", "update", "info", "sync"):
+    verbs = ["create", "upgrade", "resize", "info", "sync"]
+    if descriptor.supports_managed_marker:
+        verbs.append("tag")
+    for verb in verbs:
         cmd = group.commands[verb]
         impl = getattr(module, verb)
         sig_params = set(inspect.signature(impl).parameters)
@@ -101,14 +108,6 @@ def test_descriptor_signature_conformance(type_name: str, registered: None) -> N
         if verb == "create":
             # --yes is accepted (deprecated) but never forwarded to impl.
             click_params.discard("auto_confirm")
-        if verb == "update":
-            # `apply_marker` is deliberately internal: it gates the
-            # managed-marker backfill so `update_entry` (the `remo shell`
-            # tools-update path) can decline a provider-side write the user
-            # never asked for. Exposing it as a flag would be noise. Named
-            # explicitly rather than loosening the rule, so any *other*
-            # impl-only parameter still fails this gate.
-            sig_params.discard("apply_marker")
         assert click_params <= sig_params, (
             f"{type_name} {verb}: CLI declares params impl doesn't accept: {click_params - sig_params}"
         )
@@ -169,6 +168,18 @@ def test_descriptor_signature_conformance(type_name: str, registered: None) -> N
             f"{type_name} {spec.name}: signature mismatch (cli={click_params}, impl={sig_params})"
         )
 
+    if descriptor.host_commands:
+        host_group = group.commands["host"]
+        assert isinstance(host_group, click.Group)
+        for spec in descriptor.host_commands:
+            cmd = host_group.commands[spec.name]
+            impl = getattr(module, spec.impl)
+            sig_params = set(inspect.signature(impl).parameters)
+            click_params = _option_param_names(cmd)
+            assert click_params == sig_params, (
+                f"{type_name} host {spec.name}: signature mismatch (cli={click_params}, impl={sig_params})"
+            )
+
 
 # ---------------------------------------------------------------------------
 # 3. No SystemExit from the entry-based Protocol surface (R-A1, partial)
@@ -205,6 +216,16 @@ def test_protocol_part_a_never_calls_sys_exit(type_name: str, registered: None) 
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("type_name", _BUILTIN_TYPE_NAMES)
+def test_tag_and_host_absent_when_unsupported(type_name: str) -> None:
+    descriptor = get_descriptor(type_name)
+    group = build_provider_group(descriptor)
+    if not descriptor.supports_managed_marker:
+        assert "tag" not in group.commands
+    if not descriptor.host_commands:
+        assert "host" not in group.commands
+
+
 def test_fake_provider_full_group_mounts_with_no_existing_files_touched() -> None:
     with temporary_registration(FAKE_DESCRIPTOR):
         descriptor = get_descriptor("fake")
@@ -214,8 +235,12 @@ def test_fake_provider_full_group_mounts_with_no_existing_files_touched() -> Non
         result = runner.invoke(group, ["--help"])
         assert result.exit_code == 0, result.output
 
-        for command_name in ("create", "destroy", "update", "list", "info", "sync", "snapshot"):
+        for command_name in (
+            "create", "destroy", "upgrade", "resize", "tag", "list", "info", "sync", "snapshot", "host",
+        ):
             assert command_name in group.commands
+
+        assert "prep" in group.commands["host"].commands
 
         fake_provider.reset()
         try:
@@ -223,6 +248,18 @@ def test_fake_provider_full_group_mounts_with_no_existing_files_touched() -> Non
             assert r.exit_code == 0, r.output
 
             r = runner.invoke(group, ["info", "--name", "fake1"])
+            assert r.exit_code == 0, r.output
+
+            r = runner.invoke(group, ["tag", "fake1"])
+            assert r.exit_code == 0, r.output
+
+            r = runner.invoke(group, ["upgrade", "fake1"])
+            assert r.exit_code == 0, r.output
+
+            r = runner.invoke(group, ["resize", "fake1", "--volume-size", "20"])
+            assert r.exit_code == 0, r.output
+
+            r = runner.invoke(group, ["host", "prep"])
             assert r.exit_code == 0, r.output
 
             r = runner.invoke(group, ["destroy", "--name", "fake1", "--yes"])

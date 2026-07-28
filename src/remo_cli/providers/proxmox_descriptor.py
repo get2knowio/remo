@@ -18,8 +18,9 @@ from remo_cli.core.provider_registry import (
     HOST,
     MEMORY,
     USE_IP,
-    USER,
     VERBOSE,
+    VOLUME_SIZE,
+    ArgumentSpec,
     CommandSpec,
     ConnectionSpec,
     NameFormat,
@@ -27,13 +28,13 @@ from remo_cli.core.provider_registry import (
     ProviderDescriptor,
 )
 
-# The shared catalog's USER reads "SSH user for the remote host", which is
-# ambiguous here: for Proxmox it is the login on the *hypervisor node*, used to
-# run host-side `pct` commands -- NOT the account you land in inside the
-# container (that is always `remo`, set at create/sync time and not
-# configurable). Overridden so `--help` says which of the two machines it means.
-_NODE_USER = replace(
-    USER,
+# The login on the *hypervisor node*, used to run host-side `pct` commands --
+# NOT the account you land in inside the container (that is always `remo`,
+# set at create/sync time and not configurable).
+_NODE_USER = OptionSpec(
+    name="--node-user",
+    param="node_user",
+    default="",
     help="SSH user on the Proxmox node, for host-side pct commands "
     "(default: root). Not the container login, which is always 'remo'.",
 )
@@ -88,12 +89,23 @@ DESCRIPTOR = ProviderDescriptor(
         USE_IP,
         DEVCONTAINER_RUNTIME,
     ),
-    update_options=(
+    upgrade_options=(
         replace(HOST, default=""),
         _NODE_USER,
+        DEVCONTAINER_RUNTIME,
+    ),
+    resize_dimensions=(
+        VOLUME_SIZE,
         CORES,
         MEMORY,
-        DEVCONTAINER_RUNTIME,
+    ),
+    resize_options=(
+        replace(HOST, default=""),
+        _NODE_USER,
+    ),
+    tag_options=(
+        replace(HOST, default=""),
+        _NODE_USER,
     ),
     destroy_options=(
         replace(HOST, default=""),
@@ -111,13 +123,13 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     supports_managed_marker=True,
     snapshot_region_scoped=False,
-    extra_commands=(
+    host_commands=(
         CommandSpec(
             name="bootstrap",
             help="Verify a Proxmox node and download the default LXC template.",
             impl="bootstrap",
+            target=ArgumentSpec("host", required=True),
             options=(
-                replace(HOST, required=True, default=None),
                 _NODE_USER,
                 _BRIDGE,
                 _STORAGE,

@@ -32,19 +32,19 @@ def _entry(name: str = "dev1") -> KnownHost:
 
 class TestUpdateEntry:
     def test_success_returns_none(self, mocker):
-        spy = mocker.patch("remo_cli.providers.hetzner.update", return_value=None)
+        spy = mocker.patch("remo_cli.providers.hetzner.upgrade", return_value=None)
         result = providers_hetzner.update_entry(_entry(), verbose=True)
         assert result is None
-        spy.assert_called_once_with(name="dev1", verbose=True, apply_marker=False)
+        spy.assert_called_once_with(name="dev1", verbose=True)
 
     def test_default_verbose_false(self, mocker):
-        spy = mocker.patch("remo_cli.providers.hetzner.update", return_value=None)
+        spy = mocker.patch("remo_cli.providers.hetzner.upgrade", return_value=None)
         providers_hetzner.update_entry(_entry())
-        spy.assert_called_once_with(name="dev1", verbose=False, apply_marker=False)
+        spy.assert_called_once_with(name="dev1", verbose=False)
 
     def test_update_failure_propagates(self, mocker):
         mocker.patch(
-            "remo_cli.providers.hetzner.update",
+            "remo_cli.providers.hetzner.upgrade",
             side_effect=OperationFailedError(
                 "Failed to update tools on 'dev1' (playbook rc=1)."
             ),

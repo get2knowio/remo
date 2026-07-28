@@ -1,8 +1,9 @@
 """Hetzner Cloud provider business logic for remo.
 
-Manages the lifecycle of Hetzner Cloud VMs: create, destroy, and update
-(re-configure dev tools).  All functions are pure business logic with no
-Click imports; CLI argument handling lives in the ``cli`` layer.
+Manages the lifecycle of Hetzner Cloud VMs: create, destroy, upgrade
+(re-configure dev tools), resize (persistent volume), and tag (managed-label
+write).  All functions are pure business logic with no Click imports; CLI
+argument handling lives in the ``cli`` layer.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ from remo_cli.core.output import (
     print_error,
     print_info,
     print_success,
-    print_warning,
     render_host_table,
 )
 from remo_cli.core.reconcile import (
@@ -183,28 +183,52 @@ def teardown(entry: KnownHost, *, verbose: bool = False, remove_volume: bool = F
         raise OperationFailedError(f"Failed to destroy Hetzner VM '{server_name}' (playbook rc={rc}).")
 
 
-def update(
+def upgrade(
     name: str = "",
-    volume_size: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
-    apply_marker: bool = True,
 ) -> None:
-    """Re-configure dev tools on an existing Hetzner VM.
-
-    When *volume_size* is provided, grow the persistent volume and the
-    filesystem first (idempotent — no-op when sizes match).
+    """Refresh dev tools on an existing Hetzner VM.
 
     Raises :class:`PreconditionError` if the server is not registered, or
-    :class:`OperationFailedError` if a playbook fails.
-    
-    *apply_marker* gates the managed-marker backfill. Explicit
-    ``remo hetzner update`` backfills it (True); ``update_entry`` -- the
-    ``remo shell`` tools-update path -- passes False, so `remo shell` never
-    performs a provider-side write the user did not ask for. Instances that
-    predate tagging are pointed at ``sync`` by the one-time post-migration
-    notice instead (core/known_hosts._print_tagging_notice).
+    :class:`OperationFailedError` if the playbook fails.
+    """
+    if name:
+        validate_name(name, "server name")
+
+    server_name = name or "remo"
+    guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
+
+    server_host = _lookup_hetzner_host(server_name)
+    if not server_host:
+        raise PreconditionError(
+            f"Server '{server_name}' not found in known_hosts. "
+            f"Run 'remo hetzner sync' or 'remo hetzner create' first."
+        )
+
+    print_info(f"Updating Hetzner VM '{server_name}' at {server_host}...")
+
+    extra_vars: list[str] = [
+        "-i", f"{server_host},",
+        "-e", "ansible_user=remo",
+    ]
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
+
+    rc = run_playbook("hetzner_configure.yml", extra_vars, verbose=verbose)
+    if rc != 0:
+        raise OperationFailedError(f"Failed to update tools on '{server_name}' (playbook rc={rc}).")
+
+
+def resize(
+    name: str = "",
+    volume_size: str = "",
+    verbose: bool = False,
+) -> None:
+    """Resize the persistent volume of an existing Hetzner VM.
+
+    Raises :class:`PreconditionError` if the server is not registered, or
+    :class:`OperationFailedError` if the playbook fails.
     """
     if name:
         validate_name(name, "server name")
@@ -213,20 +237,6 @@ def update(
     server_name = name or "remo"
     guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
 
-    # `update` doubles as the backfill path for the remo managed label
-    # (T058) -- API-only, so it runs before/independent of the SSH-reachable
-    # steps below and is not skipped by a later playbook failure. Warn on
-    # failure but do not fail the whole update (FR-005 parity).
-    if apply_marker:
-        ok, err = _apply_managed_label(server_name)
-        if not ok:
-            print_warning(
-                f"Could not mark server '{server_name}' as remo-managed "
-                f"({err}); it may not be picked up by a default "
-                f"`remo hetzner sync`."
-            )
-
-    # Get server address from known_hosts.
     server_host = _lookup_hetzner_host(server_name)
     if not server_host:
         raise PreconditionError(
@@ -234,39 +244,47 @@ def update(
             f"Run 'remo hetzner sync' or 'remo hetzner create' first."
         )
 
-    if volume_size:
-        print_info(f"Resizing Hetzner volume for '{server_name}' to {volume_size}GB...")
-        resize_vars: list[str] = [
-            "-e", f"hetzner_server_name={server_name}",
-            "-e", f"volume_size={volume_size}",
-        ]
-        rc = run_playbook("hetzner_resize.yml", resize_vars, verbose=verbose)
-        if rc != 0:
-            raise OperationFailedError(
-                f"Failed to resize Hetzner volume for '{server_name}' (playbook rc={rc})."
-            )
-
-    print_info(f"Updating Hetzner VM '{server_name}' at {server_host}...")
-
-    extra_vars: list[str] = [
-        "-i", f"{server_host},",
-        "-e", "ansible_user=remo",
+    print_info(f"Resizing Hetzner volume for '{server_name}' to {volume_size}GB...")
+    resize_vars: list[str] = [
+        "-e", f"hetzner_server_name={server_name}",
+        "-e", f"volume_size={volume_size}",
     ]
-
-    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
-
-    rc = run_playbook(
-        "hetzner_configure.yml",
-        extra_vars,
-        verbose=verbose,
-    )
+    rc = run_playbook("hetzner_resize.yml", resize_vars, verbose=verbose)
     if rc != 0:
-        raise OperationFailedError(f"Failed to update tools on '{server_name}' (playbook rc={rc}).")
+        raise OperationFailedError(
+            f"Failed to resize Hetzner volume for '{server_name}' (playbook rc={rc})."
+        )
+
+
+def tag(name: str = "") -> None:
+    """Mark an existing Hetzner VM as remo-managed.
+
+    Read-before-write: already-tagged is a reported no-op (exit 0, zero
+    writes). Raises :class:`OperationFailedError` (not a warning) on write
+    failure.
+    """
+    if name:
+        validate_name(name, "server name")
+    server_name = name or "remo"
+    guard_not_added_ssh_host(server_name, "hetzner")  # FR-012
+
+    server = _get_server_by_name(server_name)
+    labels = server.get("labels", {}) or {}
+    if labels.get("remo") == "true":
+        print_info(f"Server '{server_name}' is already marked as remo-managed.")
+        return
+
+    ok, err = _apply_managed_label(server_name)
+    if not ok:
+        raise OperationFailedError(
+            f"Could not mark server '{server_name}' as remo-managed: {err}"
+        )
+    print_info(f"Marked server '{server_name}' as remo-managed.")
 
 
 def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
     """Re-apply tool configuration to an existing VM (Protocol Part A)."""
-    update(name=entry.name, verbose=verbose, apply_marker=False)
+    upgrade(name=entry.name, verbose=verbose)
 
 
 _LIST_COLUMNS = (

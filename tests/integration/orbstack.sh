@@ -164,11 +164,11 @@ for spec in "${VMS[@]}"; do
 
   # Bootstrap Incus
   blue "Bootstrapping Incus on $vmname..."
-  remo incus bootstrap --host "$host" --user "$SSH_USER"
+  remo incus host bootstrap "$host" --host-user "$SSH_USER"
 
   # Create container
   blue "Creating container '$CONTAINER_NAME' on $vmname..."
-  remo incus create --host "$host" --user "$SSH_USER" --name "$CONTAINER_NAME"
+  remo incus create --host "$host" --host-user "$SSH_USER" --name "$CONTAINER_NAME"
 
   # Smoke-test remo shell
   blue "Running shell smoke tests..."

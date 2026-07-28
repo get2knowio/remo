@@ -1,8 +1,9 @@
 """FR-012 guard: provider lifecycle ops must reject added (``type="ssh"``) hosts.
 
 A host registered with ``remo add`` has ``type="ssh"`` and no managed provider
-infrastructure. Running a provider lifecycle operation (``destroy``, resize via
-``update``, or a mutating ``snapshot`` op) against such a name must fail with a
+infrastructure. Running a provider lifecycle operation (``destroy``,
+``upgrade``, ``resize``, ``tag``, or a mutating ``snapshot`` op) against such
+a name must fail with a
 clear "manually-registered SSH host" message pointing at ``remo remove`` — never
 an opaque error or a silent mis-target.
 
@@ -56,7 +57,9 @@ LIFECYCLE_OPS = [
     # guard-ordering coverage lives in tests/unit/core/test_lifecycle.py;
     # Incus-specific wiring coverage lives at the CLI layer:
     # tests/unit/cli/providers/test_incus_snapshot.py::TestDestroyCLI.
-    ("incus.update", lambda: providers_incus.update(name=ADDED_NAME)),
+    ("incus.upgrade", lambda: providers_incus.upgrade(name=ADDED_NAME)),
+    ("incus.resize", lambda: providers_incus.resize(name=ADDED_NAME, volume_size="20")),
+    ("incus.tag", lambda: providers_incus.tag(name=ADDED_NAME)),
     (
         "incus.snapshot_create",
         lambda: providers_incus.snapshot_create_legacy(
@@ -82,7 +85,9 @@ LIFECYCLE_OPS = [
     # itself performs destruction only (R-A3) and no longer guards. Coverage
     # for the proxmox destroy guard now lives at the CLI layer:
     # tests/unit/cli/providers/test_proxmox_snapshot.py::TestDestroyCLI.
-    ("proxmox.update", lambda: providers_proxmox.update(name=ADDED_NAME, host="node1")),
+    ("proxmox.upgrade", lambda: providers_proxmox.upgrade(name=ADDED_NAME, host="node1")),
+    ("proxmox.resize", lambda: providers_proxmox.resize(name=ADDED_NAME, host="node1", volume_size="20")),
+    ("proxmox.tag", lambda: providers_proxmox.tag(name=ADDED_NAME, host="node1")),
     (
         "proxmox.snapshot_create",
         lambda: providers_proxmox.snapshot_create_legacy(
@@ -110,7 +115,8 @@ LIFECYCLE_OPS = [
     # guard-ordering coverage lives in tests/unit/core/test_lifecycle.py;
     # AWS-specific wiring coverage lives at the CLI layer:
     # tests/unit/cli/providers/test_aws_snapshot.py::TestDestroyCLI.
-    ("aws.update", lambda: providers_aws.update(name=ADDED_NAME)),
+    ("aws.upgrade", lambda: providers_aws.upgrade(name=ADDED_NAME)),
+    ("aws.resize", lambda: providers_aws.resize(name=ADDED_NAME, volume_size="20")),
     (
         "aws.snapshot_create",
         lambda: providers_aws.snapshot_create_legacy(
@@ -134,7 +140,9 @@ LIFECYCLE_OPS = [
     # itself performs destruction only (R-A3) and no longer guards. Coverage
     # for the hetzner destroy guard now lives at the CLI layer:
     # tests/unit/cli/providers/test_hetzner_snapshot.py::TestDestroyCLI.
-    ("hetzner.update", lambda: providers_hetzner.update(name=ADDED_NAME)),
+    ("hetzner.upgrade", lambda: providers_hetzner.upgrade(name=ADDED_NAME)),
+    ("hetzner.resize", lambda: providers_hetzner.resize(name=ADDED_NAME, volume_size="20")),
+    ("hetzner.tag", lambda: providers_hetzner.tag(name=ADDED_NAME)),
     (
         "hetzner.snapshot_create",
         lambda: providers_hetzner.snapshot_create_legacy(

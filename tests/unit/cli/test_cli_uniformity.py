@@ -40,10 +40,11 @@ def test_shared_options_identical_shape_across_providers() -> None:
         ("create", "tools_only"),
         ("create", "tools_skip"),
         ("create", "verbose"),
-        ("update", "volume_size"),
-        ("update", "tools_only"),
-        ("update", "tools_skip"),
-        ("update", "verbose"),
+        ("upgrade", "tools_only"),
+        ("upgrade", "tools_skip"),
+        ("upgrade", "verbose"),
+        ("resize", "volume_size"),
+        ("resize", "verbose"),
         ("destroy", "auto_confirm"),
         ("destroy", "verbose"),
         ("sync", "auto_confirm"),
@@ -65,7 +66,7 @@ def get_descriptor_by_type(type_name: str):
 def test_name_option_same_flag_no_short_form_everywhere() -> None:
     for type_name in ALL_TYPE_NAMES:
         group = build_provider_group(get_descriptor_by_type(type_name))
-        for command_name in ("create", "destroy", "update", "info"):
+        for command_name in ("create", "destroy", "info"):
             opt = _option(group.commands[command_name], "name")
             assert opt.opts == ["--name"], f"{type_name} {command_name}: {opt.opts}"
             assert opt.secondary_opts == []

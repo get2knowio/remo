@@ -60,16 +60,16 @@ remo aws create --name alice --type t3.large --region us-east-1
 remo aws list
 
 # Update dev tools on existing instance
-remo aws update
+remo aws upgrade
 
 # Update only specific tools
-remo aws update --only zellij --only fzf
+remo aws upgrade --only zellij --only fzf
 
 # Update but skip specific tools
-remo aws update --skip docker --skip nodejs
+remo aws upgrade --skip docker --skip nodejs
 
 # Grow the persistent EBS volume (and the filesystem) in place
-remo aws update --volume-size 100
+remo aws resize --volume-size 100
 
 # Show instance information (type, cores, memory, EBS volume size)
 remo aws info
@@ -105,16 +105,26 @@ remo aws snapshot delete <instance> <snap-name> [-y]    # Remove snapshot
 | `--spot` | (off) | Use spot instance for cost savings |
 | `--iam-profile <name>` | (auto) | Use existing IAM instance profile (skips discovery) |
 
-### Update Options
+### Upgrade Options
 
 | Option | Description |
 |--------|-------------|
 | `--only <tool>` | Only update specified tool (can repeat) |
 | `--skip <tool>` | Skip specified tool (can repeat) |
-| `--volume-size <GB>` | Grow the persistent EBS volume to this size and grow the ext4 filesystem in place via SSH-over-SSM. AWS only supports growing. |
 | `--name <name>` | Resource namespace (default: `$USER`) |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
+
+`remo aws upgrade` also refreshes the instance's IP/instance-id in the local registry as a side effect; it never touches the EBS volume size.
+
+### Resize Options
+
+| Option | Description |
+|--------|-------------|
+| `--volume-size <GB>` | Required. Grow the persistent EBS volume to this size and grow the ext4 filesystem in place via SSH-over-SSM. AWS only supports growing. |
+| `--name <name>` | Resource namespace (default: `$USER`) |
+
+`remo aws resize` never runs the configure/dev-tools play.
 
 ### Destroy Options
 
@@ -215,8 +225,9 @@ The principal `remo` uses (your local IAM user, SSO session, or assumed role) ne
 |---|---|
 | `create` | `RunInstances`, `DescribeInstances`, `DescribeImages`, `DescribeVolumes`, `CreateTags`, `CreateVolume`, `DescribeSecurityGroups`, `CreateSecurityGroup`, `AuthorizeSecurityGroupIngress`, `CreateKeyPair`, `ImportKeyPair`, `DescribeKeyPairs`, `RunInstances`, `iam:PassRole`, `iam:GetRole`, `iam:CreateRole`, `iam:AttachRolePolicy`, `iam:GetInstanceProfile`, `iam:CreateInstanceProfile`, `iam:AddRoleToInstanceProfile` |
 | `destroy` | `DescribeInstances`, `TerminateInstances`, `DescribeVolumes`, `DeleteVolume`, `DescribeSecurityGroups`, `DeleteSecurityGroup`, `DescribeKeyPairs`, `DeleteKeyPair`, plus the IAM cleanup mirror of `create` |
-| `update`, `info`, `list` | `DescribeInstances`, `DescribeVolumes` (+ `ModifyVolume` and `DescribeVolumesModifications` for `update --volume-size`) |
-| `sync` | `DescribeInstances` — describes every non-terminal instance in the region (paginated; not filtered by the `remo` tag) and reads each instance's tags to determine its registry name and managed-marker state. No new action beyond what `update`/`info`/`list` already require. |
+| `upgrade`, `info`, `list` | `DescribeInstances`, `DescribeVolumes` |
+| `resize` | `DescribeInstances`, `DescribeVolumes`, `ModifyVolume`, `DescribeVolumesModifications` |
+| `sync` | `DescribeInstances` — describes every non-terminal instance in the region (paginated; not filtered by the `remo` tag) and reads each instance's tags to determine its registry name and managed-marker state. No new action beyond what `upgrade`/`info`/`list` already require. |
 | `stop`, `start`, `reboot` | `DescribeInstances`, `StopInstances` / `StartInstances` / `RebootInstances` |
 | `snapshot create` | `DescribeInstances`, `DescribeVolumes`, `DescribeSnapshots`, `CreateSnapshot`, `CreateTags` |
 | `snapshot list` | `DescribeInstances`, `DescribeVolumes`, `DescribeSnapshots` |

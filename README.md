@@ -290,8 +290,8 @@ remo hetzner sync                   # Reconcile registry with existing VMs
 remo hetzner sync --all             # Also adopt unlabelled VMs
 remo hetzner sync --yes             # Skip the removal confirmation
 remo hetzner sync --dry-run         # Preview the plan, change nothing
-remo hetzner update                 # Update dev tools
-remo hetzner update --volume-size 100   # Grow persistent volume + FS
+remo hetzner upgrade NAME           # Update dev tools
+remo hetzner resize NAME --volume-size 100   # Grow persistent volume + FS
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
 # AWS (SSM access — no inbound ports)
@@ -302,8 +302,8 @@ remo aws sync                       # Reconcile registry with existing instances
 remo aws sync --all                 # Also adopt untagged remo-* named instances
 remo aws sync --yes                 # Skip the removal confirmation
 remo aws sync --dry-run             # Preview the plan, change nothing
-remo aws update                     # Update dev tools
-remo aws update --volume-size 100   # Grow EBS volume + FS in place
+remo aws upgrade NAME               # Update dev tools
+remo aws resize NAME --volume-size 100   # Grow EBS volume + FS in place
 remo aws stop [--yes]               # Stop instance (pause billing)
 remo aws start                      # Start a stopped instance
 remo aws reboot                     # Reboot instance
@@ -318,10 +318,11 @@ remo incus sync [--host H]          # Reconcile registry with remo-managed conta
 remo incus sync [--host H] --all    # Also adopt non-remo containers on the host
 remo incus sync [--host H] --yes    # Skip the removal confirmation
 remo incus sync [--host H] --dry-run   # Preview the plan, change nothing
-remo incus update --name <n>        # Update dev tools (also marks as remo-managed)
-remo incus update --name <n> --volume-size 40 --cores 4 --memory 4096
+remo incus upgrade <n> [--host H] [--host-user U]   # Update dev tools
+remo incus resize <n> --volume-size 40 --cores 4 --memory 4096
+remo incus tag <n>                  # Mark as remo-managed
 remo incus destroy --name <n> [--yes]    # Destroy container
-remo incus bootstrap                # Initialize Incus on host
+remo incus host bootstrap [HOST]    # Initialize Incus on host (defaults to localhost)
 
 # Proxmox VE LXC Containers
 remo proxmox create --name <n> --host <node>  # Create LXC container
@@ -331,10 +332,11 @@ remo proxmox sync --host <node>     # Reconcile registry with remo-managed conta
 remo proxmox sync --host <node> --all   # Also adopt non-remo containers on the node
 remo proxmox sync --host <node> --yes   # Skip the removal confirmation
 remo proxmox sync --host <node> --dry-run   # Preview the plan, change nothing
-remo proxmox update --name <n>      # Update dev tools (also marks as remo-managed)
-remo proxmox update --name <n> --volume-size 40 --cores 4 --memory 4096
+remo proxmox upgrade <n> [--host H] [--node-user U]   # Update dev tools
+remo proxmox resize <n> --volume-size 40 --cores 4 --memory 4096
+remo proxmox tag <n>                # Mark as remo-managed
 remo proxmox destroy --name <n> [--yes] [--purge]   # Destroy container
-remo proxmox bootstrap --host <node>  # Verify node + download LXC template
+remo proxmox host bootstrap <node>  # Verify node + download LXC template
 
 # Snapshots (all four providers)
 remo <provider> snapshot create <instance>                       # Auto-named
@@ -347,7 +349,7 @@ remo <provider> snapshot delete <instance> <snap-name> [-y]      # Remove
 
 # Updates
 uv tool upgrade remo-cli            # Update CLI to latest version
-remo <platform> update              # Update dev tools on remote
+remo <platform> upgrade NAME        # Update dev tools on remote
 
 # Help
 remo --help
@@ -436,11 +438,13 @@ tag, an AWS `tag:remo=true`, or a Hetzner `remo` label) — but an existing
 registry entry is never removed just because it lacks that marker; presence
 at the provider is what protects it, independently of the marker. To adopt
 unmarked containers/instances into the registry, use `sync --all` (per-run,
-prints what it widened to) or `remo <provider> update <name>` (marks one
-permanently, and for Hetzner also backfills the label on the server itself).
-Containers/instances that predate this marker convention are unmarked; a
-default `sync` retains them, names them, and prints both remedies rather than
-dropping or silently re-marking them.
+prints what it widened to) or, on Incus/Proxmox/Hetzner, `remo <provider> tag
+<name>` (marks one permanently, and for Hetzner also backfills the label on
+the server itself). AWS has no `tag` command, so `sync --all` is the only way
+to bring an unmarked instance under management there. Containers/instances
+that predate this marker convention are unmarked; a default `sync` retains
+them, names them, and prints both remedies rather than dropping or silently
+re-marking them.
 
 **SSH connection fails?**
 ```bash

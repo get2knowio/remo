@@ -328,8 +328,8 @@ def render_plan(
         print_info(f"  - removed    {len(plan.removed)}   {names}")
 
     # Only the host-scoped providers (incus, proxmox) accept `--host` on
-    # `update`; aws and hetzner do not, so the hint must not suggest it there.
-    mark_cmd = f"remo {plan.scope.type} update --name <n>"
+    # `tag`; aws and hetzner do not, so the hint must not suggest it there.
+    mark_cmd = f"remo {plan.scope.type} tag <n>"
     if get_descriptor(plan.scope.type).name_format is NameFormat.HOST_SCOPED:
         mark_cmd += " --host <h>"
 

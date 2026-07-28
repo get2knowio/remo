@@ -38,25 +38,25 @@ def _entry(name: str = "lab1/dev1", instance_id: str = "root") -> KnownHost:
 
 class TestUpdateEntry:
     def test_success_returns_none_and_parses_name(self, mocker):
-        spy = mocker.patch("remo_cli.providers.incus.update", return_value=0)
+        spy = mocker.patch("remo_cli.providers.incus.upgrade", return_value=0)
         result = providers_incus.update_entry(_entry(), verbose=True)
         assert result is None
         spy.assert_called_once_with(
-            name="dev1", host="lab1", user="root", verbose=True, apply_marker=False
+            name="dev1", host="lab1", host_user="root", verbose=True
         )
 
     def test_localhost_entry_parses_host_and_container(self, mocker):
-        spy = mocker.patch("remo_cli.providers.incus.update", return_value=0)
+        spy = mocker.patch("remo_cli.providers.incus.upgrade", return_value=0)
         providers_incus.update_entry(_entry(name="localhost/dev2", instance_id=""))
         spy.assert_called_once_with(
-            name="dev2", host="localhost", user="", verbose=False, apply_marker=False
+            name="dev2", host="localhost", host_user="", verbose=False
         )
 
     def test_underlying_failure_propagates(self, mocker):
-        """``update`` now raises directly; ``update_entry`` is a thin
+        """``upgrade`` now raises directly; ``update_entry`` is a thin
         pass-through with no rc-checking left to do."""
         mocker.patch(
-            "remo_cli.providers.incus.update",
+            "remo_cli.providers.incus.upgrade",
             side_effect=OperationFailedError("Failed to configure tools on container 'dev1' (playbook rc=1)."),
         )
         with pytest.raises(OperationFailedError, match="Failed to configure tools"):

@@ -130,9 +130,11 @@ class TestAwsGroup:
     def test_aws_subcommands(self):
         """All AWS subcommands must appear in ``remo aws --help``."""
         result = _invoke("aws", "--help")
-        expected = ["create", "destroy", "update", "list", "sync", "stop", "start", "reboot", "info"]
+        expected = ["create", "destroy", "upgrade", "resize", "list", "sync", "stop", "start", "reboot", "info"]
         for name in expected:
             assert name in result.output, f"AWS subcommand '{name}' missing from help output"
+        assert "tag" not in result.output
+        assert "host" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +156,10 @@ class TestHetznerGroup:
     def test_hetzner_subcommands(self):
         """All Hetzner subcommands must appear in ``remo hetzner --help``."""
         result = _invoke("hetzner", "--help")
-        expected = ["create", "destroy", "update", "list", "sync"]
+        expected = ["create", "destroy", "upgrade", "resize", "tag", "list", "sync"]
         for name in expected:
             assert name in result.output, f"Hetzner subcommand '{name}' missing from help output"
+        assert "host" not in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -178,9 +181,14 @@ class TestIncusGroup:
     def test_incus_subcommands(self):
         """All Incus subcommands must appear in ``remo incus --help``."""
         result = _invoke("incus", "--help")
-        expected = ["create", "destroy", "update", "list", "sync", "bootstrap"]
+        expected = ["create", "destroy", "upgrade", "resize", "tag", "list", "sync", "host"]
         for name in expected:
             assert name in result.output, f"Incus subcommand '{name}' missing from help output"
+
+    def test_incus_bootstrap_lives_under_host(self):
+        """`bootstrap` is not a flat top-level command — it's `host bootstrap`."""
+        result = _invoke("incus", "host", "--help")
+        assert "bootstrap" in result.output
 
 
 # ---------------------------------------------------------------------------

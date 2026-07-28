@@ -1,7 +1,4 @@
-"""Frozen snapshot of the hand-written CLI surface (018-provider-abstraction, T002).
-
-Captured 2026-07-26 from the (pre-refactor) hand-written modules:
-src/remo_cli/cli/providers/{incus,hetzner,aws,proxmox}.py
+"""Frozen snapshot of the generated CLI surface (021-cli-plane-separation).
 
 This is the FR-009 preservation reference consumed by
 tests/unit/cli/test_surface_preservation.py: every command and every
@@ -18,9 +15,16 @@ passed to ``click.option()``/``click.argument()`` in the original source
 (e.g. ``"--yes"``, ``"-y"``). Positional arguments are recorded using their
 click variable name in upper case (e.g. ``"INSTANCE"``); an optional
 positional argument is suffixed with ``"?"`` (e.g. ``"INSTANCE?"``).
-Subcommands of a provider's ``snapshot`` group are keyed as
+Subcommands of a provider's ``snapshot``/``host`` group are keyed as
 ``"snapshot create"``, ``"snapshot restore"``, ``"snapshot delete"``,
-``"snapshot list"``.
+``"snapshot list"``, ``"host bootstrap"``.
+
+Rewritten in full for spec 021 (CLI plane separation): the three-intent
+``update`` verb is gone (replaced by ``upgrade``/``resize``/``tag``), flat
+``bootstrap`` moved under the ``host`` subgroup, and incus/proxmox's
+``--user`` flag is now ``--host-user``/``--node-user`` respectively. This
+file *is* the intentional-breaking-change acknowledgment (research.md D9) —
+it is deliberately NOT preserved byte-for-byte from the pre-021 surface.
 
 Deliberate divergence from the 2026-07-26 capture (019-hygiene-deps-docs,
 US5, the sole FR-026 carve-out): ``"--yes"``/``"-y"`` were removed from each
@@ -39,7 +43,7 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "create": [
             "--name",
             "--host",
-            "--user",
+            "--host-user",
             "--domain",
             "--image",
             "--volume-size",
@@ -54,37 +58,45 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "destroy": [
             "--name",
             "--host",
-            "--user",
+            "--host-user",
             "--remove-storage",
             "--yes",
             "-y",
             "-v",
             "--verbose",
         ],
-        "update": [
-            "--name",
+        "upgrade": [
+            "NAME",
             "--host",
-            "--user",
-            "--volume-size",
-            "--cores",
-            "--memory",
+            "--host-user",
             "--only",
             "--skip",
             "-v",
             "--verbose",
         ],
+        "resize": [
+            "NAME",
+            "--volume-size",
+            "--cores",
+            "--memory",
+            "--host",
+            "--host-user",
+            "-v",
+            "--verbose",
+        ],
+        "tag": ["NAME", "--host", "--host-user"],
         "list": [],
-        "info": ["--name", "--host", "--user"],
+        "info": ["--name", "--host", "--host-user"],
         "sync": [
             "--host",
-            "--user",
+            "--host-user",
             "--use-ip",
             "--all",
             "--yes",
             "-y",
             "--dry-run",
         ],
-        "bootstrap": ["--host", "--user", "--network-type", "-v", "--verbose"],
+        "host bootstrap": ["HOST?", "--host-user", "--network-type", "-v", "--verbose"],
         "snapshot create": ["INSTANCE", "--name", "--description"],
         "snapshot restore": ["INSTANCE", "SNAP_NAME", "--yes", "-y"],
         "snapshot delete": ["INSTANCE", "SNAP_NAME", "--yes", "-y"],
@@ -94,7 +106,7 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "create": [
             "--name",
             "--host",
-            "--user",
+            "--node-user",
             "--node",
             "--bridge",
             "--storage",
@@ -115,40 +127,48 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "destroy": [
             "--name",
             "--host",
-            "--user",
+            "--node-user",
             "--purge",
             "--yes",
             "-y",
             "-v",
             "--verbose",
         ],
-        "update": [
-            "--name",
+        "upgrade": [
+            "NAME",
             "--host",
-            "--user",
-            "--volume-size",
-            "--cores",
-            "--memory",
+            "--node-user",
+            "--devcontainer-runtime",
             "--only",
             "--skip",
-            "--devcontainer-runtime",
             "-v",
             "--verbose",
         ],
+        "resize": [
+            "NAME",
+            "--volume-size",
+            "--cores",
+            "--memory",
+            "--host",
+            "--node-user",
+            "-v",
+            "--verbose",
+        ],
+        "tag": ["NAME", "--host", "--node-user"],
         "list": [],
-        "info": ["--name", "--host", "--user"],
+        "info": ["--name", "--host", "--node-user"],
         "sync": [
             "--host",
-            "--user",
+            "--node-user",
             "--use-ip",
             "--all",
             "--yes",
             "-y",
             "--dry-run",
         ],
-        "bootstrap": [
-            "--host",
-            "--user",
+        "host bootstrap": [
+            "HOST",
+            "--node-user",
             "--bridge",
             "--storage",
             "--template",
@@ -174,7 +194,8 @@ SURFACE: dict[str, dict[str, list[str]]] = {
             "--verbose",
         ],
         "destroy": ["--name", "--remove-storage", "--yes", "-y", "-v", "--verbose"],
-        "update": ["--name", "--volume-size", "--only", "--skip", "-v", "--verbose"],
+        "upgrade": ["NAME", "--only", "--skip", "-v", "--verbose"],
+        "resize": ["NAME", "--volume-size", "-v", "--verbose"],
         "list": [],
         "sync": ["--region", "--all", "--yes", "-y", "--dry-run"],
         "stop": ["--name", "--yes", "-y"],
@@ -205,7 +226,9 @@ SURFACE: dict[str, dict[str, list[str]]] = {
             "-v",
             "--verbose",
         ],
-        "update": ["--name", "--volume-size", "--only", "--skip", "-v", "--verbose"],
+        "upgrade": ["NAME", "--only", "--skip", "-v", "--verbose"],
+        "resize": ["NAME", "--volume-size", "-v", "--verbose"],
+        "tag": ["NAME"],
         "list": [],
         "info": ["--name"],
         "sync": ["--all", "--yes", "-y", "--dry-run"],

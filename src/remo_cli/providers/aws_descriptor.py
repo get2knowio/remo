@@ -18,6 +18,7 @@ from remo_cli.core.provider_registry import (
     LOGIN_USER,
     NAME,
     REGION,
+    VOLUME_SIZE,
     CommandSpec,
     ConnectionSpec,
     NameFormat,
@@ -62,7 +63,8 @@ DESCRIPTOR = ProviderDescriptor(
         _SPOT,
         _IAM_PROFILE,
     ),
-    update_options=(),
+    upgrade_options=(),
+    resize_dimensions=(VOLUME_SIZE,),
     destroy_options=(
         _REMOVE_STORAGE,
     ),
