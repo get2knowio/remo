@@ -68,10 +68,17 @@ else
 fi
 
 # --- Isolated HOME ---------------------------------------------------------
-# Never write into the caller's real ~/.config/fish/completions.
+# Never write into the caller's real fish completions directory.
+#
+# Overriding HOME alone is NOT enough: both fish and remo prefer
+# $XDG_CONFIG_HOME when it is set, so on any machine that exports it (the
+# GitHub runner does, as do many Linux and fish-heavy Mac setups) the install
+# would land in the caller's real ~/.config/fish/completions and clobber
+# whatever is there. Both variables have to move together.
 FISH_HOME="$(mktemp -d)"
 trap 'rm -rf "$FISH_HOME"' EXIT
 export HOME="$FISH_HOME"
+export XDG_CONFIG_HOME="$FISH_HOME/.config"
 
 blue "Installing completion into $FISH_HOME ..."
 if ! remo completion install fish; then
