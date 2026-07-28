@@ -30,6 +30,7 @@ from remo_cli.core.reconcile import (
     build_plan,
     gate_consent,
     merge_entry,
+    render_plan,
     run_sync,
 )
 from remo_cli.core.registry import read_registry
@@ -535,6 +536,52 @@ class TestBuildPlanClassification:
             include_all=False,
         )
         assert plan.baseline == (in_scope,)
+
+
+# ---------------------------------------------------------------------------
+# render_plan: "Mark permanently" remedy names `tag`, truthfully (SC-003)
+# ---------------------------------------------------------------------------
+
+
+class TestRenderPlanMarkPermanentlyRemedy:
+    def test_host_scoped_type_gets_tag_with_host_flag(self, capsys):
+        scope = SyncScope(type="incus", host="node1")
+        existing = _kh("incus", "node1/dev1", host="1.1.1.1")
+        discovered_entry = _kh("incus", "node1/dev1", host="1.1.1.1")
+        plan = build_plan(
+            [existing], _probe([_dh(discovered_entry, marked=False)]), scope, include_all=False
+        )
+        render_plan(plan, dry_run=False)
+        out = capsys.readouterr().out
+        assert "Mark permanently: remo incus tag <n> --host <h>" in out
+
+    def test_flat_type_gets_tag_without_host_flag(self, capsys):
+        scope = SyncScope(type="hetzner")
+        existing = _kh("hetzner", "web1", host="1.2.3.4")
+        discovered_entry = _kh("hetzner", "web1", host="1.2.3.4")
+        plan = build_plan(
+            [existing], _probe([_dh(discovered_entry, marked=False)]), scope, include_all=False
+        )
+        render_plan(plan, dry_run=False)
+        out = capsys.readouterr().out
+        assert "Mark permanently: remo hetzner tag <n>" in out
+        assert "--host" not in out
+
+    def test_marker_less_type_gets_no_tag_remedy(self, capsys):
+        """AWS has `supports_managed_marker=False`, so no `tag` command is
+        generated -- the remedy must stay silent rather than name a command
+        Click would reject with "No such command 'tag'" (SC-003)."""
+        scope = SyncScope(type="aws", region="us-west-2")
+        existing = _kh("aws", "box1", host="1.2.3.4")
+        discovered_entry = _kh("aws", "box1", host="1.2.3.4")
+        plan = build_plan(
+            [existing], _probe([_dh(discovered_entry, marked=False)]), scope, include_all=False
+        )
+        render_plan(plan, dry_run=False)
+        out = capsys.readouterr().out
+        assert "not remo-marked" in out  # the diagnosis still prints
+        assert "Mark permanently" not in out
+        assert "remo aws tag" not in out
 
 
 # ---------------------------------------------------------------------------

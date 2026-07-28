@@ -592,35 +592,25 @@ def teardown(
         )
 
 
-def update(
-    name: str = "",
-    volume_size: str = "",
-    tools_only: tuple[str, ...] = (),
-    tools_skip: tuple[str, ...] = (),
-    verbose: bool = False,
-) -> None:
-    """Re-configure dev tools on an existing AWS EC2 instance.
+def _refresh_registered_instance(name: str) -> tuple[str, str, str]:
+    """Resolve *name*'s running EC2 instance and refresh its registry entry.
 
-    Queries boto3 for the running instance to get current IP and instance
-    ID, updates the known-hosts registry, then runs the configure playbook.
-    When *volume_size* is provided, grow the EBS volume and the filesystem
-    first (idempotent — no-op when sizes match).
+    The shared preamble of :func:`upgrade` and :func:`resize` (spec 021 split
+    them out of the old ``update``): validate, resolve the default resource
+    name, guard added-SSH-host collisions (FR-012), find the running instance,
+    and re-record its current IP/instance-id locally. Returns
+    ``(resource_name, region, instance_id)``.
 
-    Returns ``None`` on success; raises :class:`PreconditionError` if no
-    running instance is found, or :class:`OperationFailedError` on a
-    nonzero ansible-playbook rc.
+    Raises :class:`PreconditionError` if no running instance is found.
     """
     if name:
         validate_name(name, "instance name")
-    volume_size = parse_volume_size(volume_size)
 
     resource_name = name or os.environ.get("USER", "remo")
     guard_not_added_ssh_host(resource_name, "aws")  # FR-012
     region = get_aws_region(resource_name)
 
-    # Query boto3 for running instance info.
     instance = _get_running_instance(resource_name, region)
-
     if not instance:
         raise PreconditionError(
             f"Could not find running AWS instance for '{resource_name}'. "
@@ -630,7 +620,6 @@ def update(
     instance_ip = instance.get("PublicIpAddress", "")
     instance_id = instance.get("InstanceId", "")
 
-    # Update known_hosts with current info.
     save_known_host(
         KnownHost(
             type="aws",
@@ -642,20 +631,24 @@ def update(
             region=region,
         )
     )
+    return resource_name, region, instance_id
 
-    if volume_size:
-        print_info(f"Resizing EBS volume for {instance_id} to {volume_size}GB...")
-        resize_vars: list[str] = [
-            "-e", f"aws_resource_name={resource_name}",
-            "-e", f"aws_instance_id={instance_id}",
-            "-e", f"aws_region={region}",
-            "-e", f"volume_size={volume_size}",
-        ]
-        rc = run_playbook("aws_resize.yml", resize_vars, verbose=verbose)
-        if rc != 0:
-            raise OperationFailedError(
-                f"AWS EBS volume resize failed (ansible-playbook rc={rc})."
-            )
+
+def upgrade(
+    name: str = "",
+    tools_only: tuple[str, ...] = (),
+    tools_skip: tuple[str, ...] = (),
+    verbose: bool = False,
+) -> None:
+    """Refresh dev tools on an existing AWS EC2 instance.
+
+    Queries boto3 for the running instance to get current IP and instance
+    ID, updates the known-hosts registry, then runs the configure playbook.
+
+    Raises :class:`PreconditionError` if no running instance is found, or
+    :class:`OperationFailedError` on a nonzero ansible-playbook rc.
+    """
+    _resource_name, _region, instance_id = _refresh_registered_instance(name)
 
     extra_vars: list[str] = [
         "-e", "aws_access_mode=ssm",
@@ -674,9 +667,36 @@ def update(
         )
 
 
+def resize(
+    name: str = "",
+    volume_size: str = "",
+    verbose: bool = False,
+) -> None:
+    """Resize the EBS volume of an existing AWS EC2 instance.
+
+    Raises :class:`PreconditionError` if no running instance is found, or
+    :class:`OperationFailedError` on a nonzero ansible-playbook rc.
+    """
+    volume_size = parse_volume_size(volume_size)
+    resource_name, region, instance_id = _refresh_registered_instance(name)
+
+    print_info(f"Resizing EBS volume for {instance_id} to {volume_size}GB...")
+    resize_vars: list[str] = [
+        "-e", f"aws_resource_name={resource_name}",
+        "-e", f"aws_instance_id={instance_id}",
+        "-e", f"aws_region={region}",
+        "-e", f"volume_size={volume_size}",
+    ]
+    rc = run_playbook("aws_resize.yml", resize_vars, verbose=verbose)
+    if rc != 0:
+        raise OperationFailedError(
+            f"AWS EBS volume resize failed (ansible-playbook rc={rc})."
+        )
+
+
 def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
     """Re-apply tool configuration to an existing instance (Protocol Part A)."""
-    update(name=entry.name, verbose=verbose)
+    upgrade(name=entry.name, verbose=verbose)
 
 
 # ---------------------------------------------------------------------------

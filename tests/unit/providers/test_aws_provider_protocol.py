@@ -50,14 +50,14 @@ def _snap(name: str = "pre-x") -> Snapshot:
 
 class TestUpdateEntry:
     def test_success_returns_none(self, mocker):
-        spy = mocker.patch("remo_cli.providers.aws.update", return_value=None)
+        spy = mocker.patch("remo_cli.providers.aws.upgrade", return_value=None)
         result = providers_aws.update_entry(_entry(), verbose=True)
         assert result is None
         spy.assert_called_once_with(name="dev1", verbose=True)
 
     def test_failure_propagates_operation_failed_error(self, mocker):
         mocker.patch(
-            "remo_cli.providers.aws.update",
+            "remo_cli.providers.aws.upgrade",
             side_effect=OperationFailedError("playbook rc=1"),
         )
         with pytest.raises(OperationFailedError):

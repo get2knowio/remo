@@ -14,7 +14,7 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
 # Create and configure container
-remo incus create dev1 --host incus-host --user youruser
+remo incus create dev1 --host incus-host --host-user youruser
 
 # Connect
 remo shell
@@ -28,7 +28,7 @@ No additional configuration needed for Incus. Authentication uses your SSH key.
 
 ```bash
 # Create container on remote host
-remo incus create dev1 --host myserver --user paul
+remo incus create dev1 --host myserver --host-user paul
 
 # Create container on localhost
 remo incus create dev1
@@ -42,29 +42,32 @@ remo incus create dev1 --cores 4 --memory 4096 --volume-size 40
 # List registered containers
 remo incus list
 
-# Update dev tools on existing container
-remo incus update dev1 --host myserver --user paul
+# Refresh dev tools on existing container
+remo incus upgrade dev1 --host myserver --host-user paul
 
-# Update only specific tools
-remo incus update dev1 --only zellij --only fzf
+# Refresh only specific tools
+remo incus upgrade dev1 --only zellij --only fzf
 
-# Skip specific tools during update
-remo incus update dev1 --skip docker --skip nodejs
+# Skip specific tools during a tools refresh
+remo incus upgrade dev1 --skip docker --skip nodejs
 
 # Resize the root disk on an existing container
-remo incus update dev1 --volume-size 40
+remo incus resize dev1 --volume-size 40
 
 # Live-tune CPU and/or memory limits (cgroup v2)
-remo incus update dev1 --cores 4 --memory 4096
+remo incus resize dev1 --cores 4 --memory 4096
+
+# Write the remo-managed marker on an existing container
+remo incus tag dev1 --host myserver --host-user paul
 
 # Destroy container
-remo incus destroy dev1 --host myserver --user paul --yes
+remo incus destroy dev1 --host myserver --host-user paul --yes
 
 # Destroy and also remove host mount directories
-remo incus destroy dev1 --host myserver --user paul --yes --remove-storage
+remo incus destroy dev1 --host myserver --host-user paul --yes --remove-storage
 
 # Bootstrap Incus on a host
-remo incus bootstrap --host myserver --user paul
+remo incus host bootstrap myserver --host-user paul
 
 # Inspect resources on an existing container
 remo incus info --name dev1
@@ -75,26 +78,52 @@ remo incus info --name dev1
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--host <host>` | `localhost` | Incus host to connect to |
-| `--user <user>` | (current user) | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
+| `--host-user <user>` | (current user) | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 | `--domain <domain>` | (none) | Domain for FQDN (e.g., `int.example.com`) |
 | `--image <image>` | `images:ubuntu/24.04/cloud` | Cloud image to use |
 | `--volume-size <GiB>` | (profile default) | Override the root disk size via `incus config device override root size=...` |
 | `--cores <n>` | (profile default) | Set CPU core limit (`limits.cpu`) |
 | `--memory <MiB>` | (profile default) | Set memory limit (`limits.memory`) |
 
-### Update Options
+### Upgrade Options
+
+`remo incus upgrade` refreshes dev tools only. It makes zero provider-side
+writes.
 
 | Option | Description |
 |--------|-------------|
-| `--only <tool>` | Only update specified tool (can repeat) |
+| `--only <tool>` | Only refresh specified tool (can repeat) |
 | `--skip <tool>` | Skip specified tool (can repeat) |
+| `--host <host>` | Incus host |
+| `--host-user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
+| `-v` | Verbose output |
+
+Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
+
+### Resize Options
+
+`remo incus resize` resizes resources only; it never runs the configure play.
+At least one of `--volume-size`, `--cores`, or `--memory` is required — the
+command errors listing those three flags if none is given.
+
+| Option | Description |
+|--------|-------------|
 | `--volume-size <GiB>` | Resize the root disk (grow only). May require a container restart depending on the storage backend. |
 | `--cores <n>` | Set CPU core limit (`limits.cpu`); live on cgroup v2 |
 | `--memory <MiB>` | Set memory limit (`limits.memory`); live on cgroup v2 |
 | `--host <host>` | Incus host |
-| `--user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
+| `--host-user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 
-Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
+### Tag Options
+
+`remo incus tag` writes the remo-managed marker only. If the container is
+already tagged, this is a reported no-op (exit `0`, zero writes); a write
+failure is a hard error.
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | Incus host |
+| `--host-user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 
 ### Destroy Options
 
@@ -103,22 +132,22 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `--yes`, `-y` | Skip confirmation prompt |
 | `--remove-storage` | Also remove host mount directories (e.g. `/home`, `/workspace`) bound into the container. Without this flag, mount directories on the host are preserved. |
 | `--host <host>` | Incus host |
-| `--user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
+| `--host-user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 
 ### Sync
 
 ```bash
 # Reconcile the registry with what's actually on the host (default project only)
-remo incus sync --host myserver --user paul
+remo incus sync --host myserver --host-user paul
 
 # Also adopt containers without the remo managed marker
-remo incus sync --host myserver --user paul --all
+remo incus sync --host myserver --host-user paul --all
 
 # Skip the removal confirmation prompt
-remo incus sync --host myserver --user paul --yes
+remo incus sync --host myserver --host-user paul --yes
 
 # Preview the plan without changing the registry or prompting
-remo incus sync --host myserver --user paul --dry-run
+remo incus sync --host myserver --host-user paul --dry-run
 ```
 
 `sync` reconciles the registry against every container on the given host's
@@ -134,20 +163,20 @@ prompting or changing anything, and always exits `0`.
 
 By default only containers carrying the `user.remo=true` managed marker are
 *added*; `--all` widens that to every container on the host for this run
-only. To mark one permanently instead, use `remo incus update --name <n>
+only. To mark one permanently instead, use `remo incus tag <n>
 --host <h>`.
 
 > **`remo shell` does not tag.** When `remo shell` offers a tools update, it
 > configures the instance only — it never writes provider-side state, because
 > tagging means reaching the hypervisor (a machine you did not name at the
-> prompt). Only explicit `remo incus update` and `remo incus sync` apply the marker. If
-> `sync` reports instances as unmarked, that is why, and either command fixes
-> it permanently.
+> prompt). Only explicit `remo incus tag` (and `remo incus create`) write the
+> marker — `remo incus sync` never does. If `sync` reports instances as
+> unmarked, `remo incus tag` fixes it permanently.
 
 | Option | Description |
 |--------|-------------|
 | `--host <host>` | Incus host (default: `localhost`) |
-| `--user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
+| `--host-user <user>` | SSH user on the **Incus host**, for host-side `incus` commands — not the container login (always `remo`) |
 | `--use-ip` | Store each container's resolved IP instead of its name |
 | `--all` | Also register containers without the managed marker (this run only) |
 | `--yes`, `-y` | Skip the removal confirmation prompt |
@@ -172,13 +201,13 @@ To use Incus containers, first bootstrap Incus on your host machine:
 ### Bootstrap a Remote Host
 
 ```bash
-remo incus bootstrap --host 192.168.1.100 --user paul
+remo incus host bootstrap 192.168.1.100 --host-user paul
 ```
 
 ### Bootstrap Localhost
 
 ```bash
-remo incus bootstrap
+remo incus host bootstrap
 ```
 
 ### What Bootstrap Does
@@ -195,7 +224,7 @@ remo incus bootstrap
 
 ```bash
 # Verbose output
-remo incus bootstrap --verbose
+remo incus host bootstrap -v
 
 # For advanced options, use the ansible playbook directly:
 cd ~/.remo/ansible

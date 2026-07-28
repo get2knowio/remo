@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from remo_cli.core.provider_registry import (
     LOCATION,
+    VOLUME_SIZE,
     ConnectionSpec,
     NameFormat,
     OptionSpec,
@@ -39,7 +40,9 @@ DESCRIPTOR = ProviderDescriptor(
         _SERVER_TYPE,
         LOCATION,
     ),
-    update_options=(),
+    upgrade_options=(),
+    resize_dimensions=(VOLUME_SIZE,),
+    tag_options=(),
     destroy_options=(
         _REMOVE_VOLUME,
     ),

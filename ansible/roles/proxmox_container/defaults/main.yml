@@ -12,7 +12,7 @@
 # proxmox_container_name: ""
 
 # LXC template stored on Proxmox storage, in <storage>:vztmpl/<filename> form.
-# Pre-downloaded by `remo proxmox bootstrap`.
+# Pre-downloaded by `remo proxmox host bootstrap`.
 proxmox_container_template: "local:vztmpl/ubuntu-24.04-standard_24.04-2_amd64.tar.zst"
 
 # Proxmox node name (cluster member name). Defaults to the inventory_hostname,

@@ -721,7 +721,7 @@ instance never looks the same as "no projects" (FR-006). From
 | `ok` | `remo-host capabilities` and `sessions list` both succeeded; `capability` and `targets` are populated (targets may be an empty list if the instance has no projects). | — |
 | `unreachable` | SSH connection failed (network/timeout/host down). | Retryable — check the instance is running and reachable. |
 | `auth_failed` | SSH connected but authentication was rejected. | Verify the mounted SSH identity is authorized on that instance. |
-| `no_remo_host` | The instance answered but has no `remo-host` command installed. | Not retryable as-is — re-run the instance's configure/update flow (see [Upgrade compatibility](#upgrade-compatibility)) to install it. |
+| `no_remo_host` | The instance answered but has no `remo-host` command installed. | Not retryable as-is — re-run the instance's configure/upgrade flow (see [Upgrade compatibility](#upgrade-compatibility)) to install it. |
 | `incompatible_protocol` | `remo-host` responded, but its `protocol_version` is outside the client's supported `[min,max]` range. | Update the instance's Remo host tools to a version whose `remo-host` reports a compatible protocol version. |
 | `malformed` | `remo-host` produced output that isn't valid/parseable JSON for the expected schema. | Usually indicates a broken or partial `remo-host` install — re-run configure. |
 | `timeout` | The remote command didn't respond within the configured discovery timeout. | Retryable — the instance may be slow or overloaded; increase `REMO_WEB_DISCOVERY_TIMEOUT_S` if this is chronic. |
@@ -753,7 +753,7 @@ interactive session (only `remo-host capabilities` is invoked, never `sessions a
 | `ssh_identity` FAIL — no SSH private key found | Only the registry is mounted, or the SSH key path doesn't match. | Mount a private key read-only (`REMO_WEB_SSH_IDENTITY_FILE` or the conventional `~/.ssh/id_ed25519` etc.). Remember: the registry is metadata, not authentication material. |
 | `runtime_dir` FAIL — not writable | No tmpfs (or writable directory) exists at the SSH ControlMaster socket path. | Add the `tmpfs: ["/run/remo-ssh"]` mount (or point `REMO_WEB_SSH_CONTROL_DIR` at a writable location). |
 | `ssh`/`aws_cli`/`ssm_plugin` FAIL — not found on PATH | A required executable is missing from the runtime environment. | Use the provided image (these are bundled); if running outside Docker, install the missing tool. |
-| `instance <type>/<name>` FAIL — `no_remo_host` | That specific instance predates the `remo-host` rollout, or its install failed. | Re-run that instance's configure/update flow — see [Upgrade compatibility](#upgrade-compatibility). |
+| `instance <type>/<name>` FAIL — `no_remo_host` | That specific instance predates the `remo-host` rollout, or its install failed. | Re-run that instance's configure/upgrade flow — see [Upgrade compatibility](#upgrade-compatibility). |
 | `instance <type>/<name>` FAIL — unreachable / timeout | Network path or instance state issue, isolated to that one instance. | Confirm the instance is running and reachable from the Docker host; other instances are unaffected. |
 
 ### Adoption issues
@@ -789,21 +789,21 @@ as long as they're within `[1, 1]`, and only instances truly outside the support
 the same `user_setup` Ansible role that installs `project-menu`/`project-launch`
 (`ansible/roles/user_setup/templates/remo-host.sh.j2`, idempotent install task in
 `ansible/roles/user_setup/tasks/main.yml`). That role runs as part of both the initial `create` flow
-and the `update` flow for every provider, so re-running:
+and the `upgrade` flow for every provider, so re-running:
 
 ```bash
-remo aws update        # or: remo hetzner update / remo incus update / remo proxmox update
+remo aws upgrade <name>        # or: remo hetzner upgrade / remo incus upgrade / remo proxmox upgrade
 ```
 
 against the affected instance re-templates and reinstalls `remo-host` in place — no full recreate is
-needed, and the update is idempotent (safe to run repeatedly, on both fresh and already-configured
+needed, and the upgrade is idempotent (safe to run repeatedly, on both fresh and already-configured
 hosts).
 
 **Git status glyphs require this re-provision.** Per-project git status (`git_tracked`/`git_dirty`/
 `git_ahead`/`git_behind`) was added to `remo-host` as additive, backward-compatible protocol-1 fields.
 An instance still running the older `remo-host` simply omits them and the console shows no git glyphs
-for its projects — nothing breaks. Run the `update` command above for each instance (e.g.
-`remo proxmox update --name dev1`) to start reporting git status.
+for its projects — nothing breaks. Run the `upgrade` command above for each instance (e.g.
+`remo proxmox upgrade dev1`) to start reporting git status.
 
 ## Configuration reference
 

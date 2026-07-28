@@ -352,7 +352,7 @@ jobs:
           chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Bootstrap Incus
-        run: sudo env "PATH=$PATH" uv run remo incus bootstrap --network-type bridge --user $USER
+        run: sudo env "PATH=$PATH" uv run remo incus host bootstrap --network-type bridge --host-user $USER
 
       - name: Fix root-owned dotfiles after sudo bootstrap
         run: |
@@ -444,12 +444,12 @@ jobs:
           verify_tools
           echo "Dev tools verification: PASS"
 
-      - name: Test update (idempotent)
+      - name: Test upgrade (idempotent)
         run: |
-          sg incus-admin -c "uv run remo incus update --name $CONTAINER_NAME"
-          echo "Incus update: PASS"
+          sg incus-admin -c "uv run remo incus upgrade $CONTAINER_NAME"
+          echo "Incus upgrade: PASS"
 
-      - name: Verify tools after update
+      - name: Verify tools after upgrade
         run: |
           SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
             -o ConnectTimeout=30 -o BatchMode=yes -i ~/.ssh/id_rsa remo@$HOST"
@@ -475,7 +475,7 @@ jobs:
             echo "  passwordless sudo: OK"
           }
           verify_tools
-          echo "Post-update dev tools verification: PASS"
+          echo "Post-upgrade dev tools verification: PASS"
 
       - name: Snapshot — create
         run: |

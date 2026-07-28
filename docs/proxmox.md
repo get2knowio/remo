@@ -16,10 +16,10 @@ Spin up a lightweight LXC container on your Proxmox VE node. Containers attach t
 curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 
 # One-time: verify the node and download the default LXC template
-remo proxmox bootstrap --host prox01 --user root
+remo proxmox host bootstrap prox01 --node-user root
 
 # Create and configure a container
-remo proxmox create --name dev1 --host prox01 --user root
+remo proxmox create --name dev1 --host prox01 --node-user root
 
 # Connect
 remo shell
@@ -29,47 +29,47 @@ remo shell
 
 ```bash
 # Create a container on a remote Proxmox node
-remo proxmox create --name dev1 --host prox01 --user root
+remo proxmox create --name dev1 --host prox01 --node-user root
 
 # Override resources
-remo proxmox create --name dev2 --host prox01 --user root \
+remo proxmox create --name dev2 --host prox01 --node-user root \
   --cores 4 --memory 4096 --volume-size 40
 
 # Use a different storage / bridge
-remo proxmox create --name dev3 --host prox01 --user root \
+remo proxmox create --name dev3 --host prox01 --node-user root \
   --storage local-zfs --bridge vmbr1
 
 # Use a different LXC template (must be downloaded via pveam first)
-remo proxmox create --name dev4 --host prox01 --user root \
+remo proxmox create --name dev4 --host prox01 --node-user root \
   --template local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst
 
 # List registered containers
 remo proxmox list
 
-# Update dev tools on an existing container
-remo proxmox update --name dev1
+# Refresh dev tools on an existing container
+remo proxmox upgrade dev1
 
-# Update only specific tools
-remo proxmox update --name dev1 --only zellij --only fzf
+# Refresh only specific tools
+remo proxmox upgrade dev1 --only zellij --only fzf
 
-# Skip specific tools during update
-remo proxmox update --name dev1 --skip docker --skip nodejs
+# Skip specific tools during the upgrade
+remo proxmox upgrade dev1 --skip docker --skip nodejs
 
 # Resize the rootfs (grow only) on an existing container
-remo proxmox update --name dev1 --volume-size 40
+remo proxmox resize dev1 --volume-size 40
 
 # Live-tune CPU and/or memory limits (cgroup v2)
-remo proxmox update --name dev1 --cores 4 --memory 4096
+remo proxmox resize dev1 --cores 4 --memory 4096
 
 # Reconcile the registry with the node (this node's LXC containers only —
 # other nodes' entries are never read, matched, or touched)
-remo proxmox sync --host prox01 --user root
+remo proxmox sync --host prox01 --node-user root
 
 # Also adopt containers without the remo tag, skip the removal prompt, or
 # preview the plan without changing anything
-remo proxmox sync --host prox01 --user root --all
-remo proxmox sync --host prox01 --user root --yes
-remo proxmox sync --host prox01 --user root --dry-run
+remo proxmox sync --host prox01 --node-user root --all
+remo proxmox sync --host prox01 --node-user root --yes
+remo proxmox sync --host prox01 --node-user root --dry-run
 
 # Destroy a container (rootfs is removed regardless)
 remo proxmox destroy --name dev1 --yes
@@ -78,7 +78,10 @@ remo proxmox destroy --name dev1 --yes
 remo proxmox destroy --name dev1 --yes --purge
 
 # Bootstrap (verify) a Proxmox node
-remo proxmox bootstrap --host prox01 --user root
+remo proxmox host bootstrap prox01 --node-user root
+
+# Write the remo-managed tag on an existing container
+remo proxmox tag dev1
 
 # Inspect resources on an existing container (cores, memory, rootfs size)
 remo proxmox info --name dev1
@@ -89,7 +92,7 @@ remo proxmox info --name dev1
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--host <host>` | (required) | SSH host for the Proxmox node |
-| `--user <user>` | (ssh_config; recorded as `root`) | SSH user on the **Proxmox node**, for host-side `pct` commands — not the container login (always `remo`) |
+| `--node-user <user>` | (ssh_config; recorded as `root`) | SSH user on the **Proxmox node**, for host-side `pct` commands — not the container login (always `remo`) |
 | `--node <node>` | `--host` | Proxmox cluster node name (only differs in clusters) |
 | `--bridge <name>` | `vmbr0` | Linux bridge to attach the container to |
 | `--storage <name>` | `local-lvm` | Storage pool for the rootfs volume |
@@ -101,20 +104,46 @@ remo proxmox info --name dev1
 | `--domain <domain>` | (none) | FQDN suffix for the container |
 | `--devcontainer-runtime <name>` | `devcontainer` | Devcontainer runtime to install/use: `devcontainer` or `deacon` (experimental). See [Experimental: Deacon runtime](#experimental-deacon-runtime). |
 
-### Update Options
+### Upgrade Options
 
 | Option | Description |
 |--------|-------------|
-| `--only <tool>` | Only update the specified tool (can repeat) |
+| `--only <tool>` | Only refresh the specified tool (can repeat) |
 | `--skip <tool>` | Skip the specified tool (can repeat) |
+| `--host <host>` | Proxmox host (auto-detected from registry if omitted) |
+| `--node-user <user>` | SSH user on the **Proxmox node** (default: `root`), for host-side `pct` commands — not the container login (always `remo`) |
+| `--devcontainer-runtime <name>` | `devcontainer` or `deacon` (experimental). Re-provisions the launcher scripts to use the chosen runtime. |
+
+Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
+
+`remo proxmox upgrade` only refreshes dev tools inside the container — it makes
+zero provider-side (hypervisor) writes.
+
+### Resize Options
+
+| Option | Description |
+|--------|-------------|
 | `--volume-size <GiB>` | Grow the rootfs via `pct resize` (grow only) |
 | `--cores <n>` | Set CPU core count via `pct set` (live; cgroup v2) |
 | `--memory <MiB>` | Set memory limit via `pct set` (live) |
 | `--host <host>` | Proxmox host (auto-detected from registry if omitted) |
-| `--user <user>` | SSH user on the **Proxmox node** (default: `root`), for host-side `pct` commands — not the container login (always `remo`) |
-| `--devcontainer-runtime <name>` | `devcontainer` or `deacon` (experimental). Re-provisions the launcher scripts to use the chosen runtime. |
+| `--node-user <user>` | SSH user on the **Proxmox node** (default: `root`), for host-side `pct` commands — not the container login (always `remo`) |
 
-Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
+At least one of `--volume-size`, `--cores`, or `--memory` is required —
+omitting all three is an error listing those three flags. `resize` resolves
+the container's VMID as needed (raising a clear error if it can't) and never
+runs the dev-tools configure play.
+
+### Tag Options
+
+| Option | Description |
+|--------|-------------|
+| `--host <host>` | Proxmox host (auto-detected from registry if omitted) |
+| `--node-user <user>` | SSH user on the **Proxmox node** (default: `root`), for host-side `pct` commands — not the container login (always `remo`) |
+
+Writes the remo-managed tag on the container. If it's already tagged, `tag`
+reports that and exits 0 with zero writes. A write failure or an unresolvable
+VMID is a hard error — unlike `create`'s best-effort marker application.
 
 ### Destroy Options
 
@@ -123,29 +152,30 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `--yes`, `-y` | Skip confirmation prompt |
 | `--purge` | Pass `--purge` to `pct destroy`: also remove the container from backup/replication/HA job configs. The rootfs is destroyed regardless of this flag. |
 | `--host <host>` | Proxmox host |
-| `--user <user>` | SSH user on the **Proxmox node** (default: `root`), for host-side `pct` commands — not the container login (always `remo`) |
+| `--node-user <user>` | SSH user on the **Proxmox node** (default: `root`), for host-side `pct` commands — not the container login (always `remo`) |
 
-> **`--user` is the *node* login, not the container login.** It is the account
-> remo SSHes into the Proxmox node as, to run host-side `pct` commands
+> **`--node-user` is the *node* login, not the container login.** It is the
+> account remo SSHes into the Proxmox node as, to run host-side `pct` commands
 > (creating the container, resolving its VMID, and applying the `remo` tag).
 > The account you land in *inside* the container is always `remo` and is not
 > configurable. `pct` normally requires `root` on the node.
 >
-> Note the defaults differ by command: `create`/`sync` leave `--user` empty and
-> let your `ssh_config` decide, but record `node_user: root` in the registry;
-> `update`/`destroy`/`info` read that recorded value and fall back to `root`.
-> So a container created without `--user` may be reached as you at create time
-> and as `root` later. If root SSH is blocked (e.g. a Tailscale SSH policy),
-> re-record the right user with
-> `remo proxmox sync --host <node> --user <you>` — passing `--user` to `update`
-> alone is a one-shot override and is not persisted.
+> Note the defaults differ by command: `create`/`sync` leave `--node-user`
+> empty and let your `ssh_config` decide, but record `node_user: root` in the
+> registry; `upgrade`/`resize`/`tag`/`destroy`/`info` read that recorded value
+> and fall back to `root`. So a container created without `--node-user` may be
+> reached as you at create time and as `root` later. If root SSH is blocked
+> (e.g. a Tailscale SSH policy), re-record the right user with
+> `remo proxmox sync --host <node> --node-user <you>` — passing `--node-user`
+> to `upgrade`/`resize`/`tag` alone is a one-shot override and is not
+> persisted.
 
 > **`remo shell` does not tag.** When `remo shell` offers a tools update, it
 > configures the instance only — it never writes provider-side state, because
 > tagging means reaching the hypervisor (a machine you did not name at the
-> prompt). Only explicit `remo proxmox update` and `remo proxmox sync` apply the marker. If
-> `sync` reports instances as unmarked, that is why, and either command fixes
-> it permanently.
+> prompt). Only explicit `remo proxmox tag` (and `remo proxmox create`, at
+> creation time) apply the marker. If `sync` reports instances as unmarked,
+> `remo proxmox tag` fixes it permanently.
 
 ## Features
 
@@ -167,10 +197,10 @@ Rust reimplementation of the devcontainer CLI that needs no Node.js runtime:
 
 ```bash
 # Per deployment (overrides the global default)
-remo proxmox create --name dev1 --host prox01 --user root --devcontainer-runtime deacon
+remo proxmox create --name dev1 --host prox01 --node-user root --devcontainer-runtime deacon
 
 # Switch an existing container's runtime
-remo proxmox update --name dev1 --devcontainer-runtime deacon
+remo proxmox upgrade dev1 --devcontainer-runtime deacon
 
 # As a global default for every new deployment
 export REMO_DEVCONTAINER_RUNTIME=deacon
@@ -195,16 +225,16 @@ block host-side lifecycle hooks (`initializeCommand`, dotfiles), remo passes
 
 ### Switching an existing deployment
 
-You do **not** need to recreate a container to try Deacon — `update`
+You do **not** need to recreate a container to try Deacon — `upgrade`
 re-provisions the runtime in place. Data, projects, and container config are
 untouched.
 
 ```bash
 # Flip to Deacon (installs the binary + re-points the launcher scripts)
-remo proxmox update --name dev1 --devcontainer-runtime deacon
+remo proxmox upgrade dev1 --devcontainer-runtime deacon
 
 # Revert to the Node CLI (symmetric; the switch is just a re-provision)
-remo proxmox update --name dev1 --devcontainer-runtime devcontainer
+remo proxmox upgrade dev1 --devcontainer-runtime devcontainer
 ```
 
 After switching, force one clean rebuild per project the first time you open it,
@@ -220,7 +250,7 @@ Notes:
 
 - The previously-installed runtime is left in place (not uninstalled), so
   reverting only re-points the launcher scripts — low risk, fully reversible.
-- `update` re-runs the dev-tools roles idempotently; expect it to take about as
+- `upgrade` re-runs the dev-tools roles idempotently; expect it to take about as
   long as the original configure step.
 
 ## Bootstrap
@@ -228,7 +258,7 @@ Notes:
 **Skip this if your Proxmox node is already configured the way you want it and the Ubuntu 24.04 LXC template is already downloaded.**
 
 ```bash
-remo proxmox bootstrap --host prox01 --user root
+remo proxmox host bootstrap prox01 --node-user root
 ```
 
 ### What Bootstrap Does
@@ -244,7 +274,7 @@ Unlike the Incus bootstrap, this does **not install Proxmox itself** — Proxmox
 
 ```bash
 # Use a non-default bridge / storage / template
-remo proxmox bootstrap --host prox01 --user root \
+remo proxmox host bootstrap prox01 --node-user root \
   --bridge vmbr1 \
   --storage local-zfs \
   --template debian-12-standard_12.7-1_amd64.tar.zst
@@ -310,13 +340,13 @@ Common choices (download then pass to `--template`):
 ## Troubleshooting
 
 **`Bridge 'vmbr0' not found`**
-Your node is configured with a different bridge. Pass `--bridge` to `create` and `bootstrap`. List bridges on the node with `ip -br link show type bridge`.
+Your node is configured with a different bridge. Pass `--bridge` to `create` and `host bootstrap`. List bridges on the node with `ip -br link show type bridge`.
 
 **`Storage 'local-lvm' not found`**
 Your node uses a different storage backend (e.g. `local-zfs`). Pass `--storage`. List with `pvesm status`.
 
 **`LXC template not found`**
-Run `remo proxmox bootstrap --host prox01 --user root` to download the default. To use a different one, run `pveam download local <filename>` on the node and pass `--template local:vztmpl/<filename>`.
+Run `remo proxmox host bootstrap prox01 --node-user root` to download the default. To use a different one, run `pveam download local <filename>` on the node and pass `--template local:vztmpl/<filename>`.
 
 **Container does not get an IPv4 address**
 - Check the bridge is correctly enslaving the upstream NIC: `ip -br link`

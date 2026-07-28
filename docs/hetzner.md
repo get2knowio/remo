@@ -45,17 +45,20 @@ remo hetzner create --name my-server --type cx32 --location fsn1
 # List registered servers
 remo hetzner list
 
-# Update dev tools on existing server
-remo hetzner update
+# Refresh dev tools on existing server (NAME is positional and required)
+remo hetzner upgrade my-server
 
-# Update only specific tools
-remo hetzner update --only zellij --only fzf
+# Refresh only specific tools
+remo hetzner upgrade my-server --only zellij --only fzf
 
-# Update but skip specific tools
-remo hetzner update --skip docker --skip nodejs
+# Refresh but skip specific tools
+remo hetzner upgrade my-server --skip docker --skip nodejs
 
 # Grow the persistent volume (and the filesystem) in place
-remo hetzner update --volume-size 100
+remo hetzner resize my-server --volume-size 100
+
+# Apply the remo-managed API label (no-op if already tagged)
+remo hetzner tag my-server
 
 # Inspect resources on an existing server (type, cores, memory, volume size)
 remo hetzner info
@@ -75,16 +78,40 @@ remo hetzner destroy --yes --remove-volume
 | `--type <type>` | `cx22` | Server type (see [Hetzner pricing](https://www.hetzner.com/cloud)) |
 | `--location <loc>` | `hel1` | Datacenter: `fsn1`, `nbg1`, `hel1`, `ash`, `hil` |
 
-### Update Options
+### Upgrade Options
+
+`remo hetzner upgrade` refreshes dev tools only. It makes zero provider-side
+writes.
 
 | Option | Description |
 |--------|-------------|
-| `--only <tool>` | Only update specified tool (can repeat) |
+| `--only <tool>` | Only refresh specified tool (can repeat) |
 | `--skip <tool>` | Skip specified tool (can repeat) |
-| `--volume-size <GB>` | Grow the persistent Hetzner volume to this size and grow the ext4 filesystem in place. Hetzner only supports growing. |
-| `--name <name>` | Server name (default: `remo`) |
+| `NAME` | Positional, required. Server name. |
+| `-v` | Verbose output |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
+
+### Resize Options
+
+`remo hetzner resize` grows the persistent volume only (including the
+in-guest filesystem). It never runs the dev-tools refresh play.
+
+| Option | Description |
+|--------|-------------|
+| `--volume-size <GB>` | Required. Grow the persistent Hetzner volume to this size and grow the ext4 filesystem in place. Hetzner only supports growing. |
+| `NAME` | Positional, required. Server name. |
+| `-v` | Verbose output |
+
+### Tag
+
+`remo hetzner tag` writes the remo-managed API label only. If the server is
+already tagged, it's a reported no-op (exit `0`, zero writes); if the write
+fails, that's a hard error (unlike `create`'s best-effort label application).
+
+| Option | Description |
+|--------|-------------|
+| `NAME` | Positional, required. Server name. |
 
 ### Destroy Options
 
@@ -124,7 +151,7 @@ no naming convention to narrow to, so `--all` here is deliberately broad.
 The `remo` label is applied automatically at `create` time. A server created
 before this label existed (or one whose label was somehow lost) can be
 backfilled permanently — without disturbing any of its other labels — by
-running `remo hetzner update`.
+running `remo hetzner tag <name>`.
 
 | Option | Description |
 |--------|-------------|

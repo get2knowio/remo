@@ -71,7 +71,8 @@ def _print_tagging_notice(report: MigrationReport) -> None:
     This replaces the implicit backfill that used to run whenever `remo shell`
     offered a tools update: tagging is a provider-side write (an SSH hop to the
     hypervisor for incus/proxmox), and `remo shell` should touch the instance
-    only. Explicit `remo <type> update` and `remo <type> sync` still tag.
+    only. Only explicit `remo <type> tag` and `remo <type> create` write the
+    managed marker — `sync` never does.
 
     Says "may not be" rather than "are not": we cannot know an instance's tag
     state without reaching the provider, which is the very thing being avoided.
@@ -94,7 +95,7 @@ def _print_tagging_notice(report: MigrationReport) -> None:
     )
     for type_name in taggable:
         scope = " --host <host>" if _is_host_scoped_type(type_name) else ""
-        print_info(f"  remo {type_name} sync{scope}")
+        print_info(f"  remo {type_name} tag <name>{scope}")
 
 
 def _migrate_and_notify() -> None:

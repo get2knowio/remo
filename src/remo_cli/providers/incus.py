@@ -1,8 +1,9 @@
 """Incus container provider business logic for remo.
 
-Manages the lifecycle of Incus containers: create, destroy, and update
-(re-configure dev tools).  All functions are pure business logic with no
-Click imports; CLI argument handling lives in the ``cli`` layer.
+Manages the lifecycle of Incus containers: create, destroy, upgrade
+(re-configure dev tools), resize (resource limits), and tag (managed-marker
+write).  All functions are pure business logic with no Click imports; CLI
+argument handling lives in the ``cli`` layer.
 """
 
 from __future__ import annotations
@@ -113,8 +114,8 @@ def _resolve_container_ip(
                 print_warning(f"SSH to '{ssh_target}' failed: {result.stderr.strip()}")
                 if not user:
                     print_warning(
-                        f"Try specifying --user, e.g.: remo incus update --host {host} "
-                        f"--user <username> {name}"
+                        f"Try specifying --host-user, e.g.: remo incus upgrade {name} "
+                        f"--host {host} --host-user <username>"
                     )
                 return ""
             container_ip = _extract_eth0_ip(result.stdout)
@@ -230,7 +231,7 @@ def _run_resize_playbook(
 def create(
     name: str,
     host: str = "localhost",
-    user: str = "",
+    host_user: str = "",
     domain: str = "",
     image: str = "",
     volume_size: str = "",
@@ -260,8 +261,8 @@ def create(
     if host != "localhost":
         extra_vars.extend(["-i", f"{host},"])
         extra_vars.extend(["-e", "target_hosts=all"])
-        if user:
-            extra_vars.extend(["-e", f"incus_host_user={user}"])
+        if host_user:
+            extra_vars.extend(["-e", f"incus_host_user={host_user}"])
 
     extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
@@ -277,7 +278,7 @@ def create(
         )
 
     if use_ip:
-        container_host = _resolve_container_ip(name, host, user) or name
+        container_host = _resolve_container_ip(name, host, host_user) or name
     else:
         container_host = name
     save_known_host(
@@ -286,23 +287,23 @@ def create(
             name=f"{host}/{name}",
             host=container_host,
             user="remo",
-            instance_id=user,
+            instance_id=host_user,
             access_mode="direct",
         )
     )
 
     # FR-001: mark the container as remo-managed so a default `sync` picks
     # it up. FR-005: a marking failure warns but does not fail create.
-    ok, err = _apply_managed_marker(host, user, name)
+    ok, err = _apply_managed_marker(host, host_user, name)
     if not ok:
         print_warning(
             f"Container '{name}' was created, but could not be marked as "
             f"remo-managed on Incus host '{host}' "
-            f"({_host_access_desc(host, user)}, needed for "
+            f"({_host_access_desc(host, host_user)}, needed for "
             f"`incus config set`): {err}\n"
             f"  The container is fine. Until the marker is set, a default "
-            f"`remo incus sync` will skip it; use `--all` or re-run "
-            f"`remo incus update` to include it."
+            f"`remo incus sync` will skip it; use `--all`, or run "
+            f"`remo incus tag {name} --host {host}` to include it."
         )
 
     if volume_size or cores or memory:
@@ -310,7 +311,7 @@ def create(
             _run_resize_playbook(
                 name=name,
                 host=host,
-                user=user,
+                user=host_user,
                 volume_size=volume_size,
                 cores=cores,
                 memory=memory,
@@ -333,11 +334,11 @@ def teardown(
     confirmation prompt, and registry removal all now live in
     ``core.lifecycle.run_destroy``, which calls this as its one
     provider-specific step. The generated CLI's ``destroy`` command also
-    forwards its ``--host``/``--user`` destroy-options through as keyword
-    arguments; they're accepted-but-ignored here (absorbed by
+    forwards its ``--host``/``--host-user`` destroy-options through as
+    keyword arguments; they're accepted-but-ignored here (absorbed by
     ``**_ignored``) since the resolved *entry* is the sole source of truth
     for where the container lives (R-A2) — ``host`` doesn't affect where
-    the playbook runs, and ``user`` is a stale hint superseded by
+    the playbook runs, and ``host_user`` is a stale hint superseded by
     ``entry.instance_id``.
     """
     incus_host, sep, container = entry.name.partition("/")
@@ -368,85 +369,34 @@ def teardown(
         )
 
 
-def update(
+def upgrade(
     name: str,
     host: str = "",
-    user: str = "",
-    volume_size: str = "",
-    cores: int = 0,
-    memory: int = 0,
+    host_user: str = "",
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
     verbose: bool = False,
-    apply_marker: bool = True,
 ) -> None:
-    """Re-configure dev tools on an existing Incus container.
-
-    When any of *volume_size*, *cores*, or *memory* is provided, apply
-    those resource changes (via incus config set / device override)
-    before running the dev-tools configure playbook.
+    """Refresh dev tools on an existing Incus container.
 
     Raises :class:`PreconditionError` if the container's IP could not be
     resolved, or :class:`OperationFailedError` on a nonzero
     ansible-playbook rc.
-    
-    *apply_marker* gates the managed-marker backfill. Explicit
-    ``remo incus update`` backfills it (True); ``update_entry`` -- the
-    ``remo shell`` tools-update path -- passes False, so `remo shell` never
-    performs a provider-side write the user did not ask for. Instances that
-    predate tagging are pointed at ``sync`` by the one-time post-migration
-    notice instead (core/known_hosts._print_tagging_notice).
     """
     validate_name(name, "container name")
     guard_not_added_ssh_host(name, "incus")  # FR-012
-    volume_size = parse_volume_size(volume_size)
 
-    # If --host not specified, look up container in known_hosts.
     if not host:
         host, looked_up_user = _lookup_incus_host(name)
-        if not user and looked_up_user:
-            user = looked_up_user
-
-    # FR-004: `update` doubles as the backfill path — ensure the managed marker
-    # is present (idempotent). FR-005: warn on failure but do not fail update.
-    if apply_marker:
-        ok, err = _apply_managed_marker(host, user, name)
-        if not ok:
-            print_warning(
-                f"Could not mark container '{name}' as remo-managed on Incus "
-                f"host '{host}' ({_host_access_desc(host, user)}, needed for "
-                f"`incus config set`): {err}\n"
-                f"  This is a host-side bookkeeping step only — the update "
-                f"itself continues. Until the marker is set, a default "
-                f"`remo incus sync` will skip it; use `remo incus sync --all`."
-            )
-
-    if volume_size or cores or memory:
-        bits: list[str] = []
-        if volume_size:
-            bits.append(f"size={volume_size}GiB")
-        if cores:
-            bits.append(f"cores={cores}")
-        if memory:
-            bits.append(f"memory={memory}MiB")
-        location = f" on {host}" if host and host != "localhost" else ""
-        print_info(f"Updating resources on '{name}' ({', '.join(bits)}){location}...")
-        _run_resize_playbook(
-            name=name,
-            host=host,
-            user=user,
-            volume_size=volume_size,
-            cores=cores,
-            memory=memory,
-            verbose=verbose,
-        )
+        if not host_user and looked_up_user:
+            host_user = looked_up_user
 
     print_info(f"Looking up container '{name}'...")
 
-    container_ip = _resolve_container_ip(name, host, user)
+    container_ip = _resolve_container_ip(name, host, host_user)
 
     if not container_ip:
-        ssh_target = f"{user}@{host}" if user else host
+        ssh_target = f"{host_user}@{host}" if host_user else host
         raise PreconditionError(
             f"Could not find IP for container '{name}'. Container may not "
             f"exist, may be stopped, or may not have an IP yet. Check with: "
@@ -467,24 +417,96 @@ def update(
         )
 
 
+def resize(
+    name: str,
+    host: str = "",
+    host_user: str = "",
+    volume_size: str = "",
+    cores: int = 0,
+    memory: int = 0,
+    verbose: bool = False,
+) -> None:
+    """Resize resource limits on an existing Incus container.
+
+    Applies volume/cores/memory changes via the resize playbook. Raises
+    :class:`OperationFailedError` on a nonzero ansible-playbook rc.
+    """
+    validate_name(name, "container name")
+    guard_not_added_ssh_host(name, "incus")  # FR-012
+    volume_size = parse_volume_size(volume_size)
+
+    if not host:
+        host, looked_up_user = _lookup_incus_host(name)
+        if not host_user and looked_up_user:
+            host_user = looked_up_user
+
+    bits: list[str] = []
+    if volume_size:
+        bits.append(f"size={volume_size}GiB")
+    if cores:
+        bits.append(f"cores={cores}")
+    if memory:
+        bits.append(f"memory={memory}MiB")
+    location = f" on {host}" if host and host != "localhost" else ""
+    print_info(f"Resizing '{name}' ({', '.join(bits)}){location}...")
+    _run_resize_playbook(
+        name=name,
+        host=host,
+        user=host_user,
+        volume_size=volume_size,
+        cores=cores,
+        memory=memory,
+        verbose=verbose,
+    )
+
+
+def tag(name: str, host: str = "", host_user: str = "") -> None:
+    """Mark an existing Incus container as remo-managed.
+
+    Read-before-write: already-tagged is a reported no-op (exit 0, zero
+    writes). Raises :class:`OperationFailedError` (not a warning) on write
+    failure — unlike `create`'s best-effort marker application.
+    """
+    validate_name(name, "container name")
+    guard_not_added_ssh_host(name, "incus")  # FR-012
+
+    if not host:
+        host, looked_up_user = _lookup_incus_host(name)
+        if not host_user and looked_up_user:
+            host_user = looked_up_user
+
+    cmd = f"incus config get {shlex.quote(name)} {INCUS_MANAGED_CONFIG_KEY}"
+    result = _ssh_run_on_incus_host(host, host_user, cmd)
+    if result.returncode == 0 and result.stdout.strip() == INCUS_MANAGED_CONFIG_VALUE:
+        print_info(f"Container '{name}' is already marked as remo-managed.")
+        return
+
+    ok, err = _apply_managed_marker(host, host_user, name)
+    if not ok:
+        raise OperationFailedError(
+            f"Could not mark container '{name}' as remo-managed on Incus "
+            f"host '{host}' ({_host_access_desc(host, host_user)}, needed for "
+            f"`incus config set`): {err}"
+        )
+    print_info(f"Marked container '{name}' as remo-managed.")
+
+
 def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
     """Re-apply tool configuration to an existing container (Protocol Part A).
 
-    Entry-based wrapper around :func:`update`: parses the host-scoped
+    Entry-based wrapper around :func:`upgrade`: parses the host-scoped
     ``entry.name`` (``"<incus_host>/<container>"``) and the Incus-host SSH
     user carried in ``entry.instance_id`` (R-A2 — callers never parse
-    names). ``update`` now raises directly on failure (R-A1), so this is a
-    thin adapter.
+    names).
     """
     incus_host, sep, container = entry.name.partition("/")
     if not sep:
         incus_host, container = "localhost", entry.name
-    update(
+    upgrade(
         name=container,
         host=incus_host,
-        user=entry.instance_id,
+        host_user=entry.instance_id,
         verbose=verbose,
-        apply_marker=False,
     )
 
 
@@ -518,7 +540,7 @@ def list_hosts() -> None:
     )
 
 
-def info(name: str, host: str = "", user: str = "") -> None:
+def info(name: str, host: str = "", host_user: str = "") -> None:
     """Print detailed information about an Incus container.
 
     Runs ``incus list <name> --format=json`` (locally or via SSH on the
@@ -531,8 +553,8 @@ def info(name: str, host: str = "", user: str = "") -> None:
 
     if not host:
         host, looked_up_user = _lookup_incus_host(name)
-        if not user and looked_up_user:
-            user = looked_up_user
+        if not host_user and looked_up_user:
+            host_user = looked_up_user
 
     if not host:
         host = "localhost"
@@ -545,7 +567,7 @@ def info(name: str, host: str = "", user: str = "") -> None:
             text=True,
         )
     else:
-        ssh_target = f"{user}@{host}" if user else host
+        ssh_target = f"{host_user}@{host}" if host_user else host
         result = subprocess.run(
             ["ssh", "-o", "ConnectTimeout=10", ssh_target, incus_cmd],
             capture_output=True,
@@ -595,7 +617,7 @@ def info(name: str, host: str = "", user: str = "") -> None:
     print("")
 
 
-def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> ProbeResult:
+def _probe(scope: SyncScope, host_user: str, use_ip: bool, include_all: bool) -> ProbeResult:
     """Provider-probe for :func:`sync` (contracts/provider-probe.md "Incus").
 
     Returns every container on *scope.host* -- marked and unmarked alike;
@@ -605,7 +627,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
     provider.
     """
     try:
-        rows = _list_containers_with_marker(scope.host, user)
+        rows = _list_containers_with_marker(scope.host, host_user)
     except OperationFailedError as exc:
         raise ProbeError(f"Failed to list containers on '{scope.host}': {exc}") from exc
 
@@ -613,7 +635,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
     hosts: list[DiscoveredHost] = []
     for cname, marked in rows:
         if use_ip:
-            ip = _resolve_container_ip(cname, scope.host, user)
+            ip = _resolve_container_ip(cname, scope.host, host_user)
             if ip:
                 container_host = ip
             else:
@@ -633,7 +655,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
             name=f"{scope.host}/{cname}",
             host=container_host,
             user="remo",
-            instance_id=user,
+            instance_id=host_user,
             access_mode="direct",
         )
         hosts.append(DiscoveredHost(entry=entry, marked=marked))
@@ -648,7 +670,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
 
 def sync(
     host: str = "localhost",
-    user: str = "",
+    host_user: str = "",
     use_ip: bool = False,
     include_all: bool = False,
     auto_confirm: bool = False,
@@ -670,7 +692,7 @@ def sync(
     scope = SyncScope(type="incus", host=host)
     return run_sync(
         scope,
-        lambda: _probe(scope, user=user, use_ip=use_ip, include_all=include_all),
+        lambda: _probe(scope, host_user=host_user, use_ip=use_ip, include_all=include_all),
         auto_confirm=auto_confirm,
         dry_run=dry_run,
         include_all=include_all,
@@ -679,7 +701,7 @@ def sync(
 
 def bootstrap(
     host: str = "localhost",
-    user: str = "",
+    host_user: str = "",
     network_type: str = "",
     verbose: bool = False,
 ) -> None:
@@ -695,13 +717,13 @@ def bootstrap(
     if host != "localhost":
         extra_vars.extend(["-i", f"{host},"])
         extra_vars.extend(["-e", "target_hosts=all"])
-        if user:
-            extra_vars.extend(["-e", f"ansible_user={user}"])
+        if host_user:
+            extra_vars.extend(["-e", f"ansible_user={host_user}"])
     else:
         # On localhost with sudo, ansible_user is root; allow overriding
         # incus_user so the correct user gets added to the incus-admin group.
-        if user:
-            extra_vars.extend(["-e", f"incus_user={user}"])
+        if host_user:
+            extra_vars.extend(["-e", f"incus_user={host_user}"])
 
     if network_type:
         extra_vars.extend(["-e", f"incus_network_type={network_type}"])

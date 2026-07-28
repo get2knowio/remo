@@ -93,6 +93,16 @@ class OptionSpec:
 
 
 @dataclass(frozen=True)
+class ArgumentSpec:
+    """Declarative positional argument for descriptor-declared commands (spec 021, FR-005)."""
+
+    name: str  # click param name == impl kwarg name
+    default: str | None = None
+    required: bool = True
+    completion: CompletionKind = CompletionKind.NONE
+
+
+@dataclass(frozen=True)
 class CommandSpec:
     """A provider-specific extra command (AWS stop/start/reboot, bootstrap, ...)."""
 
@@ -101,6 +111,7 @@ class CommandSpec:
     impl: str  # function name in the provider implementation module
     options: tuple[OptionSpec, ...] = ()
     confirmable: bool = False  # injects --yes/-y -> auto_confirm kwarg
+    target: ArgumentSpec | None = None  # positional target, prepended before options
 
 
 @dataclass(frozen=True)
@@ -140,18 +151,22 @@ class ProviderDescriptor:
     connection: ConnectionSpec
     implementation: str  # dotted module path, imported lazily
     create_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
-    update_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
+    upgrade_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
+    resize_dimensions: tuple[OptionSpec, ...] = field(default_factory=tuple)
+    resize_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
+    tag_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
     destroy_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
     sync_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
     info_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
-    # True when the provider backfills a remo-managed marker on `update`/`sync`
+    # True when the provider backfills a remo-managed marker on `create`/`tag`
     # (incus/proxmox config keys and tags, hetzner labels). AWS has no backfill.
-    # Drives the post-migration tagging notice; keeps the type literals here
-    # rather than in core/ (Principle II).
+    # Drives the post-migration tagging notice and `tag` command generation;
+    # keeps the type literals here rather than in core/ (Principle II).
     supports_managed_marker: bool = False
     snapshot_region_scoped: bool = False
     snapshot_async: bool = False  # True when creation is async and status is meaningful (AWS/Hetzner)
     extra_commands: tuple[CommandSpec, ...] = field(default_factory=tuple)
+    host_commands: tuple[CommandSpec, ...] = field(default_factory=tuple)
     sdk_extra: str | None = None
 
     def __post_init__(self) -> None:
@@ -159,7 +174,9 @@ class ProviderDescriptor:
             raise ValueError(f"type_name must be a nonempty lowercase string: {self.type_name!r}")
         for command_name, options in (
             ("create", self.create_options),
-            ("update", self.update_options),
+            ("upgrade", self.upgrade_options),
+            ("resize", self.resize_dimensions + self.resize_options),
+            ("tag", self.tag_options),
             ("destroy", self.destroy_options),
             ("sync", self.sync_options),
             ("info", self.info_options),
@@ -167,6 +184,12 @@ class ProviderDescriptor:
             names = [opt.name for opt in options]
             if len(names) != len(set(names)):
                 raise ValueError(f"{self.type_name}: duplicate option names in {command_name}: {names}")
+        for spec in (*self.extra_commands, *self.host_commands):
+            names = [opt.name for opt in spec.options]
+            if len(names) != len(set(names)):
+                raise ValueError(
+                    f"{self.type_name}: duplicate option names in command {spec.name!r}: {names}"
+                )
 
 
 class UnknownProviderError(PreconditionError):
@@ -270,7 +293,6 @@ def temporary_registration(descriptor: ProviderDescriptor) -> Iterator[ProviderD
 
 NAME = OptionSpec(name="--name", param="name", default="", help="Instance name.")
 HOST = OptionSpec(name="--host", param="host", default="", help="SSH host for the remote instance.")
-USER = OptionSpec(name="--user", param="user", default="", help="SSH user for the remote host.")
 DOMAIN = OptionSpec(name="--domain", param="domain", default="", help="Domain name for the instance.")
 IMAGE = OptionSpec(name="--image", param="image", default="", help="Instance image to use.")
 CORES = OptionSpec(name="--cores", param="cores", type=int, default=0, help="CPU core limit.")

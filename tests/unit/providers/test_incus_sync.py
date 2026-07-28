@@ -49,7 +49,7 @@ class TestProbeClassification:
         patch_host.return_value = _completed(
             0, stdout="dev1,true\nplex,\nweb,false\n"
         )
-        result = providers_incus._probe(scope, user="u", use_ip=False, include_all=False)
+        result = providers_incus._probe(scope, host_user="u", use_ip=False, include_all=False)
 
         by_name = {h.entry.name: h for h in result.hosts}
         assert set(by_name) == {"h/dev1", "h/plex", "h/web"}
@@ -61,10 +61,10 @@ class TestProbeClassification:
         patch_host.return_value = _completed(0, stdout="dev1,true\nplex,\n")
 
         without_all = providers_incus._probe(
-            scope, user="u", use_ip=False, include_all=False
+            scope, host_user="u", use_ip=False, include_all=False
         )
         with_all = providers_incus._probe(
-            scope, user="u", use_ip=False, include_all=True
+            scope, host_user="u", use_ip=False, include_all=True
         )
 
         assert {h.entry.name for h in without_all.hosts} == {
@@ -73,17 +73,17 @@ class TestProbeClassification:
 
     def test_adoption_criteria_is_set(self, patch_host, scope):
         patch_host.return_value = _completed(0, stdout="dev1,true\n")
-        result = providers_incus._probe(scope, user="u", use_ip=False, include_all=True)
+        result = providers_incus._probe(scope, host_user="u", use_ip=False, include_all=True)
         assert result.adoption_criteria
 
     def test_complete_is_always_true(self, patch_host, scope):
         patch_host.return_value = _completed(0, stdout="dev1,true\n")
-        result = providers_incus._probe(scope, user="u", use_ip=False, include_all=False)
+        result = providers_incus._probe(scope, host_user="u", use_ip=False, include_all=False)
         assert result.complete is True
 
     def test_entry_shape_matches_create(self, patch_host, scope):
         patch_host.return_value = _completed(0, stdout="dev1,true\n")
-        result = providers_incus._probe(scope, user="u", use_ip=False, include_all=False)
+        result = providers_incus._probe(scope, host_user="u", use_ip=False, include_all=False)
         entry = result.hosts[0].entry
         assert entry.type == "incus"
         assert entry.name == "h/dev1"
@@ -104,7 +104,7 @@ class TestProbeUseIp:
         mocker.patch(
             "remo_cli.providers.incus._resolve_container_ip", return_value="10.0.0.5"
         )
-        result = providers_incus._probe(scope, user="u", use_ip=True, include_all=False)
+        result = providers_incus._probe(scope, host_user="u", use_ip=True, include_all=False)
         assert result.hosts[0].entry.host == "10.0.0.5"
         assert result.hosts[0].entry.name == "h/dev1"
 
@@ -113,7 +113,7 @@ class TestProbeUseIp:
         mocker.patch(
             "remo_cli.providers.incus._resolve_container_ip", return_value=""
         )
-        result = providers_incus._probe(scope, user="u", use_ip=True, include_all=False)
+        result = providers_incus._probe(scope, host_user="u", use_ip=True, include_all=False)
 
         # Neither container was dropped, both entries carry an empty host so
         # merge_entry preserves the previously recorded address.
@@ -136,7 +136,7 @@ class TestProbeUseIp:
         mocker.patch(
             "remo_cli.providers.incus._resolve_container_ip", side_effect=fake_resolve
         )
-        result = providers_incus._probe(scope, user="u", use_ip=True, include_all=False)
+        result = providers_incus._probe(scope, host_user="u", use_ip=True, include_all=False)
 
         by_name = {h.entry.name: h for h in result.hosts}
         assert by_name["h/dev1"].entry.host == "10.0.0.5"
@@ -154,7 +154,7 @@ class TestProbeListingFailure:
     def test_listing_failure_raises_probe_error(self, patch_host, scope):
         patch_host.return_value = _completed(1, stderr="boom")
         with pytest.raises(ProbeError):
-            providers_incus._probe(scope, user="u", use_ip=False, include_all=False)
+            providers_incus._probe(scope, host_user="u", use_ip=False, include_all=False)
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ class TestProbeReadOnly:
         mocker.patch(
             "remo_cli.providers.incus._resolve_container_ip", return_value="10.0.0.5"
         )
-        providers_incus._probe(scope, user="u", use_ip=True, include_all=True)
+        providers_incus._probe(scope, host_user="u", use_ip=True, include_all=True)
 
         for call in patch_host.call_args_list:
             cmd = call.args[2]

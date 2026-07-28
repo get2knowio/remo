@@ -128,14 +128,15 @@ def shell(
             elif remote_version is None:
                 # No marker file on remote
                 should_update = confirm(
-                    f"Instance '{host.name}' has no version info. Update tools?",
+                    f"Instance '{host.name}' has no version info. "
+                    f"Run `{_upgrade_command_hint(host)}`?",
                     default=True,
                 )
             elif version_is_newer(local_version, remote_version):
                 # Remote is behind local
                 should_update = confirm(
                     f"Instance '{host.name}' tools are v{remote_version}, "
-                    f"local is v{local_version}. Update?",
+                    f"local is v{local_version}. Run `{_upgrade_command_hint(host)}`?",
                     default=True,
                 )
             elif version_is_newer(remote_version, local_version):
@@ -150,12 +151,12 @@ def shell(
                 from remo_cli.core.errors import ProviderError  # noqa: PLC0415
 
                 try:
-                    _run_provider_update(host)
+                    _run_provider_upgrade(host)
                 except ProviderError as e:
                     # The playbook log has already been dumped, but the SSH
                     # connection (and any remote project picker) would scroll
                     # it offscreen immediately. Pause so the user can read it.
-                    print_error(f"Tools update for '{host.name}' failed: {e}")
+                    print_error(f"Tools upgrade for '{host.name}' failed: {e}")
                     if not confirm(
                         "Connect anyway?",
                         default=False,
@@ -172,8 +173,45 @@ def shell(
     )
 
 
-def _run_provider_update(host) -> None:  # noqa: ANN001
-    """Run the appropriate provider update for the given host.
+def _upgrade_command_hint(host) -> str:  # noqa: ANN001
+    """Render the exact `remo <type> upgrade <name>` command for *host*.
+
+    Names the precise command the accepted prompt runs (SC-003) so the
+    remedy is always executable and truthful.
+
+    Host-scoped providers need the host-user flag spelled out too: accepting
+    the prompt runs ``update_entry``, which reads the host SSH user off the
+    registry entry, but passing ``--host`` on the command line short-circuits
+    that registry lookup and would silently fall back to the provider default
+    (``""``/``root``). The flag and the attribute both come from the
+    descriptor's ``registry_fields`` entry whose JSON key ends in ``_user``
+    (``instance_id``/``host_user`` for Incus, ``region``/``node_user`` for
+    Proxmox) — no provider literals here.
+    """
+    from remo_cli.core.provider_registry import (  # noqa: PLC0415
+        NameFormat,
+        get_descriptor,
+        is_provider_type,
+    )
+
+    if is_provider_type(host.type):
+        descriptor = get_descriptor(host.type)
+        if descriptor.name_format is NameFormat.HOST_SCOPED and "/" in host.name:
+            host_part, _, short_name = host.name.partition("/")
+            cmd = f"remo {host.type} upgrade {short_name} --host {host_part}"
+            for attr, json_key in descriptor.registry_fields:
+                if json_key.endswith("_user"):
+                    user_value = getattr(host, attr, "")
+                    if user_value:
+                        flag = "--" + json_key.replace("_", "-")
+                        cmd += f" {flag} {user_value}"
+                    break
+            return cmd
+    return f"remo {host.type} upgrade {host.name}"
+
+
+def _run_provider_upgrade(host) -> None:  # noqa: ANN001
+    """Run the appropriate provider upgrade for the given host.
 
     Raises :class:`~remo_cli.core.errors.ProviderError` on failure (including
     an unrecognized provider type — no more silent no-op).
@@ -182,11 +220,11 @@ def _run_provider_update(host) -> None:  # noqa: ANN001
     from remo_cli.core.output import print_info  # noqa: PLC0415
     from remo_cli.core.provider_registry import get_provider, is_provider_type  # noqa: PLC0415
 
-    print_info(f"Updating instance '{host.name}'...")
+    print_info(f"Upgrading instance '{host.name}'...")
 
     if not is_provider_type(host.type):
         raise PreconditionError(
-            f"Unknown provider type '{host.type}' for '{host.name}'; cannot update tools."
+            f"Unknown provider type '{host.type}' for '{host.name}'; cannot upgrade tools."
         )
 
     module = get_provider(host.type)

@@ -1,10 +1,12 @@
 """Generates provider CLI command groups from registered descriptors.
 
-``build_provider_group(descriptor)`` builds the six shared commands
-(create/destroy/update/list/info/sync), the ``snapshot`` subgroup, and any
-descriptor-declared ``extra_commands`` (bootstrap/stop/start/reboot). Every
-callback is wrapped by :func:`provider_command`, the single CLI-layer
-exit-code translation boundary (contracts/errors.md).
+``build_provider_group(descriptor)`` builds the shared commands
+(create/destroy/upgrade/list/info/sync), the descriptor-gated ones
+(``resize`` iff ``resize_dimensions``, ``tag`` iff ``supports_managed_marker``,
+a ``host`` subgroup iff ``host_commands``), the ``snapshot`` subgroup, and any
+descriptor-declared ``extra_commands`` (stop/start/reboot). Every callback is
+wrapped by :func:`provider_command`, the single CLI-layer exit-code
+translation boundary (contracts/errors.md).
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from remo_cli.core.provider_registry import (
     VERBOSE,
     VOLUME_SIZE,
     YES,
+    ArgumentSpec,
     CommandSpec,
     CompletionKind,
     NameFormat,
@@ -61,8 +64,8 @@ def provider_command(fn: Callable[..., Any]) -> Callable[..., None]:
     driver and keeps returning ``EXIT_OK``/``EXIT_FAILURE``/``EXIT_ABORTED``
     directly (contracts/errors.md), never raising for its own outcome. Every
     other generated command's impl now returns ``None`` on success and raises
-    instead (create/destroy/update/info/bootstrap/extra_commands all migrated
-    off int returns in Phases 3/5/6)."""
+    instead (create/destroy/upgrade/resize/tag/info/host commands/extra_commands
+    all migrated off int returns in Phases 3/5/6)."""
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> None:
@@ -122,12 +125,23 @@ def _click_option(option: OptionSpec, descriptor: ProviderDescriptor) -> click.O
     return click.Option(decls, **kwargs)
 
 
-def _instance_argument(descriptor: ProviderDescriptor, *, required: bool = True) -> click.Argument:
+def _instance_argument(
+    descriptor: ProviderDescriptor, *, required: bool = True, param: str = "instance"
+) -> click.Argument:
     kwargs: dict[str, Any] = {"shell_complete": _make_name_completer(descriptor)}
     if not required:
         kwargs["required"] = False
         kwargs["default"] = None
-    return click.Argument(["instance"], **kwargs)
+    return click.Argument([param], **kwargs)
+
+
+def _target_argument(target: ArgumentSpec, descriptor: ProviderDescriptor) -> click.Argument:
+    kwargs: dict[str, Any] = {"required": target.required}
+    if not target.required:
+        kwargs["default"] = target.default
+    if target.completion is CompletionKind.INSTANCE_NAME:
+        kwargs["shell_complete"] = _make_name_completer(descriptor)
+    return click.Argument([target.name], **kwargs)
 
 
 def _name_help(descriptor: ProviderDescriptor) -> str:
@@ -181,14 +195,16 @@ def _resolve_entry_for_destroy(descriptor: ProviderDescriptor, display_name: str
     """Find *display_name*'s registry entry, or build a minimal stub.
 
     The stub covers destroying an instance that was never synced/registered
-    (HOST_SCOPED providers accept an explicit ``--host``/``--user`` for this,
-    same as today). The ``--user`` hint is routed only into the KnownHost
-    attribute that actually stores the host SSH user for this provider — the
-    one whose ``registry_fields`` JSON key ends in ``_user`` (``instance_id``
-    for Incus's ``host_user``; ``region`` for Proxmox's ``node_user``). It
-    must NOT land in a non-user slot: Proxmox's ``instance_id`` holds the
-    VMID, and a ``--user`` value there would be forwarded to teardown as a
-    bogus ``container_vmid``.
+    (HOST_SCOPED providers accept an explicit ``--host``/``--host-user``/
+    ``--node-user`` for this, same as today). The user-flag hint is routed
+    only into the KnownHost attribute that actually stores the host SSH user
+    for this provider — found by locating the ``registry_fields`` entry whose
+    JSON key ends in ``_user`` (``instance_id``/``host_user`` for Incus;
+    ``region``/``node_user`` for Proxmox) and reading ``kwargs`` under that
+    same JSON key, which equals the click param name by construction
+    (research D7). It must NOT land in a non-user slot: Proxmox's
+    ``instance_id`` holds the VMID, and a user value there would be forwarded
+    to teardown as a bogus ``container_vmid``.
     """
     entries = get_known_hosts(type_filter=descriptor.type_name)
     if descriptor.name_format is NameFormat.HOST_SCOPED:
@@ -196,17 +212,20 @@ def _resolve_entry_for_destroy(descriptor: ProviderDescriptor, display_name: str
             if "/" in entry.name and entry.name.endswith(f"/{display_name}"):
                 return entry
         host_hint = kwargs.get("host") or "localhost"
-        user_hint = kwargs.get("user") or ""
-        user_attrs = {
-            attr for attr, json_key in descriptor.registry_fields if json_key.endswith("_user")
-        }
+        user_attr = ""
+        user_hint = ""
+        for attr, json_key in descriptor.registry_fields:
+            if json_key.endswith("_user"):
+                user_attr = attr
+                user_hint = kwargs.get(json_key) or ""
+                break
         return KnownHost(
             type=descriptor.type_name,
             name=f"{host_hint}/{display_name}",
             host="",
             user="remo",
-            instance_id=user_hint if "instance_id" in user_attrs else "",
-            region=user_hint if "region" in user_attrs else "",
+            instance_id=user_hint if user_attr == "instance_id" else "",
+            region=user_hint if user_attr == "region" else "",
         )
     for entry in entries:
         if entry.name == display_name:
@@ -249,18 +268,57 @@ def _build_destroy(descriptor: ProviderDescriptor) -> click.Command:
     )
 
 
-def _build_update(descriptor: ProviderDescriptor) -> click.Command:
-    name_opt = _name_option(descriptor, completable=True)
-    options = [name_opt, VOLUME_SIZE, ONLY, SKIP, *descriptor.update_options, VERBOSE]
-    params: list[click.Parameter] = [_click_option(o, descriptor) for o in options]
+def _build_upgrade(descriptor: ProviderDescriptor) -> click.Command:
+    options = [*descriptor.upgrade_options, ONLY, SKIP, VERBOSE]
+    params: list[click.Parameter] = [_instance_argument(descriptor, param="name")]
+    params.extend(_click_option(o, descriptor) for o in options)
 
-    def run(**kwargs: Any) -> int:
+    def run(**kwargs: Any) -> None:
         module = get_provider(descriptor.type_name)
-        return module.update(**kwargs)  # type: ignore[no-any-return]
+        module.upgrade(**kwargs)
 
     return click.Command(
-        "update",
-        help=f"Update tools on {_a_or_an(descriptor.display_name)} {descriptor.display_name} instance.",
+        "upgrade",
+        help=f"Refresh dev tools on {_a_or_an(descriptor.display_name)} {descriptor.display_name} instance.",
+        params=params,
+        callback=provider_command(run),
+    )
+
+
+def _build_resize(descriptor: ProviderDescriptor) -> click.Command:
+    options = [*descriptor.resize_dimensions, *descriptor.resize_options, VERBOSE]
+    params: list[click.Parameter] = [_instance_argument(descriptor, param="name")]
+    params.extend(_click_option(o, descriptor) for o in options)
+    dimension_params = [opt.param for opt in descriptor.resize_dimensions]
+    dimension_flags = ", ".join(opt.name for opt in descriptor.resize_dimensions)
+
+    def run(**kwargs: Any) -> None:
+        if not any(kwargs.get(p) for p in dimension_params):
+            raise PreconditionError(
+                f"resize requires at least one dimension flag: {dimension_flags}"
+            )
+        module = get_provider(descriptor.type_name)
+        module.resize(**kwargs)
+
+    return click.Command(
+        "resize",
+        help=f"Resize {_a_or_an(descriptor.display_name)} {descriptor.display_name} instance.",
+        params=params,
+        callback=provider_command(run),
+    )
+
+
+def _build_tag(descriptor: ProviderDescriptor) -> click.Command:
+    params: list[click.Parameter] = [_instance_argument(descriptor, param="name")]
+    params.extend(_click_option(o, descriptor) for o in descriptor.tag_options)
+
+    def run(**kwargs: Any) -> None:
+        module = get_provider(descriptor.type_name)
+        module.tag(**kwargs)
+
+    return click.Command(
+        "tag",
+        help=f"Mark {_a_or_an(descriptor.display_name)} {descriptor.display_name} instance as remo-managed.",
         params=params,
         callback=provider_command(run),
     )
@@ -316,7 +374,10 @@ def _build_extra_command(descriptor: ProviderDescriptor, spec: CommandSpec) -> c
     options = list(spec.options)
     if spec.confirmable:
         options = [*options, YES]
-    params: list[click.Parameter] = [_click_option(o, descriptor) for o in options]
+    params: list[click.Parameter] = []
+    if spec.target is not None:
+        params.append(_target_argument(spec.target, descriptor))
+    params.extend(_click_option(o, descriptor) for o in options)
 
     def run(**kwargs: Any) -> int | None:
         module = get_provider(descriptor.type_name)
@@ -324,6 +385,13 @@ def _build_extra_command(descriptor: ProviderDescriptor, spec: CommandSpec) -> c
         return impl(**kwargs)  # type: ignore[no-any-return]
 
     return click.Command(spec.name, help=spec.help, params=params, callback=provider_command(run))
+
+
+def _build_host_group(descriptor: ProviderDescriptor) -> click.Group:
+    group = click.Group("host", help="Operate on the hypervisor host, not an instance.")
+    for spec in descriptor.host_commands:
+        group.add_command(_build_extra_command(descriptor, spec))
+    return group
 
 
 # ---------------------------------------------------------------------------
@@ -460,13 +528,23 @@ def build_provider_group(descriptor: ProviderDescriptor) -> click.Group:
     for command in (
         _build_create(descriptor),
         _build_destroy(descriptor),
-        _build_update(descriptor),
+        _build_upgrade(descriptor),
         _build_list(descriptor),
         _build_info(descriptor),
         _build_sync(descriptor),
     ):
         group.add_command(command)
+    # `resize`'s only job is to apply a dimension flag, so a provider that
+    # declares no dimensions must not advertise the verb -- otherwise every
+    # invocation dead-ends in "at least one dimension flag: " with an empty
+    # list. Same gating shape as `tag` and the `host` subgroup below.
+    if descriptor.resize_dimensions:
+        group.add_command(_build_resize(descriptor))
+    if descriptor.supports_managed_marker:
+        group.add_command(_build_tag(descriptor))
     for spec in descriptor.extra_commands:
         group.add_command(_build_extra_command(descriptor, spec))
+    if descriptor.host_commands:
+        group.add_command(_build_host_group(descriptor))
     group.add_command(_build_snapshot_group(descriptor))
     return group

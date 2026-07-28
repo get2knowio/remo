@@ -60,7 +60,8 @@ class TestShellVersionCheck:
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_remote_behind_prompts_update(self, runner, mocker):
-        """When remote is behind local, user is prompted to update."""
+        """When remote is behind local, user is prompted to update, naming
+        the exact `remo <type> upgrade <name>` command that will run (SC-003)."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
@@ -69,8 +70,10 @@ class TestShellVersionCheck:
 
         assert result.exit_code == 0
         mock_confirm.assert_called_once()
-        assert "v0.8.0" in mock_confirm.call_args[0][0]
-        assert "v0.9.0" in mock_confirm.call_args[0][0]
+        prompt = mock_confirm.call_args[0][0]
+        assert "v0.8.0" in prompt
+        assert "v0.9.0" in prompt
+        assert "remo hetzner upgrade webserver" in prompt
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_remote_behind_update_accepted(self, runner, mocker):
@@ -145,7 +148,8 @@ class TestShellVersionCheck:
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_no_marker_prompts_update(self, runner, mocker):
-        """When remote has no version marker, user is prompted to update."""
+        """When remote has no version marker, user is prompted to update,
+        naming the exact `remo <type> upgrade <name>` command (SC-003)."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=(None, None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
@@ -154,7 +158,53 @@ class TestShellVersionCheck:
 
         assert result.exit_code == 0
         mock_confirm.assert_called_once()
-        assert "no version info" in mock_confirm.call_args[0][0]
+        prompt = mock_confirm.call_args[0][0]
+        assert "no version info" in prompt
+        assert "remo hetzner upgrade webserver" in prompt
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_prompt_names_host_scoped_upgrade_command(self, runner, mocker):
+        """A HOST_SCOPED instance (incus/proxmox) gets `--host <host>` appended,
+        with the container's short name (not `host/container`) as NAME."""
+        incus_host = KnownHost(
+            type="incus", name="lab1/dev1", host="192.168.1.50", user="remo"
+        )
+        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=incus_host)
+        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=incus_host)
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
+        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
+
+        result = runner.invoke(shell, [])
+
+        assert result.exit_code == 0
+        prompt = mock_confirm.call_args[0][0]
+        assert "remo incus upgrade dev1 --host lab1" in prompt
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_prompt_names_host_user_when_registry_carries_one(self, runner, mocker):
+        """Passing `--host` short-circuits the registry lookup inside
+        `upgrade`, so the hint must also name the host-user flag whenever the
+        entry carries one -- otherwise the printed command silently falls back
+        to the provider default and is not what accepting the prompt runs."""
+        incus_host = KnownHost(
+            type="incus",
+            name="lab1/dev1",
+            host="192.168.1.50",
+            user="remo",
+            instance_id="paul",  # incus stores the Incus-host SSH user here
+        )
+        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=incus_host)
+        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=incus_host)
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
+        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
+
+        result = runner.invoke(shell, [])
+
+        assert result.exit_code == 0
+        prompt = mock_confirm.call_args[0][0]
+        assert "remo incus upgrade dev1 --host lab1 --host-user paul" in prompt
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_ssh_error_skips_update_prompt(self, runner, mocker):
@@ -380,42 +430,42 @@ class TestBuildProjectLaunchRemoteCmd:
         )
 
 
-class TestRunProviderUpdate:
-    """Tests for _run_provider_update(): registry-dispatched via
+class TestRunProviderUpgrade:
+    """Tests for _run_provider_upgrade(): registry-dispatched via
     provider_registry + the Protocol's update_entry(entry) verb (018)."""
 
     def test_aws_update(self, mocker):
-        from remo_cli.cli.shell import _run_provider_update
+        from remo_cli.cli.shell import _run_provider_upgrade
 
         host = KnownHost(type="aws", name="devbox", host="1.2.3.4", user="remo")
         mock_update_entry = mocker.patch("remo_cli.providers.aws.update_entry")
 
-        _run_provider_update(host)
+        _run_provider_upgrade(host)
 
         mock_update_entry.assert_called_once_with(host)
 
     def test_hetzner_update(self, mocker):
-        from remo_cli.cli.shell import _run_provider_update
+        from remo_cli.cli.shell import _run_provider_upgrade
 
         host = KnownHost(type="hetzner", name="webserver", host="5.6.7.8", user="remo")
         mock_update_entry = mocker.patch("remo_cli.providers.hetzner.update_entry")
 
-        _run_provider_update(host)
+        _run_provider_upgrade(host)
 
         mock_update_entry.assert_called_once_with(host)
 
     def test_incus_update(self, mocker):
-        from remo_cli.cli.shell import _run_provider_update
+        from remo_cli.cli.shell import _run_provider_upgrade
 
         host = KnownHost(type="incus", name="myhost/devcontainer", host="192.168.1.50", user="remo")
         mock_update_entry = mocker.patch("remo_cli.providers.incus.update_entry")
 
-        _run_provider_update(host)
+        _run_provider_upgrade(host)
 
         mock_update_entry.assert_called_once_with(host)
 
     def test_proxmox_update(self, mocker):
-        from remo_cli.cli.shell import _run_provider_update
+        from remo_cli.cli.shell import _run_provider_upgrade
 
         host = KnownHost(
             type="proxmox",
@@ -428,21 +478,21 @@ class TestRunProviderUpdate:
         )
         mock_update_entry = mocker.patch("remo_cli.providers.proxmox.update_entry")
 
-        _run_provider_update(host)
+        _run_provider_upgrade(host)
 
         mock_update_entry.assert_called_once_with(host)
 
     def test_unknown_type_raises_precondition_error_naming_the_type(self):
-        from remo_cli.cli.shell import _run_provider_update
+        from remo_cli.cli.shell import _run_provider_upgrade
         from remo_cli.core.errors import PreconditionError
 
         host = KnownHost(type="totally-unknown", name="foo", host="1.2.3.4", user="remo")
 
         with pytest.raises(PreconditionError, match="totally-unknown"):
-            _run_provider_update(host)
+            _run_provider_upgrade(host)
 
     def test_update_entry_failure_propagates_as_provider_error(self, mocker):
-        from remo_cli.cli.shell import _run_provider_update
+        from remo_cli.cli.shell import _run_provider_upgrade
         from remo_cli.core.errors import OperationFailedError
 
         host = KnownHost(type="aws", name="devbox", host="1.2.3.4", user="remo")
@@ -452,4 +502,4 @@ class TestRunProviderUpdate:
         )
 
         with pytest.raises(OperationFailedError):
-            _run_provider_update(host)
+            _run_provider_upgrade(host)

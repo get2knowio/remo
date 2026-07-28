@@ -16,8 +16,9 @@ from remo_cli.core.provider_registry import (
     IMAGE,
     MEMORY,
     USE_IP,
-    USER,
     VERBOSE,
+    VOLUME_SIZE,
+    ArgumentSpec,
     CommandSpec,
     ConnectionSpec,
     NameFormat,
@@ -39,13 +40,13 @@ NETWORK_TYPE = OptionSpec(
     help="Network type for Incus host.",
 )
 
-# The shared catalog's USER reads "SSH user for the remote host", which is
-# ambiguous here: for Incus it is the login on the *Incus host*, used to run
-# host-side `incus` commands -- NOT the account you land in inside the
-# container (that is always `remo`, set at create/sync time and not
-# configurable). Overridden so `--help` says which of the two machines it means.
-HOST_USER = replace(
-    USER,
+# The login on the *Incus host*, used to run host-side `incus` commands --
+# NOT the account you land in inside the container (that is always `remo`,
+# set at create/sync time and not configurable).
+HOST_USER = OptionSpec(
+    name="--host-user",
+    param="host_user",
+    default="",
     help="SSH user on the Incus host, for host-side incus commands. "
     "Not the container login, which is always 'remo'.",
 )
@@ -68,11 +69,22 @@ DESCRIPTOR = ProviderDescriptor(
         MEMORY,
         USE_IP,
     ),
-    update_options=(
+    upgrade_options=(
         replace(HOST, default=""),
         HOST_USER,
+    ),
+    resize_dimensions=(
+        VOLUME_SIZE,
         CORES,
         MEMORY,
+    ),
+    resize_options=(
+        replace(HOST, default=""),
+        HOST_USER,
+    ),
+    tag_options=(
+        replace(HOST, default=""),
+        HOST_USER,
     ),
     destroy_options=(
         replace(HOST, default=""),
@@ -90,13 +102,13 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     supports_managed_marker=True,
     snapshot_region_scoped=False,
-    extra_commands=(
+    host_commands=(
         CommandSpec(
             name="bootstrap",
             help="Initialize an Incus host.",
             impl="bootstrap",
+            target=ArgumentSpec("host", default="localhost", required=False),
             options=(
-                replace(HOST, default="localhost"),
                 HOST_USER,
                 NETWORK_TYPE,
                 VERBOSE,

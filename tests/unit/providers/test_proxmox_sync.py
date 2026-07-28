@@ -80,7 +80,7 @@ class TestProbeClassification:
     def test_returns_marked_and_unmarked_alike(self, scope, mocker):
         _wire_ssh(mocker)
         result = providers_proxmox._probe(
-            scope, user="root", use_ip=False, include_all=False
+            scope, node_user="root", use_ip=False, include_all=False
         )
 
         by_name = {h.entry.name: h for h in result.hosts}
@@ -93,10 +93,10 @@ class TestProbeClassification:
         _wire_ssh(mocker)
 
         without_all = providers_proxmox._probe(
-            scope, user="root", use_ip=False, include_all=False
+            scope, node_user="root", use_ip=False, include_all=False
         )
         with_all = providers_proxmox._probe(
-            scope, user="root", use_ip=False, include_all=True
+            scope, node_user="root", use_ip=False, include_all=True
         )
 
         assert {h.entry.name for h in without_all.hosts} == {
@@ -106,21 +106,21 @@ class TestProbeClassification:
     def test_adoption_criteria_is_set(self, scope, mocker):
         _wire_ssh(mocker)
         result = providers_proxmox._probe(
-            scope, user="root", use_ip=False, include_all=True
+            scope, node_user="root", use_ip=False, include_all=True
         )
         assert result.adoption_criteria
 
     def test_complete_is_always_true(self, scope, mocker):
         _wire_ssh(mocker)
         result = providers_proxmox._probe(
-            scope, user="root", use_ip=False, include_all=False
+            scope, node_user="root", use_ip=False, include_all=False
         )
         assert result.complete is True
 
     def test_entry_shape_matches_create(self, scope, mocker):
         _wire_ssh(mocker)
         result = providers_proxmox._probe(
-            scope, user="root", use_ip=False, include_all=False
+            scope, node_user="root", use_ip=False, include_all=False
         )
         by_name = {h.entry.name: h for h in result.hosts}
         entry = by_name["node/dev1"].entry
@@ -135,7 +135,7 @@ class TestProbeClassification:
     def test_region_defaults_to_root_when_no_user_given(self, scope, mocker):
         _wire_ssh(mocker)
         result = providers_proxmox._probe(
-            scope, user="", use_ip=False, include_all=False
+            scope, node_user="", use_ip=False, include_all=False
         )
         assert result.hosts[0].entry.region == "root"
 
@@ -154,14 +154,14 @@ class TestProbeTagReadFailure:
         _wire_ssh(mocker, tag_dump_result=_completed(255, stderr="ssh: connection refused"))
         with pytest.raises(ProbeError):
             providers_proxmox._probe(
-                scope, user="root", use_ip=False, include_all=False
+                scope, node_user="root", use_ip=False, include_all=False
             )
 
     def test_pct_list_failure_also_raises_probe_error(self, scope, mocker):
         _wire_ssh(mocker, pct_list_result=_completed(1, stderr="boom"))
         with pytest.raises(ProbeError):
             providers_proxmox._probe(
-                scope, user="root", use_ip=False, include_all=False
+                scope, node_user="root", use_ip=False, include_all=False
             )
 
 
@@ -178,7 +178,7 @@ class TestProbeUseIp:
             return_value="10.0.0.5",
         )
         result = providers_proxmox._probe(
-            scope, user="root", use_ip=True, include_all=False
+            scope, node_user="root", use_ip=True, include_all=False
         )
         by_name = {h.entry.name: h for h in result.hosts}
         assert by_name["node/dev1"].entry.host == "10.0.0.5"
@@ -189,7 +189,7 @@ class TestProbeUseIp:
             "remo_cli.providers.proxmox._resolve_container_ip", return_value=""
         )
         result = providers_proxmox._probe(
-            scope, user="root", use_ip=True, include_all=False
+            scope, node_user="root", use_ip=True, include_all=False
         )
 
         # No container is dropped; each entry carries an empty host so
@@ -211,7 +211,7 @@ class TestProbeUseIp:
             side_effect=fake_resolve,
         )
         result = providers_proxmox._probe(
-            scope, user="root", use_ip=True, include_all=False
+            scope, node_user="root", use_ip=True, include_all=False
         )
 
         by_name = {h.entry.name: h for h in result.hosts}
@@ -233,7 +233,7 @@ class TestProbeReadOnly:
             "remo_cli.providers.proxmox._resolve_container_ip",
             return_value="10.0.0.5",
         )
-        providers_proxmox._probe(scope, user="root", use_ip=True, include_all=True)
+        providers_proxmox._probe(scope, node_user="root", use_ip=True, include_all=True)
 
         for call in node.call_args_list:
             cmd = call.args[2]
@@ -248,5 +248,5 @@ class TestProbeReadOnly:
             "remo_cli.providers.proxmox._resolve_container_ip",
             return_value="10.0.0.5",
         )
-        providers_proxmox._probe(scope, user="root", use_ip=True, include_all=False)
+        providers_proxmox._probe(scope, node_user="root", use_ip=True, include_all=False)
         assert node.call_count == 2

@@ -189,7 +189,7 @@ No manual sync needed.
 ### Test Zellij Config Changes
 
 ```bash
-remo incus update <container> --only zellij
+remo incus upgrade <container> --only zellij
 ```
 
 ### Test Full Container Setup

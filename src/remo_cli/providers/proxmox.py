@@ -1,9 +1,9 @@
 """Proxmox VE LXC container provider business logic for remo.
 
-Manages the lifecycle of Proxmox LXC containers: create, destroy, update
-(re-configure dev tools), list, sync, bootstrap.  All functions are pure
-business logic with no Click imports; CLI argument handling lives in the
-``cli`` layer.
+Manages the lifecycle of Proxmox LXC containers: create, destroy, upgrade
+(re-configure dev tools), resize, tag, list, sync, bootstrap.  All functions
+are pure business logic with no Click imports; CLI argument handling lives in
+the ``cli`` layer.
 
 Mirrors :mod:`remo_cli.providers.incus` in shape; substitutes ``pct`` for
 ``incus`` and uses the ``instance_id`` field of :class:`KnownHost` to store
@@ -137,7 +137,9 @@ def _parse_container_tags(config_text: str) -> list[str]:
     return [t for t in re.split(r"[;, ]+", line.strip()) if t]
 
 
-def _apply_managed_marker(host: str, user: str, vmid: str) -> tuple[bool, str]:
+def _apply_managed_marker(
+    host: str, user: str, vmid: str, current_tags: list[str] | None = None
+) -> tuple[bool, str]:
     """Apply the remo managed tag to Proxmox LXC *vmid* (host-side).
 
     Reads the current tag set from ``pct config <vmid>`` and, only when the
@@ -146,15 +148,21 @@ def _apply_managed_marker(host: str, user: str, vmid: str) -> tuple[bool, str]:
     appended). When ``remo`` is already present this is a strict no-op (FR-002,
     SC-005). Returns ``(ok, err)``; a failure warns but does not fail the
     enclosing command on its own (FR-005).
+
+    *current_tags* lets a caller that has already run ``pct config`` (``tag``,
+    which needs the tag set to tell "already marked" from "just marked") hand
+    the parsed tags in, so the write costs one SSH round-trip instead of two.
     """
     if not vmid:
         return False, "VMID could not be resolved"
 
-    cfg = _run_on_node(host, user, f"pct config {shlex.quote(vmid)}")
-    if cfg.returncode != 0:
-        return False, (cfg.stderr.strip() or cfg.stdout.strip())
+    if current_tags is None:
+        cfg = _run_on_node(host, user, f"pct config {shlex.quote(vmid)}")
+        if cfg.returncode != 0:
+            return False, (cfg.stderr.strip() or cfg.stdout.strip())
+        current_tags = _parse_container_tags(cfg.stdout)
 
-    tags = _parse_container_tags(cfg.stdout)
+    tags = current_tags
     if PROXMOX_MANAGED_TAG in tags:
         return True, ""  # already marked — no-op, no reorder
 
@@ -311,7 +319,7 @@ def _run_resize_playbook(
 def create(
     name: str,
     host: str,
-    user: str = "",
+    node_user: str = "",
     node: str = "",
     bridge: str = "",
     storage: str = "",
@@ -364,8 +372,8 @@ def create(
 
     extra_vars.extend(["-i", f"{host},"])
     extra_vars.extend(["-e", "target_hosts=all"])
-    if user:
-        extra_vars.extend(["-e", f"proxmox_host_user={user}"])
+    if node_user:
+        extra_vars.extend(["-e", f"proxmox_host_user={node_user}"])
 
     extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
@@ -382,9 +390,9 @@ def create(
             f"Failed to create Proxmox container '{name}' (playbook rc={rc})."
         )
 
-    vmid = _resolve_vmid(name, host, user)
+    vmid = _resolve_vmid(name, host, node_user)
     if use_ip:
-        container_host = _resolve_container_ip(name, host, user, vmid=vmid) or name
+        container_host = _resolve_container_ip(name, host, node_user, vmid=vmid) or name
     else:
         container_host = name
     save_known_host(
@@ -395,29 +403,32 @@ def create(
             user="remo",
             instance_id=vmid,
             access_mode="direct",
-            region=user or "root",
+            region=node_user or "root",
         )
     )
 
     # FR-001: mark the container as remo-managed. FR-005: a marking failure
     # (including an unresolved VMID) warns but does not fail create.
+    # `tag` takes NAME positionally (spec 021) and has no `--name` option, so
+    # both remedies below must be spelled exactly as Click accepts them.
+    tag_cmd = f"remo proxmox tag {name} --host {host}"
     if vmid:
-        ok, err = _apply_managed_marker(host, user, vmid)
+        ok, err = _apply_managed_marker(host, node_user, vmid)
         if not ok:
             print_warning(
                 f"Container '{name}' was created, but could not be tagged as "
                 f"remo-managed on Proxmox node '{host}' "
-                f"({_node_access_desc(host, user)}, needed for `pct set`): "
+                f"({_node_access_desc(host, node_user)}, needed for `pct set`): "
                 f"{err}\n"
                 f"  The container is fine. Until it carries the "
                 f"'{PROXMOX_MANAGED_TAG}' tag, a default `remo proxmox sync` "
-                f"will skip it (use `--all` or `remo proxmox update`)."
+                f"will skip it (use `--all`, or `{tag_cmd}`)."
             )
     else:
         print_warning(
             f"Container '{name}' was created but its VMID could not be "
             f"resolved, so it was not marked as remo-managed; run "
-            f"`remo proxmox update --name {name} --host {host}` to mark it."
+            f"`{tag_cmd}` to mark it."
         )
 
     # If the container already existed, site.yml skipped pct create and
@@ -428,7 +439,7 @@ def create(
             _run_resize_playbook(
                 name=name,
                 host=host,
-                user=user,
+                user=node_user,
                 volume_size=volume_size,
                 cores=cores,
                 memory=memory,
@@ -452,11 +463,12 @@ def teardown(
     confirmation prompt, and registry removal all now live in
     ``core.lifecycle.run_destroy``, which calls this as its one
     provider-specific step. The generated CLI's ``destroy`` command also
-    forwards its ``--host``/``--user`` destroy-options through as keyword
-    arguments; they're accepted-but-ignored here (absorbed by
+    forwards its ``--host``/``--node-user`` destroy-options through as
+    keyword arguments; they're accepted-but-ignored here (absorbed by
     ``**_ignored``) since the resolved *entry* is the sole source of truth
-    for where the container lives (R-A2) -- ``host``/``user`` are already
-    baked into *entry* (or its stub) by the CLI's entry-resolution step.
+    for where the container lives (R-A2) -- ``host``/``node_user`` are
+    already baked into *entry* (or its stub) by the CLI's entry-resolution
+    step.
 
     Raises :class:`PreconditionError` if *entry* carries no Proxmox node
     (unregistered container destroyed without ``--host``), or
@@ -469,7 +481,7 @@ def teardown(
     if not node_host:
         raise PreconditionError(
             f"Proxmox host for container '{container}' could not be determined.\n"
-            "Use --host (and --user) to specify it explicitly."
+            "Use --host (and --node-user) to specify it explicitly."
         )
 
     vmid = entry.instance_id
@@ -496,110 +508,42 @@ def teardown(
         )
 
 
-def update(
+def upgrade(
     name: str,
     host: str = "",
-    user: str = "",
-    volume_size: str = "",
-    cores: int = 0,
-    memory: int = 0,
+    node_user: str = "",
+    devcontainer_runtime: str | None = None,
     tools_only: tuple[str, ...] = (),
     tools_skip: tuple[str, ...] = (),
-    devcontainer_runtime: str | None = None,
     verbose: bool = False,
-    apply_marker: bool = True,
 ) -> None:
-    """Re-configure dev tools on an existing Proxmox LXC container.
-
-    When any of *volume_size*, *cores*, or *memory* is provided, apply
-    those resource changes (via pct resize / pct set) before running the
-    dev-tools configure playbook.
+    """Refresh dev tools on an existing Proxmox LXC container.
 
     Raises :class:`OperationFailedError` on a nonzero playbook rc.
-    
-    *apply_marker* gates the managed-marker backfill. Explicit
-    ``remo proxmox update`` backfills it (True); ``update_entry`` -- the
-    ``remo shell`` tools-update path -- passes False, so `remo shell` never
-    performs a provider-side write the user did not ask for. Instances that
-    predate tagging are pointed at ``sync`` by the one-time post-migration
-    notice instead (core/known_hosts._print_tagging_notice).
     """
     validate_name(name, "container name")
     guard_not_added_ssh_host(name, "proxmox")  # FR-012
-    volume_size = parse_volume_size(volume_size)
 
-    vmid = ""
     if not host:
-        host, looked_up_user, vmid = _lookup_proxmox_host(name)
-        if not user and looked_up_user:
-            user = looked_up_user
+        host, looked_up_user, _ = _lookup_proxmox_host(name)
+        if not node_user and looked_up_user:
+            node_user = looked_up_user
 
     if not host:
         raise PreconditionError(
             f"Proxmox host for container '{name}' could not be determined.\n"
-            "Use --host (and --user) to specify it explicitly."
+            "Use --host (and --node-user) to specify it explicitly."
         )
 
-    if not user:
-        user = "root"
-
-    # FR-004: `update` is the backfill path — ensure the managed marker is
-    # present (idempotent, preserving existing tags). FR-005: warn on failure
-    # but do not fail update. Resolve the VMID if the registry did not have it.
-    # Resolve the VMID only when something actually needs it — tagging below,
-    # or a resize. Resolving costs an SSH round-trip to the node, and a
-    # tools-only update from `remo shell` needs neither, so it must not pay for
-    # one. (`_resolve_container_ip` further down resolves lazily on its own if
-    # the registry has no cached address.)
-    if not vmid and (apply_marker or volume_size or cores or memory):
-        vmid = _resolve_vmid(name, host, user)
-
-    if apply_marker:
-        if vmid:
-            ok, err = _apply_managed_marker(host, user, vmid)
-            if not ok:
-                print_warning(
-                    f"Could not tag container '{name}' as remo-managed on "
-                    f"Proxmox node '{host}' ({_node_access_desc(host, user)}, "
-                    f"needed for `pct set`): {err}\n"
-                    f"  This is a node-side bookkeeping step only — the update "
-                    f"itself continues. Until '{name}' carries the "
-                    f"'{PROXMOX_MANAGED_TAG}' tag, a default `remo proxmox "
-                    f"sync` will skip it; use `remo proxmox sync --all`, or "
-                    f"add the tag in the Proxmox UI."
-                )
-        else:
-            print_warning(
-                f"Could not resolve a VMID for '{name}'; it was not marked as "
-                f"remo-managed."
-            )
-
-    if volume_size or cores or memory:
-        bits: list[str] = []
-        if volume_size:
-            bits.append(f"rootfs={volume_size}G")
-        if cores:
-            bits.append(f"cores={cores}")
-        if memory:
-            bits.append(f"memory={memory}MiB")
-        print_info(f"Updating resources on '{name}' ({', '.join(bits)}) on {host}...")
-        _run_resize_playbook(
-            name=name,
-            host=host,
-            user=user,
-            volume_size=volume_size,
-            cores=cores,
-            memory=memory,
-            vmid=vmid,
-            verbose=verbose,
-        )
+    if not node_user:
+        node_user = "root"
 
     print_info(f"Looking up container '{name}' on {host}...")
 
-    container_ip = _resolve_container_ip(name, host, user, vmid=vmid)
+    container_ip = _resolve_container_ip(name, host, node_user)
 
     if not container_ip:
-        ssh_target = f"{user}@{host}" if user else host
+        ssh_target = f"{node_user}@{host}" if node_user else host
         raise PreconditionError(
             f"Could not find IP for container '{name}'.\n"
             "Container may not exist, may be stopped, or may not have an IP yet.\n"
@@ -619,8 +563,124 @@ def update(
     rc = run_playbook("proxmox_configure.yml", extra_vars, verbose=verbose)
     if rc != 0:
         raise OperationFailedError(
-            f"Failed to update tools on '{name}' (playbook rc={rc})."
+            f"Failed to configure tools on '{name}' (playbook rc={rc})."
         )
+
+
+def resize(
+    name: str,
+    host: str = "",
+    node_user: str = "",
+    volume_size: str = "",
+    cores: int = 0,
+    memory: int = 0,
+    verbose: bool = False,
+) -> None:
+    """Resize resource limits on an existing Proxmox LXC container.
+
+    Raises :class:`PreconditionError` if the container's VMID could not be
+    resolved, or :class:`OperationFailedError` on a nonzero playbook rc.
+    """
+    validate_name(name, "container name")
+    guard_not_added_ssh_host(name, "proxmox")  # FR-012
+    volume_size = parse_volume_size(volume_size)
+
+    vmid = ""
+    if not host:
+        host, looked_up_user, vmid = _lookup_proxmox_host(name)
+        if not node_user and looked_up_user:
+            node_user = looked_up_user
+
+    if not host:
+        raise PreconditionError(
+            f"Proxmox host for container '{name}' could not be determined.\n"
+            "Use --host (and --node-user) to specify it explicitly."
+        )
+
+    if not node_user:
+        node_user = "root"
+
+    if not vmid:
+        vmid = _resolve_vmid(name, host, node_user)
+    if not vmid:
+        raise PreconditionError(
+            f"Could not resolve a VMID for '{name}' on Proxmox host '{host}'."
+        )
+
+    bits: list[str] = []
+    if volume_size:
+        bits.append(f"rootfs={volume_size}G")
+    if cores:
+        bits.append(f"cores={cores}")
+    if memory:
+        bits.append(f"memory={memory}MiB")
+    print_info(f"Resizing '{name}' ({', '.join(bits)}) on {host}...")
+    _run_resize_playbook(
+        name=name,
+        host=host,
+        user=node_user,
+        volume_size=volume_size,
+        cores=cores,
+        memory=memory,
+        vmid=vmid,
+        verbose=verbose,
+    )
+
+
+def tag(name: str, host: str = "", node_user: str = "") -> None:
+    """Mark an existing Proxmox LXC container as remo-managed.
+
+    Read-before-write: already-tagged is a reported no-op (exit 0, zero
+    writes). Raises :class:`OperationFailedError` (not a warning) on write
+    failure or an unresolvable VMID — unlike `create`'s best-effort marker
+    application.
+    """
+    validate_name(name, "container name")
+    guard_not_added_ssh_host(name, "proxmox")  # FR-012
+
+    vmid = ""
+    if not host:
+        host, looked_up_user, vmid = _lookup_proxmox_host(name)
+        if not node_user and looked_up_user:
+            node_user = looked_up_user
+
+    if not host:
+        raise PreconditionError(
+            f"Proxmox host for container '{name}' could not be determined.\n"
+            "Use --host (and --node-user) to specify it explicitly."
+        )
+
+    if not node_user:
+        node_user = "root"
+
+    if not vmid:
+        vmid = _resolve_vmid(name, host, node_user)
+    if not vmid:
+        raise PreconditionError(
+            f"Could not resolve a VMID for '{name}' on Proxmox host '{host}'; cannot tag."
+        )
+
+    cfg = _run_on_node(host, node_user, f"pct config {shlex.quote(vmid)}")
+    if cfg.returncode != 0:
+        raise OperationFailedError(
+            f"Could not read tags for container '{name}': "
+            f"{cfg.stderr.strip() or cfg.stdout.strip()}"
+        )
+    current_tags = _parse_container_tags(cfg.stdout)
+    if PROXMOX_MANAGED_TAG in current_tags:
+        print_info(f"Container '{name}' is already marked as remo-managed.")
+        return
+
+    # Hand the already-read tags down so the write is one round-trip, not a
+    # second `pct config` inside _apply_managed_marker.
+    ok, err = _apply_managed_marker(host, node_user, vmid, current_tags)
+    if not ok:
+        raise OperationFailedError(
+            f"Could not tag container '{name}' as remo-managed on Proxmox "
+            f"node '{host}' ({_node_access_desc(host, node_user)}, needed for "
+            f"`pct set`): {err}"
+        )
+    print_info(f"Marked container '{name}' as remo-managed.")
 
 
 def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
@@ -628,12 +688,11 @@ def update_entry(entry: KnownHost, *, verbose: bool = False) -> None:
     node_host, sep, container = entry.name.partition("/")
     if not sep:
         node_host, container = "", entry.name
-    update(
+    upgrade(
         name=container,
         host=node_host,
-        user=entry.region,
+        node_user=entry.region,
         verbose=verbose,
-        apply_marker=False,
     )
 
 
@@ -663,7 +722,7 @@ def list_hosts() -> None:
     )
 
 
-def info(name: str, host: str = "", user: str = "") -> None:
+def info(name: str, host: str = "", node_user: str = "") -> None:
     """Print detailed information about a Proxmox LXC container.
 
     Reads ``pct config`` and ``pct status`` over SSH on the Proxmox host,
@@ -676,20 +735,20 @@ def info(name: str, host: str = "", user: str = "") -> None:
     vmid = ""
     if not host:
         host, looked_up_user, vmid = _lookup_proxmox_host(name)
-        if not user and looked_up_user:
-            user = looked_up_user
+        if not node_user and looked_up_user:
+            node_user = looked_up_user
 
     if not host:
         raise PreconditionError(
             f"Proxmox host for container '{name}' could not be determined.\n"
-            "Use --host (and --user) to specify it explicitly."
+            "Use --host (and --node-user) to specify it explicitly."
         )
 
-    if not user:
-        user = "root"
+    if not node_user:
+        node_user = "root"
 
     if not vmid:
-        vmid = _resolve_vmid(name, host, user)
+        vmid = _resolve_vmid(name, host, node_user)
     if not vmid:
         raise PreconditionError(
             f"Container '{name}' was not found on Proxmox host '{host}'."
@@ -697,7 +756,7 @@ def info(name: str, host: str = "", user: str = "") -> None:
 
     # Single SSH round-trip: combine config + status.
     cmd = f"pct config {vmid}; echo ---STATUS---; pct status {vmid}"
-    result = _ssh_run(host, user, cmd)
+    result = _ssh_run(host, node_user, cmd)
     if result.returncode != 0:
         raise OperationFailedError(
             f"Failed to query container '{name}' on '{host}': {result.stderr.strip()}"
@@ -724,7 +783,7 @@ def info(name: str, host: str = "", user: str = "") -> None:
     if state_match:
         state = state_match.group(1)
 
-    container_ip = _resolve_container_ip(name, host, user, vmid=vmid)
+    container_ip = _resolve_container_ip(name, host, node_user, vmid=vmid)
 
     print("")
     print(f"  Name:       {hostname}")
@@ -750,7 +809,7 @@ def _parse_pct_config_field(config_text: str, field: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> ProbeResult:
+def _probe(scope: SyncScope, node_user: str, use_ip: bool, include_all: bool) -> ProbeResult:
     """Provider-probe for :func:`sync` (contracts/provider-probe.md "Proxmox").
 
     Returns every LXC container on *scope.host* -- marked and unmarked alike;
@@ -759,7 +818,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
     when *use_ip* is set, one IP lookup per container. Never writes/mutates
     the provider.
     """
-    result = _run_on_node(scope.host, user, "pct list")
+    result = _run_on_node(scope.host, node_user, "pct list")
 
     if result.returncode != 0:
         raise ProbeError(
@@ -788,7 +847,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
         # the shell command would exit non-zero, which _read_tags_by_vmid
         # (correctly) treats as a failure -- turning a legitimate empty node
         # into a spurious probe error instead of a clean reconcile.
-        tags_by_vmid = _read_tags_by_vmid(scope.host, user) if containers else {}
+        tags_by_vmid = _read_tags_by_vmid(scope.host, node_user) if containers else {}
     except OperationFailedError as exc:
         # A tag-read failure must abort the whole probe, not silently treat
         # every container as unmarked (the bug this phase fixes -- R5 #1).
@@ -802,7 +861,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
         marked = PROXMOX_MANAGED_TAG in tags_by_vmid.get(vmid, set())
 
         if use_ip:
-            ip = _resolve_container_ip(hostname, scope.host, user, vmid=vmid)
+            ip = _resolve_container_ip(hostname, scope.host, node_user, vmid=vmid)
             if ip:
                 container_host = ip
             else:
@@ -824,7 +883,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
             user="remo",
             instance_id=vmid,
             access_mode="direct",
-            region=user or "root",
+            region=node_user or "root",
         )
         hosts.append(DiscoveredHost(entry=entry, marked=marked))
 
@@ -838,7 +897,7 @@ def _probe(scope: SyncScope, user: str, use_ip: bool, include_all: bool) -> Prob
 
 def sync(
     host: str,
-    user: str = "",
+    node_user: str = "",
     use_ip: bool = False,
     include_all: bool = False,
     auto_confirm: bool = False,
@@ -860,7 +919,7 @@ def sync(
     scope = SyncScope(type="proxmox", host=host)
     return run_sync(
         scope,
-        lambda: _probe(scope, user=user, use_ip=use_ip, include_all=include_all),
+        lambda: _probe(scope, node_user=node_user, use_ip=use_ip, include_all=include_all),
         auto_confirm=auto_confirm,
         dry_run=dry_run,
         include_all=include_all,
@@ -869,7 +928,7 @@ def sync(
 
 def bootstrap(
     host: str,
-    user: str = "",
+    node_user: str = "",
     bridge: str = "",
     storage: str = "",
     template: str = "",
@@ -880,11 +939,14 @@ def bootstrap(
     Raises :class:`OperationFailedError` on a nonzero playbook rc.
     """
     if not host:
-        raise PreconditionError("Proxmox host is required (use --host).")
+        # Click enforces the positional HOST for `remo proxmox host bootstrap`
+        # (spec 021 -- there is no `--host` flag on this command any more);
+        # this guard only covers direct programmatic calls.
+        raise PreconditionError("Proxmox host is required.")
 
     extra_vars: list[str] = ["-i", f"{host},", "-e", "target_hosts=all"]
-    if user:
-        extra_vars.extend(["-e", f"ansible_user={user}"])
+    if node_user:
+        extra_vars.extend(["-e", f"ansible_user={node_user}"])
     if bridge:
         extra_vars.extend(["-e", f"proxmox_bridge={bridge}"])
     if storage:
