@@ -35,6 +35,38 @@ fi
 blue "fish:  $(fish --version)"
 blue "remo:  $(remo --version)"
 
+# fish loads a command's completion file only when it can resolve the command
+# itself. If `remo` is missing from *fish's* PATH, the whole script is ignored
+# in silence and fish falls back to listing files — the exact symptom this
+# suite exists to catch, and indistinguishable from a broken script unless you
+# check for it explicitly. Rather than trust PATH to survive into the fish
+# subprocess, put remo's directory there deliberately.
+REMO_BIN_DIR="$(cd "$(dirname "$(command -v remo)")" && pwd)"
+blue "remo dir: $REMO_BIN_DIR"
+
+# Run one fish command with remo guaranteed on PATH.
+fish_run() {
+    fish -c "set -x PATH '$REMO_BIN_DIR' \$PATH; $1"
+}
+
+if ! fish_run 'type -q remo'; then
+    red "FAIL: fish cannot resolve 'remo' even with $REMO_BIN_DIR on PATH."
+    red "  bash PATH: $PATH"
+    red "  fish PATH: $(fish_run 'echo $PATH')"
+    exit 1
+fi
+
+# Informational: does fish inherit enough PATH to find remo on its own? CI has
+# been observed failing here while bash resolved remo fine, and forcing PATH
+# above papers over that. Report it rather than hide it — a "no" is the whole
+# explanation for a file-listing bug report, so it belongs in the log.
+if fish -c 'type -q remo'; then
+    blue "note: fish resolves remo from the inherited PATH."
+else
+    blue "note: fish does NOT resolve remo from the inherited PATH (forced above)."
+    blue "      inherited fish PATH: $(fish -c 'echo $PATH' | tr ' ' ':')"
+fi
+
 # --- Isolated HOME ---------------------------------------------------------
 # Never write into the caller's real ~/.config/fish/completions.
 FISH_HOME="$(mktemp -d)"
@@ -69,7 +101,7 @@ check() {
     local errfile out rc
     errfile="$(mktemp)"
 
-    out="$(fish -c "complete -C '$cmdline'" 2>"$errfile")"
+    out="$(fish_run "complete -C '$cmdline'" 2>"$errfile")"
     rc=$?
 
     local problems=()
@@ -114,18 +146,30 @@ check "incus subcommands" "remo incus " \
 # `tag` is generated only when the provider supports a managed marker, so AWS
 # must NOT offer it — a completion that suggests a nonexistent command is the
 # same broken-remedy class of bug as a printed one.
-if fish -c "complete -C 'remo aws '" 2>/dev/null | grep -qE '^tag(\s|$)'; then
+#
+# Anchored on a positive first: a bare "no tag here" assertion also passes when
+# completion is broken outright (a directory listing contains no `tag` either),
+# which would make this check quietly worthless exactly when it matters.
+check "aws subcommands present" "remo aws " create destroy upgrade resize
+aws_out="$(fish_run "complete -C 'remo aws '" 2>/dev/null)"
+if grep -qE '^tag(\s|$)' <<<"$aws_out"; then
     red "FAIL: 'remo aws' offers 'tag', which AWS does not implement"
     FAILURES=$((FAILURES + 1))
 else
     green "PASS: 'remo aws' correctly omits 'tag'"
 fi
 
-# The original defect, reproduced directly: no candidates match, Click emits a
-# bare newline, and an unguarded script turns that into a wall of
-# `string split: missing argument` / `test: Missing argument at index 3`.
-# No expected candidates here — an empty result is the correct answer. What is
-# asserted is silence.
+# No candidates match. Click emits a bare newline here (verified), and on the
+# fish versions behind a2542e9 that became one empty loop iteration and a wall
+# of `string split: missing argument` / `test: Missing argument at index 3`.
+#
+# Caveat, so nobody over-trusts this check: it does NOT reproduce that bug on
+# fish 3.7, which strips the trailing empty from command substitution before
+# the loop ever sees it. Reverting both hardening changes was measured against
+# this suite and it still passed. What this asserts is silence on *this* fish;
+# it is a regression guard for older ones, not proof the guards are load-
+# bearing here. Exercising them properly would need an older fish in the
+# matrix.
 check "no-match input produces no errors" "remo zzzznosuchcommand"
 
 # Same failure mode one level deeper.
