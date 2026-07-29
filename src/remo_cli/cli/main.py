@@ -208,7 +208,11 @@ def completion_install(shell: str | None, yes: bool) -> None:
     fish needs no rc change — its completions directory is loaded
     automatically.
     """
-    from remo_cli.core.completion import detect_shell, install
+    from remo_cli.core.completion import (
+        detect_shell,
+        fish_autoload_problem,
+        install,
+    )
     from remo_cli.core.output import print_info, print_success, print_warning
 
     if shell is None:
@@ -237,6 +241,12 @@ def completion_install(shell: str | None, yes: bool) -> None:
         print_info(f"Completion script already current: {outcome.script_path}")
 
     if outcome.rc_path is None:
+        # fish needs no rc edit, but "wrote the file" is not the same as "fish
+        # will read it" — and when it won't, the failure is completely silent.
+        problem = fish_autoload_problem(outcome.script_path)
+        if problem:
+            print_warning(problem)
+            return
         print_info("Start a new shell (or run `exec fish`) to pick it up.")
         return
 

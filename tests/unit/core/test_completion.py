@@ -8,6 +8,7 @@ on never touching an rc file without consent.
 from __future__ import annotations
 
 import os
+import subprocess
 
 import pytest
 
@@ -15,6 +16,7 @@ from remo_cli.core import completion
 from remo_cli.core.completion import (
     SHELLS,
     detect_shell,
+    fish_autoload_problem,
     install,
     installed_version,
     is_stale,
@@ -259,6 +261,84 @@ class TestInstall:
 # ---------------------------------------------------------------------------
 # staleness
 # ---------------------------------------------------------------------------
+
+
+class TestFishAutoloadProblem:
+    """Guards issue #116: a correct script fish never reads fails identically
+    to a broken one — silent fallback to filename completion, with `install`
+    reporting success. The whole point of this check is that the failure is
+    otherwise mute.
+    """
+
+    @staticmethod
+    def _fish_returns(monkeypatch, stdout, returncode=0):
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(cmd, returncode, stdout, "")
+
+        monkeypatch.setattr(subprocess, "run", fake_run)
+
+    def test_silent_when_directory_is_on_the_path(self, monkeypatch, tmp_path):
+        script = tmp_path / "completions" / "remo.fish"
+        self._fish_returns(monkeypatch, f"/other\n{script.parent}\n/more\n")
+        assert fish_autoload_problem(script) is None
+
+    def test_names_the_export_collapse_when_that_is_the_cause(
+        self, monkeypatch, tmp_path
+    ):
+        """fish colon-joins an exported list var only when the name ends in
+        uppercase PATH. `fish_complete_path` is lowercase, so an exported copy
+        is space-joined and every child fish re-imports it as ONE nonexistent
+        directory. The remedy is a one-character edit that is very hard to
+        arrive at unaided, so it is worth naming explicitly."""
+        script = tmp_path / "completions" / "remo.fish"
+        self._fish_returns(monkeypatch, "/collapsed /into /one\n")
+        monkeypatch.setenv("fish_complete_path", "/collapsed /into /one")
+        msg = fish_autoload_problem(script)
+        assert msg is not None
+        assert "set -g fish_complete_path" in msg
+        assert "not `set -gx`" in msg
+        # Must not leave the user thinking they need to reinstall.
+        assert "script itself is fine" in msg
+
+    def test_generic_message_when_not_an_export_problem(self, monkeypatch, tmp_path):
+        script = tmp_path / "completions" / "remo.fish"
+        self._fish_returns(monkeypatch, "/somewhere/else\n")
+        monkeypatch.delenv("fish_complete_path", raising=False)
+        msg = fish_autoload_problem(script)
+        assert msg is not None
+        assert "not in $fish_complete_path" in msg
+        assert "set -gx" not in msg
+
+    def test_single_exported_entry_is_not_flagged_as_collapsed(
+        self, monkeypatch, tmp_path
+    ):
+        """An exported path with one entry round-trips correctly — it is only
+        the space-joining of two or more that produces a bogus element."""
+        script = tmp_path / "completions" / "remo.fish"
+        self._fish_returns(monkeypatch, "/elsewhere\n")
+        monkeypatch.setenv("fish_complete_path", "/elsewhere")
+        msg = fish_autoload_problem(script)
+        assert msg is not None
+        assert "set -gx" not in msg
+
+    def test_missing_fish_is_not_a_problem(self, monkeypatch, tmp_path):
+        """Installing completion for a shell you do not have is legitimate;
+        there is simply nothing to verify against."""
+
+        def boom(cmd, **kwargs):
+            raise FileNotFoundError("fish")
+
+        monkeypatch.setattr(subprocess, "run", boom)
+        assert fish_autoload_problem(tmp_path / "completions" / "remo.fish") is None
+
+    def test_fish_error_is_not_a_problem(self, monkeypatch, tmp_path):
+        self._fish_returns(monkeypatch, "", returncode=127)
+        assert fish_autoload_problem(tmp_path / "completions" / "remo.fish") is None
+
+    def test_empty_output_is_not_a_problem(self, monkeypatch, tmp_path):
+        """Don't turn an unreadable answer into a confident accusation."""
+        self._fish_returns(monkeypatch, "\n")
+        assert fish_autoload_problem(tmp_path / "completions" / "remo.fish") is None
 
 
 class TestStaleness:

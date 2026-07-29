@@ -191,6 +191,67 @@ def stale_shells(current_version: str, *, home: Path | None = None) -> list[str]
     return [s for s in SHELLS if is_stale(s, current_version, home=home)]
 
 
+def fish_autoload_problem(script_path: Path) -> str | None:
+    """Warn when fish will not autoload the script we just wrote.
+
+    A correct script in a directory fish does not read fails *identically* to a
+    broken script: fish silently completes filenames instead. There is no error,
+    and `remo completion install` otherwise reports success — so the user is
+    told everything worked while nothing does. Issue #116 was exactly this, and
+    took a day to find precisely because the failure is mute.
+
+    Asks fish what it actually reads rather than reasoning about it, so this
+    catches any cause — an exported `fish_complete_path`, a config that
+    overwrites it, a path we got wrong — not just the one that prompted it.
+
+    Returns None when everything is fine, or when fish is absent (nothing to
+    verify against, and installing for a shell you don't have is legitimate).
+    """
+    try:
+        proc = subprocess.run(
+            ["fish", "-c", r"printf '%s\n' $fish_complete_path"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+
+    entries = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    if not entries or str(script_path.parent) in entries:
+        return None
+
+    # The specific cause behind #116, worth naming because the remedy is a
+    # one-character edit that is otherwise very hard to arrive at: fish
+    # colon-joins an exported list variable only when its name ends in
+    # uppercase PATH. `fish_complete_path` is lowercase, so an exported copy is
+    # space-joined and every child fish re-imports it as ONE nonexistent
+    # directory — silently losing every user completion at once.
+    exported = os.environ.get("fish_complete_path")
+    if exported and " " in exported:
+        return (
+            f"fish will not load completions from {script_path.parent}.\n"
+            "  `fish_complete_path` is exported in your environment as a single "
+            "space-joined\n"
+            "  string, so every child fish sees one nonexistent directory "
+            "instead of a list.\n"
+            "  Fix: in your fish config use `set -g fish_complete_path ...`, "
+            "not `set -gx`.\n"
+            "  The script itself is fine — completion will simply do nothing "
+            "until that changes."
+        )
+
+    return (
+        f"fish will not load completions from {script_path.parent} — "
+        "it is not in $fish_complete_path.\n"
+        "  The script itself is fine, but completion will silently do nothing.\n"
+        "  Check your fish config for anything that overwrites "
+        "`fish_complete_path`."
+    )
+
+
 def installed_version(shell: str, *, home: Path | None = None) -> str | None:
     """Return the remo version stamped into the installed script, if any.
 
