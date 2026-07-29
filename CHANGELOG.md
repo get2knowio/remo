@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.1.0](https://github.com/get2knowio/remo/compare/v3.0.0...v3.1.0) (2026-07-29)
+
+
+### Features
+
+* **cli:** warn when fish won't autoload the completion we just wrote ([#118](https://github.com/get2knowio/remo/issues/118)) ([759780d](https://github.com/get2knowio/remo/commit/759780d1eab3b39409cd315e22bd16ad0ab126ab))
+
 ## [3.0.0](https://github.com/get2knowio/remo/compare/v2.2.0...v3.0.0) (2026-07-28)
 
 
