@@ -192,7 +192,13 @@ def completion_show(shell: str) -> None:
     help="Add the rc `source` line without prompting (bash and zsh only).",
 )
 def completion_install(shell: str | None, yes: bool) -> None:
-    """Install tab completion for SHELL (detected from $SHELL if omitted).
+    """Install tab completion for SHELL (auto-detected if omitted).
+
+    Detection prefers the shell you are actually running, read from the process
+    tree, and falls back to $SHELL. The two disagree more often than you would
+    expect — macOS ships zsh as the login shell, so $SHELL says zsh even when
+    you launch fish from your terminal emulator. When they differ remo says so
+    and uses the shell you are typing into; naming one explicitly always wins.
 
     Writes the activation script to its own file and, for bash and zsh, adds a
     single line to your rc file that loads it. Safe to re-run: an unchanged
