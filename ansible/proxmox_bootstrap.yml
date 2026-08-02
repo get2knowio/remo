@@ -32,4 +32,4 @@
           - Template: {{ proxmox_template }}
 
           Launch a container:
-            remo proxmox create --name dev1 --host {{ inventory_hostname }} --node-user {{ ansible_user | default('root') }}
+            remo proxmox create --name dev1 --host {{ inventory_hostname }} --host-user {{ ansible_user | default('root') }}

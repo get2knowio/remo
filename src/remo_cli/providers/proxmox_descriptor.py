@@ -30,13 +30,16 @@ from remo_cli.core.provider_registry import (
 
 # The login on the *hypervisor node*, used to run host-side `pct` commands --
 # NOT the account you land in inside the container (that is always `remo`,
-# set at create/sync time and not configurable).
-_NODE_USER = OptionSpec(
-    name="--node-user",
-    param="node_user",
+# set at create/sync time and not configurable). Spelled `--host-user` to match
+# Incus and the `proxmox_host_user` Ansible var; it was `--node-user` through
+# 3.1.0.
+_HOST_USER = OptionSpec(
+    name="--host-user",
+    param="host_user",
     default="",
     help="SSH user on the Proxmox node, for host-side pct commands "
-    "(default: root). Not the container login, which is always 'remo'.",
+    "(default: whatever your ssh_config picks for that host). Not the "
+    "container login, which is always 'remo'.",
 )
 
 _NODE = OptionSpec(
@@ -71,13 +74,13 @@ DESCRIPTOR = ProviderDescriptor(
     display_name="Proxmox",
     default_instance_name="dev1",
     name_format=NameFormat.HOST_SCOPED,
-    registry_fields=(("instance_id", "vmid"), ("region", "node_user")),
+    registry_fields=(("instance_id", "vmid"), ("region", "host_user")),
     connection=ConnectionSpec(),
     implementation="remo_cli.providers.proxmox",
     sdk_extra=None,
     create_options=(
         replace(HOST, required=True, default=None),
-        _NODE_USER,
+        _HOST_USER,
         _NODE,
         _BRIDGE,
         _STORAGE,
@@ -91,7 +94,7 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     upgrade_options=(
         replace(HOST, default=""),
-        _NODE_USER,
+        _HOST_USER,
         DEVCONTAINER_RUNTIME,
     ),
     resize_dimensions=(
@@ -101,25 +104,25 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     resize_options=(
         replace(HOST, default=""),
-        _NODE_USER,
+        _HOST_USER,
     ),
     tag_options=(
         replace(HOST, default=""),
-        _NODE_USER,
+        _HOST_USER,
     ),
     destroy_options=(
         replace(HOST, default=""),
-        _NODE_USER,
+        _HOST_USER,
         _PURGE,
     ),
     sync_options=(
         replace(HOST, required=True, default=None),
-        _NODE_USER,
+        _HOST_USER,
         USE_IP,
     ),
     info_options=(
         replace(HOST, default=""),
-        _NODE_USER,
+        _HOST_USER,
     ),
     supports_managed_marker=True,
     snapshot_region_scoped=False,
@@ -130,7 +133,7 @@ DESCRIPTOR = ProviderDescriptor(
             impl="bootstrap",
             target=ArgumentSpec("host", required=True),
             options=(
-                _NODE_USER,
+                _HOST_USER,
                 _BRIDGE,
                 _STORAGE,
                 _TEMPLATE,

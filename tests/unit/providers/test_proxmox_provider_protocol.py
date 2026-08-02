@@ -54,7 +54,7 @@ class TestUpdateEntry:
         result = providers_proxmox.update_entry(_entry(), verbose=True)
         assert result is None
         spy.assert_called_once_with(
-            name="dev1", host="lab1", node_user="root", verbose=True
+            name="dev1", host="lab1", host_user="root", verbose=True
         )
 
     def test_failure_raises_operation_failed_error(self, mocker):

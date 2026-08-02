@@ -19,7 +19,7 @@ def runner():
 
 def test_default_sync_passes_include_all_false(runner, mocker):
     spy = mocker.patch("remo_cli.providers.proxmox.sync", return_value=0)
-    result = runner.invoke(proxmox, ["sync", "--host", "node", "--node-user", "root"])
+    result = runner.invoke(proxmox, ["sync", "--host", "node", "--host-user", "root"])
     assert result.exit_code == 0, result.output
     assert spy.call_args.kwargs["include_all"] is False
 

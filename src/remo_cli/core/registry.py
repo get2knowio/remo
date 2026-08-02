@@ -211,7 +211,14 @@ def entry_to_known_host(entry: dict[str, Any]) -> KnownHost | None:
         nested = entry.get("proxmox")
         if isinstance(nested, dict):
             instance_id = str(nested.get("vmid", "") or "")
-            region = str(nested.get("node_user", "") or "")
+            # `host_user` replaced `node_user` when `--node-user` became
+            # `--host-user`, matching Incus and the `proxmox_host_user` Ansible
+            # var. Registries written before that still carry the old key, so
+            # accept it on read; the next write emits `host_user` and the entry
+            # migrates without the operator doing anything.
+            region = str(
+                nested.get("host_user", "") or nested.get("node_user", "") or ""
+            )
     elif type_ == "aws":
         nested = entry.get("aws")
         if isinstance(nested, dict):

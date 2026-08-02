@@ -44,5 +44,5 @@
         pveam update
         pveam download {{ proxmox_container_template.split(':')[0] }} {{ proxmox_container_template.split('/')[-1] }}
 
-      Or run: remo proxmox host bootstrap {{ inventory_hostname }} --node-user {{ ansible_user | default('root') }}
+      Or run: remo proxmox host bootstrap {{ inventory_hostname }} --host-user {{ ansible_user | default('root') }}
   when: proxmox_container_template not in (template_check.stdout | default(''))

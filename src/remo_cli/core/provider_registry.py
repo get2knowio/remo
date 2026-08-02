@@ -146,7 +146,7 @@ class ProviderDescriptor:
     name_format: NameFormat
     # (KnownHost attribute name, registry v2 nested JSON key) pairs this
     # type serializes when non-empty (drives core/registry.py's per-type
-    # field map). e.g. Proxmox: (("instance_id", "vmid"), ("region", "node_user")).
+    # field map). e.g. Proxmox: (("instance_id", "vmid"), ("region", "host_user")).
     registry_fields: tuple[tuple[str, str], ...]
     connection: ConnectionSpec
     implementation: str  # dotted module path, imported lazily

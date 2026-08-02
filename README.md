@@ -349,7 +349,7 @@ remo proxmox sync --host <node>     # Reconcile registry with remo-managed conta
 remo proxmox sync --host <node> --all   # Also adopt non-remo containers on the node
 remo proxmox sync --host <node> --yes   # Skip the removal confirmation
 remo proxmox sync --host <node> --dry-run   # Preview the plan, change nothing
-remo proxmox upgrade <n> [--host H] [--node-user U]   # Update dev tools
+remo proxmox upgrade <n> [--host H] [--host-user U]   # Update dev tools
 remo proxmox resize <n> --volume-size 40 --cores 4 --memory 4096
 remo proxmox tag <n>                # Mark as remo-managed
 remo proxmox destroy --name <n> [--yes] [--purge]   # Destroy container

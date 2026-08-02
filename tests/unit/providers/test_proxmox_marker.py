@@ -142,7 +142,7 @@ class TestCreateUpdateWiring:
             "remo_cli.providers.proxmox._apply_managed_marker",
             return_value=(True, ""),
         )
-        result = providers_proxmox.create(name="dev1", host="node", node_user="root")
+        result = providers_proxmox.create(name="dev1", host="node", host_user="root")
         assert result is None
         apply.assert_called_once_with("node", "root", "100")
 
@@ -157,7 +157,7 @@ class TestCreateUpdateWiring:
             "remo_cli.providers.proxmox._apply_managed_marker",
             return_value=(True, ""),
         )
-        result = providers_proxmox.tag(name="dev1", host="node", node_user="root")
+        result = providers_proxmox.tag(name="dev1", host="node", host_user="root")
         assert result is None
         # The already-parsed tag set is handed down so the write costs one SSH
         # round-trip, not a second `pct config` inside _apply_managed_marker.
@@ -174,7 +174,7 @@ class TestCreateUpdateWiring:
             "remo_cli.providers.proxmox._apply_managed_marker",
             return_value=(True, ""),
         )
-        result = providers_proxmox.tag(name="dev1", host="node", node_user="root")
+        result = providers_proxmox.tag(name="dev1", host="node", host_user="root")
         assert result is None
         apply.assert_not_called()
 
@@ -190,7 +190,7 @@ class TestCreateUpdateWiring:
             return_value=(False, "pct set failed"),
         )
         with pytest.raises(OperationFailedError, match="pct set failed"):
-            providers_proxmox.tag(name="dev1", host="node", node_user="root")
+            providers_proxmox.tag(name="dev1", host="node", host_user="root")
 
     def test_tag_raises_on_unresolvable_vmid(self, mocker):
         # Both the registry-cached lookup and the host-side fallback fail --
@@ -200,7 +200,7 @@ class TestCreateUpdateWiring:
         node = mocker.patch("remo_cli.providers.proxmox._run_on_node", autospec=True)
         apply = mocker.patch("remo_cli.providers.proxmox._apply_managed_marker")
         with pytest.raises(PreconditionError, match="VMID"):
-            providers_proxmox.tag(name="dev1", host="node", node_user="root")
+            providers_proxmox.tag(name="dev1", host="node", host_user="root")
         node.assert_not_called()
         apply.assert_not_called()
 
@@ -235,7 +235,7 @@ class TestCreateUpdateWiring:
             return_value=(True, ""),
         )
 
-        providers_proxmox.upgrade(name="dev1", host="node", node_user="root")
+        providers_proxmox.upgrade(name="dev1", host="node", host_user="root")
         apply.assert_not_called()
         resolve_vmid.assert_not_called()
 

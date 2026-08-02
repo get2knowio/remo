@@ -36,7 +36,7 @@ class TestResize:
         configure = mocker.patch("remo_cli.providers.proxmox.run_playbook")
 
         result = providers_proxmox.resize(
-            name="dev1", host="node", node_user="root", cores=4
+            name="dev1", host="node", host_user="root", cores=4
         )
 
         assert result is None
@@ -56,7 +56,7 @@ class TestResize:
         configure = mocker.patch("remo_cli.providers.proxmox.run_playbook")
 
         providers_proxmox.resize(
-            name="dev1", host="node", node_user="root", volume_size="20"
+            name="dev1", host="node", host_user="root", volume_size="20"
         )
 
         resize_shared.assert_called_once()
@@ -72,7 +72,7 @@ class TestResize:
         configure = mocker.patch("remo_cli.providers.proxmox.run_playbook")
 
         providers_proxmox.resize(
-            name="dev1", host="node", node_user="root", memory=2048
+            name="dev1", host="node", host_user="root", memory=2048
         )
 
         resize_shared.assert_called_once()
@@ -87,7 +87,7 @@ class TestResize:
         )
 
         with pytest.raises(PreconditionError, match="VMID"):
-            providers_proxmox.resize(name="dev1", host="node", node_user="root", cores=4)
+            providers_proxmox.resize(name="dev1", host="node", host_user="root", cores=4)
 
         resize_shared.assert_not_called()
 

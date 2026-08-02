@@ -412,7 +412,11 @@ class TestTeardown:
         assert not any(v.startswith("container_vmid=") for v in extra_vars)
         assert "purge=false" in extra_vars
 
-    def test_defaults_user_to_root_when_region_empty(self, mocker):
+    def test_empty_region_leaves_the_node_login_to_ssh_config(self, mocker):
+        """#106: an empty region means no `--host-user` was ever recorded, so
+        the node login is whatever ssh_config picks — which is exactly how
+        create reached the node. Forcing root here would connect as someone
+        create never used."""
         entry = KnownHost(
             type="proxmox", name="lab1/dev1", host="lab1", user="remo",
             instance_id="100", region="",
@@ -422,7 +426,18 @@ class TestTeardown:
         )
         providers_proxmox.teardown(entry)
         extra_vars = run_playbook.call_args.args[1]
-        assert "proxmox_host_user=root" in extra_vars
+        assert not any(v.startswith("proxmox_host_user=") for v in extra_vars)
+
+    def test_recorded_region_is_passed_through_as_the_node_login(self, mocker):
+        entry = KnownHost(
+            type="proxmox", name="lab1/dev1", host="lab1", user="remo",
+            instance_id="100", region="paul",
+        )
+        run_playbook = mocker.patch(
+            "remo_cli.providers.proxmox.run_playbook", return_value=0
+        )
+        providers_proxmox.teardown(entry)
+        assert "proxmox_host_user=paul" in run_playbook.call_args.args[1]
 
     def test_nonzero_rc_raises_operation_failed_error(self, mocker):
         entry = KnownHost(

@@ -321,11 +321,11 @@ DESCRIPTOR = ProviderDescriptor(
 `sync` (`"localhost"`) vs `upgrade`/`resize`/`tag`/`destroy`/`info`
 (`""`). The SSH-user-on-the-host flag is *not* shared across providers —
 Incus declares its own local `HOST_USER` (`--host-user`/`param="host_user"`)
-and Proxmox its own local `_NODE_USER` (`--node-user`/`param="node_user"`),
+and Proxmox its own local `_HOST_USER` (`--host-user`/`param="host_user"`),
 each reused across `create`/`upgrade`/`resize`/`tag`/`destroy`/`info` the
 same way `HOST` is. (The catalog used to have a generic `USER` entry; it was
 removed once every consumer had migrated to a provider-local, differently-named
-option — the JSON registry key each maps to, `host_user`/`node_user`, now
+option — the JSON registry key each maps to, `host_user`/`host_user`, now
 equals the click param name, which is what lets
 `_resolve_entry_for_destroy` find the right kwarg generically instead of
 special-casing the literal `"user"`.)
