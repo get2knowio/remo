@@ -485,6 +485,15 @@ best-effort revoking the service key on any removed instances (see
 [Removing an instance revokes its access](#removing-an-instance-revokes-its-access)), triggering a
 server-side verification pass, and rendering the report.
 
+The `unchanged` fast path is an optimization, and **verification overrules it**. The push cache
+records what this workstation last *sent*; only the service can observe whether its key is still
+installed on an instance. So when the verification pass comes back `auth_failed` for an instance the
+push skipped as `unchanged` — the service key was removed host-side, e.g. by a provisioning pass that
+rewrote `authorized_keys` — that instance is re-keyscanned and re-authorized within the same run, the
+mirror is re-pushed, and verification runs again, so the report you read reflects the repaired state.
+Those instances are reported `repaired`. **A plain `remo web push` therefore fixes a host-side key
+loss on its own**; you do not need `--force` for that case.
+
 **3. Read the summary.** Every registry entry gets exactly one outcome line, each with a one-line
 remediation where applicable:
 
@@ -492,6 +501,7 @@ remediation where applicable:
 |---|---|
 | `adopted` | Host key verified and pushed; service key authorized on the instance. |
 | `unchanged` | The instance matches the push cache from the last successful push — keyscan/authorization skipped, cached host-key lines reused. (Never appears on the very first push; `--force` bypasses it.) |
+| `repaired` | The instance was skipped as `unchanged`, service-side verification then reported `auth_failed` for it, and the push re-keyscanned and re-authorized it. The service key had gone missing host-side; no action needed. |
 | `skipped_unreachable` | Keyscan failed or timed out — instance down or unreachable from the workstation. Not fatal; re-run push when it's back. |
 | `skipped_by_design` | SSM-routed instance (AWS-managed transport). No action needed — SSM instances are excluded from host-key and service-key push by design; see [Credentials and SSM](#credentials-and-ssm). |
 | `skipped_no_trust` | Your workstation has no trusted host-key record and the run was non-interactive (`--yes`), so nothing was pushed. Interactively, you're prompted to confirm the SHA256 fingerprint instead. |
@@ -595,11 +605,15 @@ exactly one identifiable line (`grep remo-web@ ~/.ssh/authorized_keys` to audit)
 
 `remo web push --force` (also on the deprecated `adopt` alias) bypasses the fingerprint `unchanged`
 fast path and re-scans host keys and re-authorizes the service key on **every** direct-access
-instance, exactly as a first push would. Use it when an instance was rebuilt **out of band** — same
-registry entry, but brand-new host keys and a wiped `authorized_keys` — so its registry fingerprint
-is unchanged and a normal push would skip it as `unchanged` (leaving the service unable to reach it).
-`--force` changes only *which* instances are processed, not how failures are classified: per-instance
-skips/flags stay non-fatal.
+instance, exactly as a first push would. `--force` changes only *which* instances are processed, not
+how failures are classified: per-instance skips/flags stay non-fatal.
+
+You should rarely need it. An instance rebuilt **out of band** — same registry entry, brand-new host
+keys and a wiped `authorized_keys` — is caught by the verification-driven repair described above and
+reported `repaired`, because the service fails to authenticate to it and the push acts on that.
+Reach for `--force` when the repair itself didn't take (the verification report names the exact
+command in that case), or when you want every instance re-scanned regardless of what verification
+saw — for example after rotating host keys across a fleet.
 
 ### Multi-workstation flap detection
 

@@ -180,7 +180,12 @@ def _classify_ssh_transport(exc: SshTransportError) -> tuple[InstanceStatus, str
             InstanceStatus.AUTH_FAILED,
             "auth_failed",
             False,
-            "Check SSH credentials/identity for this instance.",
+            # Name the command, not the symptom (#122): in practice this is the
+            # service's key having gone missing from the instance's
+            # authorized_keys, and re-pushing is the fix. "Check your
+            # credentials" pointed at the identity file and dead-ended there.
+            "Re-authorize the service on this instance: run "
+            "`remo web push --force <service-url>` from your workstation.",
         )
     return (
         InstanceStatus.UNREACHABLE,

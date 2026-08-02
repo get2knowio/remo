@@ -35,6 +35,12 @@
       delay: 10
       until: apt_lock_result.rc | default(1) == 0
 
+    # Unwedge apt before the first apt call: a sources line naming a keyring
+    # that no longer exists makes apt refuse to read ANY source list, which
+    # would fail the cache update below and leave the host unrepairable (#120).
+    - name: Repair apt sources referencing a missing keyring
+      ansible.builtin.include_tasks: tasks/repair_apt_sources.yml
+
     - name: Update apt cache
       ansible.builtin.apt:
         update_cache: true

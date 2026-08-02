@@ -43,6 +43,13 @@
   become: true
   gather_facts: true
 
+  # Proxmox/Incus place the operator's key straight into the remo user's
+  # authorized_keys at create time, so user_setup must not re-seed it from
+  # root's — doing so overwrote keys placed by other tooling, notably the
+  # `remo-web@…` line `remo web push` installs (#121).
+  vars:
+    user_setup_bootstrap_cloud_keys: false
+
   pre_tasks:
     - name: Wait for apt to be ready
       ansible.builtin.shell: |
@@ -56,6 +63,12 @@
       retries: 30
       delay: 10
       until: apt_lock_result.rc | default(1) == 0
+
+    # Unwedge apt before the first apt call: a sources line naming a keyring
+    # that no longer exists makes apt refuse to read ANY source list, which
+    # would fail the cache update below and leave the host unrepairable (#120).
+    - name: Repair apt sources referencing a missing keyring
+      ansible.builtin.include_tasks: tasks/repair_apt_sources.yml
 
     - name: Update apt cache
       ansible.builtin.apt:

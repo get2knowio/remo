@@ -66,6 +66,12 @@ proxmox_container_ssh_key_path: "~/.ssh/id_rsa.pub"
 # connect to the container in the configure play.
 proxmox_container_ssh_private_key: "~/.ssh/id_rsa"
 
+# Scratch path inside the container where the pubkey lands before it is merged
+# into authorized_keys. Staging exists so the install is additive rather than a
+# `pct push` overwrite that would revoke keys remo did not place (#121); the
+# file is removed by the merge step.
+proxmox_container_pubkey_staging_path: "/run/remo-pubkey.pub"
+
 # ============================================================================
 # WAIT TIMEOUTS
 # ============================================================================

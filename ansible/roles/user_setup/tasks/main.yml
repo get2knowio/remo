@@ -143,6 +143,35 @@
     group: "{{ remo_user }}"
     mode: '0700'
 
+# --- Cloud-injected key bootstrap (#121) -----------------------------------
+#
+# On Hetzner the provider injects the operator's key into root's
+# authorized_keys, and on EC2 into ubuntu's; the remo user this role just
+# created has none, so it has to be seeded from there or the operator locks
+# themselves out. Proxmox and Incus place the key directly into the remo
+# user's file at create time and set `user_setup_bootstrap_cloud_keys: false`.
+#
+# Three properties this bootstrap has to have, all of which it previously
+# lacked (#121):
+#
+#   * SCOPED. `ansible.builtin.copy` from root ran on Proxmox LXCs too — the
+#     task named "(Hetzner)" had no provider condition, and a Debian LXC with
+#     no /home/ubuntu and a PVE-injected root key satisfies every clause.
+#   * MERGING. `copy` REPLACES the destination. Any key remo did not put
+#     there was destroyed — in practice the `remo-web@…` line that
+#     `remo web push` installs by design, which is why the browser console
+#     started failing `SSH Auth Failed` after every upgrade.
+#   * FIRST-CONTACT-ONLY. The intent is one-time bootstrap; user_setup also
+#     runs on the configure/upgrade path, so re-seeding on every pass turns a
+#     provisioning convenience into recurring credential loss.
+# These three stats stay unconditional: they are read-only, and a `when` here
+# would leave the registered variables holding a skip result whose `.stat`
+# subtree the gates below would have to chain through.
+- name: Check whether the remo user already has authorized_keys
+  ansible.builtin.stat:
+    path: "/home/{{ remo_user }}/.ssh/authorized_keys"
+  register: remo_authorized_keys
+
 - name: Check if ubuntu user has authorized_keys (AWS EC2 injects keys to ubuntu)
   ansible.builtin.stat:
     path: /home/ubuntu/.ssh/authorized_keys
@@ -153,32 +182,48 @@
     path: /root/.ssh/authorized_keys
   register: root_authorized_keys
 
+- name: Decide whether a cloud-injected key bootstrap is still needed
+  ansible.builtin.set_fact:
+    user_setup_needs_key_bootstrap: >-
+      {{ (user_setup_bootstrap_cloud_keys | bool)
+         and not (remo_authorized_keys.stat.exists | default(false)
+                  and (remo_authorized_keys.stat.size | default(0)) > 0) }}
+
 # Prefer ubuntu's keys over root's - on EC2 root's authorized_keys contains
 # a forced command that rejects login, while ubuntu's has the actual key
-- name: Copy authorized_keys from ubuntu to remo user (AWS EC2)
-  ansible.builtin.copy:
-    src: /home/ubuntu/.ssh/authorized_keys
-    dest: "/home/{{ remo_user }}/.ssh/authorized_keys"
-    remote_src: true
-    owner: "{{ remo_user }}"
-    group: "{{ remo_user }}"
-    mode: '0600'
-  when:
-    - ubuntu_authorized_keys.stat.exists | default(false)
-    - ubuntu_authorized_keys.stat.size | default(0) > 0
+- name: Select the cloud-injected key source
+  ansible.builtin.set_fact:
+    user_setup_key_source: >-
+      {{ '/home/ubuntu/.ssh/authorized_keys'
+         if (ubuntu_authorized_keys.stat.exists | default(false)
+             and (ubuntu_authorized_keys.stat.size | default(0)) > 0)
+         else ('/root/.ssh/authorized_keys'
+               if (root_authorized_keys.stat.exists | default(false)
+                   and (root_authorized_keys.stat.size | default(0)) > 0)
+               else '') }}
+  when: user_setup_needs_key_bootstrap | bool
 
-- name: Copy authorized_keys from root to remo user (Hetzner)
-  ansible.builtin.copy:
-    src: /root/.ssh/authorized_keys
-    dest: "/home/{{ remo_user }}/.ssh/authorized_keys"
-    remote_src: true
-    owner: "{{ remo_user }}"
-    group: "{{ remo_user }}"
-    mode: '0600'
+- name: Read the cloud-injected authorized_keys
+  ansible.builtin.slurp:
+    src: "{{ user_setup_key_source }}"
+  register: user_setup_cloud_keys
   when:
-    - not (ubuntu_authorized_keys.stat.exists | default(false)) or (ubuntu_authorized_keys.stat.size | default(0) == 0)
-    - root_authorized_keys.stat.exists | default(false)
-    - root_authorized_keys.stat.size | default(0) > 0
+    - user_setup_needs_key_bootstrap | bool
+    - user_setup_key_source | default('') | length > 0
+
+# `authorized_key` adds only the keys that are missing and leaves every other
+# line alone, so this can never revoke a key it did not place (unlike `copy`).
+# It is also idempotent, which keeps a second configure pass a no-op.
+- name: Seed the remo user's authorized_keys from the cloud-injected key
+  ansible.posix.authorized_key:
+    user: "{{ remo_user }}"
+    key: "{{ user_setup_cloud_keys.content | default('') | b64decode }}"
+    state: present
+    exclusive: false
+  when:
+    - user_setup_needs_key_bootstrap | bool
+    - user_setup_cloud_keys.content | default('') | length > 0
+# --- end cloud-injected key bootstrap --------------------------------------
 
 - name: Add remo user to docker group
   ansible.builtin.user:
