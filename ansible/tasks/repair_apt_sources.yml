@@ -1,0 +1,72 @@
+---
+# Repair apt source lines that reference a keyring which no longer exists.
+#
+# Why this is a pre_task and not part of the role that owns the repo (#120):
+# when a role rotates its signing key it removes the old keyring, but
+# `apt_repository` only *adds* the new line — the old line survives alongside
+# it. apt then refuses to read ANY source list ("Conflicting values set for
+# option Signed-By"), so every apt operation on the box fails, including the
+# `Update apt cache` pre_task that runs long before the owning role could
+# repair itself. The container is wedged and `remo <provider> upgrade` cannot
+# unwedge it. Editing a sources file needs no working apt cache, so the repair
+# has to happen here, ahead of the first apt call.
+#
+# The rule is deliberately generic rather than NodeSource-specific: any
+# `deb`/`deb-src` line whose `signed-by=` names an absolute path that is not
+# on disk is already broken for its own repo and is poisoning every other
+# repo. Dropping it is strictly a repair — the role that owns the repo re-adds
+# a correct line later in the same run. That also covers the docker and
+# github-cli roles structurally, should either ever change its keyring path.
+#
+# Only one-line (`.list`) sources are scanned; deb822 `.sources` files use a
+# `Signed-By:` field and are not written by any role here.
+
+- name: Drop apt source lines whose signed-by keyring is missing
+  ansible.builtin.shell: |
+    set -uo pipefail
+    shopt -s nullglob
+    removed=0
+    for f in {{ apt_sources_repair_dir | default('/etc/apt/sources.list.d') }}/*.list; do
+      tmp="$f.remo-repair"
+      : > "$tmp"
+      file_changed=0
+      while IFS= read -r line || [ -n "$line" ]; do
+        keep=1
+        case "$line" in
+          deb\ *|deb-src\ *)
+            opts=$(printf '%s' "$line" | sed -n 's/^[^[]*\[\([^]]*\)\].*/\1/p')
+            for opt in $opts; do
+              case "$opt" in
+                signed-by=/*)
+                  key="${opt#signed-by=}"
+                  if [ ! -e "$key" ]; then
+                    keep=0
+                  fi
+                  ;;
+              esac
+            done
+            ;;
+        esac
+        if [ "$keep" -eq 1 ]; then
+          printf '%s\n' "$line" >> "$tmp"
+        else
+          file_changed=1
+          echo "removed from $f: $line"
+        fi
+      done < "$f"
+      if [ "$file_changed" -eq 1 ]; then
+        cat "$tmp" > "$f"
+        removed=1
+      fi
+      rm -f "$tmp"
+    done
+    echo "remo_apt_sources_repaired=$removed"
+  args:
+    executable: /bin/bash
+  register: apt_sources_repair
+  changed_when: "'remo_apt_sources_repaired=1' in (apt_sources_repair.stdout | default(''))"
+
+- name: Report repaired apt source lines
+  ansible.builtin.debug:
+    msg: "{{ apt_sources_repair.stdout_lines | default([]) | reject('search', '^remo_apt_sources_repaired=') | list }}"
+  when: apt_sources_repair.changed | default(false)

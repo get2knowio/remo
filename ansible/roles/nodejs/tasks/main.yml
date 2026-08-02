@@ -49,6 +49,13 @@
 
 # Superseded by nodesource.asc above; removed so a rotated key cannot leave a
 # stale trusted key behind on an already-provisioned machine.
+#
+# Removing the keyring is not enough on its own: the `deb ... signed-by=...
+# nodesource.gpg` line that names it survives in nodesource.list, and apt
+# rejects the whole sources tree over the conflicting Signed-By (#120). That
+# line is dropped by `ansible/tasks/repair_apt_sources.yml`, which every
+# configure/site playbook runs as a pre_task — it has to happen before the
+# first apt call, which is earlier than this role can run.
 - name: Remove superseded de-armored NodeSource keyring
   ansible.builtin.file:
     path: /etc/apt/keyrings/nodesource.gpg
