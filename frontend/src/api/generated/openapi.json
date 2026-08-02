@@ -370,6 +370,11 @@
       },
       "RefreshRequest": {
         "properties": {
+          "force": {
+            "default": true,
+            "title": "Force",
+            "type": "boolean"
+          },
           "instance_id": {
             "anyOf": [
               {
@@ -749,7 +754,7 @@
   "paths": {
     "/api/v1/discovery/refresh": {
       "post": {
-        "description": "`POST /api/v1/discovery/refresh` -- kick off a fresh discovery run.\n\nNever blocks on the discovery run itself (FR-035): the refresh is\nscheduled as a `BackgroundTasks` job and results land in the cache\nincrementally, visible on subsequent `GET /hosts`/`GET /sessions` calls.",
+        "description": "`POST /api/v1/discovery/refresh` -- kick off a fresh discovery run.\n\nNever blocks on the discovery run itself (FR-035): the refresh is\nscheduled as a `BackgroundTasks` job and results land in the cache\nincrementally, visible on subsequent `GET /hosts`/`GET /sessions` calls.\n\n``force: false`` in the body makes the run TTL-gated \u2014 the console's\nbackground poll uses it so a long-lived page keeps its view fresh without\nevery tick costing an SSH round trip to every instance.",
         "operationId": "post_discovery_refresh_api_v1_discovery_refresh_post",
         "requestBody": {
           "content": {

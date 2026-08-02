@@ -15,6 +15,18 @@ export interface RailRow {
   target: SessionTarget;
   /** 1–9 when among the first nine openable targets, else null. */
   num: number | null;
+  /**
+   * Whether to show this row as having a live session (the ⚡).
+   *
+   * Discovery's `zellij_state` is a snapshot, and a session this console just
+   * started is not in it until the next discovery run lands. But the console
+   * knows something discovery doesn't: it is holding an open terminal on that
+   * project, and `remo-host sessions attach` creates-or-attaches a Zellij
+   * session — so a live terminal IS an active session, immediately and by
+   * construction. Both sources feed this one flag so the ⚡ and the
+   * "Active only" filter can never disagree about a row.
+   */
+  active: boolean;
 }
 
 export interface RailErrorInfo {
@@ -63,8 +75,12 @@ export function buildRailModel(
   instances: DiscoveryInstance[],
   targets: SessionTarget[],
   filters: RailFilters,
+  /** Target ids this console currently holds a connected terminal for. */
+  liveTargetIds: ReadonlySet<string> = new Set(),
 ): RailModel {
   const q = filters.search.trim().toLowerCase();
+  const isActive = (t: SessionTarget): boolean =>
+    t.zellij_state === "active" || liveTargetIds.has(t.id);
   const byInstance = new Map<string, SessionTarget[]>();
   for (const t of targets) {
     const key = `${t.instance_type}::${t.instance_name}`;
@@ -87,8 +103,7 @@ export function buildRailModel(
     const openable = instance.status === "ok";
 
     const filtered = instTargets.filter(
-      (t) =>
-        matchesSearch(instance, t, q) && (!filters.sessionOnly || t.zellij_state === "active"),
+      (t) => matchesSearch(instance, t, q) && (!filters.sessionOnly || isActive(t)),
     );
 
     const instMatches =
@@ -104,7 +119,7 @@ export function buildRailModel(
         availCount += 1;
         num = flatOpenable.length <= 9 ? flatOpenable.length : null;
       }
-      return { target, num };
+      return { target, num, active: isActive(target) };
     });
 
     const isError = instance.status !== "ok" && instance.error != null;

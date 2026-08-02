@@ -75,6 +75,10 @@ session-target IDs. Three protocol layers make this work, each documented in ful
   /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/hosts`, `GET /api/v1/sessions`, `POST
   /api/v1/discovery/refresh`, and `POST`/`GET`/`DELETE /api/v1/terminals`. Terminal creation returns
   an opaque terminal ID plus a short-lived WebSocket token — never a hostname or command.
+  `GET /hosts` and `GET /sessions` only **read** the service's discovery cache; `POST
+  /discovery/refresh` is the only call that repopulates it, which is why the console posts it on a
+  background cadence (with `force: false`, so the cache TTL decides when a run is really due)
+  rather than polling the GETs alone.
 - **Terminal WebSocket protocol** ([`terminal-websocket.md`](../specs/010-web-session-interface/contracts/terminal-websocket.md)) —
   `WS /api/v1/terminals/{terminal_id}`, subprotocol `remo-terminal.v1`. Binary frames carry raw PTY
   bytes in both directions; JSON text frames carry control messages (`resize`, `ready`, `exit`,
@@ -831,7 +835,7 @@ locally with zero configuration; a container overrides everything via env alone.
 | `REMO_WEB_BIND_PORT` | `8080` | Port the server binds to. `--port` on `remo web serve` overrides this per-invocation. |
 | `REMO_WEB_DISCOVERY_CONCURRENCY` | `8` | Maximum number of instances discovered concurrently. |
 | `REMO_WEB_DISCOVERY_TIMEOUT_S` | `10.0` | Per-instance timeout (seconds) for a discovery round-trip before it's classified `timeout`. |
-| `REMO_WEB_DISCOVERY_CACHE_TTL_S` | `30.0` | How long a discovery snapshot is served from cache before the next scheduled refresh; manual refresh (`POST /api/v1/discovery/refresh`) bypasses this. |
+| `REMO_WEB_DISCOVERY_CACHE_TTL_S` | `30.0` | How long a discovery snapshot is served from cache before the console's background poll is allowed to re-run discovery. This — not the console's poll interval, and not how many browser tabs are open — is what sets how often instances are actually contacted. An explicit refresh (`POST /api/v1/discovery/refresh` with the default `force: true`, which is what the Refresh button and the post-terminal-exit refresh send) bypasses it. |
 | `REMO_WEB_TERMINAL_CAP_GLOBAL` | `32` | Maximum concurrent terminal attachments across all clients. |
 | `REMO_WEB_TERMINAL_CAP_PER_CLIENT` | `16` | Maximum concurrent terminal attachments for a single client. |
 | `REMO_WEB_WS_TOKEN_TTL_S` | `30.0` | Seconds a single-use WebSocket terminal token remains valid between issuance and successful upgrade. |

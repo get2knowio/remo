@@ -229,6 +229,7 @@ function RailInstance({
           key={row.target.id}
           target={row.target}
           providerColor={meta.color}
+          active={row.active}
           attached={attached.includes(row.target.id)}
           visible={visible.includes(row.target.id)}
           focused={focusedId === row.target.id}
@@ -243,6 +244,8 @@ function RailInstance({
 interface RailSessionRowProps {
   target: SessionTarget;
   providerColor: string;
+  /** Has a live session — discovered, or one this console is attached to. */
+  active: boolean;
   attached: boolean;
   visible: boolean;
   focused: boolean;
@@ -252,6 +255,7 @@ interface RailSessionRowProps {
 
 function RailSessionRow({
   target,
+  active,
   attached,
   visible,
   focused,
@@ -296,7 +300,7 @@ function RailSessionRow({
             ⇣
           </span>
         )}
-        {target.zellij_state === "active" && (
+        {active && (
           <span title="Active Zellij session" style={{ color: "var(--git-active)" }}>
             ⚡
           </span>

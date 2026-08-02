@@ -20,6 +20,10 @@ export interface paths {
          *     Never blocks on the discovery run itself (FR-035): the refresh is
          *     scheduled as a `BackgroundTasks` job and results land in the cache
          *     incrementally, visible on subsequent `GET /hosts`/`GET /sessions` calls.
+         *
+         *     ``force: false`` in the body makes the run TTL-gated — the console's
+         *     background poll uses it so a long-lived page keeps its view fresh without
+         *     every tick costing an SSH round trip to every instance.
          */
         post: operations["post_discovery_refresh_api_v1_discovery_refresh_post"];
         delete?: never;
@@ -451,6 +455,11 @@ export interface components {
         };
         /** RefreshRequest */
         RefreshRequest: {
+            /**
+             * Force
+             * @default true
+             */
+            force: boolean;
             /** Instance Id */
             instance_id?: string | null;
         };

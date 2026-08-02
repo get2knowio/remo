@@ -108,6 +108,13 @@ class SessionsResponse(BaseModel):
 
 class RefreshRequest(BaseModel):
     instance_id: str | None = None
+    #: ``False`` asks for a TTL-gated refresh: run discovery only if the cache
+    #: is older than ``discovery_cache_ttl_s``, otherwise no-op. That is what
+    #: the console's background poll sends, so N open browsers cost at most one
+    #: discovery run per TTL instead of one per tick per browser. Defaults to
+    #: ``True`` (always run) so an explicit "Refresh" — and any older client
+    #: that omits the field — behaves exactly as before.
+    force: bool = True
 
 
 class RefreshResponse(BaseModel):
@@ -206,8 +213,13 @@ async def post_discovery_refresh(
     Never blocks on the discovery run itself (FR-035): the refresh is
     scheduled as a `BackgroundTasks` job and results land in the cache
     incrementally, visible on subsequent `GET /hosts`/`GET /sessions` calls.
+
+    ``force: false`` in the body makes the run TTL-gated — the console's
+    background poll uses it so a long-lived page keeps its view fresh without
+    every tick costing an SSH round trip to every instance.
     """
     service = get_discovery_service(request)
     instance_id = body.instance_id if body is not None else None
-    background_tasks.add_task(service.refresh, instance_id)
+    force = body.force if body is not None else True
+    background_tasks.add_task(service.refresh, instance_id, force=force)
     return RefreshResponse(refreshing=True)

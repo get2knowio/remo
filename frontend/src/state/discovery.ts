@@ -112,11 +112,20 @@ function startAutoRefresh(intervalMs: number): void {
   // First launch: the backend discovery cache is empty until a discovery run
   // happens (GET /hosts only READS the cache). Trigger a full refresh — POST
   // /discovery/refresh + follow-up polls — so the registry is discovered
-  // automatically without the user having to click "Refresh". Subsequent
-  // interval ticks just poll the now-populated cache.
+  // automatically without the user having to click "Refresh".
   void manualRefresh();
+  // Every tick must trigger a discovery run too, not just re-read the cache.
+  // GET /hosts and GET /sessions are cache reads: a tick that only polls them
+  // re-renders the SAME snapshot forever, so the whole rail freezes at whatever
+  // page load found — ⚡ session state, git ahead/behind, newly-created
+  // projects, instance status. The user sees a session they just started never
+  // light up until they reload the page.
+  //
+  // The POST is TTL-gated (`force: false`), so it is the service's
+  // DISCOVERY_CACHE_TTL_S — not this interval, and not the number of open
+  // browser tabs — that decides how often discovery actually runs.
   autoRefreshHandle = setInterval(() => {
-    void pollOnce();
+    void tick();
   }, intervalMs);
 }
 
@@ -158,6 +167,28 @@ async function manualRefresh(instanceId?: string): Promise<void> {
   } finally {
     setState({ isRefreshing: false });
   }
+}
+
+/**
+ * One background tick: ask the service for a TTL-gated discovery run, then read
+ * the cache. Deliberately does NOT set `isRefreshing` — that flag drives the
+ * "Refreshing…" affordance next to the user's own Refresh button, and a
+ * background tick flickering it every interval would be noise.
+ *
+ * A failed POST is swallowed for the same reason `manualRefresh` swallows it:
+ * the following GETs may still land useful data, and a transient blip on a
+ * background tick is not worth surfacing.
+ */
+async function tick(): Promise<void> {
+  try {
+    await refreshDiscoveryRequest(undefined, { force: false });
+  } catch (error) {
+    if (!(error instanceof ApiError)) {
+      throw error;
+    }
+    console.error("discovery: background POST /discovery/refresh failed", error);
+  }
+  await pollOnce();
 }
 
 export interface UseDiscoveryResult {
