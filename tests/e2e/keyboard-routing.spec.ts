@@ -9,8 +9,8 @@
 //     because it stopped being the focused/visible one ("hidden terminals
 //     remain connected").
 //
-// Literal rendered terminal *content* is intentionally NOT asserted (Ghostty
-// draws to a WASM canvas that isn't text-queryable from Playwright).
+// Literal rendered terminal *content* is intentionally NOT asserted (the
+// terminal paints to a canvas that isn't text-queryable from Playwright).
 
 import { expect, test } from "@playwright/test";
 import { TESTID, openTerminalCardIds, requireBackendFixture, waitForDiscoveredTargets } from "./fixtures";

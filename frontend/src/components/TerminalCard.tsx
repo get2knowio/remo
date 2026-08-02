@@ -247,7 +247,7 @@ export function TerminalCard({
     }
     createdRef.current = true;
 
-    const adapter = createDefaultRenderer(fontRef.current, settings.renderer, themeRef.current);
+    const adapter = createDefaultRenderer(fontRef.current, themeRef.current);
     adapterRef.current = adapter;
     adapter.open(container);
 
@@ -318,12 +318,11 @@ export function TerminalCard({
       adapterRef.current = null;
       connectionRef.current = null;
     };
-    // Keyed on target.id (+ renderer engine): this card owns exactly one
-    // terminal for its lifetime (see file header). Flipping the engine in
-    // Settings intentionally tears down and rebuilds the terminal with the
-    // chosen renderer, reconnecting to the same remote Zellij session.
+    // Keyed on target.id alone: this card owns exactly one terminal for its
+    // lifetime (see file header). Nothing else may enter this dep array — a
+    // re-run tears down the connection and the browser scrollback with it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [target.id, settings.renderer]);
+  }, [target.id]);
 
   // Move DOM keyboard focus into the terminal whenever this card becomes the
   // focused, visible one — e.g. after clicking a rail row (selectOnly) or a

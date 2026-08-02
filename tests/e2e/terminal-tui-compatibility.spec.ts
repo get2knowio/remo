@@ -1,11 +1,11 @@
-// Ghostty Web compatibility suite, part 2/2 (T060, FR-039/SC-009): Zellij,
-// the project menu/launch path, devcontainer startup, and full-screen TUIs
+// Terminal compatibility suite, part 2/2 (T060, FR-039): Zellij, the project
+// menu/launch path, devcontainer startup, and full-screen TUIs
 // (alternate-screen buffer handling).
 //
-// See `ghostty-shell-io.spec.ts` for bash/zsh/Unicode/paste/mouse/resize
+// See `terminal-shell-io.spec.ts` for bash/zsh/Unicode/paste/mouse/resize
 // coverage and for the "why WebSocket-byte-stream assertions instead of DOM
-// text queries" rationale (`GhosttyRenderer` draws to a canvas — no
-// accessible text layer). Both files share `captureTerminalFrames()` /
+// text queries" rationale (the terminal paints to a canvas — no reliable
+// text layer). Both files share `captureTerminalFrames()` /
 // `waitForOutput()` from `fixtures.ts`.
 //
 // WHY EVERY OPENED TERMINAL ALREADY EXERCISES ZELLIJ + DEVCONTAINER STARTUP:
@@ -42,7 +42,6 @@
 import { expect, test } from "@playwright/test";
 import {
   captureTerminalFrames,
-  forceRenderer,
   openTerminal,
   requireBackendFixture,
   typeCommand,
@@ -57,12 +56,9 @@ const ALT_SCREEN_DISABLE = "\u001b[?1049l";
 // that a real Zellij TUI painted, not a bare shell prompt.
 const BOX_DRAWING = /[─-╿]/;
 
-test.describe("Ghostty Web compatibility: Zellij and full-screen TUIs", () => {
-  // xterm.js is the default engine; force ghostty-web so this suite exercises
-  // the renderer it's named for.
+test.describe("Terminal compatibility: Zellij and full-screen TUIs", () => {
   test.beforeEach(async ({ page }) => {
     requireBackendFixture(test);
-    await forceRenderer(page, "ghostty");
   });
 
   test("Zellij: attaching to a project lands in a real Zellij session (alt-screen + styled borders)", async ({

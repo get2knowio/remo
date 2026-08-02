@@ -5,7 +5,6 @@ import "./theme/fonts";
 import { AppRoot } from "./components/AppRoot";
 import { restoreUploadedFonts } from "./state/fonts";
 import { initSettings } from "./state/settings";
-import { initRenderers } from "./terminal/defaultRenderer";
 
 // AppRoot gates on the service state (011-web-adopt): the awaiting-adoption
 // page while unconfigured, otherwise the full console shell — dashboard (US1)
@@ -23,11 +22,9 @@ function mount(): void {
   );
 }
 
-// Apply persisted settings (accent + terminal font CSS vars on <html>) and
-// re-register any uploaded Nerd Fonts before first paint, then load the
-// ghostty-web WASM engine BEFORE mounting so a terminal can be constructed
-// synchronously if the user has opted into ghostty (xterm.js is the default
-// engine and needs no such init). initRenderers never rejects — it forces
-// xterm.js on failure — so this always mounts the app.
+// Apply persisted settings (site theme + accent + terminal font CSS vars on
+// <html>) and re-register any uploaded Nerd Fonts before first paint, then
+// mount. The font restore is allowed to fail (allSettled) — a missing uploaded
+// font must never keep the console from starting.
 initSettings();
-void Promise.allSettled([restoreUploadedFonts(), initRenderers()]).then(mount);
+void Promise.allSettled([restoreUploadedFonts()]).then(mount);

@@ -14,7 +14,7 @@ import {
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
-// The 22 fields both engines' ITheme accepts. Listed literally rather than
+// The 22 ITheme fields every palette must set. Listed literally rather than
 // derived from a sample theme, so a field dropped from every palette at once
 // still fails here.
 const COLOR_KEYS: (keyof TerminalThemeColors)[] = [
@@ -73,9 +73,9 @@ describe("terminal themes", () => {
     expect(autoTerminalTheme(false).colors.foreground).toBe("#242930"); // --text light
   });
 
-  // ghostty-web's color parser is the strict one: no `#rgb`, no alpha, no
-  // oklch(). A palette typo that lands here would show up as a silently
-  // mis-rendered terminal, so pin the format.
+  // xterm.js's ITheme wants literal colors — no oklch(), no alpha. A palette
+  // typo that lands here would show up as a silently mis-rendered terminal,
+  // so pin the format.
   it.each(TERMINAL_THEMES)("$label declares all 22 colors as #rrggbb", (theme) => {
     for (const key of COLOR_KEYS) {
       expect(theme.colors[key], `${theme.id}.${key}`).toMatch(HEX);

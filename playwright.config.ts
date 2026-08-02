@@ -12,8 +12,8 @@
 // this file.
 //
 // NOT RUN in this sandbox: `npm`/`playwright` are not installed here (no
-// network access), so these specs are written-but-unexecuted, same as the
-// T040-era ghostty-web integration code. They are structured to run for
+// network access), so these specs are written-but-unexecuted. They are
+// structured to run for
 // real against a `vite dev` server (frontend) proxying to a real
 // `remo web serve` backend with disposable SSH fixtures (mirroring
 // `tests/integration/test_nine_terminals.py`'s 3x3 fixture) in CI/local dev

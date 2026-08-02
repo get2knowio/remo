@@ -3,8 +3,7 @@
 Verifies `web/app.py`'s `_origin_allowlist_and_csp` middleware attaches a
 restrictive `Content-Security-Policy` header to every HTTP response, and that
 the policy stays within the "same-origin, no-CDN" bounds required by FR-038/
-FR-051: no wildcard source, no bare external scheme, and the one WASM-eval
-exception the Ghostty terminal renderer actually needs.
+FR-051: no wildcard source and no bare external scheme.
 """
 
 from __future__ import annotations
@@ -26,7 +25,6 @@ _SAFE_TOKENS = {
     "'self'",
     "'none'",
     "'unsafe-inline'",
-    "'wasm-unsafe-eval'",
     "data:",
 }
 
@@ -61,11 +59,16 @@ def test_csp_contains_default_src_self():
     assert "default-src 'self'" in csp
 
 
-def test_csp_contains_wasm_unsafe_eval_for_ghostty():
+def test_csp_grants_no_wasm_eval():
+    # The console is xterm.js-only and instantiates no WebAssembly. The
+    # 'wasm-unsafe-eval' exception the removed Ghostty renderer needed went
+    # with it; keep it gone, since an unused script-src relaxation is pure
+    # attack surface.
     with _client() as client:
         resp = client.get("/api/v1/health")
     csp = resp.headers["Content-Security-Policy"]
-    assert "'wasm-unsafe-eval'" in csp
+    assert "wasm" not in csp
+    assert "script-src 'self';" in csp
 
 
 def test_csp_has_no_wildcard_or_bare_external_scheme_sources():

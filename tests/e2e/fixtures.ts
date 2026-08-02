@@ -1,6 +1,6 @@
 // Shared helpers for the Playwright suite: T044 (US3 — grid/tab/focus,
-// keyboard routing, reconnect, mobile input) plus T060 (Ghostty Web
-// compatibility — `ghostty-shell-io.spec.ts` / `ghostty-tui-compatibility.
+// keyboard routing, reconnect, mobile input) plus T060 (terminal
+// compatibility — `terminal-shell-io.spec.ts` / `terminal-tui-compatibility.
 // spec.ts`).
 //
 // Every spec in this directory needs a REAL discovery snapshot (actual
@@ -76,28 +76,6 @@ export const TESTID = {
   terminalFullscreen: (targetId: string) => `terminal-fullscreen-${targetId}`,
 } as const;
 
-/** Seeds the browser-local settings store so the console boots with a specific
- * terminal engine. Uses `addInitScript`, so it MUST run before the first
- * navigation — call it in a `beforeEach`. xterm.js is the app default; the
- * Ghostty compatibility specs force `"ghostty"` so they exercise the engine
- * they're named for. */
-export async function forceRenderer(
-  page: Page,
-  renderer: "xterm" | "ghostty",
-): Promise<void> {
-  await page.addInitScript((chosen) => {
-    try {
-      const key = "remo-web:settings";
-      const raw = window.localStorage.getItem(key);
-      const parsed: Record<string, unknown> = raw ? JSON.parse(raw) : {};
-      parsed.renderer = chosen;
-      window.localStorage.setItem(key, JSON.stringify(parsed));
-    } catch {
-      /* localStorage unavailable — the app falls back to its default engine. */
-    }
-  }, renderer);
-}
-
 /** Navigates to the console and waits for at least one discovered session row
  * to render. Returns the resolved targets' ids (the trailing `id` segment of
  * each `session-row-*` element) in rail order. */
@@ -169,8 +147,8 @@ export interface CapturedFrames {
   /** Concatenates every BINARY `toClient` frame captured so far, decoded as
    * UTF-8 — i.e. the raw PTY output byte stream the renderer would have
    * drawn, with JSON control frames excluded. This is the load-bearing
-   * technique this whole suite relies on: `GhosttyRenderer` draws to a
-   * `ghostty-web`-owned canvas (see `keyboard-routing.spec.ts`'s file-level
+   * technique this whole suite relies on: the terminal paints to a canvas
+   * (xterm.js with the WebGL addon — see `keyboard-routing.spec.ts`'s file-level
    * comment), so rendered terminal *content* is not DOM-text-queryable from
    * Playwright. Inspecting the WebSocket byte stream the renderer was FED
    * is the honest, protocol-level substitute: it proves the bytes arrived

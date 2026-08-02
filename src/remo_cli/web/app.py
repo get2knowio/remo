@@ -43,14 +43,15 @@ from remo_cli.web.terminal_registry import TerminalRegistry
 
 logger = logging.getLogger("remo_cli.web.app")
 
-# Restrictive CSP compatible with the local (same-origin, no-CDN) Ghostty
-# WASM renderer and the same-origin terminal WebSocket (FR-038/FR-051), plus
-# standard hardening directives with zero functional downside for this app.
+# Restrictive CSP compatible with the same-origin, no-CDN SPA and terminal
+# WebSocket (FR-038/FR-051), plus standard hardening directives with zero
+# functional downside for this app.
 # T062 finalization notes:
-# - `script-src 'self' 'wasm-unsafe-eval'`: 'self' allows the same-origin JS
-#   bundle; 'wasm-unsafe-eval' is required to instantiate the Ghostty WASM
-#   module (WebAssembly.instantiate) -- there is no narrower standard token
-#   for this.
+# - `script-src 'self'`: the same-origin JS bundle, nothing else. This used to
+#   also carry 'wasm-unsafe-eval' for the opt-in Ghostty WASM renderer; that
+#   renderer is gone (the console is xterm.js-only), and no remaining code
+#   instantiates WebAssembly, so the exception was dropped rather than left
+#   standing as a permission nothing uses.
 # - `connect-src 'self'`: deliberately does NOT add a bare `ws:`/`wss:`
 #   source. Per the Fetch/CSP spec, a `connect-src` source list without an
 #   explicit scheme matches the *scheme of the protected resource* for
@@ -68,7 +69,7 @@ logger = logging.getLogger("remo_cli.web.app")
 #   `<base>` rewriting and form submission targets to same-origin.
 _CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'wasm-unsafe-eval'; "
+    "script-src 'self'; "
     "connect-src 'self'; "
     "img-src 'self' data:; "
     "style-src 'self' 'unsafe-inline'; "
