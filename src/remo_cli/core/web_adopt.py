@@ -1598,8 +1598,15 @@ def run_push(
         token,
         via,
         "pushing",
+        # display_url is the URL the operator typed, not client.base_url: under
+        # --via the latter is the local tunnel address, which is useless in a
+        # "re-run this command" remediation (#122).
         lambda client: _push_flow(
-            client, allow_empty=allow_empty, interactive=interactive, force=force
+            client,
+            allow_empty=allow_empty,
+            interactive=interactive,
+            force=force,
+            display_url=url,
         ),
     )
 
@@ -1637,6 +1644,7 @@ def _push_flow(
     allow_empty: bool,
     interactive: bool,
     force: bool = False,
+    display_url: str = "",
 ) -> AdoptResult:
     # Step 1: status precheck (FR-017) — a mount-configured service is read-only.
     # Then the payload-version skew gate (FR-021) — BEFORE any instance
@@ -1786,7 +1794,7 @@ def _push_flow(
 
     render_summary(outcomes)
     render_revocations(revocations)
-    render_verification(verify, outcomes, service_url=client.base_url)
+    render_verification(verify, outcomes, service_url=display_url or client.base_url)
 
     return AdoptResult(
         outcomes=outcomes,

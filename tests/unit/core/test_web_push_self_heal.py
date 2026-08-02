@@ -373,6 +373,33 @@ class TestRemediationNamesTheCommand:
 
         assert f"remo web push --force {URL}" in capsys.readouterr().out
 
+    def test_via_tunnel_names_the_url_the_operator_typed(
+        self, tmp_config_dir, api_client, registry, mocker, capsys
+    ):
+        """Under --via, client.base_url is the local tunnel — useless to retype."""
+        host = _host()
+        registry.return_value = [host]
+        _seed_cache(host)
+        api_client.base_url = "http://127.0.0.1:45231"
+        failing = {
+            "all_passed": False,
+            "results": [_instance_check("incus/node1/dev", passed=False, detail="auth_failed")],
+        }
+        api_client.post_verify.side_effect = [failing, failing]
+        _patch_process(mocker)
+        mocker.patch(
+            "remo_cli.core.web_adopt.open_via_tunnel",
+            return_value=mocker.MagicMock(
+                __enter__=lambda *_: "http://127.0.0.1:45231", __exit__=lambda *_: False
+            ),
+        )
+
+        run_push(URL, CODE, via="bastion", assume_yes=True)
+
+        out = capsys.readouterr().out
+        assert f"remo web push --force {URL}" in out
+        assert "127.0.0.1:45231" not in out
+
     def test_other_failures_do_not_suggest_force(
         self, tmp_config_dir, api_client, registry, mocker, capsys
     ):
