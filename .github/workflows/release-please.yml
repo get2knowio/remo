@@ -43,6 +43,7 @@ jobs:
           private-key: ${{ secrets.RELEASE_PLEASE_APP_KEY }}
 
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           # Token precedence:
           #   1. GitHub App installation token (recommended — see above).
@@ -55,3 +56,39 @@ jobs:
           token: ${{ steps.app-token.outputs.token || secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # release-please bumps `pyproject.toml` but knows nothing about uv.lock,
+      # which records the project's own version in its `remo-cli` package entry.
+      # Left alone the two drift apart at every release (3.1.0 shipped with a
+      # lockfile still saying 3.0.0), and the drift then reappears as noise in
+      # the next unrelated PR, because any `uv run` regenerates it.
+      #
+      # Amend the sync onto the release PR itself. release-please force-pushes
+      # its branch whenever it refreshes the PR, which would drop this commit —
+      # but this job runs immediately after that refresh on every push to main,
+      # so the commit is simply re-made. `tests/unit/test_lockfile_version.py`
+      # is the backstop that keeps a drifted lockfile from merging at all.
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        if: ${{ steps.release.outputs.pr }}
+
+      - name: Sync uv.lock onto the release PR
+        if: ${{ steps.release.outputs.pr }}
+        env:
+          RELEASE_BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git clone --branch "$RELEASE_BRANCH" --depth 1 \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" release-pr
+          cd release-pr
+          # `uv lock` is not an upgrade: it re-resolves only what the manifest
+          # forces, so the sole change here is the bumped project version.
+          uv lock
+          if git diff --quiet -- uv.lock; then
+            echo "uv.lock already matches the bumped version; nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: sync uv.lock with the released version" -- uv.lock
+          git push origin "HEAD:${RELEASE_BRANCH}"

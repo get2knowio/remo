@@ -148,9 +148,12 @@ curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
 >
 > See `.github/workflows/release-please.yml`.
 >
-> **Note:** release-please does not run `uv lock`; if `uv.lock`'s recorded
-> project version matters to you, run `uv lock` and amend it onto the release PR
-> before merging.
+> **`uv.lock` is synced for you.** release-please bumps `pyproject.toml` but
+> knows nothing about `uv.lock`, which records the project's own version too.
+> The workflow now runs `uv lock` against the release branch and commits the
+> result onto the release PR, and `tests/unit/test_lockfile_version.py` fails
+> the build if the two ever disagree — so a drifted lockfile can't merge. If
+> that test does fire, the fix is `uv lock` plus a commit.
 
 ### Version Numbering
 
