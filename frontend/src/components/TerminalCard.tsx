@@ -76,6 +76,8 @@ interface TerminalCardProps {
    * terminal is closed — the caller should re-run discovery for this instance
    * so the rail's live Zellij/git state stops being stale. */
   onEnded?: () => void;
+  /** The terminal reached `ready` — a Zellij session for this target now exists. */
+  onStarted?: () => void;
 }
 
 function effectiveFont(settings: SettingsState, mode: TerminalCardMode): TerminalFontOptions {
@@ -102,6 +104,7 @@ export function TerminalCard({
   onHoverFocus,
   onActivity,
   onEnded,
+  onStarted,
 }: TerminalCardProps): JSX.Element {
   const settings = useSettings();
 
@@ -115,6 +118,7 @@ export function TerminalCard({
   const isVisibleRef = useRef(isVisible);
   const onActivityRef = useRef(onActivity);
   const onEndedRef = useRef(onEnded);
+  const onStartedRef = useRef(onStarted);
   const fontRef = useRef<TerminalFontOptions>(effectiveFont(settings, mode));
   // Coalesced-fit bookkeeping: a pending rAF handle, and the last dims we sent
   // (to skip redundant resize frames).
@@ -159,7 +163,8 @@ export function TerminalCard({
   }, [onActivity]);
   useEffect(() => {
     onEndedRef.current = onEnded;
-  }, [onEnded]);
+    onStartedRef.current = onStarted;
+  }, [onEnded, onStarted]);
 
   // Coalesce fit()+resize into at most one per animation frame, and only send a
   // resize frame when the cell grid actually changed. A window drag fires the
@@ -234,7 +239,14 @@ export function TerminalCard({
           onActivityRef.current?.();
         }
       },
-      onReady: () => setError(null),
+      onReady: () => {
+        setError(null);
+        // Attaching creates-or-attaches the target's Zellij session, so the
+        // rail can light its ⚡ now rather than waiting for the next discovery
+        // run to notice (which is what made a freshly-started devcontainer look
+        // sessionless until a page reload).
+        onStartedRef.current?.();
+      },
       onExit: () => {
         // The remote process exited — the Zellij session may have ended (e.g.
         // the user quit Zellij). Re-run discovery so the rail's ⚡/git state

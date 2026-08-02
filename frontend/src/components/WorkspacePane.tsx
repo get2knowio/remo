@@ -33,6 +33,7 @@ interface WorkspacePaneProps {
   regionByKey: Map<string, string>;
   /** Re-run discovery for a target's instance (its terminal exited/closed). */
   onTerminalEnded: (target: SessionTarget) => void;
+  onTerminalStarted: (target: SessionTarget) => void;
   narrow: boolean;
 }
 
@@ -53,6 +54,7 @@ export function WorkspacePane({
   targetsById,
   regionByKey,
   onTerminalEnded,
+  onTerminalStarted,
   narrow,
 }: WorkspacePaneProps): JSX.Element {
   const workspace = useWorkspace();
@@ -193,6 +195,7 @@ export function WorkspacePane({
                 }
                 onActivity={() => workspace.markUnread(id)}
                 onEnded={() => onTerminalEnded(target)}
+                onStarted={() => onTerminalStarted(target)}
               />
             );
           })}

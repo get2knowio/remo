@@ -88,9 +88,15 @@ export function AppShell(): JSX.Element {
     return map;
   }, [discovery.targets]);
 
+  // Targets this console currently holds a connected terminal for. Discovery
+  // is a periodic snapshot, so a session started here is invisible to it until
+  // the next run lands; an open terminal is direct evidence the session exists.
+  // Feeding both into the rail is what makes the ⚡ appear on the spot.
+  const [liveTargetIds, setLiveTargetIds] = useState<ReadonlySet<string>>(() => new Set());
+
   const railModel = useMemo(
-    () => buildRailModel(discovery.instances, discovery.targets, filters),
-    [discovery.instances, discovery.targets, filters],
+    () => buildRailModel(discovery.instances, discovery.targets, filters, liveTargetIds),
+    [discovery.instances, discovery.targets, filters, liveTargetIds],
   );
 
   const regionByKey = useMemo(() => {
@@ -115,11 +121,24 @@ export function AppShell(): JSX.Element {
   const refresh = discovery.refresh;
   const onTerminalEnded = useCallback(
     (target: SessionTarget) => {
+      setLiveTargetIds((prev) => {
+        if (!prev.has(target.id)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(target.id);
+        return next;
+      });
       const id = instanceIdByKey.get(`${target.instance_type}::${target.instance_name}`);
       void refresh(id);
     },
     [instanceIdByKey, refresh],
   );
+
+  // A terminal connected: the target has a Zellij session as of now.
+  const onTerminalStarted = useCallback((target: SessionTarget) => {
+    setLiveTargetIds((prev) => (prev.has(target.id) ? prev : new Set(prev).add(target.id)));
+  }, []);
 
   const providers = useMemo(
     () => [...new Set(discovery.instances.map((i) => i.instance_type))],
@@ -256,6 +275,7 @@ export function AppShell(): JSX.Element {
             targetsById={targetsById}
             regionByKey={regionByKey}
             onTerminalEnded={onTerminalEnded}
+            onTerminalStarted={onTerminalStarted}
             narrow={narrow}
           />
         </div>

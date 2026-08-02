@@ -198,10 +198,28 @@ export async function getSessions(): Promise<SessionsResponse> {
   return request<SessionsResponse>("/api/v1/sessions", { method: "GET" });
 }
 
-export async function refreshDiscovery(instanceId?: string): Promise<RefreshResponse> {
+/**
+ * Trigger a server-side discovery run. `GET /hosts` and `GET /sessions` only
+ * READ the service's cache — this is the only call that repopulates it.
+ *
+ * `force: false` asks for a TTL-gated run (no-op while the cache is fresh),
+ * which is what the background poll sends so a long-lived page stays current
+ * without every tick costing an SSH round trip to every instance.
+ */
+export async function refreshDiscovery(
+  instanceId?: string,
+  options?: { force?: boolean },
+): Promise<RefreshResponse> {
+  const body: { instance_id?: string; force?: boolean } = {};
+  if (instanceId) {
+    body.instance_id = instanceId;
+  }
+  if (options?.force === false) {
+    body.force = false;
+  }
   return request<RefreshResponse>("/api/v1/discovery/refresh", {
     method: "POST",
-    body: instanceId ? JSON.stringify({ instance_id: instanceId }) : undefined,
+    body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
   });
 }
 
