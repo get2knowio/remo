@@ -252,6 +252,20 @@ Two properties make this safe:
   unauthenticated at the proxy layer; those routes are authenticated by the pairing code alone. In
   short: gate `/api/v1/pairing/mint` with SSO, pass `/api/v1/setup/*` through.
 
+**When the proxy's session expires, the console re-authenticates itself.** A forward-auth proxy
+answers an expired-session request with a redirect to the IdP (or a bare `401`). A `fetch()` cannot
+complete that SSO round trip — and the service's own `connect-src 'self'` CSP blocks following a
+cross-origin redirect at all — so the only thing that restores a session is a **top-level
+navigation**. Every API call therefore goes through `apiFetch()` in `frontend/src/api/client.ts`,
+which sends `redirect: "manual"`, recognizes both challenge shapes, and reloads the document once.
+Concurrent challenges (returning to a backgrounded tab fires several polls at once) collapse into a
+single reload. If a completed reload is challenged *again* within 10s, the console stops navigating —
+permanently, for that document — and surfaces `auth_required`: sign in through the proxy and reload
+manually. That state means the proxy's session cookie genuinely isn't reaching the app, not that the
+service is down, and it is deliberately not retried on a timer (a page that reloads itself under you
+every ten seconds is worse than one that stops and says why). A challenge is never reported as a service outage: the health
+store ignores it rather than flashing the offline overlay.
+
 **Forward-auth trust boundary.** The service trusts the identity header only because the deployment
 guarantees the proxy sits in front and **sets/strips** that header — so a client cannot reach the app
 directly and spoof it. This is the standard forward-auth boundary; a deployment that exposes the app

@@ -19,6 +19,7 @@ import {
   ApiError,
   getHosts,
   getSessions,
+  isAuthChallenge,
   refreshDiscovery as refreshDiscoveryRequest,
   type DiscoveryInstance,
   type SessionTarget,
@@ -67,6 +68,18 @@ function sleep(ms: number): Promise<void> {
 // Only one poll runs at a time; overlapping interval ticks / manual refreshes
 // are no-ops while a poll is already in flight, so responses can never race
 // each other and clobber newer state with a stale one.
+/** Log a failed poll, EXCEPT a forward-auth challenge. Returning to a
+ * backgrounded tab with a lapsed SSO session challenges every in-flight
+ * request at once; the client is already re-authenticating via a top-level
+ * reload, and shouting about it fills the console with alarming errors for a
+ * condition that resolves itself. */
+function logPollFailure(what: string, error: unknown): void {
+  if (isAuthChallenge(error)) {
+    return;
+  }
+  console.error(`discovery: ${what} failed`, error);
+}
+
 let pollInFlight = false;
 
 async function pollOnce(): Promise<void> {
@@ -84,7 +97,7 @@ async function pollOnce(): Promise<void> {
       .catch((error: unknown) => {
         // Keep the last-known instances rather than blanking the dashboard
         // on a transient poll failure.
-        console.error("discovery: GET /hosts failed", error);
+        logPollFailure("GET /hosts", error);
       });
 
     const sessionsPoll = getSessions()
@@ -92,7 +105,7 @@ async function pollOnce(): Promise<void> {
         setState({ targets: response.targets });
       })
       .catch((error: unknown) => {
-        console.error("discovery: GET /sessions failed", error);
+        logPollFailure("GET /sessions", error);
       });
 
     await Promise.all([hostsPoll, sessionsPoll]);
@@ -155,7 +168,7 @@ async function manualRefresh(instanceId?: string): Promise<void> {
       if (!(error instanceof ApiError)) {
         throw error;
       }
-      console.error("discovery: POST /discovery/refresh failed", error);
+      logPollFailure("POST /discovery/refresh", error);
     }
 
     for (let i = 0; i < POST_REFRESH_POLL_COUNT; i += 1) {
@@ -186,7 +199,7 @@ async function tick(): Promise<void> {
     if (!(error instanceof ApiError)) {
       throw error;
     }
-    console.error("discovery: background POST /discovery/refresh failed", error);
+    logPollFailure("background POST /discovery/refresh", error);
   }
   await pollOnce();
 }

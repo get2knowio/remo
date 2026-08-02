@@ -83,14 +83,59 @@ type ErrorEnvelope = components["schemas"]["ErrorEnvelope"];
 const _REAUTH_KEY = "remo:last-reauth";
 const _REAUTH_COOLDOWN_MS = 10_000;
 
+/** True once this document has committed to a re-auth navigation. Concurrent
+ * challenges are the NORM, not the exception — returning to a backgrounded tab
+ * fires the discovery poll, the sessions fetch and the readiness poll at once,
+ * and a lapsed proxy session challenges all of them. Only the first may
+ * navigate; without this flag the others hit the sessionStorage cooldown below
+ * and wrongly report that re-auth had already failed. */
+let _reauthNavigating = false;
+
+/** Set once a COMPLETED reload has been challenged again. The cooldown alone
+ * only suppresses re-auth for 10s, so a genuinely broken proxy would reload the
+ * page every 10 seconds forever — a page that reloads under the operator is
+ * worse than one that stops and says why. After giving up, this document never
+ * navigates again; the error's remediation asks for a manual reload, and this
+ * makes that true. */
+let _reauthGaveUp = false;
+
+/** A challenge arriving while a re-auth navigation is already under way. Benign:
+ * the document is about to be replaced. */
+function _reauthInFlightError(): ApiError {
+  return new ApiError({
+    code: "auth_challenge",
+    message: "Re-authenticating…",
+    retryable: false,
+    remediation: "",
+  });
+}
+
+/** Re-auth ran and did not produce a usable session. */
+function _reauthFailedError(): ApiError {
+  return new ApiError({
+    code: "auth_required",
+    message: "Sign-in is required, but the access proxy did not restore a session.",
+    retryable: false,
+    remediation:
+      "Sign in through your access proxy, then reload this page. If it repeats, the " +
+      "forward-auth proxy may be misconfigured (its session cookie is not reaching this app).",
+  });
+}
+
 /**
  * Handle a forward-auth challenge on an XHR by re-authenticating through a
- * top-level navigation. Never returns normally: it either navigates the whole
- * document (throwing to halt the caller before the navigation lands) or, if we
- * already tried to re-auth within the cooldown, throws a clear `auth_required`
- * ApiError instead of looping.
+ * top-level navigation. Never returns normally: it either reloads the whole
+ * document (throwing to halt the caller before the navigation lands), reports
+ * that a reload is already under way, or — if a previous reload was already
+ * challenged again — throws a clear `auth_required` ApiError instead of looping.
  */
 function reauthenticate(): never {
+  if (_reauthNavigating) {
+    throw _reauthInFlightError();
+  }
+  if (_reauthGaveUp) {
+    throw _reauthFailedError();
+  }
   let last = 0;
   try {
     last = Number(sessionStorage.getItem(_REAUTH_KEY) ?? 0) || 0;
@@ -99,54 +144,52 @@ function reauthenticate(): never {
   }
   const now = Date.now();
   if (now - last < _REAUTH_COOLDOWN_MS) {
-    // We just reloaded to re-auth and are being challenged again — the SSO
-    // round-trip isn't restoring a usable session. Stop reloading; surface a
-    // clear error rather than looping.
-    throw new ApiError({
-      code: "auth_required",
-      message: "Sign-in is required, but the access proxy did not restore a session.",
-      retryable: false,
-      remediation:
-        "Sign in through your access proxy and reload. If this repeats, the " +
-        "forward-auth proxy may be misconfigured (its session cookie is not reaching this app).",
-    });
+    // We reloaded to re-auth and are being challenged again — the SSO round
+    // trip isn't restoring a usable session. Stop reloading, for good.
+    _reauthGaveUp = true;
+    throw _reauthFailedError();
   }
   try {
     sessionStorage.setItem(_REAUTH_KEY, String(now));
   } catch {
     // sessionStorage unavailable — navigate anyway.
   }
+  _reauthNavigating = true;
   // A full document request re-runs the proxy's SSO redirect chain (IdP round
   // trip), unlike a fetch which cannot. The SPA reloads authenticated and
-  // subsequent XHRs return 200.
-  window.location.assign(window.location.href);
-  // location.assign() schedules the navigation asynchronously and lets sync
-  // code keep running; throw so the caller never treats this as data.
-  throw new ApiError({
-    code: "auth_challenge",
-    message: "Re-authenticating…",
-    retryable: false,
-    remediation: "",
-  });
+  // subsequent XHRs return 200. reload() rather than assign(location.href):
+  // assigning the CURRENT url is a same-document navigation when it carries a
+  // fragment, which would silently skip the network round trip we need.
+  window.location.reload();
+  // reload() schedules the navigation asynchronously and lets sync code keep
+  // running; throw so the caller never treats this as data.
+  throw _reauthInFlightError();
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * `fetch` for same-origin API calls, with forward-auth challenge detection.
+ *
+ * EVERY call to this app's API must go through here. A plain `fetch()` follows
+ * the proxy's cross-origin 302 to the IdP, which the strict `connect-src 'self'`
+ * CSP then blocks — surfacing as an opaque "Failed to fetch" that callers
+ * misread as "the service is down" (it presented as a bogus offline overlay
+ * when the readiness poll did exactly this).
+ *
+ * Two shapes of challenge are recognized, because forward-auth proxies differ:
+ *   - a 3xx to the IdP, seen as `type: "opaqueredirect"` thanks to
+ *     `redirect: "manual"`. This is unambiguous only because the API itself
+ *     never issues a redirect of any kind — every route is an exact path, so a
+ *     3xx on an API call always came from something in front of us;
+ *   - a bare 401. The service itself never issues one (web/api/setup.py is
+ *     explicit: a dormant surface answers 404, "never a distinguishable 401"),
+ *     so a 401 reaching the browser came from the proxy in front of it.
+ */
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(path, {
-      ...init,
-      // Catch a forward-auth proxy's cross-origin SSO redirect as an opaque
-      // response instead of a thrown CSP-blocked follow (see reauthenticate()).
-      redirect: "manual",
-      headers: {
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-    });
+    response = await fetch(path, { ...init, redirect: "manual" });
   } catch (cause) {
-    // Network-level failure (offline, connection refused, etc.) — surface it
-    // through the same ApiError shape as HTTP-level errors so callers only
-    // ever handle one error type.
+    // Network-level failure (offline, connection refused, etc.).
     throw new ApiError({
       code: "network_error",
       message: cause instanceof Error ? cause.message : "Network request failed",
@@ -154,14 +197,28 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       remediation: "Check your network connection and that the Remo web service is reachable.",
     });
   }
-
-  // A forward-auth session lapse: the proxy answered with a cross-origin 3xx,
-  // now an opaque redirect. Re-authenticate via a top-level navigation rather
-  // than surfacing a bogus "network_error"/CSP failure. The API itself never
-  // issues same-origin redirects, so this is unambiguously a proxy challenge.
-  if (response.type === "opaqueredirect") {
+  if (response.type === "opaqueredirect" || response.status === 401) {
     reauthenticate();
   }
+  return response;
+}
+
+/** True for the two error codes that mean "a re-auth is happening / needed",
+ * so callers can avoid reporting a proxy challenge as a service outage. */
+export function isAuthChallenge(error: unknown): boolean {
+  return (
+    error instanceof ApiError && (error.code === "auth_challenge" || error.code === "auth_required")
+  );
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await apiFetch(path, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
 
   if (!response.ok) {
     let envelope: ErrorEnvelope | undefined;
@@ -253,17 +310,9 @@ export interface ReadinessResponse {
  * `ApiError{code:"network_error"}` so callers can show the offline overlay.
  */
 export async function getReady(): Promise<ReadinessResponse> {
-  let response: Response;
-  try {
-    response = await fetch("/api/v1/ready", { method: "GET" });
-  } catch (cause) {
-    throw new ApiError({
-      code: "network_error",
-      message: cause instanceof Error ? cause.message : "Network request failed",
-      retryable: true,
-      remediation: "Check that the Remo web service is reachable.",
-    });
-  }
+  // Via apiFetch, not a bare fetch: a lapsed forward-auth session must trigger
+  // re-auth, not masquerade as an unreachable service (the offline overlay).
+  const response = await apiFetch("/api/v1/ready", { method: "GET" });
   let body: { status?: string; checks?: Record<string, string>; detail?: string } = {};
   try {
     body = (await response.json()) as typeof body;
@@ -298,19 +347,9 @@ export type MintPairingResponse = components["schemas"]["MintPairingResponse"];
 export async function mintPairingCode(
   origin: "adopt" | "resync" = "adopt",
 ): Promise<MintPairingResponse> {
-  let response: Response;
-  try {
-    response = await fetch(`/api/v1/pairing/mint?origin=${encodeURIComponent(origin)}`, {
-      method: "POST",
-    });
-  } catch (cause) {
-    throw new ApiError({
-      code: "network_error",
-      message: cause instanceof Error ? cause.message : "Network request failed",
-      retryable: true,
-      remediation: "Check that the Remo web service is reachable.",
-    });
-  }
+  const response = await apiFetch(`/api/v1/pairing/mint?origin=${encodeURIComponent(origin)}`, {
+    method: "POST",
+  });
   if (response.status === 403) {
     // Operator authentication required / not configured — surface a distinct
     // code so the adopt page can prompt to sign in rather than showing a code.
@@ -346,7 +385,10 @@ export function endPairing(): void {
   } catch {
     // fall through to fetch
   }
-  // keepalive lets the request outlive the page during unload.
+  // keepalive lets the request outlive the page during unload. Deliberately a
+  // bare fetch, not apiFetch: this fires as the page goes away, where a re-auth
+  // navigation would be both futile and destructive. The server's idle TTL is
+  // the backstop if the challenge eats it.
   void fetch(path, { method: "POST", keepalive: true }).catch(() => undefined);
 }
 
