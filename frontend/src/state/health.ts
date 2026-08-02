@@ -16,9 +16,15 @@
 //                     explain it.
 //   - "offline"       the request failed at the network level (service down /
 //                     restarting). Drives the offline overlay.
+//
+// A forward-auth challenge (expired SSO session behind an access proxy) is NOT
+// any of these: the service is fine, the browser just needs to re-auth. The
+// client turns it into a top-level reload and an `auth_challenge` error, which
+// this store deliberately ignores so the offline overlay never flashes over a
+// page that is one navigation away from working again.
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { ApiError, getReady, type ReadinessResponse } from "../api/client";
+import { ApiError, getReady, isAuthChallenge, type ReadinessResponse } from "../api/client";
 
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 
@@ -71,6 +77,13 @@ async function pollOnce(): Promise<void> {
       detail: ready.detail ?? null,
     });
   } catch (error) {
+    if (isAuthChallenge(error)) {
+      // A re-auth navigation is under way (auth_challenge), or re-auth already
+      // failed once and the client has stopped looping (auth_required). Either
+      // way the service's own health is unknown, not bad — leave the last known
+      // status alone rather than claiming an outage we haven't observed.
+      return;
+    }
     if (error instanceof ApiError && error.code === "network_error") {
       setState({ status: "offline", detail: "The Remo web service is unreachable." });
     } else {
