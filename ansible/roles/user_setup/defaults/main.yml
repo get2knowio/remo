@@ -1,6 +1,15 @@
 ---
 remo_user: "remo"
 
+# Seed the remo user's authorized_keys from the key the cloud provider injected
+# elsewhere on the box (Hetzner -> root, EC2 -> ubuntu). Only Hetzner and AWS
+# need this; Proxmox and Incus write the key straight into the remo user's file
+# at create time, and running the bootstrap there overwrote keys placed by other
+# tooling — notably the `remo-web@…` line `remo web push` installs (#121). Those
+# two providers' configure/site playbooks set this false. Even where it does
+# run, the bootstrap merges and only fires on first contact.
+user_setup_bootstrap_cloud_keys: true
+
 # Version displayed in project-menu banner
 remo_version: ""
 

@@ -224,18 +224,54 @@
   changed_when: false
   failed_when: pct_sshdir_result.rc | default(1) != 0
 
-- name: Push SSH pubkey into container via pct push
+# `pct push` straight onto authorized_keys REPLACES the file, so re-running
+# create against an existing container destroyed every key remo did not put
+# there — the same defect user_setup had on the configure path (#121). Stage
+# the pubkey, then merge it line by line: additive, so a key installed by other
+# tooling (notably `remo web push`'s `remo-web@…` line) survives, and a second
+# run reports no change (Principle VII).
+- name: Stage SSH pubkey inside container via pct push
   ansible.builtin.command:
     cmd: >-
       pct push {{ proxmox_container_vmid }}
       {{ proxmox_container_pubkey_host_path }}
-      /home/{{ proxmox_container_ssh_user }}/.ssh/authorized_keys
-      --user {{ proxmox_container_ssh_user }}
-      --group {{ proxmox_container_ssh_user }}
+      {{ proxmox_container_pubkey_staging_path }}
       --perms 0600
   register: pct_push_result
-  changed_when: pct_push_result.rc | default(1) == 0
+  changed_when: false
   failed_when: pct_push_result.rc | default(1) != 0
+
+- name: Merge staged pubkey into authorized_keys
+  ansible.builtin.command:
+    argv:
+      - pct
+      - exec
+      - "{{ proxmox_container_vmid }}"
+      - --
+      - bash
+      - -c
+      - |
+        set -eu
+        user={{ proxmox_container_ssh_user | quote }}
+        staged={{ proxmox_container_pubkey_staging_path | quote }}
+        ak="/home/$user/.ssh/authorized_keys"
+        install -d -o "$user" -g "$user" -m 0700 "/home/$user/.ssh"
+        [ -f "$ak" ] || : > "$ak"
+        changed=0
+        while IFS= read -r line || [ -n "$line" ]; do
+          case "$line" in ''|'#'*) continue ;; esac
+          if ! grep -qxF "$line" "$ak"; then
+            printf '%s\n' "$line" >> "$ak"
+            changed=1
+          fi
+        done < "$staged"
+        chown "$user:$user" "$ak"
+        chmod 0600 "$ak"
+        rm -f "$staged"
+        echo "remo_authorized_keys_changed=$changed"
+  register: pct_merge_key_result
+  changed_when: "'remo_authorized_keys_changed=1' in (pct_merge_key_result.stdout | default(''))"
+  failed_when: pct_merge_key_result.rc | default(1) != 0
 
 - name: Harden sshd config (UseDNS no, PermitRootLogin no, GSSAPI off)
   ansible.builtin.command:
