@@ -117,8 +117,9 @@ frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
 ├── src/
 │   ├── api/client.ts        # REST + WS terminal client (remo-terminal.v1 subprotocol)
 │   ├── components/          # Dashboard, InstanceGroup, TargetCard, GridView, TabView, TerminalCard
-│   ├── state/                # discovery.ts, workspace.ts (layout persisted to localStorage)
-│   └── terminal/              # RendererAdapter, GhosttyRenderer (default), XtermRenderer (fallback)
+│   ├── state/                # discovery.ts, workspace.ts (layout persisted to localStorage), settings.ts (display prefs: site light/dark mode, accent, fonts, terminal theme + per-target overrides)
+│   ├── terminal/              # RendererAdapter, GhosttyRenderer (default), XtermRenderer (fallback)
+│   └── theme/                 # tokens.css (light-dark() palette, one pair per token), fonts.ts, terminalThemes.ts (8 terminal color schemes: a token-derived Remo Dark/Light pair the default 'auto' selection tracks, plus 6 curated third-party)
 └── public/                    # Same-origin-served ghostty-web WASM asset
 
 docker/                    # remo-web container packaging (010-web-session-interface, US4)

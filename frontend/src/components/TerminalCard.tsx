@@ -9,16 +9,20 @@
 // single↔grid only re-renders the header chrome and never remounts the
 // terminal surface (which would tear down the live connection).
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { SessionTarget, TypedError } from "../api/client";
 import { providerMeta } from "./providerMeta";
 import {
+  effectiveTerminalTheme,
+  settingsActions,
+  terminalThemeLabel,
   terminalFontOptions,
   useSettings,
   type SettingsState,
   type TerminalFontOptions,
 } from "../state/settings";
+import { TERMINAL_THEMES, type TerminalThemeColors } from "../theme/terminalThemes";
 import { removeLatency, reportLatency } from "../state/latency";
 import type { RendererAdapter } from "../terminal/RendererAdapter";
 import { createDefaultRenderer } from "../terminal/defaultRenderer";
@@ -120,6 +124,7 @@ export function TerminalCard({
   const onEndedRef = useRef(onEnded);
   const onStartedRef = useRef(onStarted);
   const fontRef = useRef<TerminalFontOptions>(effectiveFont(settings, mode));
+  const themeRef = useRef<TerminalThemeColors>(effectiveTerminalTheme(settings, target.id).colors);
   // Coalesced-fit bookkeeping: a pending rAF handle, and the last dims we sent
   // (to skip redundant resize frames).
   const fitRafRef = useRef<number | null>(null);
@@ -135,6 +140,8 @@ export function TerminalCard({
   const [error, setError] = useState<TypedError | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const themeMenuRef = useRef<HTMLDivElement | null>(null);
 
   // dnd-kit reorder: the tile is both a draggable (handle = header grip, below)
   // and a droppable (swap target). Disabled outside a reorderable grid. We use
@@ -218,6 +225,18 @@ export function TerminalCard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [font.fontFamily, font.fontSize, font.ligatures]);
 
+  // Apply a live terminal-theme change (global default or this card's
+  // override) to the open terminal. Deliberately NOT part of the mount effect's
+  // dep array: recoloring must never remount the terminal (that would drop the
+  // scrollback and reconnect). Colors don't alter cell metrics, so no re-fit.
+  const theme = effectiveTerminalTheme(settings, target.id);
+  useEffect(() => {
+    themeRef.current = theme.colors;
+    adapterRef.current?.applyTheme(theme.colors);
+    // theme is derived fresh each render; its id identifies the palette.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme.id]);
+
   useEffect(() => {
     if (createdRef.current) {
       return undefined;
@@ -228,7 +247,7 @@ export function TerminalCard({
     }
     createdRef.current = true;
 
-    const adapter = createDefaultRenderer(fontRef.current, settings.renderer);
+    const adapter = createDefaultRenderer(fontRef.current, settings.renderer, themeRef.current);
     adapterRef.current = adapter;
     adapter.open(container);
 
@@ -318,6 +337,29 @@ export function TerminalCard({
     }
   }, [isFocused, isVisible]);
 
+  // Dismiss the theme popup on Escape or a click anywhere outside it.
+  useEffect(() => {
+    if (!themeMenuOpen) {
+      return undefined;
+    }
+    const onPointerDown = (e: globalThis.PointerEvent): void => {
+      if (!themeMenuRef.current?.contains(e.target as Node)) {
+        setThemeMenuOpen(false);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        setThemeMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [themeMenuOpen]);
+
   const handleReconnect = useCallback(() => {
     setError(null);
     void connectionRef.current?.reconnect();
@@ -371,6 +413,12 @@ export function TerminalCard({
   const prov = providerMeta(target.instance_type);
   const badge = [prov.label, target.instance_name, region].filter(Boolean).join(" · ");
 
+  // The Settings-wide choice, shown as the popup's "Default — …" entry. Under
+  // "auto" that resolves per site mode, so the entry names what it means now.
+  const globalTheme = effectiveTerminalTheme(settings);
+  const globalLabel = terminalThemeLabel(settings.termTheme, settings);
+  const hasThemeOverride = settings.termThemeOverrides[target.id] !== undefined;
+
   const isDragging = draggable.isDragging;
   // Highlight the tile the drop will land on (swap target) — but not the source.
   const isDropTarget = Boolean(reorderEnabled) && droppable.isOver && !isDragging;
@@ -383,7 +431,15 @@ export function TerminalCard({
       data-testid={`terminal-card-${target.id}`}
       data-focused={isFocused}
       data-connection-state={connectionState}
-      style={{ display: isVisible ? undefined : "none" }}
+      // --bg-term drives the card's own background and the surface's 2px/4px
+      // padding gutter; pinning it to this card's terminal theme keeps the
+      // gutter flush with what the emulator paints inside it.
+      style={
+        {
+          display: isVisible ? undefined : "none",
+          "--bg-term": theme.colors.background,
+        } as CSSProperties
+      }
       onMouseEnter={handleMouseEnter}
       onMouseLeave={clearHoverTimer}
     >
@@ -440,6 +496,74 @@ export function TerminalCard({
               ↻ Reconnect
             </button>
           )}
+          {/* Per-terminal color scheme. The swatch shows what this card is
+           * painted with; the popup sets an override, or clears back to
+           * "Default" so the card follows the Settings-wide choice again. */}
+          <div className="tc-theme" ref={themeMenuRef}>
+            <button
+              type="button"
+              className="tc-btn tc-btn--swatch"
+              data-testid={`terminal-theme-${target.id}`}
+              title={`Terminal theme: ${theme.label}${hasThemeOverride ? "" : " (default)"}`}
+              aria-label="Terminal theme"
+              aria-haspopup="menu"
+              aria-expanded={themeMenuOpen}
+              style={{ background: theme.colors.background, color: theme.colors.foreground }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setThemeMenuOpen((v) => !v);
+              }}
+            >
+              A
+            </button>
+            {themeMenuOpen && (
+              <div className="tc-theme-menu" role="menu">
+                <button
+                  type="button"
+                  className={`tc-theme-item${hasThemeOverride ? "" : " tc-theme-item--on"}`}
+                  role="menuitem"
+                  data-testid={`terminal-theme-default-${target.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    settingsActions.setTermThemeOverride(target.id, null);
+                    setThemeMenuOpen(false);
+                  }}
+                >
+                  <span
+                    className="tc-theme-swatch"
+                    style={{
+                      background: globalTheme.colors.background,
+                      borderColor: globalTheme.colors.brightBlack,
+                    }}
+                  />
+                  <span className="tc-theme-label">Default — {globalLabel}</span>
+                </button>
+                {TERMINAL_THEMES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    className={`tc-theme-item${hasThemeOverride && t.id === theme.id ? " tc-theme-item--on" : ""}`}
+                    role="menuitem"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      settingsActions.setTermThemeOverride(target.id, t.id);
+                      setThemeMenuOpen(false);
+                    }}
+                  >
+                    <span
+                      className="tc-theme-swatch"
+                      style={{ background: t.colors.background, borderColor: t.colors.brightBlack }}
+                    >
+                      <i style={{ background: t.colors.red }} />
+                      <i style={{ background: t.colors.green }} />
+                      <i style={{ background: t.colors.blue }} />
+                    </span>
+                    <span className="tc-theme-label">{t.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {/* Window-control cluster: mutually-exclusive display modes ordered
            * by how much space they take — Grid (smaller/tiled) → Normal (fills
            * the app's main pane) → Fullscreen (whole window) — plus close. The

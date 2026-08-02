@@ -9,7 +9,7 @@ import { exitBrowserFullscreen } from "../lib/fullscreen";
 import { useDiscovery } from "../state/discovery";
 import { useHealth } from "../state/health";
 import { useLatency } from "../state/latency";
-import { settingsActions, useSettings } from "../state/settings";
+import { resolvedSiteTheme, settingsActions, useSettings } from "../state/settings";
 import { useConsoleKeyboard } from "../state/useConsoleKeyboard";
 import { useWorkspace } from "../state/workspace";
 import { buildRailModel, type RailFilters } from "./railModel";
@@ -74,6 +74,18 @@ export function AppShell(): JSX.Element {
     document.addEventListener("fullscreenchange", onChange);
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, [maximized, restore]);
+
+  // Per-terminal theme overrides are keyed by target id; drop the ones whose
+  // target no longer exists so the stored map can't grow without bound.
+  // Guarded on a non-empty snapshot: discovery keeps its last-known targets
+  // when a poll fails, and pruning against an empty list — the pre-first-poll
+  // state, or a failed one — would wipe live preferences.
+  useEffect(() => {
+    if (discovery.targets.length === 0) {
+      return;
+    }
+    settingsActions.pruneTermThemeOverrides(discovery.targets.map((t) => t.id));
+  }, [discovery.targets]);
 
   const filters: RailFilters = useMemo(
     () => ({ search, providerFilter, sessionOnly }),
@@ -218,6 +230,9 @@ export function AppShell(): JSX.Element {
         onRefresh={() => void discovery.refresh()}
         onSettings={() => setSettingsOpen(true)}
         onShortcuts={onToggleShortcuts}
+        themeMode={settings.themeMode}
+        resolvedDark={resolvedSiteTheme(settings) === "dark"}
+        onCycleTheme={() => settingsActions.cycleThemeMode()}
       />
 
       {discovery.isRefreshing && !maximized && (

@@ -141,10 +141,27 @@ Git ahead/behind reflect the **last-known** upstream — discovery never runs `g
 they can be stale until something else fetches. Git glyphs only appear on instances running a
 `remo-host` new enough to report git status; see [Upgrade compatibility](#upgrade-compatibility).
 
-**Settings** (⚙, top bar; stored in this browser only, FR-034): accent color, terminal font, font
-size, program ligatures, grid display mode (actual-size vs scale-to-fit), **focus dwell** (how long the
-pointer rests before focus-follows-mouse fires), terminal engine, a **Nerd Font uploader**, and **Pair
-CLI to sync** (mint a re-sync pairing code). Because a browser can't read fonts installed on the
+**Settings** (⚙, top bar; stored in this browser only, FR-034): **appearance** (site light/dark mode),
+accent color, terminal font, **terminal theme**, font size, program ligatures, grid display mode
+(actual-size vs scale-to-fit), **focus dwell** (how long the pointer rests before focus-follows-mouse
+fires), terminal engine, a **Nerd Font uploader**, and **Pair CLI to sync** (mint a re-sync pairing
+code).
+
+**Appearance** is tri-state — `system` (the default, following the OS `prefers-color-scheme`),
+`light`, or `dark` — toggled from the ◐/☀/☾ button in the top bar as well as from Settings. The
+console's palette is a set of `light-dark()` CSS custom properties in `theme/tokens.css`; "system"
+therefore needs no JavaScript to render, and an explicit choice is applied as `data-theme` on `<html>`.
+**Terminal theme** defaults to **Follow site theme**, which tracks the site mode: a light console gets
+**Remo Light**, a dark one **Remo Dark**. Those two are derived from `theme/tokens.css` — terminal
+background is `--bg-term`, foreground `--text`, ANSI 1–6 the `--danger`/`--ok`/`--warn`/`--info`/`--mag`/
+`--cyan` ramp — so the terminal sits flush with the chrome around it. They are hand-derived *snapshots*
+(a terminal palette must be literal `#rrggbb`; ghostty-web's parser accepts neither `oklch()` nor
+`var()`), so editing a token does not update them. Six curated third-party schemes are also available —
+Catppuccin Mocha/Latte, Dracula, Gruvbox Dark/Light, Solarized Light — and any theme can be used under
+either site mode; picking one explicitly stops the terminal following the site. The Settings choice is
+the default for every terminal; an individual terminal can override it from the color swatch in its
+header, and clearing that override back to "Default" makes it follow the global choice again. Theme
+changes apply live — the terminal is recolored in place, keeping the connection and scrollback. Because a browser can't read fonts installed on the
 instance, uploading a patched Nerd Font once registers it via the `FontFace` API (persisted in
 IndexedDB) and offers it as a terminal font — that's how Powerline/Git/devicon glyphs in a prompt or
 Zellij status bar render. Font changes apply live to every open terminal. The top bar shows the

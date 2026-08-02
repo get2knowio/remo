@@ -1,6 +1,7 @@
-// Full-screen Settings page: terminal font, grid display mode, font size,
-// ligatures, accent color, and Nerd-Font upload. All preferences are stored in
-// this browser (FR-034) and applied live to every open terminal.
+// Full-screen Settings page: site light/dark mode, accent color, terminal font,
+// terminal color theme, grid display mode, font size, ligatures, and Nerd-Font
+// upload. All preferences are stored in this browser (FR-034) and applied live
+// to every open terminal.
 
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { listUploadedFonts, registerUploadedFont } from "../state/fonts";
@@ -12,16 +13,22 @@ import {
   MIN_FOCUS_DWELL_MS,
   MIN_TERM_SIZE,
   RENDERER_OPTIONS,
+  effectiveTerminalTheme,
   settingsActions,
+  SITE_THEME_OPTIONS,
   useSettings,
   type FontOption,
 } from "../state/settings";
+import { AUTO_TERMINAL_THEME, TERMINAL_THEMES } from "../theme/terminalThemes";
 import { PairToSync } from "./PairToSync";
 import "./SettingsPage.css";
 
 interface SettingsPageProps {
   onClose: () => void;
 }
+
+/** The six ANSI hues shown as dots in a theme preview. */
+const ANSI_PREVIEW_KEYS = ["red", "green", "yellow", "blue", "magenta", "cyan"] as const;
 
 const GRID_MODES = [
   {
@@ -41,6 +48,9 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploaded, setUploaded] = useState<string[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const autoSelected = settings.termTheme === AUTO_TERMINAL_THEME;
+  // What "auto" resolves to for the site mode in effect — the preview subject.
+  const autoTheme = effectiveTerminalTheme({ ...settings, termTheme: AUTO_TERMINAL_THEME });
 
   useEffect(() => {
     void listUploadedFonts().then(setUploaded);
@@ -88,6 +98,36 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
 
       <div className="settings-scroll">
         <div className="settings-inner">
+          {/* Appearance (site light/dark) */}
+          <section>
+            <div className="settings-heading">Appearance</div>
+            <p className="settings-sub">
+              The console&rsquo;s own light/dark theme. Terminal colors are set separately, below.
+            </p>
+            <div className="settings-gridmodes">
+              {SITE_THEME_OPTIONS.map((o) => {
+                const selected = settings.themeMode === o.value;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    data-testid={`site-theme-${o.value}`}
+                    className={`settings-gridmode${selected ? " settings-gridmode--on" : ""}`}
+                    onClick={() => settingsActions.setThemeMode(o.value)}
+                  >
+                    <span className="settings-radio">{selected ? "✓" : ""}</span>
+                    <span>
+                      <span className="settings-gridmode-title">
+                        {o.icon} {o.label}
+                      </span>
+                      <span className="settings-gridmode-desc">{o.desc}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
           {/* Accent */}
           <section>
             <div className="settings-heading">Accent color</div>
@@ -127,6 +167,87 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
                     </div>
                     <div className="settings-font-preview" style={{ fontFamily: f.css }}>
                       $ git commit -m &quot;=&gt; fix&quot;
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* Terminal theme */}
+          <section>
+            <div className="settings-heading">Terminal theme</div>
+            <p className="settings-sub">
+              The color scheme inside every terminal. Applied live, without dropping the session.
+              Any individual terminal can override this from the swatch in its header.
+            </p>
+            <div className="settings-termthemes">
+              {/* "Follow site theme" is the default, and previews whichever of
+               * the two site-matched palettes is in effect right now. */}
+              <button
+                type="button"
+                data-testid="term-theme-auto"
+                className={`settings-termtheme${autoSelected ? " settings-termtheme--on" : ""}`}
+                onClick={() => settingsActions.setTermTheme(AUTO_TERMINAL_THEME)}
+              >
+                <div className="settings-font-head">
+                  <span className="settings-radio">{autoSelected ? "✓" : ""}</span>
+                  <span className="settings-font-label">Follow site theme</span>
+                  <span className="settings-font-tag">{autoTheme.variant === "dark" ? "Dark" : "Light"}</span>
+                </div>
+                <div
+                  className="settings-termtheme-preview"
+                  style={{
+                    background: autoTheme.colors.background,
+                    color: autoTheme.colors.foreground,
+                    borderColor: autoTheme.colors.brightBlack,
+                  }}
+                >
+                  <div className="settings-termtheme-dots">
+                    {ANSI_PREVIEW_KEYS.map((key) => (
+                      <span key={key} style={{ background: autoTheme.colors[key] }} />
+                    ))}
+                  </div>
+                  <span style={{ color: autoTheme.colors.green }}>$</span>{" "}
+                  <span style={{ color: autoTheme.colors.blue }}>remo</span> shell{" "}
+                  <span style={{ color: autoTheme.colors.yellow }}>web</span>
+                </div>
+              </button>
+              {TERMINAL_THEMES.map((th) => {
+                const selected = settings.termTheme === th.id;
+                return (
+                  <button
+                    key={th.id}
+                    type="button"
+                    data-testid={`term-theme-${th.id}`}
+                    className={`settings-termtheme${selected ? " settings-termtheme--on" : ""}`}
+                    onClick={() => settingsActions.setTermTheme(th.id)}
+                  >
+                    <div className="settings-font-head">
+                      <span className="settings-radio">{selected ? "✓" : ""}</span>
+                      <span className="settings-font-label">{th.label}</span>
+                      <span className="settings-font-tag">
+                        {th.variant === "dark" ? "Dark" : "Light"}
+                      </span>
+                    </div>
+                    {/* The preview is painted from the theme data itself, so a
+                     * palette edit can't drift from what it advertises. */}
+                    <div
+                      className="settings-termtheme-preview"
+                      style={{
+                        background: th.colors.background,
+                        color: th.colors.foreground,
+                        borderColor: th.colors.brightBlack,
+                      }}
+                    >
+                      <div className="settings-termtheme-dots">
+                        {ANSI_PREVIEW_KEYS.map((key) => (
+                          <span key={key} style={{ background: th.colors[key] }} />
+                        ))}
+                      </div>
+                      <span style={{ color: th.colors.green }}>$</span>{" "}
+                      <span style={{ color: th.colors.blue }}>remo</span> shell{" "}
+                      <span style={{ color: th.colors.yellow }}>web</span>
                     </div>
                   </button>
                 );

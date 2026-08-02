@@ -2,7 +2,7 @@
   position: absolute;
   inset: 0;
   z-index: 80;
-  background: oklch(0.13 0.01 255 / 0.93);
+  background: var(--overlay-scrim-strong);
   backdrop-filter: blur(3px);
   display: flex;
   align-items: center;
@@ -13,8 +13,8 @@
 .offline-card {
   max-width: 460px;
   text-align: center;
-  background: oklch(0.2 0.02 25);
-  border: 1px solid oklch(0.4 0.09 25);
+  background: var(--danger-surface);
+  border: 1px solid var(--danger-border);
   border-radius: 16px;
   padding: 38px 32px;
 }
@@ -28,14 +28,14 @@
 .offline-title {
   font-size: 18px;
   font-weight: 600;
-  color: oklch(0.85 0.08 25);
+  color: var(--danger-text);
   margin-bottom: 8px;
 }
 
 .offline-body {
   font-size: 13.5px;
   line-height: 1.6;
-  color: oklch(0.72 0.02 25);
+  color: var(--danger-text-2);
   margin: 0 0 20px;
 }
 
@@ -44,7 +44,7 @@
   border-radius: 8px;
   border: none;
   background: var(--ok);
-  color: oklch(0.16 0.05 150);
+  color: var(--on-ok);
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
