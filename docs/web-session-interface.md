@@ -58,7 +58,7 @@ second launcher; it reuses the same host-side scripts (`project-launch`) that th
   remote Zellij session / devcontainer (unchanged from `remo shell`)
         │
         ▼
-  server-side PTY  ⇄  WebSocket (binary PTY bytes + JSON control frames)  ⇄  browser (ghostty-web)
+  server-side PTY  ⇄  WebSocket (binary PTY bytes + JSON control frames)  ⇄  browser (xterm.js)
 ```
 
 The service never talks to an instance except over SSH, and it never accepts a raw hostname,
@@ -87,12 +87,13 @@ session-target IDs. Three protocol layers make this work, each documented in ful
 Backend package: `src/remo_cli/web/` (`app.py` FastAPI factory, `config.py` settings, `discovery.py`,
 `ssh_master.py`, `terminal.py`, `terminal_registry.py`, `tokens.py`, `health.py`, `check.py`, plus
 `api/hosts.py` and `api/terminals.py`). Frontend: `frontend/` (Vite + React + TypeScript). Terminals
-render behind a Remo-owned adapter (`frontend/src/terminal/RendererAdapter.ts`) with two
-interchangeable engines: **xterm.js** (`XtermRenderer.ts`) is the default — stable and
-battle-tested — and **[ghostty-web](https://github.com/coder/ghostty-web)** (`GhosttyRenderer.ts`,
-its WASM VT engine) is opt-in. The user switches between them at runtime via **Settings → Terminal
-engine** (`settings.renderer`, persisted browser-side); ghostty falls back to xterm.js if its WASM
-engine can't load. Either engine satisfies the same adapter, so the choice has no backend impact.
+render behind a Remo-owned adapter (`frontend/src/terminal/RendererAdapter.ts`), implemented by
+**xterm.js** (`XtermRenderer.ts`) — stable, battle-tested, and the console's only engine. An opt-in
+`ghostty-web` engine existed behind a **Settings → Terminal engine** switch and was removed: its VT
+engine was pre-1.0, and it never worked under the service's own CSP (the package fetches its WASM
+from a `data:` URL, which `connect-src 'self'` blocks, so it always fell back to xterm.js anyway).
+The adapter seam remains — it is what the component tests mock and what keeps `TerminalCard` free of
+any direct dependency on a renderer class.
 
 ## Browser console UI
 
@@ -144,7 +145,7 @@ they can be stale until something else fetches. Git glyphs only appear on instan
 **Settings** (⚙, top bar; stored in this browser only, FR-034): **appearance** (site light/dark mode),
 accent color, terminal font, **terminal theme**, font size, program ligatures, grid display mode
 (actual-size vs scale-to-fit), **focus dwell** (how long the pointer rests before focus-follows-mouse
-fires), terminal engine, a **Nerd Font uploader**, and **Pair CLI to sync** (mint a re-sync pairing
+fires), a **Nerd Font uploader**, and **Pair CLI to sync** (mint a re-sync pairing
 code).
 
 **Appearance** is tri-state — `system` (the default, following the OS `prefers-color-scheme`),
@@ -155,7 +156,7 @@ therefore needs no JavaScript to render, and an explicit choice is applied as `d
 **Remo Light**, a dark one **Remo Dark**. Those two are derived from `theme/tokens.css` — terminal
 background is `--bg-term`, foreground `--text`, ANSI 1–6 the `--danger`/`--ok`/`--warn`/`--info`/`--mag`/
 `--cyan` ramp — so the terminal sits flush with the chrome around it. They are hand-derived *snapshots*
-(a terminal palette must be literal `#rrggbb`; ghostty-web's parser accepts neither `oklch()` nor
+(a terminal palette must be literal `#rrggbb`; xterm.js's `ITheme` accepts neither `oklch()` nor
 `var()`), so editing a token does not update them. Six curated third-party schemes are also available —
 Catppuccin Mocha/Latte, Dracula, Gruvbox Dark/Light, Solarized Light — and any theme can be used under
 either site mode; picking one explicitly stops the terminal following the site. The Settings choice is

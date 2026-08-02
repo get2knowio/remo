@@ -1,12 +1,12 @@
-// Ghostty Web compatibility suite, part 1/2 (T060, FR-039/SC-009): shell I/O
+// Terminal compatibility suite, part 1/2 (T060, FR-039): shell I/O
 // fidelity — bash, zsh, Unicode, bracketed paste, mouse, resize.
 //
-// See `ghostty-tui-compatibility.spec.ts` for Zellij, project-menu,
+// See `terminal-tui-compatibility.spec.ts` for Zellij, project-menu,
 // devcontainer startup, and full-screen TUI (alt-screen) coverage.
 //
-// HOW CONTENT IS ASSERTED WITHOUT DOM TEXT QUERIES: `GhosttyRenderer` draws
-// into a `ghostty-web`-owned canvas (see `keyboard-routing.spec.ts`'s
-// file-level comment) — there is no accessible text layer to assert
+// HOW CONTENT IS ASSERTED WITHOUT DOM TEXT QUERIES: the terminal paints to a
+// canvas (xterm.js with the WebGL addon — see `keyboard-routing.spec.ts`'s
+// file-level comment), so there is no reliable text layer to assert
 // "the screen shows X" against. Instead, every spec below uses
 // `captureTerminalFrames()` (fixtures.ts) to transparently intercept the
 // terminal's WebSocket and record the exact PTY output bytes the server
@@ -14,9 +14,9 @@
 // byte stream via `waitForOutput()`. This is a byte-accurate, honest
 // substitute for "the terminal displays this correctly": it proves the
 // bytes arrived intact (no dropped/mangled/replacement-character corruption
-// between remote shell and browser), even though it cannot prove Ghostty's
-// canvas painted every glyph pixel-perfectly — that residual gap is exactly
-// what SC-009's documented xterm.js-fallback escape hatch exists for.
+// between remote shell and browser), even though it cannot prove the canvas
+// painted every glyph pixel-perfectly — that residual gap is one only a human
+// looking at a real session can close.
 //
 // BACKEND REQUIREMENTS: gated behind `REMO_E2E_BACKEND_URL` via
 // `requireBackendFixture` (fixtures.ts). Full fidelity additionally requires
@@ -34,7 +34,6 @@ import { expect, test } from "@playwright/test";
 import type { CapturedFrames } from "./fixtures";
 import {
   captureTerminalFrames,
-  forceRenderer,
   openTerminal,
   requireBackendFixture,
   typeCommand,
@@ -42,12 +41,9 @@ import {
   waitForOutput,
 } from "./fixtures";
 
-test.describe("Ghostty Web compatibility: shell I/O fidelity", () => {
-  // xterm.js is the default engine; force ghostty-web so this suite exercises
-  // the renderer it's named for.
+test.describe("Terminal compatibility: shell I/O fidelity", () => {
   test.beforeEach(async ({ page }) => {
     requireBackendFixture(test);
-    await forceRenderer(page, "ghostty");
   });
 
   test("bash: prompt accepts a command and echoes exact, uncorrupted output", async ({ page }) => {
@@ -122,7 +118,7 @@ test.describe("Ghostty Web compatibility: shell I/O fidelity", () => {
 
     // If bash's readline bracketed-paste mode (the default once an
     // interactive prompt is live, enabled remotely via `\e[?2004h`) is
-    // honored end-to-end by ghostty-web's paste handling, the three lines
+    // honored end-to-end by the terminal's paste handling, the three lines
     // above arrive wrapped as ESC[200~ ... ESC[201~ in the data the browser
     // sends upstream — i.e. inserted as one editable buffered line the user
     // can review before pressing Enter, rather than being immediately
@@ -130,12 +126,10 @@ test.describe("Ghostty Web compatibility: shell I/O fidelity", () => {
     // is the entire point of bracketed paste: it stops a pasted shell
     // snippet from running commands unreviewed.
     //
-    // CAVEAT (matches `GhosttyRenderer.ts`'s own file-level doc comment):
-    // ghostty-web's exact paste-handling API/behavior is unconfirmed against
-    // the real package, which is not installed in this sandbox. This is the
-    // spec-accurate assertion to run once it is — if it fails against a real
-    // `ghostty-web` build, that is exactly the kind of release-blocking gap
-    // SC-009 anticipates being handled by falling back to `XtermRenderer`.
+    // CAVEAT: this assertion has never been executed against a live backend
+    // (the suite is gated behind REMO_E2E_BACKEND_URL). It is written to the
+    // protocol rather than observed, so treat a failure here as "verify the
+    // claim" before assuming a regression.
     await expect
       .poll(
         () =>
@@ -173,7 +167,7 @@ test.describe("Ghostty Web compatibility: shell I/O fidelity", () => {
     // A precise assertion of "the exact mouse-reporting escape sequence was
     // sent upstream" needs a mouse-aware full-screen TUI (mouse reporting is
     // usually off at a bare shell prompt) — that's covered as a best-effort,
-    // more concrete check in `ghostty-tui-compatibility.spec.ts`'s Zellij
+    // more concrete check in `terminal-tui-compatibility.spec.ts`'s Zellij
     // tests, since only a real Zellij session has mouse mode enabled. Here,
     // the honest and still-meaningful check is: mouse interaction over the
     // canvas surface doesn't crash the renderer or drop the connection, and

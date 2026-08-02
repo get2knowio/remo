@@ -1,15 +1,12 @@
 // RendererAdapter implementation wrapping `xterm` (xterm.js), the well-known,
-// stable terminal emulator library (T040, US2, FR-036). This is the DEFAULT
-// terminal engine — battle-tested (VS Code et al.) and the surface we polish
-// against day to day; `GhosttyRenderer` is the opt-in alternative (SC-009),
-// selectable in Settings → Terminal engine.
+// stable terminal emulator library (T040, US2). This is the console's terminal
+// engine — battle-tested (VS Code et al.) and the only one, since the opt-in
+// ghostty-web alternative was removed (see defaultRenderer.ts).
 //
 // Targets the scoped `@xterm/*` packages: `@xterm/xterm@^5.5` plus
 // `@xterm/addon-fit` (`^0.10`, container fit), `@xterm/addon-ligatures`
 // (`^0.9`, programming ligatures — activated only when ligatures are enabled
 // in Settings), and `@xterm/addon-webgl` (`^0.18`, GPU-accelerated rendering).
-// Both renderers implement the same `RendererAdapter`, so the engine choice
-// has no backend impact (FR-036).
 //
 // WebGL is loaded AFTER open() (the addon requires an attached terminal) and is
 // strictly a rendering optimization: if the GPU context can't be created (e.g.

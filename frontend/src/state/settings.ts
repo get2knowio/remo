@@ -57,33 +57,6 @@ export const SITE_THEME_OPTIONS: SiteThemeOption[] = [
 
 const MEDIA_QUERY_DARK = "(prefers-color-scheme: dark)";
 
-/** Which browser terminal engine backs each terminal. xterm.js is the stable
- * default; ghostty-web is the opt-in WASM engine (falls back to xterm if its
- * one-time init failed — see terminal/defaultRenderer.ts). */
-export type RendererChoice = "xterm" | "ghostty";
-
-export interface RendererOption {
-  value: RendererChoice;
-  label: string;
-  tag: string;
-  desc: string;
-}
-
-export const RENDERER_OPTIONS: RendererOption[] = [
-  {
-    value: "xterm",
-    label: "xterm.js",
-    tag: "Stable",
-    desc: "The battle-tested emulator behind VS Code and many web IDEs. Recommended.",
-  },
-  {
-    value: "ghostty",
-    label: "ghostty-web",
-    tag: "Experimental",
-    desc: "Ghostty's WASM VT engine. Pre-1.0; falls back to xterm.js if it can't load.",
-  },
-];
-
 export interface FontOption {
   label: string;
   css: string;
@@ -137,8 +110,6 @@ export interface SettingsState {
   railCollapsed: boolean;
   /** Family name of the currently-registered uploaded Nerd Font, if any. */
   nerdFontName: string | null;
-  /** Browser terminal engine to back each terminal. */
-  renderer: RendererChoice;
   /** Focus-follows-mouse dwell in ms (how long the pointer rests before focus). */
   focusDwellMs: number;
 }
@@ -162,7 +133,6 @@ const DEFAULTS: SettingsState = {
   railWidth: DEFAULT_RAIL_WIDTH,
   railCollapsed: false,
   nerdFontName: null,
-  renderer: "xterm",
   focusDwellMs: DEFAULT_FOCUS_DWELL_MS,
 };
 
@@ -235,7 +205,6 @@ function loadPersisted(): SettingsState {
           : DEFAULTS.railWidth,
       railCollapsed: typeof c.railCollapsed === "boolean" ? c.railCollapsed : DEFAULTS.railCollapsed,
       nerdFontName: typeof c.nerdFontName === "string" ? c.nerdFontName : null,
-      renderer: c.renderer === "ghostty" || c.renderer === "xterm" ? c.renderer : DEFAULTS.renderer,
       focusDwellMs:
         typeof c.focusDwellMs === "number"
           ? clamp(Math.round(c.focusDwellMs), MIN_FOCUS_DWELL_MS, MAX_FOCUS_DWELL_MS)
@@ -399,7 +368,6 @@ export const settingsActions = {
     setState({ railWidth: clamp(Math.round(railWidth), MIN_RAIL_WIDTH, MAX_RAIL_WIDTH) }),
   toggleRailCollapsed: () => setState({ railCollapsed: !state.railCollapsed }),
   setNerdFontName: (nerdFontName: string | null) => setState({ nerdFontName }),
-  setRenderer: (renderer: RendererChoice) => setState({ renderer }),
   setFocusDwell: (focusDwellMs: number) =>
     setState({
       focusDwellMs: clamp(Math.round(focusDwellMs), MIN_FOCUS_DWELL_MS, MAX_FOCUS_DWELL_MS),

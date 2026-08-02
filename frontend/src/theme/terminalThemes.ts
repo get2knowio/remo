@@ -6,17 +6,16 @@
 // to validate persisted ids, and the settings store must stay importable
 // without dragging in a renderer.
 //
-// Every color is plain `#rrggbb`. Both engines take an xterm.js-shaped `ITheme`
-// object, and ghostty-web's parser is the least forgiving of the two, so no
-// `oklch()`, no `#rgb` shorthand, and no alpha — an opaque selection color is
-// what both engines expect.
+// Every color is plain `#rrggbb`: the renderer takes an xterm.js `ITheme`, so
+// no `oklch()` and no alpha — an opaque selection color is what it expects.
+// The uniform 6-digit form is also what makes the format test meaningful.
 //
 // Two of the schemes (Remo Dark/Light) are derived from the console's own
 // tokens so the terminal matches the chrome — see the block comment on them.
 // The rest are the official upstream ports: catppuccin.com/palette,
 // draculatheme.com, github.com/morhetz/gruvbox, github.com/altercation/solarized.
 
-/** The exact set of fields shared by xterm.js's and ghostty-web's `ITheme`. */
+/** The subset of xterm.js's `ITheme` the console sets. */
 export interface TerminalThemeColors {
   background: string;
   foreground: string;
@@ -87,7 +86,7 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
   //   cursor       <- --info (NOT --accent: the accent is user-tunable, and a
   //                   static palette could not follow it)
   // These are SNAPSHOTS, not live references — a terminal palette has to be
-  // literal #rrggbb (ghostty-web's parser takes neither oklch() nor var()).
+  // literal #rrggbb (the renderer's ITheme takes neither oklch() nor var()).
   // Editing a token therefore does NOT update these; re-derive them by hand.
   //
   // One deliberate deviation: magenta is pulled to hue 330 (the token is 350),

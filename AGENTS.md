@@ -26,7 +26,7 @@ Principles I, IV, and VIII are machine-enforced — see [Quality Gates](#quality
 - Python 3.11+ + Click (CLI framework), InquirerPy (interactive picker), boto3 (unconditional runtime dependency, used by the CLI's own lazy `import boto3` in `providers/aws.py` and by the Ansible `amazon.aws`/`community.aws` collections), hcloud (unconditional runtime dependency, consumed by the Ansible layer, not the CLI's own Python code) (003-python-cli-rewrite)
 - Versioned JSON registry (`~/.config/remo/registry.json`, format v2 — named fields per type, no positional overloading; single accessor `core/registry.py` owns parse/serialize/validate/lock/migrate for CLI, providers, and the web service). Legacy `~/.config/remo/known_hosts` (colon-delimited) is read-only migration input, lazily migrated to v2 on first CLI read and renamed to `known_hosts.v1.bak`. (003-python-cli-rewrite; superseded by 015-registry-v2)
 - Cross-provider snapshot model (`models/snapshot.py`) + shared helpers in `core/snapshot.py` (name generator, validator, table formatter, destroy-time cleanup hook). No new runtime deps. (005-provider-snapshots)
-- FastAPI/Uvicorn + WebSockets (backend, optional `web` extra), TypeScript/Vite/React + ghostty-web (frontend), Bash (`remo-host` host command templated by Ansible) (010-web-session-interface)
+- FastAPI/Uvicorn + WebSockets (backend, optional `web` extra), TypeScript/Vite/React + xterm.js (frontend), Bash (`remo-host` host command templated by Ansible) (010-web-session-interface)
 - Stdlib `urllib.request` CLI setup client + token-gated `/api/v1/setup/*` FastAPI surface; service state in flat files under the writable `REMO_HOME` volume (`web-identity/` keypair + service known_hosts, `~/.config/remo/web-service.json` saved credentials, `cache_version: 2`) (011-web-adopt; payload versioning updated by 015-registry-v2)
 - `core/registry.py`: stdlib `json` (format), `fcntl` (advisory locking via a `registry.lock` sidecar), `os.replace` (atomic writes). No new runtime deps. Setup API mirror payload moved to v2 (`contracts/mirror-payload-v2.md`) with a `payload_versions` capability handshake; an upgraded service still accepts v1 payloads. (015-registry-v2)
 - `core/reconcile.py`: provider-agnostic sync-reconcile engine (`SyncScope`, `DiscoveredHost`, `ProbeResult`, `build_plan` (pure), `render_plan`, the consent gate, `apply_plan` via the existing `mutate_registry()`, and the `run_sync` driver). No new runtime deps — stdlib only, built on `core/registry.py`/`core/output.py` as-is. (016-sync-reconcile)
@@ -118,8 +118,7 @@ frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
 │   ├── api/client.ts        # REST + WS terminal client (remo-terminal.v1 subprotocol)
 │   ├── components/          # Dashboard, InstanceGroup, TargetCard, GridView, TabView, TerminalCard
 │   ├── state/                # discovery.ts, workspace.ts (layout persisted to localStorage)
-│   └── terminal/              # RendererAdapter, GhosttyRenderer (default), XtermRenderer (fallback)
-└── public/                    # Same-origin-served ghostty-web WASM asset
+│   └── terminal/              # RendererAdapter (seam), XtermRenderer (the one engine), TerminalConnection, keymap
 
 docker/                    # remo-web container packaging (010-web-session-interface, US4)
 ├── Dockerfile               # multi-stage: frontend build -> wheel build -> slim Python runtime

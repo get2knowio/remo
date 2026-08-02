@@ -30,7 +30,7 @@ function fakeAdapter(): RendererAdapter {
 }
 
 vi.mock("../terminal/defaultRenderer", () => ({
-  createDefaultRenderer: vi.fn((_font?: unknown, _choice?: unknown, theme?: unknown) => {
+  createDefaultRenderer: vi.fn((_font?: unknown, theme?: unknown) => {
     const adapter = fakeAdapter();
     // Remember what the renderer was constructed with — the seeding contract.
     (adapter as unknown as { seededTheme: unknown }).seededTheme = theme;

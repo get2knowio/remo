@@ -1,17 +1,14 @@
 // Remo-owned renderer adapter (T039, US2, FR-036/FR-037).
 //
 // Application code (TerminalConnection, TerminalCard) depends ONLY on this
-// interface, never on `ghostty-web`/`xterm` classes directly — that is what
-// makes it a decoupling adapter (spec decision: "do not couple application
-// state directly to Ghostty Web classes"). Concrete implementations live in
-// `XtermRenderer.ts` (the default engine — stable, battle-tested) and
-// `GhosttyRenderer.ts` (opt-in via Settings, FR-036/SC-009). The user picks
-// between them at runtime (`settings.renderer`); either satisfies this same
-// interface, so the choice has no backend impact.
+// interface, never on a concrete renderer class — that is what makes it a
+// decoupling adapter. `XtermRenderer.ts` is the sole implementation today (a
+// second, `ghostty-web`-backed one was removed; see `defaultRenderer.ts`), but
+// the seam earns its keep regardless: it is what the component tests mock, and
+// it keeps the swap cost low if the engine is ever revisited.
 //
 // Naming follows xterm.js's well-established public API vocabulary — the de
-// facto reference shape for a browser terminal adapter — since both
-// implementations must satisfy this same interface: `write`, `onData`,
+// facto reference shape for a browser terminal adapter: `write`, `onData`,
 // `resize`, `focus`, `onTitleChange`, `dispose` are all real xterm.js method
 // names. Note the xterm.js semantics carried over here: `write()` pushes PTY
 // output INTO the renderer, while `onData()` fires with bytes the user TYPED
@@ -34,9 +31,9 @@ export interface TerminalFontOptions {
   ligatures: boolean;
 }
 
-/** A terminal color scheme, in the `ITheme` shape both engines accept. The
- * concrete palettes live in theme/terminalThemes.ts; this file stays
- * import-free, so the shape is re-declared structurally here. */
+/** A terminal color scheme, in xterm.js's `ITheme` shape. The concrete
+ * palettes live in theme/terminalThemes.ts; this file stays import-free, so
+ * the shape is re-declared structurally here. */
 export interface TerminalThemeColors {
   background: string;
   foreground: string;
@@ -63,9 +60,9 @@ export interface TerminalThemeColors {
 }
 
 /**
- * A Remo-owned adapter over a concrete browser terminal renderer
- * (`ghostty-web` or `xterm`). Implementations translate this interface's
- * calls into the underlying library's real API.
+ * A Remo-owned adapter over a concrete browser terminal renderer.
+ * Implementations translate this interface's calls into the underlying
+ * library's real API.
  */
 export interface RendererAdapter {
   /**
