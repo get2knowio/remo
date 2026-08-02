@@ -2,7 +2,7 @@
   position: absolute;
   inset: 0;
   z-index: 70;
-  background: oklch(0.1 0.006 255 / 0.6);
+  background: var(--overlay-scrim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -15,7 +15,7 @@
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   padding: 20px;
-  box-shadow: 0 24px 60px oklch(0 0 0 / 0.6);
+  box-shadow: 0 24px 60px var(--shadow-color-strong);
   animation: rpop 0.14s ease;
 }
 

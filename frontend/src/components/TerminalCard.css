@@ -67,7 +67,7 @@
   opacity: 0.4;
 }
 .terminal-card--drop-target {
-  outline: 2px dashed color-mix(in oklch, var(--accent) 85%, white);
+  outline: 2px dashed var(--accent-strong);
   outline-offset: -3px;
   background: color-mix(in oklch, var(--accent) 12%, var(--bg-term));
 }
@@ -82,9 +82,9 @@
   display: flex;
   align-items: flex-start;
   border-radius: var(--radius-lg);
-  border: 2px dashed color-mix(in oklch, var(--accent) 80%, white);
+  border: 2px dashed var(--accent-strong);
   background: color-mix(in oklch, var(--accent) 16%, transparent);
-  box-shadow: 0 12px 30px oklch(0 0 0 / 0.35);
+  box-shadow: 0 12px 30px var(--shadow-color);
   cursor: grabbing;
   overflow: hidden;
 }
@@ -196,6 +196,102 @@
   background: var(--bg-btn-hover);
 }
 
+/* --- per-card terminal theme picker --- */
+.tc-theme {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* The swatch button paints itself in the card's terminal colors (set inline),
+ * so it reads as a live sample rather than a labelled control. */
+.tc-btn--swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+}
+.terminal-card--grid .tc-btn--swatch {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+/* Keep the inline theme colors on hover — .tc-btn:hover would repaint it. */
+.tc-btn--swatch:hover {
+  background: inherit;
+  border-color: var(--accent-strong);
+}
+
+.tc-theme-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  min-width: 216px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 14px 34px var(--shadow-color);
+  animation: rpop 0.12s ease;
+}
+
+.tc-theme-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-1);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.tc-theme-item:hover {
+  background: var(--bg-row-hover);
+}
+.tc-theme-item--on {
+  border-color: color-mix(in oklch, var(--accent) 55%, var(--border-strong));
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+  color: var(--accent-strong);
+}
+
+/* Mini preview: the theme's background with three of its ANSI colors on top. */
+.tc-theme-swatch {
+  flex: none;
+  width: 34px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+.tc-theme-swatch i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.tc-theme-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Window-control cluster: a tight row of square, icon-only mode buttons. */
 .tc-winctl {
   display: flex;
@@ -224,7 +320,7 @@
 .tc-btn--active {
   border-color: color-mix(in oklch, var(--accent) 55%, var(--border-strong));
   background: color-mix(in oklch, var(--accent) 18%, transparent);
-  color: color-mix(in oklch, var(--accent) 82%, white);
+  color: var(--accent-strong);
 }
 
 /* Unavailable modes (e.g. Grid with no grid to show) read as inert. */
@@ -244,21 +340,21 @@
 .tc-btn--accent {
   border-color: color-mix(in oklch, var(--accent) 45%, var(--border-strong));
   background: color-mix(in oklch, var(--accent) 15%, transparent);
-  color: color-mix(in oklch, var(--accent) 80%, white);
+  color: var(--accent-strong);
   font-weight: 600;
 }
 
 .tc-btn--close:hover {
-  background: oklch(0.3 0.05 25);
-  color: oklch(0.85 0.11 25);
+  background: var(--danger-surface-hover);
+  color: var(--danger-emph);
 }
 
 .terminal-card-error {
   flex: none;
   padding: 9px 12px;
-  background: oklch(0.2 0.03 25);
-  color: oklch(0.85 0.09 25);
-  border-bottom: 1px solid oklch(0.38 0.08 25);
+  background: var(--danger-surface);
+  color: var(--danger-text);
+  border-bottom: 1px solid var(--danger-border);
   font-size: 12px;
 }
 
@@ -287,11 +383,16 @@
     font-size: 13px;
   }
   .tc-btn--icon,
-  .terminal-card--grid .tc-btn--icon {
+  .terminal-card--grid .tc-btn--icon,
+  .tc-btn--swatch,
+  .terminal-card--grid .tc-btn--swatch {
     width: 34px;
     height: 34px;
     padding: 0;
     font-size: 15px;
+  }
+  .tc-theme-item {
+    padding: 10px 8px;
   }
   .tc-winctl {
     gap: 7px;

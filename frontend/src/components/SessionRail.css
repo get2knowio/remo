@@ -95,13 +95,13 @@
 .rail-toggle--active {
   border-color: var(--warn);
   background: color-mix(in oklch, var(--warn) 16%, var(--bg-btn));
-  color: oklch(0.9 0.08 88);
+  color: var(--warn-text);
 }
 .rail-openall {
   font-weight: 600;
   border-color: color-mix(in oklch, var(--accent) 45%, var(--border-strong));
   background: color-mix(in oklch, var(--accent) 15%, var(--bg-btn));
-  color: color-mix(in oklch, var(--accent) 80%, white);
+  color: var(--accent-strong);
 }
 .rail-openall:disabled {
   opacity: 0.5;
@@ -177,8 +177,8 @@
   margin: 2px 4px 6px;
   padding: 9px 10px;
   border-radius: 8px;
-  background: oklch(0.2 0.03 25);
-  border: 1px solid oklch(0.38 0.08 25);
+  background: var(--danger-surface);
+  border: 1px solid var(--danger-border);
 }
 .rail-inst-error-title {
   display: flex;
@@ -186,7 +186,7 @@
   gap: 7px;
   font-size: 12px;
   font-weight: 600;
-  color: oklch(0.82 0.1 25);
+  color: var(--danger-text);
 }
 .rail-inst-error-msg {
   font-size: 11px;
@@ -199,7 +199,7 @@
   margin-top: 7px;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: oklch(0.74 0.05 80);
+  color: var(--warn-text-dim);
   background: var(--bg-term);
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -241,7 +241,7 @@
   width: 10px;
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--accent);
+  color: var(--accent-ink);
   flex: none;
 }
 .rail-row-name {
@@ -316,8 +316,8 @@
   margin: 12px 4px;
   padding: 14px;
   border-radius: 10px;
-  background: oklch(0.21 0.03 70);
-  border: 1px solid oklch(0.4 0.08 70);
+  background: var(--warn-surface);
+  border: 1px solid var(--warn-border);
   text-align: left;
 }
 .rail-notice-icon {

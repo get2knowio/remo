@@ -20,7 +20,11 @@
 
 import { init as ghosttyInit } from "ghostty-web";
 import type { RendererChoice } from "../state/settings";
-import type { RendererAdapter, TerminalFontOptions } from "./RendererAdapter";
+import type {
+  RendererAdapter,
+  TerminalFontOptions,
+  TerminalThemeColors,
+} from "./RendererAdapter";
 import { GhosttyRenderer } from "./GhosttyRenderer";
 import { XtermRenderer } from "./XtermRenderer";
 
@@ -55,11 +59,15 @@ export function isGhosttyReady(): boolean {
 
 /** Build the renderer `TerminalCard` uses. `choice` is the user's selected
  * engine (default "xterm"); ghostty is used only when explicitly chosen AND its
- * WASM init succeeded, else we fall back to xterm. `font` seeds the initial
- * family/size/ligatures from the settings store. */
+ * WASM init succeeded, else we fall back to xterm. `font` and `theme` seed the
+ * initial family/size/ligatures and color scheme from the settings store, so a
+ * freshly-mounted terminal paints correctly on its first frame. */
 export function createDefaultRenderer(
   font?: TerminalFontOptions,
   choice: RendererChoice = "xterm",
+  theme?: TerminalThemeColors,
 ): RendererAdapter {
-  return choice === "ghostty" && ghosttyReady ? new GhosttyRenderer(font) : new XtermRenderer(font);
+  return choice === "ghostty" && ghosttyReady
+    ? new GhosttyRenderer(font, theme)
+    : new XtermRenderer(font, theme);
 }

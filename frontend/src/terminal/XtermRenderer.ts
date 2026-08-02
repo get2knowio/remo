@@ -31,6 +31,7 @@ import type {
   RendererAdapter,
   TerminalDimensions,
   TerminalFontOptions,
+  TerminalThemeColors,
 } from "./RendererAdapter";
 
 // OSC 52 handling: WRITE lets a remote app (e.g. Claude Code's copy-on-select)
@@ -65,13 +66,16 @@ export class XtermRenderer implements RendererAdapter {
    * remote PTY through the same path. */
   private readonly dataHandlers = new Set<(data: Uint8Array | string) => void>();
 
-  constructor(font: TerminalFontOptions = DEFAULT_FONT) {
+  constructor(font: TerminalFontOptions = DEFAULT_FONT, theme?: TerminalThemeColors) {
     this.terminal = new Terminal({
       cursorBlink: true,
       convertEol: false,
       scrollback: 5000,
       fontFamily: font.fontFamily,
       fontSize: font.fontSize,
+      // A copy: xterm keeps the object we hand it, and our caller's is shared
+      // across every terminal using this theme.
+      ...(theme ? { theme: { ...theme } } : {}),
       // @xterm/addon-ligatures registers a character joiner, which lives behind
       // xterm's "proposed API" guard; without this the addon throws on load.
       allowProposedApi: true,
@@ -204,6 +208,17 @@ export class XtermRenderer implements RendererAdapter {
     this.terminal.options.fontFamily = options.fontFamily;
     this.terminal.options.fontSize = options.fontSize;
     this.applyLigatures(options.ligatures);
+  }
+
+  applyTheme(colors: TerminalThemeColors): void {
+    // A FRESH object is required: xterm only reacts to the `theme` options
+    // setter, so mutating the existing one in place would change nothing.
+    this.terminal.options.theme = { ...colors };
+    // The WebGL renderer caches a glyph atlas keyed on the old colors; force a
+    // full repaint so no stale-colored cells survive the switch.
+    if (this.opened) {
+      this.terminal.refresh(0, this.terminal.rows - 1);
+    }
   }
 
   focus(): void {

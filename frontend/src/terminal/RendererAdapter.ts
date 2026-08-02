@@ -34,6 +34,34 @@ export interface TerminalFontOptions {
   ligatures: boolean;
 }
 
+/** A terminal color scheme, in the `ITheme` shape both engines accept. The
+ * concrete palettes live in theme/terminalThemes.ts; this file stays
+ * import-free, so the shape is re-declared structurally here. */
+export interface TerminalThemeColors {
+  background: string;
+  foreground: string;
+  cursor: string;
+  cursorAccent: string;
+  selectionBackground: string;
+  selectionForeground: string;
+  black: string;
+  red: string;
+  green: string;
+  yellow: string;
+  blue: string;
+  magenta: string;
+  cyan: string;
+  white: string;
+  brightBlack: string;
+  brightRed: string;
+  brightGreen: string;
+  brightYellow: string;
+  brightBlue: string;
+  brightMagenta: string;
+  brightCyan: string;
+  brightWhite: string;
+}
+
 /**
  * A Remo-owned adapter over a concrete browser terminal renderer
  * (`ghostty-web` or `xterm`). Implementations translate this interface's
@@ -74,6 +102,14 @@ export interface RendererAdapter {
    * before `open()` (they cache the options for the eventual open).
    */
   applyFont(options: TerminalFontOptions): void;
+
+  /**
+   * Applies a new color scheme to a live terminal. Unlike `applyFont` this
+   * does not change the cell grid, so no `fit()` is needed afterwards.
+   * Implementations must be safe to call before `open()` (they cache the
+   * colors for the eventual open).
+   */
+  applyTheme(colors: TerminalThemeColors): void;
 
   /** Moves keyboard focus into the terminal. */
   focus(): void;

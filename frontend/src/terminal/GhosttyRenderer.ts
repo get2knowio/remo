@@ -16,6 +16,7 @@ import type {
   RendererAdapter,
   TerminalDimensions,
   TerminalFontOptions,
+  TerminalThemeColors,
 } from "./RendererAdapter";
 
 /** Minimal shape of the disposable object xterm.js-compatible `on*` methods
@@ -39,13 +40,14 @@ export class GhosttyRenderer implements RendererAdapter {
    * plus synthesize Shift+Enter, through one path). */
   private readonly dataHandlers = new Set<(data: Uint8Array | string) => void>();
 
-  constructor(font: TerminalFontOptions = DEFAULT_FONT) {
+  constructor(font: TerminalFontOptions = DEFAULT_FONT, theme?: TerminalThemeColors) {
     this.font = font;
     this.terminal = new Terminal({
       cursorBlink: true,
       scrollback: 5000,
       fontFamily: font.fontFamily,
       fontSize: font.fontSize,
+      ...(theme ? { theme: { ...theme } } : {}),
     });
     this.terminal.onData((data: string | Uint8Array) => this.emit(data));
     // Best-effort Shift+Enter → ESC+CR (newline), matching XtermRenderer. Guarded
@@ -125,6 +127,16 @@ export class GhosttyRenderer implements RendererAdapter {
     if (opts) {
       opts.fontFamily = options.fontFamily;
       opts.fontSize = options.fontSize;
+    }
+  }
+
+  applyTheme(colors: TerminalThemeColors): void {
+    // Same defensive options-bag guard as applyFont: ghostty-web is pre-1.0 and
+    // a build without a writable `options` must degrade to "the theme applies
+    // on the next mount", never throw at a user switching themes.
+    const opts = (this.terminal as unknown as { options?: Record<string, unknown> }).options;
+    if (opts) {
+      opts.theme = { ...colors };
     }
   }
 

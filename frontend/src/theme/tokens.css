@@ -3,11 +3,28 @@
  * Single source of truth for the console's oklch palette, the live-tunable
  * terminal font variables (driven by state/settings.ts), and the shared
  * keyframe animations. Every component .css references these vars instead of
- * repeating literals. The console commits to a dark theme (matching the
- * mockup); the terminal surface is dark regardless. */
+ * repeating literals.
+ *
+ * Light/dark: every color token is a `light-dark(<light>, <dark>)` pair, so the
+ * whole console follows `color-scheme`. `:root` declares `light dark`, which
+ * means "system" mode needs zero JavaScript — the browser resolves the OS
+ * preference live, with no flash of the wrong theme on first paint. An explicit
+ * user choice is applied by state/settings.ts as `data-theme="light" | "dark"`
+ * on <html>, which pins `color-scheme` and therefore which half of every
+ * `light-dark()` pair wins.
+ *
+ * The dark side of every pair is byte-identical to the console's original
+ * dark-only palette. The core surface/text vars additionally carry a plain
+ * dark declaration on the line before, so browsers without `light-dark()`
+ * (pre Chrome 123 / Firefox 120 / Safari 17.5) still get the original dark
+ * look rather than an unstyled page.
+ *
+ * The terminal surface itself is themed separately (theme/terminalThemes.ts):
+ * TerminalCard sets `--bg-term` inline from the terminal theme in effect for
+ * that card, so the card's padding gutter matches the emulator's background. */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
 
   /* --- live, user-tunable (written to <html> by state/settings.ts) --- */
   --accent: #38bdf8;
@@ -22,50 +39,106 @@
 
   /* --- surfaces --- */
   --bg-app: oklch(0.17 0.012 255);
-  --bg-header: oklch(0.195 0.012 255);
-  --bg-rail: oklch(0.185 0.012 255);
-  --bg-pane: oklch(0.155 0.01 255);
+  --bg-app: light-dark(oklch(0.965 0.004 255), oklch(0.17 0.012 255));
+  --bg-header: light-dark(oklch(0.995 0.002 255), oklch(0.195 0.012 255));
+  --bg-rail: light-dark(oklch(0.985 0.003 255), oklch(0.185 0.012 255));
+  --bg-pane: light-dark(oklch(0.95 0.005 255), oklch(0.155 0.01 255));
   --bg-term: oklch(0.12 0.008 255);
-  --bg-elev: oklch(0.21 0.012 255);
-  --bg-input: oklch(0.155 0.01 255);
-  --bg-btn: oklch(0.23 0.012 255);
-  --bg-btn-hover: oklch(0.27 0.012 255);
-  --bg-row-hover: oklch(0.22 0.012 255);
+  --bg-term: light-dark(oklch(0.96 0.006 255), oklch(0.12 0.008 255));
+  --bg-elev: light-dark(oklch(1 0 0), oklch(0.21 0.012 255));
+  --bg-input: light-dark(oklch(1 0 0), oklch(0.155 0.01 255));
+  --bg-btn: light-dark(oklch(0.975 0.003 255), oklch(0.23 0.012 255));
+  --bg-btn-hover: light-dark(oklch(0.94 0.006 255), oklch(0.27 0.012 255));
+  --bg-row-hover: light-dark(oklch(0.945 0.006 255), oklch(0.22 0.012 255));
 
   /* --- borders --- */
-  --border: oklch(0.27 0.012 255);
-  --border-soft: oklch(0.25 0.012 255);
-  --border-strong: oklch(0.31 0.012 255);
+  --border: light-dark(oklch(0.88 0.006 255), oklch(0.27 0.012 255));
+  --border-soft: light-dark(oklch(0.91 0.005 255), oklch(0.25 0.012 255));
+  --border-strong: light-dark(oklch(0.83 0.008 255), oklch(0.31 0.012 255));
 
   /* --- text --- */
   --text: oklch(0.92 0.006 255);
-  --text-1: oklch(0.86 0.01 255);
-  --text-2: oklch(0.72 0.01 255);
-  --text-dim: oklch(0.62 0.012 255);
-  --text-faint: oklch(0.5 0.012 255);
+  --text: light-dark(oklch(0.28 0.015 255), oklch(0.92 0.006 255));
+  --text-1: light-dark(oklch(0.34 0.014 255), oklch(0.86 0.01 255));
+  --text-2: light-dark(oklch(0.46 0.014 255), oklch(0.72 0.01 255));
+  --text-dim: light-dark(oklch(0.55 0.014 255), oklch(0.62 0.012 255));
+  --text-faint: light-dark(oklch(0.64 0.012 255), oklch(0.5 0.012 255));
 
-  /* --- status --- */
-  --ok: oklch(0.8 0.15 150);
-  --warn: oklch(0.83 0.13 88);
-  --danger: oklch(0.72 0.17 25);
-  --info: oklch(0.78 0.1 235);
-  --mag: oklch(0.72 0.18 350);
-  --cyan: oklch(0.8 0.09 200);
+  /* --- status --- *
+   * The dark palette's pastels (L ≈ 0.72–0.85) are illegible on a light
+   * surface, and these are used as text and dot colors; the light side keeps
+   * the hue but drops to L ≈ 0.5–0.6. */
+  --ok: light-dark(oklch(0.55 0.15 150), oklch(0.8 0.15 150));
+  --warn: light-dark(oklch(0.58 0.13 88), oklch(0.83 0.13 88));
+  --danger: light-dark(oklch(0.53 0.19 25), oklch(0.72 0.17 25));
+  --info: light-dark(oklch(0.55 0.13 235), oklch(0.78 0.1 235));
+  --mag: light-dark(oklch(0.55 0.2 350), oklch(0.72 0.18 350));
+  --cyan: light-dark(oklch(0.55 0.1 200), oklch(0.8 0.09 200));
 
   /* --- git / session glyphs --- */
-  --git-changes: oklch(0.78 0.13 62);
-  --git-sync: oklch(0.72 0.11 12);
-  --git-active: oklch(0.85 0.14 92);
+  --git-changes: light-dark(oklch(0.58 0.14 62), oklch(0.78 0.13 62));
+  --git-sync: light-dark(oklch(0.55 0.14 12), oklch(0.72 0.11 12));
+  --git-active: light-dark(oklch(0.6 0.14 92), oklch(0.85 0.14 92));
 
   /* --- provider accents --- */
-  --prov-aws: oklch(0.78 0.13 70);
-  --prov-hetzner: oklch(0.72 0.16 25);
-  --prov-proxmox: oklch(0.72 0.13 300);
-  --prov-incus: oklch(0.78 0.11 200);
-  --prov-unknown: oklch(0.62 0.012 255);
+  --prov-aws: light-dark(oklch(0.58 0.14 70), oklch(0.78 0.13 70));
+  --prov-hetzner: light-dark(oklch(0.55 0.19 25), oklch(0.72 0.16 25));
+  --prov-proxmox: light-dark(oklch(0.52 0.16 300), oklch(0.72 0.13 300));
+  --prov-incus: light-dark(oklch(0.55 0.12 200), oklch(0.78 0.11 200));
+  --prov-unknown: light-dark(oklch(0.6 0.012 255), oklch(0.62 0.012 255));
+
+  /* --- accent derivatives --- *
+   * The accent is a user-chosen hue that has to stay legible in both modes.
+   * The dark theme lightened it toward white inline; doing that on a light
+   * surface washes it out, so each mode mixes toward its own extreme. */
+  /* Accent-colored text/glyphs on a NEUTRAL surface (a value readout, a radio
+   * check, the rail's focus caret). Dark keeps the accent as-is. */
+  --accent-ink: light-dark(color-mix(in oklch, var(--accent) 72%, black), var(--accent));
+  /* Accent on an accent-TINTED surface (active window control, "open all"), and
+   * accent outlines, which both need to separate from the tint behind them. */
+  --accent-strong: light-dark(
+    color-mix(in oklch, var(--accent) 78%, black),
+    color-mix(in oklch, var(--accent) 82%, white)
+  );
+
+  /* --- overlays / elevation --- */
+  --overlay-scrim: light-dark(oklch(0.55 0.006 255 / 0.35), oklch(0.1 0.006 255 / 0.6));
+  --overlay-scrim-strong: light-dark(oklch(0.97 0.005 255 / 0.9), oklch(0.13 0.01 255 / 0.93));
+  --shadow-color: light-dark(oklch(0.45 0.02 255 / 0.18), oklch(0 0 0 / 0.35));
+  --shadow-color-strong: light-dark(oklch(0.45 0.02 255 / 0.28), oklch(0 0 0 / 0.6));
+
+  /* --- danger surfaces (error banners, offline card, close-button hover) --- */
+  --danger-surface: light-dark(oklch(0.96 0.025 25), oklch(0.2 0.03 25));
+  --danger-surface-hover: light-dark(oklch(0.92 0.05 25), oklch(0.3 0.05 25));
+  --danger-border: light-dark(oklch(0.86 0.07 25), oklch(0.38 0.08 25));
+  --danger-text: light-dark(oklch(0.45 0.16 25), oklch(0.85 0.09 25));
+  --danger-text-2: light-dark(oklch(0.5 0.06 25), oklch(0.72 0.02 25));
+  --danger-emph: light-dark(oklch(0.42 0.18 25), oklch(0.85 0.11 25));
+
+  /* --- warn surfaces (rail notices, active filter toggle, hint chips) --- */
+  --warn-surface: light-dark(oklch(0.97 0.03 70), oklch(0.21 0.03 70));
+  --warn-border: light-dark(oklch(0.87 0.08 70), oklch(0.4 0.08 70));
+  --warn-text: light-dark(oklch(0.48 0.11 88), oklch(0.9 0.08 88));
+  --warn-text-dim: light-dark(oklch(0.5 0.07 80), oklch(0.74 0.05 80));
+
+  /* --- misc --- */
+  /* Readable ink on a filled --ok button. */
+  --on-ok: light-dark(oklch(0.99 0.02 150), oklch(0.16 0.05 150));
+  /* The sliding dot of a toggle switch. */
+  --knob: light-dark(oklch(1 0 0), oklch(0.96 0 0));
 
   --radius: 8px;
   --radius-lg: 11px;
+}
+
+/* An explicit site-theme choice pins color-scheme, which is what decides the
+ * winning half of every light-dark() pair above. No attribute = "system". */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 * {
