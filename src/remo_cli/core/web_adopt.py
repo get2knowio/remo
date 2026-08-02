@@ -123,6 +123,17 @@ OUTCOME_SECURITY_FLAGGED = "security_flagged"
 #: Push-only outcome (FR-026): the instance matches the delta cache from the
 #: last successful push, so keyscan/authorize were skipped (already adopted).
 OUTCOME_UNCHANGED = "unchanged"
+#: Push-only outcome (#122): the instance was skipped as ``unchanged``, the
+#: service-side verification pass then failed to authenticate to it, and the
+#: push re-ran keyscan/authorize for it. See `_repair_auth_failures`.
+OUTCOME_REPAIRED = "repaired"
+
+#: The `web.discovery` error code for an instance the service reaches but
+#: cannot authenticate to. Matched against the *detail* of a failed
+#: verification result because `POST /setup/verify` reports the code there and
+#: carries no separate machine-readable field — and a newer CLI has to keep
+#: working against an older service, so this cannot become a wire change.
+_VERIFY_AUTH_FAILED = "auth_failed"
 
 _MOUNT_CONFIGURED_MSG = (
     "this deployment is configured via read-only mounts (the registry and SSH "
@@ -1138,10 +1149,11 @@ def _cache_from_outcomes(
 ) -> dict[str, CachedInstance]:
     """Build the push delta cache from a completed run (module docstring design).
 
-    A direct-access instance is cached only when it ended ``adopted`` or
-    ``unchanged`` — those are exactly the instances whose host keys were verified
-    and whose lines were included in the successful PUT; a skipped/flagged direct
-    instance gets no entry so the next push retries it in full.
+    A direct-access instance is cached only when it ended ``adopted``,
+    ``unchanged`` or ``repaired`` — those are exactly the instances whose host
+    keys were verified and whose lines were included in the successful PUT; a
+    skipped/flagged direct instance gets no entry so the next push retries it in
+    full.
 
     SSM instances are cached too (they end ``skipped_by_design``) even though
     they carry no keyscan/authorize state: their registry entry IS mirrored on
@@ -1153,7 +1165,7 @@ def _cache_from_outcomes(
     cache: dict[str, CachedInstance] = {}
     for o in outcomes:
         if is_direct_access(o.host):
-            if o.outcome not in (OUTCOME_ADOPTED, OUTCOME_UNCHANGED):
+            if o.outcome not in (OUTCOME_ADOPTED, OUTCOME_UNCHANGED, OUTCOME_REPAIRED):
                 continue
         elif o.outcome != OUTCOME_SKIPPED_BY_DESIGN:
             continue
@@ -1339,7 +1351,11 @@ def render_summary(outcomes: list[InstanceOutcome]) -> None:
     name_width = max(len(o.label) for o in outcomes)
     outcome_width = max(len(o.outcome) for o in outcomes)
     for o in outcomes:
-        color = GREEN if o.outcome in (OUTCOME_ADOPTED, OUTCOME_UNCHANGED) else YELLOW
+        color = (
+            GREEN
+            if o.outcome in (OUTCOME_ADOPTED, OUTCOME_UNCHANGED, OUTCOME_REPAIRED)
+            else YELLOW
+        )
         line = (
             f"  {o.label:<{name_width}}  "
             f"{color}{o.outcome:<{outcome_width}}{NC}  {o.detail}"
@@ -1354,6 +1370,91 @@ def render_summary(outcomes: list[InstanceOutcome]) -> None:
         print(line)
         if o.remediation:
             print(f"      -> {o.remediation}")
+
+
+def auth_failed_labels(verify: dict[str, Any]) -> set[str]:
+    """Instance labels the service reached but could not authenticate to (#122).
+
+    `POST /setup/verify` reports per-instance checks as ``instance <type>/<name>``
+    with the `web.discovery` error code in ``detail``; ``auth_failed`` means the
+    service's key is not (or no longer) accepted by that instance's
+    ``authorized_keys``, or the host key changed under it.
+    """
+    labels: set[str] = set()
+    results = verify.get("results")
+    if not isinstance(results, list):
+        return labels
+    for result in results:
+        if not isinstance(result, dict) or result.get("passed"):
+            continue
+        name = str(result.get("name", ""))
+        if not name.startswith("instance "):
+            continue
+        if str(result.get("detail") or "").strip() == _VERIFY_AUTH_FAILED:
+            labels.add(name.removeprefix("instance "))
+    return labels
+
+
+def _repair_auth_failures(
+    outcomes: list[InstanceOutcome],
+    verify: dict[str, Any],
+    host_keys: dict[str, list[str]],
+    *,
+    interactive: bool,
+    public_key: str,
+) -> list[InstanceOutcome]:
+    """Re-authorize instances the fast path skipped but verification rejected (#122).
+
+    The ``unchanged`` fast path answers "did this instance's registry entry
+    change since our last push?" from the local push cache. That is a correct
+    answer to a *different* question than the one that decides whether authorize
+    can be skipped — "is the service still authorized on this instance?" — which
+    only the host can answer. When the two diverge (the service key is wiped
+    host-side, e.g. by a provisioning pass that rewrote ``authorized_keys``),
+    push reported ``unchanged`` and repaired nothing, while its own verification
+    step printed the failure it had just declined to fix.
+
+    So: treat verification as the authority it is. Any instance skipped as
+    ``unchanged`` whose verification came back ``auth_failed`` gets the full
+    keyscan/authorize treatment after all — the skip was an optimization whose
+    premise verification just disproved. Instances that were actually processed
+    this run are left alone: re-running authorize for them would not change the
+    outcome, and their failure is a genuine one worth reporting.
+
+    Mutates *outcomes* in place (and *host_keys*, via `_process_instance`) and
+    returns the outcomes that were reprocessed.
+    """
+    failed = auth_failed_labels(verify)
+    if not failed:
+        return []
+
+    repaired: list[InstanceOutcome] = []
+    for index, outcome in enumerate(outcomes):
+        if outcome.outcome != OUTCOME_UNCHANGED or outcome.label not in failed:
+            continue
+        print_warning(
+            f"{outcome.label}: the service cannot authenticate to this instance, "
+            "but the push skipped it as unchanged — re-authorizing."
+        )
+        # The cached host-key lines are stale by assumption here: a changed host
+        # key is one of the ways an instance reads as auth_failed. Drop them so
+        # the rescan's lines are what lands in the mirror.
+        host_keys.pop(outcome.host.name, None)
+        redone = _process_instance(
+            outcome.host,
+            public_key,
+            interactive=interactive,
+            host_keys=host_keys,
+        )
+        if redone.outcome == OUTCOME_ADOPTED:
+            redone = InstanceOutcome(
+                redone.host,
+                OUTCOME_REPAIRED,
+                detail="service key was missing host-side; re-authorized",
+            )
+        outcomes[index] = redone
+        repaired.append(redone)
+    return repaired
 
 
 def render_revocations(revocations: list[RevocationOutcome]) -> None:
@@ -1378,8 +1479,18 @@ def render_revocations(revocations: list[RevocationOutcome]) -> None:
             print(f"      -> {r.remediation}")
 
 
-def render_verification(verify: dict[str, Any], outcomes: list[InstanceOutcome]) -> None:
-    """Render the service-side verification report, annotating FR-014 cases."""
+def render_verification(
+    verify: dict[str, Any],
+    outcomes: list[InstanceOutcome],
+    *,
+    service_url: str = "",
+) -> None:
+    """Render the service-side verification report, annotating FR-014 cases.
+
+    *service_url* lets an ``auth_failed`` line name the exact command that
+    repairs it (#122). The service's own remediation cannot: it has no idea what
+    URL the operator reaches it on.
+    """
     print()
     print("Service-side verification:")
     results = verify.get("results")
@@ -1408,6 +1519,12 @@ def render_verification(verify: dict[str, Any], outcomes: list[InstanceOutcome])
                 )
             if remediation:
                 print(f"      remediation: {remediation}")
+            if name.startswith("instance ") and detail.strip() == _VERIFY_AUTH_FAILED:
+                # This push already re-authorized it once and the service still
+                # can't get in, so name the command that redoes the work from
+                # scratch rather than leaving the operator to infer it (#122).
+                target = f" {service_url}" if service_url else " <service-url>"
+                print(f"      still failing after re-authorization — try: remo web push --force{target}")
 
     if verify.get("all_passed"):
         print_success("All service-side checks passed.")
@@ -1624,10 +1741,35 @@ def _push_flow(
     # service's authorized_keys entry on each removed instance (never fatal).
     revocations = _revoke_removed(removed, cached_instances)
 
-    # Step 6: only after a successful PUT, rewrite the delta cache for this
+    # Step 6: service-side verification (FR-014).
+    print_info("Running service-side verification...")
+    verify = client.post_verify()
+
+    # Step 6b (#122): self-heal. Verification is the only observer of whether
+    # the service is still authorized on an instance; the push cache only knows
+    # what this workstation last *sent*. Where the two disagree, re-authorize
+    # the instances the fast path skipped, then re-PUT (a repaired instance may
+    # carry rescanned host-key lines) and re-verify so the report reflects the
+    # repaired state rather than the state that triggered it.
+    repaired = _repair_auth_failures(
+        outcomes, verify, host_keys, interactive=interactive, public_key=public_key
+    )
+    if repaired:
+        payload = build_adoption_payload(hosts, host_keys, allow_empty=True)
+        payload["workstation"] = _workstation_label()
+        applied = client.put_registry(payload, allow_empty=allow_empty)
+        print_info("Re-running service-side verification after repair...")
+        verify = client.post_verify()
+
+    # Step 7: only after a successful PUT, rewrite the delta cache for this
     # deployment (removed instances drop out; skipped/flagged instances get no
     # entry so the next push retries them in full). Record the generation the
     # service just returned so the next push can flap-detect (US5).
+    #
+    # An instance the service still cannot authenticate to is dropped from the
+    # cache as well (#122): caching it would make it eligible for the very
+    # `unchanged` fast path that let the breakage persist, so the next push
+    # would skip it again. A known-failed instance always gets retried in full.
     returned_generation = applied.get("mirror_generation")
     new_generation = (
         returned_generation
@@ -1635,17 +1777,16 @@ def _push_flow(
         else cached_generation
     )
     if deployment_id:
-        _update_push_cache(
-            deployment_id, _cache_from_outcomes(outcomes, host_keys), new_generation
-        )
-
-    # Step 7: service-side verification (FR-014).
-    print_info("Running service-side verification...")
-    verify = client.post_verify()
+        cache_entries = _cache_from_outcomes(outcomes, host_keys)
+        still_failing = auth_failed_labels(verify)
+        for outcome in outcomes:
+            if outcome.label in still_failing:
+                cache_entries.pop(outcome.host.name, None)
+        _update_push_cache(deployment_id, cache_entries, new_generation)
 
     render_summary(outcomes)
     render_revocations(revocations)
-    render_verification(verify, outcomes)
+    render_verification(verify, outcomes, service_url=client.base_url)
 
     return AdoptResult(
         outcomes=outcomes,
