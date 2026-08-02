@@ -196,11 +196,11 @@ def _resolve_entry_for_destroy(descriptor: ProviderDescriptor, display_name: str
 
     The stub covers destroying an instance that was never synced/registered
     (HOST_SCOPED providers accept an explicit ``--host``/``--host-user``/
-    ``--node-user`` for this, same as today). The user-flag hint is routed
+    ``--host-user`` for this, same as today). The user-flag hint is routed
     only into the KnownHost attribute that actually stores the host SSH user
     for this provider — found by locating the ``registry_fields`` entry whose
     JSON key ends in ``_user`` (``instance_id``/``host_user`` for Incus;
-    ``region``/``node_user`` for Proxmox) and reading ``kwargs`` under that
+    ``region``/``host_user`` for Proxmox) and reading ``kwargs`` under that
     same JSON key, which equals the click param name by construction
     (research D7). It must NOT land in a non-user slot: Proxmox's
     ``instance_id`` holds the VMID, and a user value there would be forwarded

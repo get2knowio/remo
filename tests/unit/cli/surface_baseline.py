@@ -22,7 +22,7 @@ Subcommands of a provider's ``snapshot``/``host`` group are keyed as
 Rewritten in full for spec 021 (CLI plane separation): the three-intent
 ``update`` verb is gone (replaced by ``upgrade``/``resize``/``tag``), flat
 ``bootstrap`` moved under the ``host`` subgroup, and incus/proxmox's
-``--user`` flag is now ``--host-user``/``--node-user`` respectively. This
+``--user`` flag is now ``--host-user``/``--host-user`` respectively. This
 file *is* the intentional-breaking-change acknowledgment (research.md D9) —
 it is deliberately NOT preserved byte-for-byte from the pre-021 surface.
 
@@ -106,7 +106,7 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "create": [
             "--name",
             "--host",
-            "--node-user",
+            "--host-user",
             "--node",
             "--bridge",
             "--storage",
@@ -127,7 +127,7 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "destroy": [
             "--name",
             "--host",
-            "--node-user",
+            "--host-user",
             "--purge",
             "--yes",
             "-y",
@@ -137,7 +137,7 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "upgrade": [
             "NAME",
             "--host",
-            "--node-user",
+            "--host-user",
             "--devcontainer-runtime",
             "--only",
             "--skip",
@@ -150,16 +150,16 @@ SURFACE: dict[str, dict[str, list[str]]] = {
             "--cores",
             "--memory",
             "--host",
-            "--node-user",
+            "--host-user",
             "-v",
             "--verbose",
         ],
-        "tag": ["NAME", "--host", "--node-user"],
+        "tag": ["NAME", "--host", "--host-user"],
         "list": [],
-        "info": ["--name", "--host", "--node-user"],
+        "info": ["--name", "--host", "--host-user"],
         "sync": [
             "--host",
-            "--node-user",
+            "--host-user",
             "--use-ip",
             "--all",
             "--yes",
@@ -168,7 +168,7 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         ],
         "host bootstrap": [
             "HOST",
-            "--node-user",
+            "--host-user",
             "--bridge",
             "--storage",
             "--template",

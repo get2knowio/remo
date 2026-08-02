@@ -658,7 +658,17 @@ def _probe(scope: SyncScope, host_user: str, use_ip: bool, include_all: bool) ->
             instance_id=host_user,
             access_mode="direct",
         )
-        hosts.append(DiscoveredHost(entry=entry, marked=marked))
+        # #87 / #107: declare what this probe genuinely READ. `host` comes from
+        # the listing (or the IP lookup). `instance_id` holds the Incus-host
+        # login, which the probe does not observe — it is whatever the operator
+        # passed on this invocation — so it counts only when they passed it.
+        # `access_mode` is a constant, never read from the host.
+        observed = {"host"}
+        if host_user:
+            observed.add("instance_id")
+        hosts.append(
+            DiscoveredHost(entry=entry, marked=marked, observed=frozenset(observed))
+        )
 
     return ProbeResult(
         hosts=hosts,

@@ -69,7 +69,7 @@ class TestIncusSaveShape:
 class TestProxmoxSaveShape:
     """providers/proxmox.py create()/sync(): instance_id holds the numeric
     VMID (-> proxmox.vmid); region holds the Proxmox NODE's SSH user
-    (-> proxmox.node_user, confusingly named "region" in the old schema)."""
+    (-> proxmox.host_user, confusingly named "region" in the old schema)."""
 
     def _make(self) -> KnownHost:
         return KnownHost(

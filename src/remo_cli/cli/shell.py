@@ -185,7 +185,7 @@ def _upgrade_command_hint(host) -> str:  # noqa: ANN001
     that registry lookup and would silently fall back to the provider default
     (``""``/``root``). The flag and the attribute both come from the
     descriptor's ``registry_fields`` entry whose JSON key ends in ``_user``
-    (``instance_id``/``host_user`` for Incus, ``region``/``node_user`` for
+    (``instance_id``/``host_user`` for Incus, ``region``/``host_user`` for
     Proxmox) — no provider literals here.
     """
     from remo_cli.core.provider_registry import (  # noqa: PLC0415

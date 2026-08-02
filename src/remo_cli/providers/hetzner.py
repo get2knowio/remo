@@ -425,12 +425,19 @@ def _probe(scope: SyncScope, include_all: bool) -> ProbeResult:
         # this in lockstep with what create/update write.
         marked = labels.get("remo") == "true"
         entry = KnownHost(type="hetzner", name=name, host=ip, user="remo")
+        # #87 / #107: the API response supplies the address and nothing else
+        # this probe records — `instance_id`/`region` are left empty and
+        # `access_mode` is KnownHost's constant default, none of them read from
+        # Hetzner. Declaring that keeps a hand-edited registry value safe.
+        observed = frozenset({"host"})
         # FR-019: only non-running states are ever annotated in render_plan's
         # output, so a normally-running server must report state="" here --
         # otherwise every healthy server would print as "(running)".
         status = server.get("status", "")
         state = "" if status == "running" else status
-        hosts.append(DiscoveredHost(entry=entry, marked=marked, state=state))
+        hosts.append(
+            DiscoveredHost(entry=entry, marked=marked, state=state, observed=observed)
+        )
 
     return ProbeResult(
         hosts=hosts,

@@ -40,7 +40,7 @@ class TestFieldVariantMigrationMatrix:
             legacy_line("incus", "h1/c1", "1.1.1.1", "remo"),
             legacy_line("incus", "h1/c2", "1.1.1.2", "remo", "paul", "direct"),
             legacy_line("incus", "h1/c3", "1.1.1.3", "remo", "paul", "direct", "somenode"),
-            # proxmox: instance_id -> proxmox.vmid, region -> proxmox.node_user.
+            # proxmox: instance_id -> proxmox.vmid, region -> proxmox.host_user.
             legacy_line("proxmox", "p/c1", "2.2.2.1", "remo"),
             legacy_line("proxmox", "p/c2", "2.2.2.2", "remo", "104", "direct"),
             legacy_line("proxmox", "p/c3", "2.2.2.3", "remo", "105", "direct", "root"),
@@ -86,7 +86,7 @@ class TestFieldVariantMigrationMatrix:
         assert e["proxmox"] == {"vmid": "104"}
 
         e = _entry(doc, "proxmox", "p/c3")
-        assert e["proxmox"] == {"vmid": "105", "node_user": "root"}
+        assert e["proxmox"] == {"vmid": "105", "host_user": "root"}
 
         e = _entry(doc, "aws", "a1")
         assert e["access"] == "direct"
