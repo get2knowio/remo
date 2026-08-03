@@ -112,6 +112,24 @@
 - name: Reconnect after UID reassignment
   ansible.builtin.meta: reset_connection
 
+# The task above rewrites /etc/passwd to move the user Ansible is CURRENTLY
+# logged in as off UID 1000, which tears down the live session. Reconnecting is
+# therefore inherently racy, and the next task's first attempt can land before
+# the transport has settled -- on AWS (SSM) that surfaces as an UNREACHABLE
+# host, which no failed_when can rescue and which fails the whole provision:
+#
+#   Data could not be sent to remote host "i-0…": Connection closed by
+#   UNKNOWN port 65535
+#
+# Observed on both CI and main; it is intermittent, which is exactly why it
+# needs a retry rather than a fix somewhere else. wait_for_connection keeps
+# re-attempting until the transport is genuinely back, and returns as soon as
+# it is (so a fast local connection -- Incus, Proxmox -- pays only `delay`).
+- name: Wait for the connection to come back after the UID swap
+  ansible.builtin.wait_for_connection:
+    delay: 5
+    timeout: 120
+
 - name: Create remo user with UID 1000 (matches devcontainer vscode user)
   ansible.builtin.user:
     name: "{{ remo_user }}"
