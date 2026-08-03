@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.1](https://github.com/get2knowio/remo/compare/v4.0.0...v4.0.1) (2026-08-03)
+
+
+### Bug Fixes
+
+* **web:** let the terminal-theme menu scroll instead of being clipped ([#134](https://github.com/get2knowio/remo/issues/134)) ([ffb34e7](https://github.com/get2knowio/remo/commit/ffb34e72cc9d1744130130934538d38af217ec73))
+
 ## [4.0.0](https://github.com/get2knowio/remo/compare/v3.1.0...v4.0.0) (2026-08-03)
 
 
