@@ -11,6 +11,7 @@ transport is exercised here — that's covered by the integration test
 
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -67,37 +68,75 @@ def _entries(*names: str) -> list[ProjectEntry]:
 
 
 @pytest.mark.asyncio
-async def test_concurrency_bounds_wall_clock(tmp_config_dir, monkeypatch):
-    """4 hosts x ~80ms each, concurrency=2 -> wall clock << 4x serial time."""
+async def test_concurrency_is_bounded_by_the_setting(tmp_config_dir, monkeypatch):
+    """`discovery_concurrency` caps how many probes run at once — measured.
+
+    This used to time the whole refresh and assert it beat 75% of the serial
+    duration. That inferred concurrency from a stopwatch, so a loaded machine
+    (a busy CI runner, or a laptop mid-release) failed it with nothing wrong:
+    it flaked during the 4.0.1 release gate on a commit that touched no Python
+    at all.
+
+    Counting the probes actually in flight tests the real property instead, and
+    a stricter one — the old assertion passed for ANY concurrency above ~1.4x,
+    including an unbounded fan-out that ignored the setting entirely.
+    """
+    concurrency = 2
     num_hosts = 4
-    delay = 0.08
     hosts = [("incus", f"host{i}") for i in range(num_hosts)]
     _write_registry(tmp_config_dir, hosts)
 
-    def _slow_get_capabilities(ssh_argv_prefix, *, timeout=None, **kwargs):
-        time.sleep(delay)
+    lock = threading.Lock()
+    in_flight = 0
+    peak = 0
+    # A rendezvous for exactly `concurrency` probes. It is what proves the
+    # probes genuinely OVERLAP: a serial implementation can never assemble a
+    # party, so it trips the timeout instead of quietly passing. With 4 hosts
+    # and a bound of 2 the barrier fills twice, and resets itself in between.
+    barrier = threading.Barrier(concurrency)
+
+    def _instrumented_get_capabilities(ssh_argv_prefix, *, timeout=None, **kwargs):
+        nonlocal in_flight, peak
+        with lock:
+            in_flight += 1
+            peak = max(peak, in_flight)
+        try:
+            barrier.wait(timeout=2)
+        except threading.BrokenBarrierError:
+            # Nobody else arrived: concurrency is lower than configured. Let the
+            # assertions below report that, rather than hanging the suite.
+            pass
+        # Keep hold of the slot briefly. Without this the rendezvousing pair
+        # returns so fast that an implementation ignoring the bound gets its
+        # extra probes in AFTER the count drops, and the peak reads as 2 when 4
+        # were really running (verified: the assertion missed a Semaphore(999)
+        # mutant until this dwell was added). The dependency is one-directional
+        # and therefore safe — a slower machine makes the overlap easier to
+        # observe, never harder, so this can under-report a bug but cannot
+        # invent one.
+        time.sleep(0.05)
+        with lock:
+            in_flight -= 1
         return _capability()
 
-    monkeypatch.setattr(discovery_module, "get_capabilities", _slow_get_capabilities)
+    monkeypatch.setattr(discovery_module, "get_capabilities", _instrumented_get_capabilities)
     monkeypatch.setattr(discovery_module, "list_sessions", lambda *a, **k: _entries("proj1"))
 
-    settings = WebSettings(discovery_concurrency=2, discovery_timeout_s=5.0)
+    # discovery_timeout_s must comfortably exceed the barrier's own timeout.
+    # At 5s each they raced: a serialized implementation left probe 1 parked at
+    # the barrier until wait_for fired, and wait_for RELEASES THE SEMAPHORE
+    # while the executor thread keeps running — so probe 2 overlapped a probe
+    # that was only still there because of the timeout, and the peak read 2 on
+    # an implementation with a bound of 1.
+    settings = WebSettings(discovery_concurrency=concurrency, discovery_timeout_s=30.0)
     service = DiscoveryService(settings)
 
-    start = time.monotonic()
     await service.refresh()
-    elapsed = time.monotonic() - start
 
-    serial_time = num_hosts * delay
-    # Generous tolerance: proves bounded concurrency without being flaky.
-    assert elapsed < serial_time * 0.75, (
-        f"expected concurrency to bound wall-clock well under serial "
-        f"({serial_time:.3f}s), got {elapsed:.3f}s"
+    assert peak == concurrency, (
+        f"expected at most {concurrency} probes in flight at once (and at least "
+        f"that many overlapping), observed a peak of {peak} across {num_hosts} hosts"
     )
-
-    snapshots = service.get_snapshot()
-    assert len(snapshots) == num_hosts
-    assert all(s.status is InstanceStatus.OK for s in snapshots)
 
 
 # ---------------------------------------------------------------------------

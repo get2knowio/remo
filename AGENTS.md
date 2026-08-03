@@ -135,7 +135,8 @@ ansible/                   # Ansible playbooks (invoked by Python via subprocess
 └── requirements.yml
 
 scripts/                   # Repo-root utility scripts (not part of the installed package)
-└── export_openapi.py        # Exports frontend/src/api/generated/{openapi.json,terminal-frames.json} (feature 020)
+├── export_openapi.py        # Exports frontend/src/api/generated/{openapi.json,terminal-frames.json} (feature 020)
+└── palette-check.sh         # Prints every ANSI colour x normal/bold/dim/bright in a live terminal — audits a theme's legibility where contrast maths can't
 
 pyproject.toml             # Build config, dependencies (incl. `web` extra), console_scripts entry point
 ```
