@@ -14,6 +14,19 @@ import {
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
+/** WCAG relative luminance, then the standard contrast ratio. */
+function luminance(hex: string): number {
+  const channels = [1, 3, 5]
+    .map((i) => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map((c) => (c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)));
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrast(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
 // The 22 ITheme fields every palette must set. Listed literally rather than
 // derived from a sample theme, so a field dropped from every palette at once
 // still fails here.
@@ -61,6 +74,44 @@ describe("terminal themes", () => {
     expect(autoTerminalTheme(true).variant).toBe("dark");
     expect(autoTerminalTheme(false).id).toBe(AUTO_LIGHT_THEME_ID);
     expect(autoTerminalTheme(false).variant).toBe("light");
+  });
+
+  // Every colour the Remo pair can PRINT must be legible on its own
+  // background. This is the regression guard for a real report: Remo Light
+  // shipped `white` at #d5d8db and `brightWhite` at #fbfcfd — 1.27:1 and
+  // 1.09:1 — so Claude Code's "Cooked for 9s" and "(shift+tab to cycle)" hints
+  // were invisible, and bold made it worse, since xterm draws bold with the
+  // BRIGHT colour.
+  //
+  // Scoped to the two themes we author: the third-party ports are faithful
+  // copies and several of them would fail this (Gruvbox Light sets colour 0 to
+  // its own background), which is theirs to define, not ours to "fix".
+  //
+  // `black` is exempt: sitting near the background is what colour 0 is FOR in a
+  // dark theme, and apps use it as a background fill far more than as text.
+  describe.each([
+    ["remo-dark", "#040608"],
+    ["remo-light", "#eff2f6"],
+  ])("%s stays legible on its own background", (id, bg) => {
+    const theme = TERMINAL_THEMES.find((t) => t.id === id)!;
+    const printable = Object.entries(theme.colors).filter(
+      ([slot]) =>
+        !["background", "cursorAccent", "selectionBackground", "selectionForeground", "black"].includes(
+          slot,
+        ),
+    );
+
+    it.each(printable)("%s (%s) clears 3:1", (slot, hex) => {
+      expect(contrast(hex, bg), `${id}.${slot} ${hex} on ${bg}`).toBeGreaterThanOrEqual(3);
+    });
+
+    it("keeps bold white stronger than normal white, not weaker", () => {
+      // Bold is drawn with brightWhite; if it were the paler of the two, bold
+      // text would recede exactly where it should stand out.
+      expect(contrast(theme.colors.brightWhite, bg)).toBeGreaterThan(
+        contrast(theme.colors.white, bg),
+      );
+    });
   });
 
   // The palette is a hand-derived snapshot of theme/tokens.css (it cannot
