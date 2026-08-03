@@ -1,5 +1,34 @@
 # Changelog
 
+## [4.0.0](https://github.com/get2knowio/remo/compare/v3.1.0...v4.0.0) (2026-08-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **web:** drop the ghostty-web renderer, leaving xterm.js as the engine ([#130](https://github.com/get2knowio/remo/issues/130))
+* **providers:** `remo proxmox`'s `--node-user` flag is now `--host-user`, on every verb that took it (create, upgrade, resize, tag, destroy, sync, info, host bootstrap). Scripts passing `--node-user` will fail with a Click "no such option" error naming the new spelling. Separately, a container whose registry entry has no recorded host user is now reached via ssh_config rather than as root — matching how create reached it.
+
+### Features
+
+* **web:** give the console a light/dark mode and selectable terminal themes ([#129](https://github.com/get2knowio/remo/issues/129)) ([7905c4b](https://github.com/get2knowio/remo/commit/7905c4b4f4d94403cc4a48c7a9858776774bf47c))
+
+
+### Bug Fixes
+
+* **ansible:** stop provisioning failing when GitHub rate-limits the zellij lookup ([#132](https://github.com/get2knowio/remo/issues/132)) ([cda5d0b](https://github.com/get2knowio/remo/commit/cda5d0b748bc90bb685b28510645d4fe29c35061))
+* **ansible:** survive the SSM reconnect after the UID-1000 swap ([#133](https://github.com/get2knowio/remo/issues/133)) ([1a76f92](https://github.com/get2knowio/remo/commit/1a76f92107e3bd6fb7bfce60e51a0d284a0f4dcf))
+* **devcontainer:** point CLAUDE_CONFIG_DIR at the mounted ~/.claude ([#125](https://github.com/get2knowio/remo/issues/125)) ([b9da45d](https://github.com/get2knowio/remo/commit/b9da45ddc4ed6f513a895e54de9e2e0dd16fe436))
+* **providers:** spell the Proxmox node login `--host-user`, and record it honestly ([#124](https://github.com/get2knowio/remo/issues/124)) ([830d4d6](https://github.com/get2knowio/remo/commit/830d4d65ecab5c9e78b019323b3ad8b9d926f474)), closes [#106](https://github.com/get2knowio/remo/issues/106) [#107](https://github.com/get2knowio/remo/issues/107)
+* **release:** keep uv.lock's version in step with the release bump ([#126](https://github.com/get2knowio/remo/issues/126)) ([137fa55](https://github.com/get2knowio/remo/commit/137fa55dead73c2da07037d22480e788332f9bb3))
+* unwedge apt, stop authorized_keys being clobbered, and self-heal `remo web push` ([#123](https://github.com/get2knowio/remo/issues/123)) ([679fab9](https://github.com/get2knowio/remo/commit/679fab9f84b90fa33d3ef6eb2f58e568430c9fd9))
+* **web:** make the console's background poll actually re-run discovery ([#128](https://github.com/get2knowio/remo/issues/128)) ([6d18d37](https://github.com/get2knowio/remo/commit/6d18d374023b2d6f1dccf4535016d00bfde92b12))
+* **web:** recover from an expired access-proxy session without a manual reload ([#131](https://github.com/get2knowio/remo/issues/131)) ([3ce3e8e](https://github.com/get2knowio/remo/commit/3ce3e8ea9c1ab3c568b128356e5884631465df9f))
+
+
+### Code Refactoring
+
+* **web:** drop the ghostty-web renderer, leaving xterm.js as the engine ([#130](https://github.com/get2knowio/remo/issues/130)) ([c3e9170](https://github.com/get2knowio/remo/commit/c3e917044c756e1138817b70380177d636824ab2))
+
 ## [3.1.0](https://github.com/get2knowio/remo/compare/v3.0.0...v3.1.0) (2026-07-29)
 
 
