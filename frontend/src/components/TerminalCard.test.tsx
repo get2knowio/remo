@@ -7,6 +7,7 @@ import { act, render, screen } from "@testing-library/react";
 import { DndContext } from "@dnd-kit/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionTarget } from "../api/client";
+import { themeMenuPosition } from "./TerminalCard";
 import type { RendererAdapter } from "../terminal/RendererAdapter";
 
 const adapters: RendererAdapter[] = [];
@@ -194,5 +195,61 @@ describe("TerminalCard terminal theme", () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+});
+
+// The reported bug: in a 2x2 grid on a small display the theme list was cut off
+// at the card's edge (`.terminal-card` sets `overflow: hidden`) and swiping it
+// scrolled the whole page instead. The menu is now placed against the viewport
+// with a computed max-height, which is what gives it something to scroll.
+describe("themeMenuPosition", () => {
+  const VIEWPORT = { width: 1024, height: 768 };
+
+  it("opens below the swatch when there is room, right-aligned to it", () => {
+    const pos = themeMenuPosition({ top: 100, bottom: 126, right: 500 }, VIEWPORT);
+    expect(pos.placement).toBe("below");
+    expect(pos.style).toMatchObject({ position: "fixed", top: 132, left: 500 - 216 });
+  });
+
+  it("caps the height to the space available, so the list scrolls instead of overflowing", () => {
+    // Room below is 768 - 560 - 6 - 8 = 194: enough to stay below, but well
+    // short of the ~300px the nine-entry list wants. That gap is the scroll.
+    const pos = themeMenuPosition({ top: 534, bottom: 560, right: 500 }, VIEWPORT);
+    expect(pos.placement).toBe("below");
+    expect(pos.style.maxHeight).toBe(194);
+  });
+
+  it("floors the height so a cramped anchor still shows a usable list", () => {
+    // Below is only 154 here, and above (560) is roomier — so it flips, rather
+    // than rendering a sliver.
+    const pos = themeMenuPosition({ top: 574, bottom: 600, right: 500 }, VIEWPORT);
+    expect(pos.placement).toBe("above");
+    expect(pos.style.maxHeight).toBe(560);
+  });
+
+  it("flips above the swatch when below is too cramped and above is roomier", () => {
+    const pos = themeMenuPosition({ top: 700, bottom: 726, right: 500 }, VIEWPORT);
+    expect(pos.placement).toBe("above");
+    // Anchored by its bottom edge, so it grows upward without needing its height.
+    expect(pos.style.bottom).toBe(768 - 700 + 6);
+    expect(pos.style.top).toBeUndefined();
+  });
+
+  it("never places the menu off the right edge", () => {
+    const pos = themeMenuPosition({ top: 40, bottom: 66, right: 1020 }, VIEWPORT);
+    expect(pos.style.left).toBe(1024 - 216 - 8);
+  });
+
+  it("never places the menu off the left edge on a narrow screen", () => {
+    const pos = themeMenuPosition({ top: 40, bottom: 66, right: 120 }, { width: 380, height: 800 });
+    expect(pos.style.left).toBe(8);
+  });
+
+  // A card mid-teardown (or jsdom, which reports zeroes) must not produce a
+  // negative max-height and an unusable sliver of a menu.
+  it("stays usable for a degenerate anchor", () => {
+    const pos = themeMenuPosition({ top: 0, bottom: 0, right: 0 }, { width: 0, height: 0 });
+    expect(pos.style.maxHeight as number).toBeGreaterThan(0);
+    expect(pos.style.left as number).toBeGreaterThanOrEqual(0);
   });
 });

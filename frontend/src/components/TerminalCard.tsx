@@ -9,7 +9,14 @@
 // single↔grid only re-renders the header chrome and never remounts the
 // terminal surface (which would tear down the live connection).
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { SessionTarget, TypedError } from "../api/client";
 import { providerMeta } from "./providerMeta";
@@ -84,6 +91,71 @@ interface TerminalCardProps {
   onStarted?: () => void;
 }
 
+/** Where the terminal-theme popup goes, as viewport-relative inline styles. */
+export interface ThemeMenuPosition {
+  style: CSSProperties;
+  /** Which side of the swatch the menu opened on (asserted in tests). */
+  placement: "below" | "above";
+}
+
+/** Gap between the swatch and the menu, and the minimum breathing room kept
+ * against the viewport edges. */
+const THEME_MENU_GAP = 6;
+const THEME_MENU_MARGIN = 8;
+/** Matches the menu's min-width in TerminalCard.css. */
+const THEME_MENU_WIDTH = 216;
+/** Below this, "below the swatch" is too cramped to be worth using. */
+const THEME_MENU_MIN_USABLE = 160;
+
+/**
+ * Place the theme popup against the VIEWPORT rather than the card.
+ *
+ * A grid tile on a small screen (a 2x2 layout on an iPad, say) is routinely
+ * shorter than the nine-entry theme list, and `.terminal-card` sets
+ * `overflow: hidden` — so an absolutely-positioned menu was silently clipped at
+ * the card's edge with no way to reach the rest. Fixed positioning escapes that
+ * clip, and the computed `maxHeight` is what gives the menu something to scroll
+ * (paired with `overscroll-behavior: contain` in CSS, so the scroll stops at the
+ * menu instead of running the page).
+ *
+ * Opens downward by default, flipping above the swatch when there is more room
+ * there, and clamps horizontally so the menu can never sit off-screen.
+ */
+export function themeMenuPosition(
+  anchor: { top: number; bottom: number; right: number },
+  viewport: { width: number; height: number } = {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  },
+): ThemeMenuPosition {
+  const roomBelow = viewport.height - anchor.bottom - THEME_MENU_GAP - THEME_MENU_MARGIN;
+  const roomAbove = anchor.top - THEME_MENU_GAP - THEME_MENU_MARGIN;
+  const placement: "below" | "above" =
+    roomBelow < THEME_MENU_MIN_USABLE && roomAbove > roomBelow ? "above" : "below";
+
+  // Right-align to the swatch, then clamp both edges into the viewport.
+  const left = Math.max(
+    THEME_MENU_MARGIN,
+    Math.min(anchor.right - THEME_MENU_WIDTH, viewport.width - THEME_MENU_WIDTH - THEME_MENU_MARGIN),
+  );
+  // Never negative: a zero-height anchor (jsdom, or a card mid-teardown) would
+  // otherwise ask for a negative max-height and render an unusable sliver.
+  const maxHeight = Math.max(THEME_MENU_MIN_USABLE, placement === "above" ? roomAbove : roomBelow);
+
+  return {
+    placement,
+    style:
+      placement === "above"
+        ? {
+            position: "fixed",
+            bottom: viewport.height - anchor.top + THEME_MENU_GAP,
+            left,
+            maxHeight,
+          }
+        : { position: "fixed", top: anchor.bottom + THEME_MENU_GAP, left, maxHeight },
+  };
+}
+
 function effectiveFont(settings: SettingsState, mode: TerminalCardMode): TerminalFontOptions {
   const base = terminalFontOptions(settings);
   if (mode === "grid" && settings.gridFit) {
@@ -142,6 +214,9 @@ export function TerminalCard({
   const [copied, setCopied] = useState(false);
   const [themeMenuOpen, setThemeMenuOpen] = useState(false);
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
+  const themeButtonRef = useRef<HTMLButtonElement | null>(null);
+  // Viewport-relative placement for the theme popup; null until measured.
+  const [themeMenuPos, setThemeMenuPos] = useState<ThemeMenuPosition | null>(null);
 
   // dnd-kit reorder: the tile is both a draggable (handle = header grip, below)
   // and a droppable (swap target). Disabled outside a reorderable grid. We use
@@ -336,6 +411,39 @@ export function TerminalCard({
     }
   }, [isFocused, isVisible]);
 
+  // Measure the popup's placement before paint, and keep it anchored while it
+  // is open. A grid tile can be far smaller than the list, so the menu is
+  // positioned against the VIEWPORT (see ThemeMenuPosition) rather than the
+  // card, which clips its overflow.
+  useLayoutEffect(() => {
+    if (!themeMenuOpen) {
+      setThemeMenuPos(null);
+      return undefined;
+    }
+    const measure = (): void => {
+      const button = themeButtonRef.current;
+      if (button) {
+        setThemeMenuPos(themeMenuPosition(button.getBoundingClientRect()));
+      }
+    };
+    measure();
+    // A rotate/resize moves the anchor; so does scrolling the pane under it.
+    // Scrolling INSIDE the menu must not re-anchor (it would fight the user),
+    // and element scrolls only reach window listeners in the capture phase.
+    const onScroll = (e: Event): void => {
+      if (themeMenuRef.current?.contains(e.target as Node)) {
+        return;
+      }
+      measure();
+    };
+    window.addEventListener("resize", measure);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("scroll", onScroll, true);
+    };
+  }, [themeMenuOpen]);
+
   // Dismiss the theme popup on Escape or a click anywhere outside it.
   useEffect(() => {
     if (!themeMenuOpen) {
@@ -501,6 +609,7 @@ export function TerminalCard({
           <div className="tc-theme" ref={themeMenuRef}>
             <button
               type="button"
+              ref={themeButtonRef}
               className="tc-btn tc-btn--swatch"
               data-testid={`terminal-theme-${target.id}`}
               title={`Terminal theme: ${theme.label}${hasThemeOverride ? "" : " (default)"}`}
@@ -515,8 +624,8 @@ export function TerminalCard({
             >
               A
             </button>
-            {themeMenuOpen && (
-              <div className="tc-theme-menu" role="menu">
+            {themeMenuOpen && themeMenuPos && (
+              <div className="tc-theme-menu" role="menu" style={themeMenuPos.style}>
                 <button
                   type="button"
                   className={`tc-theme-item${hasThemeOverride ? "" : " tc-theme-item--on"}`}

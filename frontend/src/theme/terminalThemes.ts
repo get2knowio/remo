@@ -127,6 +127,15 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
     variant: "light",
     // On a light background the "bright" half goes DARKER, not lighter — the
     // same inversion Solarized Light uses, so bold text stays legible.
+    //
+    // That inversion has to include the WHITE pair, which is the trap Solarized
+    // Light and Catppuccin Latte both fall into: a literal white `white` sits at
+    // ~1.1:1 on a light background and simply is not there. Terminal apps print
+    // colour 7/15 as TEXT constantly (Claude Code's "Cooked for 9s" and
+    // "(shift+tab to cycle)" hints among them), so here they are the two darkest
+    // neutrals — 6.3:1 and 13:1 — with brightWhite the stronger of the pair, so
+    // bold still reads as emphasis. Reported from a live session; the contrast
+    // floor is asserted in terminalThemes.test.ts.
     colors: {
       background: "#eff2f6",
       foreground: "#242930",
@@ -141,7 +150,7 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       blue: "#007bb2",
       magenta: "#ad36a7",
       cyan: "#008389",
-      white: "#d5d8db",
+      white: "#535960",
       brightBlack: "#6c727a",
       brightRed: "#a9000c",
       brightGreen: "#007026",
@@ -149,7 +158,7 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       brightBlue: "#0064a1",
       brightMagenta: "#950891",
       brightCyan: "#006b71",
-      brightWhite: "#fbfcfd",
+      brightWhite: "#242930",
     },
   },
   // --- Curated third-party schemes -----------------------------------------
