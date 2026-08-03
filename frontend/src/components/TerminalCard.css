@@ -228,16 +228,23 @@
   border-color: var(--accent-strong);
 }
 
+/* Positioned against the viewport from JS (themeMenuPosition) — `position`,
+ * `top`/`bottom`, `left` and `max-height` all arrive as inline styles. It has
+ * to escape `.terminal-card`'s `overflow: hidden`, which used to clip the list
+ * inside a short grid tile with no way to scroll to the rest. */
 .tc-theme-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 20;
+  position: fixed;
+  z-index: 60;
   min-width: 216px;
+  max-width: calc(100vw - 16px);
   padding: 5px;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow-y: auto;
+  /* Stop at the menu's own edges instead of scrolling the page behind it —
+   * the whole reported symptom was a swipe here moving the whole console. */
+  overscroll-behavior: contain;
   background: var(--bg-elev);
   border: 1px solid var(--border-strong);
   border-radius: 10px;
