@@ -2,12 +2,26 @@
 # Zellij version to install (use 'latest' for most recent release)
 zellij_version: "latest"
 
+# Version installed when zellij_version is 'latest' but the release lookup
+# cannot be completed (no network, GitHub having a bad day). Provisioning must
+# not fail just because we could not discover the newest tag -- a slightly old
+# zellij is fine, no zellij is not. Bump this occasionally; it is only ever a
+# floor, since the lookup normally wins.
+zellij_fallback_version: "0.44.3"
+
 # Minimum required zellij version (apt version must be at least this)
 zellij_min_version: "0.40.0"
 
 # Installation method: 'auto' will try apt first, fall back to binary
 # Options: 'auto', 'apt', 'binary'
 zellij_install_method: "auto"
+
+# Where "latest" is resolved from. Deliberately github.com and NOT
+# api.github.com: the API caps unauthenticated callers at 60 requests/hour/IP,
+# while this redirect carries no such quota. Overridable so a mirror or an
+# air-gapped deployment can point it elsewhere (and so the failure paths are
+# testable).
+zellij_latest_release_url: "https://github.com/zellij-org/zellij/releases/latest"
 
 # Binary download location
 zellij_binary_path: "/usr/local/bin/zellij"

@@ -68,19 +68,50 @@
 
     - name: Set architecture mapping
       ansible.builtin.set_fact:
-        zellij_arch: "{{ 'x86_64' if zellij_system_arch.stdout == 'x86_64' else 'aarch64' }}"
+        zellij_arch: "{{ 'x86_64' if (zellij_system_arch.stdout | default('')) == 'x86_64' else 'aarch64' }}"
 
-    - name: Get latest zellij release version from GitHub
+    # Resolve "latest" WITHOUT api.github.com. That API allows only 60
+    # unauthenticated requests per hour per IP -- a budget shared by everyone
+    # behind the same NAT and by CI runners -- and this lookup used to abort
+    # provisioning outright when it ran out (the 403 had no failure handling;
+    # it surfaced as "Failed to create Incus container ... playbook rc=2").
+    # github.com's own /releases/latest redirects to the tagged release and
+    # carries no such quota, so read the tag out of the Location header and keep
+    # the API off the provisioning path entirely.
+    - name: Resolve latest zellij release via the github.com redirect
       ansible.builtin.uri:
-        url: https://api.github.com/repos/zellij-org/zellij/releases/latest
-        return_content: true
-      register: zellij_latest_release
+        url: "{{ zellij_latest_release_url }}"
+        method: HEAD
+        follow_redirects: none
+        status_code: [301, 302, 303, 307, 308]
+      register: zellij_latest_redirect
+      retries: 3
+      delay: 5
+      until: zellij_latest_redirect.location | default('') is search('/tag/')
+      # Never fatal: a failed lookup falls back to the pinned version below.
+      failed_when: false
+      changed_when: false
       when: zellij_version == 'latest'
 
     - name: Set zellij download version
       ansible.builtin.set_fact:
+        # The Location must actually look like .../tag/v1.2.3 before we trust
+        # it; anything else (an error page, a redirect somewhere unexpected)
+        # falls back rather than turning junk into a download URL.
         zellij_download_version: >-
-          {{ zellij_latest_release.json.tag_name | regex_replace('^v', '') if zellij_version == 'latest' else zellij_version }}
+          {{ zellij_version if zellij_version != 'latest'
+             else ((zellij_latest_redirect.location | default('') | regex_replace('^.*/tag/v?', ''))
+                   if (zellij_latest_redirect.location | default('')) is search('/tag/v?[0-9]+\.[0-9]+\.[0-9]+$')
+                   else zellij_fallback_version) }}
+
+    - name: Note that the pinned fallback version is being used
+      ansible.builtin.debug:
+        msg: >-
+          Could not resolve the latest zellij release from github.com; installing the
+          pinned fallback {{ zellij_fallback_version }} instead. This is not fatal.
+      when:
+        - zellij_version == 'latest'
+        - (zellij_latest_redirect.location | default('')) is not search('/tag/v?[0-9]+\.[0-9]+\.[0-9]+$')
 
     - name: Check if we need to install/upgrade
       ansible.builtin.set_fact:
@@ -125,7 +156,7 @@
 
 - name: Display zellij version
   ansible.builtin.debug:
-    msg: "{{ zellij_final_version.stdout }}"
+    msg: "{{ zellij_final_version.stdout | default('unknown') }}"
 
 - name: Create zellij config directory for user
   ansible.builtin.file:
