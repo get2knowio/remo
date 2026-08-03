@@ -6,6 +6,7 @@
 ### Bug Fixes
 
 * **web:** let the terminal-theme menu scroll instead of being clipped ([#134](https://github.com/get2knowio/remo/issues/134)) ([ffb34e7](https://github.com/get2knowio/remo/commit/ffb34e72cc9d1744130130934538d38af217ec73))
+* **web:** make Remo Light's white family visible — `white` and `brightWhite` were 1.27:1 and 1.09:1 against the background, hiding dim and bold text ([#134](https://github.com/get2knowio/remo/issues/134)) ([c5bc07a](https://github.com/get2knowio/remo/commit/c5bc07a7))
 
 ## [4.0.0](https://github.com/get2knowio/remo/compare/v3.1.0...v4.0.0) (2026-08-03)
 
