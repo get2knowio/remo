@@ -76,9 +76,11 @@ export function paneLayout(
   layout: WorkspaceLayout,
   visible: string[],
   narrow: boolean,
+  /** The master's share of the pane (settings.masterSplit). */
+  fraction: number,
 ): PaneLayout {
   if (layout.kind === "master" && visible.includes(layout.id) && visible.length > 1) {
-    return masterLayout(layout.id, layout.side, layout.fraction, visible);
+    return masterLayout(layout.id, layout.side, fraction, visible);
   }
   const cols = gridColumns(visible.length, narrow);
   const rows = Math.max(1, Math.ceil(visible.length / cols));

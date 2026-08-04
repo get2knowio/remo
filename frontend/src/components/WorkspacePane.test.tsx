@@ -193,6 +193,25 @@ describe("WorkspacePane layout wiring", () => {
   });
 });
 
+describe("tiling split setting", () => {
+  // The point of putting the split in settings rather than the layout: changing
+  // it re-flows the tiling you are looking at, no re-tiling required.
+  it("re-flows the current tiling when the split changes", async () => {
+    const { store } = await mount(["a", "b", "c"]);
+    const settings = await import("../state/settings");
+    act(() => store.setMaster("c", "right"));
+
+    const cols = (): string => body().style.gridTemplateColumns;
+    expect(cols()).toBe("repeat(1, minmax(0, 40fr)) minmax(0, 60fr)");
+
+    act(() => settings.settingsActions.setMasterSplit(0.5));
+    expect(cols()).toBe("repeat(1, minmax(0, 50fr)) minmax(0, 50fr)");
+
+    act(() => settings.settingsActions.setMasterSplit(0.55));
+    expect(cols()).toBe("repeat(1, minmax(0, 45fr)) minmax(0, 55fr)");
+  });
+});
+
 describe("terminal chrome toggle", () => {
   it("drops every tile header when chrome is off, and restores them", async () => {
     const { view } = await mount(["a", "b"]);

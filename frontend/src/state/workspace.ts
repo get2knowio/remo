@@ -45,18 +45,18 @@ export type MasterSide = (typeof MASTER_SIDES)[number];
 
 /** How the visible tiles are arranged. `grid` is the uniform CSS grid the
  * console has always used, and is both the default and the fallback for every
- * invalid state. `master` is one tile holding `fraction` of the pane on `side`,
- * with the rest tiling the remainder. */
+ * invalid state. `master` is one tile holding `side` of the pane, with the rest
+ * tiling the remainder.
+ *
+ * HOW MUCH of the pane it takes is deliberately NOT here: it is a display
+ * preference (settings.masterSplit), so changing it re-flows the arrangement
+ * you are looking at rather than only the next one you build. */
 export type WorkspaceLayout =
   | { kind: "grid" }
-  | { kind: "master"; id: string; side: MasterSide; fraction: number };
+  | { kind: "master"; id: string; side: MasterSide };
 
 /** Shared instance so the uniform-grid case never allocates per write. */
 const GRID_LAYOUT: WorkspaceLayout = { kind: "grid" };
-
-export const DEFAULT_MASTER_FRACTION = 0.6;
-export const MIN_MASTER_FRACTION = 0.3;
-export const MAX_MASTER_FRACTION = 0.75;
 
 interface PersistedWorkspaceState {
   attached: string[];
@@ -95,9 +95,7 @@ function normalizeLayout(layout: WorkspaceLayout, ids: string[]): WorkspaceLayou
     return GRID_LAYOUT;
   }
   const id = ids.includes(layout.id) ? layout.id : ids[0];
-  const raw = Number.isFinite(layout.fraction) ? layout.fraction : DEFAULT_MASTER_FRACTION;
-  const fraction = Math.min(MAX_MASTER_FRACTION, Math.max(MIN_MASTER_FRACTION, raw));
-  return id === layout.id && fraction === layout.fraction ? layout : { ...layout, id, fraction };
+  return id === layout.id ? layout : { ...layout, id };
 }
 
 /** Shape-only validation of an untrusted persisted layout. Cross-field rules
@@ -107,16 +105,16 @@ function asLayout(v: unknown): WorkspaceLayout {
   if (typeof v !== "object" || v === null || Array.isArray(v)) {
     return GRID_LAYOUT;
   }
-  const l = v as Partial<{ kind: unknown; id: unknown; side: unknown; fraction: unknown }>;
+  const l = v as Partial<{ kind: unknown; id: unknown; side: unknown }>;
   if (l.kind !== "master") {
     return GRID_LAYOUT;
   }
   if (typeof l.id !== "string" || !MASTER_SIDES.includes(l.side as MasterSide)) {
     return GRID_LAYOUT;
   }
-  // A bad fraction has an obviously-correct default; a bad side does not.
-  const fraction = typeof l.fraction === "number" ? l.fraction : DEFAULT_MASTER_FRACTION;
-  return { kind: "master", id: l.id, side: l.side as MasterSide, fraction };
+  // Any `fraction` written by 4.1.0 is dropped here: the split moved to
+  // settings.masterSplit, and an ignored extra key needs no migration.
+  return { kind: "master", id: l.id, side: l.side as MasterSide };
 }
 
 function loadPersisted(): WorkspaceState {
@@ -331,9 +329,8 @@ function swapVisible(a: string, b: string): void {
 }
 
 /** Give `id` the master area on `side`, tiling the rest into the remainder.
- * Keeps the current split when one is already set, so re-tiling to another edge
- * doesn't silently undo a resize. Normalised away by `normalizeLayout` when `id`
- * isn't part of a two-plus grid, so callers need no guard. */
+ * Normalised away by `normalizeLayout` when `id` isn't part of a two-plus grid,
+ * so callers need no guard. */
 function setMaster(id: string, side: MasterSide): void {
   // An explicit request naming a tile that isn't on screen is a caller bug, not
   // a tile disappearing — no-op rather than letting normalizeLayout's promotion
@@ -341,9 +338,7 @@ function setMaster(id: string, side: MasterSide): void {
   if (!state.visible.includes(id)) {
     return;
   }
-  const fraction =
-    state.layout.kind === "master" ? state.layout.fraction : DEFAULT_MASTER_FRACTION;
-  setState({ layout: { kind: "master", id, side, fraction } });
+  setState({ layout: { kind: "master", id, side } });
 }
 
 /** Back to the uniform grid, leaving the tile ORDER untouched. */

@@ -57,6 +57,37 @@ export const SITE_THEME_OPTIONS: SiteThemeOption[] = [
 
 const MEDIA_QUERY_DARK = "(prefers-color-scheme: dark)";
 
+/** How much of the pane a tiled master area takes, as stack/master. Kept to a
+ * short list rather than a slider: these are the only splits that read well for
+ * terminals, and a free-form value invites fiddling over choosing. */
+export interface MasterSplitOption {
+  /** The master's share, which is what masterLayout consumes. */
+  value: number;
+  label: string;
+  desc: string;
+}
+
+export const MASTER_SPLIT_OPTIONS: MasterSplitOption[] = [
+  {
+    value: 0.6,
+    label: "40 / 60",
+    desc: "The master gets the most room. Best when the stack is for glancing at.",
+  },
+  {
+    value: 0.55,
+    label: "45 / 55",
+    desc: "A gentle bias to the master, with the stack still comfortably usable.",
+  },
+  {
+    value: 0.5,
+    label: "50 / 50",
+    desc: "An even split, matching what a half-screen snap does elsewhere.",
+  },
+];
+
+const MASTER_SPLIT_VALUES = MASTER_SPLIT_OPTIONS.map((o) => o.value);
+export const DEFAULT_MASTER_SPLIT = MASTER_SPLIT_OPTIONS[0].value;
+
 export interface FontOption {
   label: string;
   css: string;
@@ -106,6 +137,10 @@ export interface SettingsState {
   termLiga: boolean;
   /** Scale each grid terminal to fit (true) vs keep font fixed + clip (false). */
   gridFit: boolean;
+  /** The master area's share of the pane when a grid is tiled. Lives here, not
+   * in the layout itself, so changing it re-flows the CURRENT tiling instead of
+   * only applying to the next one. */
+  masterSplit: number;
   /** Show each terminal's header (identity, state, window controls). Hiding it
    * buys back ~36px per tile, which is a real difference when three are stacked
    * on a tablet — at the cost of the per-tile controls and the drag handle,
@@ -136,6 +171,7 @@ const DEFAULTS: SettingsState = {
   termLiga: true,
   gridFit: false,
   showTileChrome: true,
+  masterSplit: DEFAULT_MASTER_SPLIT,
   railWidth: DEFAULT_RAIL_WIDTH,
   railCollapsed: false,
   nerdFontName: null,
@@ -207,6 +243,13 @@ function loadPersisted(): SettingsState {
       gridFit: typeof c.gridFit === "boolean" ? c.gridFit : DEFAULTS.gridFit,
       showTileChrome:
         typeof c.showTileChrome === "boolean" ? c.showTileChrome : DEFAULTS.showTileChrome,
+      // Only the offered splits are accepted: anything else (a hand-edited
+      // store, or a value from a build that offered a different set) would
+      // render a layout no menu item matches.
+      masterSplit:
+        typeof c.masterSplit === "number" && MASTER_SPLIT_VALUES.includes(c.masterSplit)
+          ? c.masterSplit
+          : DEFAULTS.masterSplit,
       railWidth:
         typeof c.railWidth === "number"
           ? clamp(Math.round(c.railWidth), MIN_RAIL_WIDTH, MAX_RAIL_WIDTH)
@@ -335,12 +378,6 @@ export function terminalFontOptions(s: SettingsState = state): TerminalFontOptio
 
 export const settingsActions = {
   setThemeMode: (themeMode: SiteThemeMode) => setState({ themeMode }),
-  /** Top-bar toggle: system → light → dark → system. */
-  cycleThemeMode: () => {
-    const order: SiteThemeMode[] = ["system", "light", "dark"];
-    const next = order[(order.indexOf(state.themeMode) + 1) % order.length];
-    setState({ themeMode: next });
-  },
   setTermTheme: (termTheme: string) => setState({ termTheme }),
   /** Set (or, with `null`, clear) one target's terminal-theme override.
    * Clearing DELETES the key rather than storing the current global id, so the
@@ -373,6 +410,10 @@ export const settingsActions = {
   toggleLiga: () => setState({ termLiga: !state.termLiga }),
   setGridFit: (gridFit: boolean) => setState({ gridFit }),
   toggleTileChrome: () => setState({ showTileChrome: !state.showTileChrome }),
+  setMasterSplit: (masterSplit: number) =>
+    setState({
+      masterSplit: MASTER_SPLIT_VALUES.includes(masterSplit) ? masterSplit : DEFAULT_MASTER_SPLIT,
+    }),
   setRailWidth: (railWidth: number) =>
     setState({ railWidth: clamp(Math.round(railWidth), MIN_RAIL_WIDTH, MAX_RAIL_WIDTH) }),
   toggleRailCollapsed: () => setState({ railCollapsed: !state.railCollapsed }),

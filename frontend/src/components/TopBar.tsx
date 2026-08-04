@@ -2,7 +2,6 @@
 // health indicator, refresh, settings, and shortcuts.
 
 import type { HealthStatus } from "../state/health";
-import type { SiteThemeMode } from "../state/settings";
 import "./TopBar.css";
 
 // "unconfigured" is included for Record exhaustiveness, but in practice the
@@ -24,13 +23,6 @@ const HEALTH_COLOR: Record<HealthStatus, string> = {
   offline: "var(--danger)",
 };
 
-/** Toggle glyph per mode: system reads as "half and half". */
-const THEME_ICON: Record<SiteThemeMode, string> = {
-  system: "◐",
-  light: "☀",
-  dark: "☾",
-};
-
 interface TopBarProps {
   showRailToggle: boolean;
   railCollapsed: boolean;
@@ -44,16 +36,11 @@ interface TopBarProps {
   onRefresh: () => void;
   onSettings: () => void;
   onShortcuts: () => void;
-  /** Site light/dark mode (this component stays pure-props; AppShell wires it
-   * to the settings store). */
-  /** Whether each terminal shows its header; the toggle sits next to Settings. */
+  /** Whether each terminal shows its header; the toggle sits next to Settings.
+   * Light/dark deliberately has no button here — Settings → Appearance owns it,
+   * and header space is scarcer than a settings row. */
   showTileChrome: boolean;
   onToggleTileChrome: () => void;
-  themeMode: SiteThemeMode;
-  /** What the mode resolves to right now — only differs from `themeMode` under
-   * "system", where it reflects the OS preference. */
-  resolvedDark: boolean;
-  onCycleTheme: () => void;
 }
 
 /** Latency → dot color: good (green) / so-so (yellow) / poor (red). */
@@ -81,9 +68,6 @@ export function TopBar({
   onShortcuts,
   showTileChrome,
   onToggleTileChrome,
-  themeMode,
-  resolvedDark,
-  onCycleTheme,
 }: TopBarProps): JSX.Element {
   // Prefer live WS latency (the real data-path measure); fall back to the
   // health status when no terminal is connected to measure.
@@ -93,10 +77,6 @@ export function TopBar({
   const statusTitle = showLatency
     ? "WebSocket round-trip latency (median across open terminals)"
     : (healthDetail ?? HEALTH_LABEL[health]);
-  const themeTitle =
-    themeMode === "system"
-      ? `Theme: system (currently ${resolvedDark ? "dark" : "light"}) — click for light`
-      : `Theme: ${themeMode} — click for ${themeMode === "light" ? "dark" : "system"}`;
   return (
     <header className="topbar">
       {showRailToggle && (
@@ -153,16 +133,6 @@ export function TopBar({
         onClick={onToggleTileChrome}
       >
         {showTileChrome ? "▤" : "▭"}
-      </button>
-      <button
-        type="button"
-        className="topbar-icon-btn"
-        title={themeTitle}
-        aria-label={themeTitle}
-        data-testid="theme-toggle"
-        onClick={onCycleTheme}
-      >
-        {THEME_ICON[themeMode]}
       </button>
       <button
         type="button"

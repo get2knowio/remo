@@ -20,6 +20,7 @@ import {
 } from "@dnd-kit/core";
 import type { SessionTarget } from "../api/client";
 import { requestBrowserFullscreen } from "../lib/fullscreen";
+import { useSettings } from "../state/settings";
 import { MASTER_SIDES, useWorkspace, type MasterSide } from "../state/workspace";
 import { dropIntent, nextMasterSide, paneLayout } from "./masterLayout";
 import { TerminalCard } from "./TerminalCard";
@@ -108,6 +109,7 @@ export function WorkspacePane({
   onTerminalStarted,
   narrow,
 }: WorkspacePaneProps): JSX.Element {
+  const settings = useSettings();
   const workspace = useWorkspace();
   const { attached, visible, focusedId, prevGrid, maximizedId, layout } = workspace;
 
@@ -175,7 +177,7 @@ export function WorkspacePane({
   // `paneMode` is the single-vs-grid axis; `layout.kind` is the separate
   // uniform-vs-tiled axis. Two different "grid"s, hence the distinct name.
   const paneMode = maximized || visible.length <= 1 ? "single" : "grid";
-  const pane = paneMode === "grid" ? paneLayout(layout, visible, narrow) : null;
+  const pane = paneMode === "grid" ? paneLayout(layout, visible, narrow, settings.masterSplit) : null;
   // The Grid control is available when a grid can be shown — either the visible
   // set is already a grid (fullscreen opened over one) or a grid was remembered.
   const canGrid =

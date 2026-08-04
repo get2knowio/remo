@@ -9,7 +9,7 @@ import { exitBrowserFullscreen } from "../lib/fullscreen";
 import { useDiscovery } from "../state/discovery";
 import { useHealth } from "../state/health";
 import { useLatency } from "../state/latency";
-import { resolvedSiteTheme, settingsActions, useSettings } from "../state/settings";
+import { settingsActions, useSettings } from "../state/settings";
 import { useConsoleKeyboard } from "../state/useConsoleKeyboard";
 import { useWorkspace } from "../state/workspace";
 import { buildRailModel, type RailFilters } from "./railModel";
@@ -232,9 +232,6 @@ export function AppShell(): JSX.Element {
         onShortcuts={onToggleShortcuts}
         showTileChrome={settings.showTileChrome}
         onToggleTileChrome={() => settingsActions.toggleTileChrome()}
-        themeMode={settings.themeMode}
-        resolvedDark={resolvedSiteTheme(settings) === "dark"}
-        onCycleTheme={() => settingsActions.cycleThemeMode()}
       />
 
       {discovery.isRefreshing && !maximized && (

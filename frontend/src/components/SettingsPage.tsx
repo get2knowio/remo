@@ -8,6 +8,7 @@ import { listUploadedFonts, registerUploadedFont } from "../state/fonts";
 import {
   ACCENT_OPTIONS,
   FONT_OPTIONS,
+  MASTER_SPLIT_OPTIONS,
   MAX_FOCUS_DWELL_MS,
   MAX_TERM_SIZE,
   MIN_FOCUS_DWELL_MS,
@@ -272,6 +273,35 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
                     <span>
                       <span className="settings-gridmode-title">{g.title}</span>
                       <span className="settings-gridmode-desc">{g.desc}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          {/* Tiling split */}
+          <section>
+            <div className="settings-heading">Tiling split</div>
+            <p className="settings-sub">
+              How much of the pane a terminal takes when you tile it to an edge (stack / master).
+              Applies immediately to a tiling you already have.
+            </p>
+            <div className="settings-gridmodes">
+              {MASTER_SPLIT_OPTIONS.map((o) => {
+                const selected = settings.masterSplit === o.value;
+                return (
+                  <button
+                    key={o.value}
+                    type="button"
+                    data-testid={`master-split-${o.label.replace(/\s\/\s/, "-")}`}
+                    className={`settings-gridmode${selected ? " settings-gridmode--on" : ""}`}
+                    onClick={() => settingsActions.setMasterSplit(o.value)}
+                  >
+                    <span className="settings-radio">{selected ? "✓" : ""}</span>
+                    <span>
+                      <span className="settings-gridmode-title">{o.label}</span>
+                      <span className="settings-gridmode-desc">{o.desc}</span>
                     </span>
                   </button>
                 );

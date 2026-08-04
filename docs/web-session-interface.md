@@ -121,7 +121,8 @@ The SPA is a two-pane **web console**:
   master+stack model). A translucent band marks each edge while dragging and fills in when the drop
   would land there. The **▦** control in a tile's header cycles the same thing without a drag
   (▌ left → ▀ top → ▐ right → ▄ bottom → back to the even grid), which is the practical path on a touch
-  device. The master takes 60% by default, closing it promotes the head of the stack rather than
+  device. The master's share is a setting (**Settings → Tiling split**: 40/60, 45/55 or 50/50, applied
+  live to a tiling you already have), closing it promotes the head of the stack rather than
   un-tiling everything, and the arrangement persists across reload alongside the tile order. **⊞ flattens
   a tiling back to even tiles** — in a plain grid that control is inert, so it doubles as the way out
   rather than making you cycle ▦ forward until it wraps. This is
@@ -161,13 +162,15 @@ they can be stale until something else fetches. Git glyphs only appear on instan
 `remo-host` new enough to report git status; see [Upgrade compatibility](#upgrade-compatibility).
 
 **Settings** (⚙, top bar; stored in this browser only, FR-034): **appearance** (site light/dark mode),
-accent color, terminal font, **terminal theme**, font size, program ligatures, grid display mode
+accent color, terminal font, **terminal theme**, **tiling split**, font size, program ligatures,
+grid display mode
 (actual-size vs scale-to-fit), **focus dwell** (how long the pointer rests before focus-follows-mouse
 fires), a **Nerd Font uploader**, and **Pair CLI to sync** (mint a re-sync pairing
 code).
 
 **Appearance** is tri-state — `system` (the default, following the OS `prefers-color-scheme`),
-`light`, or `dark` — toggled from the ◐/☀/☾ button in the top bar as well as from Settings. The
+`light`, or `dark` — set from Settings. (It briefly had a top-bar button too; that was removed once
+the header ran short of room, since Settings already owned the choice.) The
 console's palette is a set of `light-dark()` CSS custom properties in `theme/tokens.css`; "system"
 therefore needs no JavaScript to render, and an explicit choice is applied as `data-theme` on `<html>`.
 **Terminal theme** defaults to **Follow site theme**, which tracks the site mode: a light console gets
