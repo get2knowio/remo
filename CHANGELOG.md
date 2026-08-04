@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.0](https://github.com/get2knowio/remo/compare/v4.0.1...v4.1.0) (2026-08-04)
+
+
+### Features
+
+* **web:** tile a terminal to a pane edge as a master area ([#137](https://github.com/get2knowio/remo/issues/137)) ([41802fb](https://github.com/get2knowio/remo/commit/41802fb17ae5741918a31ee9d662aa90808ebb9a))
+
 ## [4.0.1](https://github.com/get2knowio/remo/compare/v4.0.0...v4.0.1) (2026-08-03)
 
 
