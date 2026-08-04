@@ -2,7 +2,7 @@
 // terminal (each mounted for its lifetime so hidden ones stay connected),
 // laid out as a single view (one visible) or a responsive grid (two-plus).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -10,14 +10,18 @@ import {
   PointerSensor,
   TouchSensor,
   closestCenter,
+  pointerWithin,
+  useDroppable,
   useSensor,
   useSensors,
+  type CollisionDetection,
   type DragEndEvent,
   type DragStartEvent,
 } from "@dnd-kit/core";
 import type { SessionTarget } from "../api/client";
 import { requestBrowserFullscreen } from "../lib/fullscreen";
-import { useWorkspace } from "../state/workspace";
+import { MASTER_SIDES, useWorkspace, type MasterSide } from "../state/workspace";
+import { dropIntent, nextMasterSide, paneLayout } from "./masterLayout";
 import { TerminalCard } from "./TerminalCard";
 import "./WorkspacePane.css";
 
@@ -25,6 +29,66 @@ const REMO_ASCII = `   ____ ___ _ __ ___   ___
   | __// _ \\  _ \` _ \\ / _ \\
   | | |  __/ | | | | | (_) |
   |_|  \\___|_| |_| |_|\\___/`;
+
+/** How long hover-focus stays suppressed after tiles reflow. */
+const LAYOUT_SETTLE_MS = 250;
+
+/**
+ * Edge zones win outright when the pointer is inside one — dragging to the
+ * border is unambiguous intent, and `closestCenter` would otherwise keep
+ * choosing whichever tile sits under the band (a thin strip's centre is almost
+ * never the closest). `pointerWithin` returns [] when there are no pointer
+ * coordinates, which is exactly the fallback we want: a KeyboardSensor drag
+ * keeps today's swap-only behaviour.
+ */
+const snapAwareCollision: CollisionDetection = (args) => {
+  const isZone = (c: (typeof args.droppableContainers)[number]): boolean =>
+    c.data.current?.snapSide !== undefined;
+  const zones = args.droppableContainers.filter(isZone);
+  if (zones.length > 0) {
+    const hits = pointerWithin({ ...args, droppableContainers: zones });
+    if (hits.length > 0) {
+      return hits;
+    }
+  }
+  return closestCenter({
+    ...args,
+    droppableContainers: args.droppableContainers.filter((c) => !isZone(c)),
+  });
+};
+
+/** Read a drop target as either an edge zone or a plain tile. Zones are told
+ * apart by their `data` payload, never an id prefix — target ids come from the
+ * server and must not be assumed prefix-free. */
+function snapTargetOf(over: {
+  id: string | number;
+  data: { current?: { snapSide?: MasterSide } };
+}): { id: string; snapSide?: MasterSide } {
+  return { id: String(over.id), snapSide: over.data.current?.snapSide };
+}
+
+/** A drop target hugging one border of the pane.
+ *
+ * Deliberately `pointer-events: none` (see the CSS): dnd-kit resolves collisions
+ * from measured RECTS, never DOM hit-testing, so a zone can overlay the pane
+ * without stealing the pointer. That also leaves the rail's resize handle —
+ * which overhangs 3px into this pane's left edge — owning pointerdown there. */
+function SnapZone({ side, armed }: { side: MasterSide; armed: boolean }): JSX.Element {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `remo-snap:${side}`,
+    data: { snapSide: side },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      aria-hidden="true"
+      data-testid={`snap-zone-${side}`}
+      className={`workspace-snap workspace-snap--${side}${armed ? " workspace-snap--armed" : ""}${
+        isOver ? " workspace-snap--over" : ""
+      }`}
+    />
+  );
+}
 
 interface WorkspacePaneProps {
   /** id -> SessionTarget resolved from live discovery. */
@@ -37,19 +101,6 @@ interface WorkspacePaneProps {
   narrow: boolean;
 }
 
-function gridColumns(visibleCount: number, narrow: boolean): number {
-  if (narrow) {
-    return 1;
-  }
-  if (visibleCount >= 5) {
-    return 3;
-  }
-  if (visibleCount >= 2) {
-    return 2;
-  }
-  return 1;
-}
-
 export function WorkspacePane({
   targetsById,
   regionByKey,
@@ -58,7 +109,18 @@ export function WorkspacePane({
   narrow,
 }: WorkspacePaneProps): JSX.Element {
   const workspace = useWorkspace();
-  const { attached, visible, focusedId, prevGrid, maximizedId } = workspace;
+  const { attached, visible, focusedId, prevGrid, maximizedId, layout } = workspace;
+
+  // A layout change reflows tiles under a stationary pointer, and the browser
+  // then fires mouseenter for whatever landed there — arming focus-follows-mouse
+  // and silently moving focus a beat later. Suppress hover-focus briefly after
+  // any change. (WorkspacePane's activeId guard can't help: the drag has ended.)
+  const [settling, setSettling] = useState(false);
+  useEffect(() => {
+    setSettling(true);
+    const timer = setTimeout(() => setSettling(false), LAYOUT_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [layout, visible]);
 
   // dnd-kit reorder: `activeId` is the tile currently being dragged (drives the
   // floating DragOverlay ghost). Only the resulting order (`visible`) persists.
@@ -110,9 +172,10 @@ export function WorkspacePane({
 
   // Cards render as single (full-bleed) while a card is maximized; otherwise the
   // usual single↔grid split by how many are visible.
-  const mode = maximized || visible.length <= 1 ? "single" : "grid";
-  const cols = gridColumns(visible.length, narrow);
-  const rows = Math.max(1, Math.ceil(visible.length / cols));
+  // `paneMode` is the single-vs-grid axis; `layout.kind` is the separate
+  // uniform-vs-tiled axis. Two different "grid"s, hence the distinct name.
+  const paneMode = maximized || visible.length <= 1 ? "single" : "grid";
+  const pane = paneMode === "grid" ? paneLayout(layout, visible, narrow) : null;
   // The Grid control is available when a grid can be shown — either the visible
   // set is already a grid (fullscreen opened over one) or a grid was remembered.
   const canGrid =
@@ -130,15 +193,30 @@ export function WorkspacePane({
   };
 
   // Reordering is possible only within a real grid (two-plus visible tiles).
-  const reorderable = !maximized && mode === "grid" && visible.length > 1;
+  const reorderable = !maximized && paneMode === "grid" && visible.length > 1;
   const activeTarget = activeId ? targetsById.get(activeId) : undefined;
+
+  const cycleTile = (id: string): void => {
+    const side = nextMasterSide(layout, id);
+    if (side) {
+      workspace.setMaster(id, side);
+    } else {
+      workspace.clearMaster();
+    }
+  };
 
   const onDragStart = (e: DragStartEvent): void => setActiveId(String(e.active.id));
   const onDragEnd = (e: DragEndEvent): void => {
     const { active, over } = e;
     setActiveId(null);
-    if (over && active.id !== over.id) {
-      workspace.swapVisible(String(active.id), String(over.id));
+    // The branchy part is a pure function: jsdom reports every element as 0x0,
+    // so a real dnd-kit drop cannot be simulated and this is the only place the
+    // decision can actually be tested. See masterLayout.test.ts.
+    const intent = dropIntent(String(active.id), over ? snapTargetOf(over) : null);
+    if (intent?.kind === "master") {
+      workspace.setMaster(intent.id, intent.side);
+    } else if (intent?.kind === "swap") {
+      workspace.swapVisible(intent.a, intent.b);
     }
   };
 
@@ -146,33 +224,40 @@ export function WorkspacePane({
     <main className="workspace" data-testid="workspace">
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={snapAwareCollision}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onDragCancel={() => setActiveId(null)}
       >
         <div
-          className={`workspace-body workspace-body--${mode}${maximized ? " workspace-body--maximized" : ""}`}
-          style={
-            mode === "grid"
-              ? {
-                  gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-                  gridTemplateRows: `repeat(${rows}, minmax(0, 1fr))`,
-                }
-              : undefined
-          }
+          className={`workspace-body workspace-body--${paneMode}${maximized ? " workspace-body--maximized" : ""}`}
+          style={pane?.container}
         >
+          {/* Edge drop targets. Mounted whenever a reorder is possible, NOT on
+           * activeId: dnd-kit measures droppable rects when the drag starts, so
+           * a zone mounted inside onDragStart races that measurement. */}
+          {reorderable &&
+            MASTER_SIDES.map((side) => (
+              <SnapZone key={side} side={side} armed={activeId !== null} />
+            ))}
           {orderedTargets.map((target) => {
             const id = target.id;
             const isVisible = maximized ? id === maximized : visible.includes(id);
             const viewState =
-              maximized === id ? "fullscreen" : mode === "grid" ? "grid" : "normal";
+              maximized === id ? "fullscreen" : paneMode === "grid" ? "grid" : "normal";
             return (
               <TerminalCard
                 key={id}
                 target={target}
                 region={regionByKey.get(`${target.instance_type}::${target.instance_name}`)}
-                mode={mode}
+                mode={paneMode}
+                gridArea={pane?.areaById.get(id)}
+                masterSide={
+                  layout.kind === "master" && layout.id === id ? layout.side : null
+                }
+                onCycleTile={
+                  reorderable && isVisible ? () => cycleTile(id) : undefined
+                }
                 isVisible={isVisible}
                 isFocused={focusedId === id}
                 viewState={viewState}
@@ -183,7 +268,7 @@ export function WorkspacePane({
                 onToggleFullscreen={() => toggleFullscreen(id)}
                 onFocusRequest={() => workspace.setFocused(id)}
                 onHoverFocus={
-                  mode === "grid" && !maximized
+                  paneMode === "grid" && !maximized && !settling
                     ? () => {
                         // Focus-follows-mouse: hovering a grid tile focuses it,
                         // but never while dragging (would fight the reorder).

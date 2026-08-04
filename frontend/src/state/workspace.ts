@@ -14,6 +14,13 @@
 //                 can restore it.
 //   - `unread`    attached-but-hidden ids that produced output since last seen
 //                 (drives the rail's activity marker). Not persisted.
+//   - `layout`    how the visible tiles are arranged: the uniform grid (the
+//                 default), or a master/stack tiling where one tile holds a
+//                 chosen side of the pane and the rest tile the leftover strip
+//                 (the dwm/xmonad model). Persisted alongside `visible`, since a
+//                 tiling is exactly as durable as the tile ORDER it decorates.
+//   - `prevLayout`  the tiling remembered when soloing, so "back to grid" can
+//                 restore it. Transient, mirroring `prevGrid`.
 //   - `maximizedId`  the terminal currently shown fullscreen, or null. This is
 //                 an ORTHOGONAL presentation overlay, NOT a third value on the
 //                 single↔grid axis: it never mutates `visible`/`prevGrid`, so
@@ -33,16 +40,83 @@ import type { SessionTarget } from "../api/client";
 
 const STORAGE_KEY = "remo-web:workspace";
 
+export const MASTER_SIDES = ["left", "right", "top", "bottom"] as const;
+export type MasterSide = (typeof MASTER_SIDES)[number];
+
+/** How the visible tiles are arranged. `grid` is the uniform CSS grid the
+ * console has always used, and is both the default and the fallback for every
+ * invalid state. `master` is one tile holding `fraction` of the pane on `side`,
+ * with the rest tiling the remainder. */
+export type WorkspaceLayout =
+  | { kind: "grid" }
+  | { kind: "master"; id: string; side: MasterSide; fraction: number };
+
+/** Shared instance so the uniform-grid case never allocates per write. */
+const GRID_LAYOUT: WorkspaceLayout = { kind: "grid" };
+
+export const DEFAULT_MASTER_FRACTION = 0.6;
+export const MIN_MASTER_FRACTION = 0.3;
+export const MAX_MASTER_FRACTION = 0.75;
+
 interface PersistedWorkspaceState {
   attached: string[];
   visible: string[];
   focusedId: string | null;
+  layout: WorkspaceLayout;
 }
 
 interface WorkspaceState extends PersistedWorkspaceState {
   prevGrid: string[] | null;
+  prevLayout: WorkspaceLayout | null;
   unread: string[];
   maximizedId: string | null;
+}
+
+/**
+ * The layout's cross-field invariant, in ONE place.
+ *
+ * A master area only means anything while its tile is one of two-plus visible
+ * tiles, so everything that shrinks or rebuilds `visible` has to be accounted
+ * for. Rather than teach eight actions that rule — and forget it in the ninth —
+ * `setState` runs this on every write and `loadPersisted` runs it on the
+ * restored blob.
+ *
+ * A master that is no longer visible PROMOTES the head of the stack rather than
+ * un-tiling: closing the master should move one tile, not reflow every survivor
+ * (which resizes each remaining PTY and repaints any TUI). That is also what dwm
+ * does. Returns its input unchanged when already valid, so unrelated actions
+ * like `markUnread` never churn the layout reference.
+ */
+function normalizeLayout(layout: WorkspaceLayout, ids: string[]): WorkspaceLayout {
+  if (layout.kind !== "master") {
+    return GRID_LAYOUT;
+  }
+  if (ids.length < 2) {
+    return GRID_LAYOUT;
+  }
+  const id = ids.includes(layout.id) ? layout.id : ids[0];
+  const raw = Number.isFinite(layout.fraction) ? layout.fraction : DEFAULT_MASTER_FRACTION;
+  const fraction = Math.min(MAX_MASTER_FRACTION, Math.max(MIN_MASTER_FRACTION, raw));
+  return id === layout.id && fraction === layout.fraction ? layout : { ...layout, id, fraction };
+}
+
+/** Shape-only validation of an untrusted persisted layout. Cross-field rules
+ * belong to `normalizeLayout`, which runs after this. An unrecognized `kind`
+ * (written by a newer build) degrades to the grid rather than throwing. */
+function asLayout(v: unknown): WorkspaceLayout {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) {
+    return GRID_LAYOUT;
+  }
+  const l = v as Partial<{ kind: unknown; id: unknown; side: unknown; fraction: unknown }>;
+  if (l.kind !== "master") {
+    return GRID_LAYOUT;
+  }
+  if (typeof l.id !== "string" || !MASTER_SIDES.includes(l.side as MasterSide)) {
+    return GRID_LAYOUT;
+  }
+  // A bad fraction has an obviously-correct default; a bad side does not.
+  const fraction = typeof l.fraction === "number" ? l.fraction : DEFAULT_MASTER_FRACTION;
+  return { kind: "master", id: l.id, side: l.side as MasterSide, fraction };
 }
 
 function loadPersisted(): WorkspaceState {
@@ -50,7 +124,9 @@ function loadPersisted(): WorkspaceState {
     attached: [],
     visible: [],
     focusedId: null,
+    layout: GRID_LAYOUT,
     prevGrid: null,
+    prevLayout: null,
     unread: [],
     maximizedId: null,
   };
@@ -75,7 +151,18 @@ function loadPersisted(): WorkspaceState {
     const visible = asStrings(c.visible).filter((id) => attached.includes(id));
     const focusedId =
       typeof c.focusedId === "string" && visible.includes(c.focusedId) ? c.focusedId : (visible[0] ?? null);
-    return { attached, visible, focusedId, prevGrid: null, unread: [], maximizedId: null };
+    // Validated last, against the already-filtered `visible`.
+    const layout = normalizeLayout(asLayout(c.layout), visible);
+    return {
+      attached,
+      visible,
+      focusedId,
+      layout,
+      prevGrid: null,
+      prevLayout: null,
+      unread: [],
+      maximizedId: null,
+    };
   } catch (error) {
     console.error("workspace: failed to restore from localStorage", error);
     return fallback;
@@ -91,6 +178,7 @@ function persist(state: WorkspaceState): void {
       attached: state.attached,
       visible: state.visible,
       focusedId: state.focusedId,
+      layout: state.layout,
     };
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(toPersist));
   } catch (error) {
@@ -103,7 +191,11 @@ let state: WorkspaceState = loadPersisted();
 const listeners = new Set<() => void>();
 
 function setState(partial: Partial<WorkspaceState>): void {
-  state = { ...state, ...partial };
+  const next = { ...state, ...partial };
+  // The single write path for every action, so the layout invariant lives here
+  // once instead of in each of them. See normalizeLayout.
+  next.layout = normalizeLayout(next.layout, next.visible);
+  state = next;
   persist(state);
   for (const listener of listeners) {
     listener();
@@ -154,10 +246,15 @@ function addSession(target: SessionTarget): void {
   setState({ attached, visible, focusedId, unread: clearUnread(id), maximizedId: null });
 }
 
-/** Solo a grid tile into the single view, remembering the grid to return to. */
+/** Solo a grid tile into the single view, remembering the grid to return to.
+ * Remembers the TILING under the same condition: Escape routes here
+ * (useConsoleKeyboard), so without this one stray keypress would permanently
+ * destroy a layout that took a drag to build. */
 function soloTile(id: string): void {
+  const wasGrid = state.visible.length > 1;
   setState({
-    prevGrid: state.visible.length > 1 ? state.visible : state.prevGrid,
+    prevGrid: wasGrid ? state.visible : state.prevGrid,
+    prevLayout: wasGrid ? state.layout : state.prevLayout,
     visible: [id],
     focusedId: id,
     unread: clearUnread(id),
@@ -173,11 +270,19 @@ function backToGrid(): void {
   const grid =
     current.length > 1 ? current : (state.prevGrid ?? []).filter((id) => state.attached.includes(id));
   if (grid.length <= 1) {
-    setState({ prevGrid: null, maximizedId: null });
+    setState({ prevGrid: null, prevLayout: null, maximizedId: null });
     return;
   }
   const focusedId = grid.includes(state.focusedId ?? "") ? state.focusedId : grid[grid.length - 1];
-  setState({ visible: grid, focusedId, prevGrid: null, maximizedId: null });
+  // normalizeLayout validates the restored tiling against the restored grid.
+  setState({
+    visible: grid,
+    layout: state.prevLayout ?? GRID_LAYOUT,
+    focusedId,
+    prevGrid: null,
+    prevLayout: null,
+    maximizedId: null,
+  });
 }
 
 /** Open several targets at once as a grid (open-all). */
@@ -192,7 +297,16 @@ function openMany(targets: SessionTarget[]): void {
     }
   }
   const visible = targets.map((t) => t.id);
-  setState({ attached, visible, focusedId: visible[0], prevGrid: null, maximizedId: null });
+  // A full rebuild already discards the custom `visible` order; the tiling is
+  // the same class of arrangement state, so it goes with it.
+  setState({
+    attached,
+    visible,
+    focusedId: visible[0],
+    layout: GRID_LAYOUT,
+    prevGrid: null,
+    maximizedId: null,
+  });
 }
 
 /** Swap two tiles' positions in the grid. The order lives in `visible` (which is
@@ -206,7 +320,35 @@ function swapVisible(a: string, b: string): void {
   }
   const visible = [...state.visible];
   [visible[i], visible[j]] = [visible[j], visible[i]];
-  setState({ visible });
+  // Mastership follows the SLOT, not the tile. Dragging the master onto a stack
+  // tile otherwise swaps their array positions while `layout.id` still names the
+  // master — so the tile the user dragged visibly would not move.
+  let layout = state.layout;
+  if (layout.kind === "master" && (layout.id === a || layout.id === b)) {
+    layout = { ...layout, id: layout.id === a ? b : a };
+  }
+  setState({ visible, layout });
+}
+
+/** Give `id` the master area on `side`, tiling the rest into the remainder.
+ * Keeps the current split when one is already set, so re-tiling to another edge
+ * doesn't silently undo a resize. Normalised away by `normalizeLayout` when `id`
+ * isn't part of a two-plus grid, so callers need no guard. */
+function setMaster(id: string, side: MasterSide): void {
+  // An explicit request naming a tile that isn't on screen is a caller bug, not
+  // a tile disappearing — no-op rather than letting normalizeLayout's promotion
+  // rule hand mastership to whatever happens to be first.
+  if (!state.visible.includes(id)) {
+    return;
+  }
+  const fraction =
+    state.layout.kind === "master" ? state.layout.fraction : DEFAULT_MASTER_FRACTION;
+  setState({ layout: { kind: "master", id, side, fraction } });
+}
+
+/** Back to the uniform grid, leaving the tile ORDER untouched. */
+function clearMaster(): void {
+  setState({ layout: GRID_LAYOUT });
 }
 
 /** Close a terminal: reap it and re-pick focus / restore grid if soloed. */
@@ -271,6 +413,7 @@ export interface UseWorkspaceResult {
   prevGrid: string[] | null;
   unread: string[];
   maximizedId: string | null;
+  layout: WorkspaceLayout;
   selectOnly: (target: SessionTarget) => void;
   addSession: (target: SessionTarget) => void;
   soloTile: (id: string) => void;
@@ -278,6 +421,8 @@ export interface UseWorkspaceResult {
   openMany: (targets: SessionTarget[]) => void;
   closeTerm: (id: string) => void;
   swapVisible: (a: string, b: string) => void;
+  setMaster: (id: string, side: MasterSide) => void;
+  clearMaster: () => void;
   maximize: (id: string) => void;
   restore: () => void;
   setFocused: (id: string | null) => void;
@@ -293,6 +438,7 @@ export function useWorkspace(): UseWorkspaceResult {
     prevGrid: snapshot.prevGrid,
     unread: snapshot.unread,
     maximizedId: snapshot.maximizedId,
+    layout: snapshot.layout,
     selectOnly,
     addSession,
     soloTile,
@@ -300,6 +446,8 @@ export function useWorkspace(): UseWorkspaceResult {
     openMany,
     closeTerm,
     swapVisible,
+    setMaster,
+    clearMaster,
     maximize,
     restore,
     setFocused,

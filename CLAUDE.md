@@ -117,6 +117,7 @@ frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
 ├── src/
 │   ├── api/client.ts        # REST + WS terminal client (remo-terminal.v1 subprotocol)
 │   ├── components/          # Dashboard, InstanceGroup, TargetCard, GridView, TabView, TerminalCard
+│   │                        #   + masterLayout.ts (pure pane geometry: uniform grid + master/stack tiling)
 │   ├── state/                # discovery.ts, workspace.ts (layout persisted to localStorage), settings.ts (display prefs: site light/dark mode, accent, fonts, terminal theme + per-target overrides)
 │   ├── terminal/              # RendererAdapter (seam), XtermRenderer (the one engine), TerminalConnection, keymap
 │   └── theme/                 # tokens.css (light-dark() palette, one pair per token), fonts.ts, terminalThemes.ts (8 terminal color schemes: a token-derived Remo Dark/Light pair the default 'auto' selection tracks, plus 6 curated third-party)

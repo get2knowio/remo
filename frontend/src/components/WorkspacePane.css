@@ -23,6 +23,75 @@
   display: grid;
 }
 
+/* Containing block for the snap zones below, and a stop for touch scroll
+ * chaining while dragging a tile around. */
+.workspace-body {
+  position: relative;
+  overscroll-behavior: contain;
+}
+
+/* --- edge drop targets (master/stack tiling) ---
+ *
+ * `pointer-events: none` is load-bearing, not a tidy-up: dnd-kit resolves drops
+ * from measured rects rather than hit-testing, so these can blanket the pane
+ * edges without intercepting anything — including the rail's resize handle,
+ * which overhangs 3px into this pane's left edge.
+ *
+ * z-index 20 sits in the free band between the rail divider (8) and the terminal
+ * theme popup (60). */
+.workspace-snap {
+  position: absolute;
+  z-index: 20;
+  pointer-events: none;
+  opacity: 0;
+  border-radius: var(--radius-lg);
+  border: 2px dashed transparent;
+  background: color-mix(in oklch, var(--accent) 14%, transparent);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .workspace-snap {
+    transition: opacity 120ms ease;
+  }
+}
+/* Visible but quiet while a drag is in flight, solid once it would land here. */
+.workspace-snap--armed {
+  opacity: 0.4;
+}
+.workspace-snap--over {
+  opacity: 1;
+  border-color: var(--accent-strong);
+  background: color-mix(in oklch, var(--accent) 28%, transparent);
+}
+
+.workspace-snap--left,
+.workspace-snap--right {
+  top: 0;
+  bottom: 0;
+  width: min(64px, 18%);
+}
+.workspace-snap--left {
+  left: 0;
+}
+.workspace-snap--right {
+  right: 0;
+}
+
+/* Inset horizontally by the same band, so the CORNERS belong unambiguously to
+ * left/right — the vertical split is what this feature is for, and an overlap
+ * would resolve a corner by centre distance, i.e. arbitrarily. */
+.workspace-snap--top,
+.workspace-snap--bottom {
+  left: min(64px, 18%);
+  right: min(64px, 18%);
+  height: min(64px, 18%);
+}
+.workspace-snap--top {
+  top: 0;
+}
+.workspace-snap--bottom {
+  bottom: 0;
+}
+
 /* Empty state */
 .workspace-empty {
   flex: 1;
