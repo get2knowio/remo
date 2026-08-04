@@ -96,3 +96,201 @@ describe("workspace grid reorder (swapVisible)", () => {
     expect(result.current.visible).toEqual(["a", "b"]);
   });
 });
+
+// --- master/stack tiling ----------------------------------------------------
+//
+// The invariant lives in one place (normalizeLayout, called from setState), so
+// most of these prove that actions which never mention `layout` still leave it
+// coherent.
+
+const STORAGE_KEY = "remo-web:workspace";
+
+describe("workspace master layout", () => {
+  it("promotes a visible tile to the master area at the default split", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b"), target("c")]));
+    act(() => result.current.setMaster("c", "right"));
+
+    expect(result.current.layout).toEqual({
+      kind: "master",
+      id: "c",
+      side: "right",
+      fraction: 0.6,
+    });
+  });
+
+  it("keeps the current split when re-tiling to another edge", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b")]));
+    act(() => result.current.setMaster("a", "right"));
+    act(() => result.current.setMaster("a", "top"));
+
+    expect(result.current.layout).toMatchObject({ side: "top", fraction: 0.6 });
+  });
+
+  it("clearMaster returns to the grid without disturbing the tile order", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b"), target("c")]));
+    act(() => result.current.setMaster("b", "left"));
+    act(() => result.current.clearMaster());
+
+    expect(result.current.layout).toEqual({ kind: "grid" });
+    expect(result.current.visible).toEqual(["a", "b", "c"]);
+  });
+
+  it("ignores a master that isn't visible, and one with too few tiles", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b")]));
+
+    act(() => result.current.setMaster("nope", "left"));
+    expect(result.current.layout).toEqual({ kind: "grid" });
+
+    act(() => result.current.selectOnly(target("a")));
+    act(() => result.current.setMaster("a", "left"));
+    expect(result.current.layout).toEqual({ kind: "grid" });
+  });
+
+  it("clamps the split into the usable range", async () => {
+    // Only reachable through a hand-edited store today (the splitter is stage
+    // 2), but the clamp is what stops a 0.99 master squeezing the stack to
+    // nothing. NB: mount() clears localStorage, so seed it and import directly.
+    window.localStorage.clear();
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        attached: ["a", "b"],
+        visible: ["a", "b"],
+        focusedId: "a",
+        layout: { kind: "master", id: "a", side: "left", fraction: 0.99 },
+      }),
+    );
+    vi.resetModules();
+    const mod = await import("./workspace");
+    const { result } = renderHook(() => mod.useWorkspace());
+    expect((result.current.layout as { fraction: number }).fraction).toBe(0.75);
+  });
+
+  // Closing the master moves ONE tile instead of reflowing every survivor.
+  it("promotes the head of the stack when the master is closed", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b"), target("c")]));
+    act(() => result.current.setMaster("c", "right"));
+    act(() => result.current.closeTerm("c"));
+
+    expect(result.current.layout).toMatchObject({ kind: "master", id: "a", side: "right" });
+    expect(result.current.visible).toEqual(["a", "b"]);
+  });
+
+  it("falls back to the grid once too few tiles remain", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b")]));
+    act(() => result.current.setMaster("a", "right"));
+    act(() => result.current.closeTerm("b"));
+
+    expect(result.current.layout).toEqual({ kind: "grid" });
+  });
+
+  it("survives solo and comes back with the grid", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b"), target("c")]));
+    act(() => result.current.setMaster("c", "top"));
+    // Escape routes here — the tiling must not be destroyed by it.
+    act(() => result.current.soloTile("a"));
+    expect(result.current.layout).toEqual({ kind: "grid" });
+
+    act(() => result.current.backToGrid());
+    expect(result.current.layout).toMatchObject({ kind: "master", id: "c", side: "top" });
+  });
+
+  it("is discarded by an open-many rebuild", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b")]));
+    act(() => result.current.setMaster("a", "left"));
+    act(() => result.current.openMany([target("a"), target("b"), target("c")]));
+
+    expect(result.current.layout).toEqual({ kind: "grid" });
+  });
+
+  // Mastership is attached to the SLOT: dragging the master onto a stack tile
+  // must actually move the dragged tile.
+  it("transfers mastership when the master is swapped", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b"), target("c")]));
+    act(() => result.current.setMaster("a", "right"));
+
+    act(() => result.current.swapVisible("a", "c"));
+    expect(result.current.layout).toMatchObject({ id: "c" });
+
+    act(() => result.current.swapVisible("b", "c"));
+    expect(result.current.layout).toMatchObject({ id: "b" });
+  });
+
+  it("leaves the master alone when neither swapped tile holds it", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b"), target("c")]));
+    act(() => result.current.setMaster("a", "right"));
+    act(() => result.current.swapVisible("b", "c"));
+
+    expect(result.current.layout).toMatchObject({ id: "a" });
+  });
+
+  it("is orthogonal to fullscreen", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b")]));
+    act(() => result.current.setMaster("b", "bottom"));
+
+    act(() => result.current.maximize("a"));
+    expect(result.current.layout).toMatchObject({ kind: "master", id: "b" });
+    act(() => result.current.restore());
+    expect(result.current.layout).toMatchObject({ kind: "master", id: "b" });
+  });
+});
+
+describe("workspace master layout persistence", () => {
+  it("round-trips through localStorage", async () => {
+    const first = await mount();
+    act(() => first.result.current.openMany([target("a"), target("b"), target("c")]));
+    act(() => first.result.current.setMaster("b", "left"));
+
+    vi.resetModules();
+    const mod = await import("./workspace");
+    const { result } = renderHook(() => mod.useWorkspace());
+    expect(result.current.layout).toMatchObject({ kind: "master", id: "b", side: "left" });
+  });
+
+  it("does not persist the remembered tiling", async () => {
+    const { result } = await mount();
+    act(() => result.current.openMany([target("a"), target("b")]));
+    act(() => result.current.setMaster("a", "left"));
+    act(() => result.current.soloTile("a"));
+
+    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "{}") as Record<string, unknown>;
+    expect(Object.keys(stored).sort()).toEqual(["attached", "focusedId", "layout", "visible"]);
+  });
+
+  it.each([
+    ["a stale master id", { kind: "master", id: "gone", side: "left", fraction: 0.6 }],
+    ["a bad side", { kind: "master", id: "a", side: "sideways", fraction: 0.6 }],
+    ["a non-numeric fraction", { kind: "master", id: "a", side: "left", fraction: "wide" }],
+    ["an unknown kind from a newer build", { kind: "columns", id: "a" }],
+    ["a non-object", "master"],
+    ["an array", []],
+  ])("loads sanely with %s", async (_label, layout) => {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ attached: ["a", "b"], visible: ["a", "b"], focusedId: "a", layout }),
+    );
+    vi.resetModules();
+    const mod = await import("./workspace");
+    const { result } = renderHook(() => mod.useWorkspace());
+
+    // Either a coherent master on a real tile, or the grid. Never a dangling id.
+    const restored = result.current.layout;
+    if (restored.kind === "master") {
+      expect(result.current.visible).toContain(restored.id);
+      expect(restored.fraction).toBeGreaterThanOrEqual(0.3);
+    } else {
+      expect(restored).toEqual({ kind: "grid" });
+    }
+  });
+});

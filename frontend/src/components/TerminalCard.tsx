@@ -30,6 +30,7 @@ import {
   type TerminalFontOptions,
 } from "../state/settings";
 import { TERMINAL_THEMES, type TerminalThemeColors } from "../theme/terminalThemes";
+import type { MasterSide } from "../state/workspace";
 import { removeLatency, reportLatency } from "../state/latency";
 import type { RendererAdapter } from "../terminal/RendererAdapter";
 import { createDefaultRenderer } from "../terminal/defaultRenderer";
@@ -40,6 +41,16 @@ const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 /** How much to shrink the terminal font in a grid tile when "scale to fit". */
 const GRID_FIT_SCALE = 0.8;
+
+/** Glyph + label per tiling state. The glyph is a half block drawing where the
+ * master area sits, so the button reads as a picture of the layout. */
+const MASTER_GLYPH: Record<MasterSide | "grid", { glyph: string; title: string }> = {
+  grid: { glyph: "▦", title: "Tile this terminal to the left" },
+  left: { glyph: "▌", title: "Mastering the left — tile to the top" },
+  top: { glyph: "▀", title: "Mastering the top — tile to the right" },
+  right: { glyph: "▐", title: "Mastering the right — tile to the bottom" },
+  bottom: { glyph: "▄", title: "Mastering the bottom — back to the even grid" },
+};
 
 const STATE_LABELS: Record<TerminalConnectionState, string> = {
   connecting: "Connecting…",
@@ -70,6 +81,16 @@ interface TerminalCardProps {
   /** When true, the header acts as a dnd-kit drag handle and the tile is a drop
    * target (grid reorder). The DndContext + swap live in WorkspacePane. */
   reorderEnabled?: boolean;
+  /** This tile's slot in a master/stack tiling, as a CSS `grid-area`. Undefined
+   * in the uniform grid, where tiles auto-place exactly as they always have.
+   * Applied to the card's OWN root element — never a wrapper, see WorkspacePane. */
+  gridArea?: string;
+  /** Which side this tile masters, or null when it is a plain stack tile.
+   * Undefined hides the tiling control entirely (single view, fullscreen). */
+  masterSide?: MasterSide | null;
+  /** Advance this tile through the tiling cycle (left -> top -> right -> bottom
+   * -> uniform grid). */
+  onCycleTile?: () => void;
   /** Window-control "Normal": solo this terminal into the single view. */
   onNormal: () => void;
   /** Window-control "Grid": show the grid — omitted when none is available. */
@@ -173,6 +194,9 @@ export function TerminalCard({
   viewState,
   onClose,
   reorderEnabled,
+  gridArea,
+  masterSide,
+  onCycleTile,
   onNormal,
   onGrid,
   onToggleFullscreen,
@@ -544,6 +568,7 @@ export function TerminalCard({
       style={
         {
           display: isVisible ? undefined : "none",
+          gridArea,
           "--bg-term": theme.colors.background,
         } as CSSProperties
       }
@@ -672,6 +697,26 @@ export function TerminalCard({
               </div>
             )}
           </div>
+          {/* Tiling control. Cycles rather than opening a menu: it is one tap on
+           * a touch device, where dragging to a 64px edge band with a thumb is
+           * the awkward path. The half-block glyphs draw where the master area
+           * lands, so the current state is legible without the tooltip. */}
+          {onCycleTile && (
+            <button
+              type="button"
+              className={`tc-btn tc-btn--icon${masterSide ? " tc-btn--active" : ""}`}
+              data-testid={`terminal-tile-${target.id}`}
+              title={MASTER_GLYPH[masterSide ?? "grid"].title}
+              aria-label={MASTER_GLYPH[masterSide ?? "grid"].title}
+              aria-pressed={Boolean(masterSide)}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCycleTile();
+              }}
+            >
+              {MASTER_GLYPH[masterSide ?? "grid"].glyph}
+            </button>
+          )}
           {/* Window-control cluster: mutually-exclusive display modes ordered
            * by how much space they take — Grid (smaller/tiled) → Normal (fills
            * the app's main pane) → Fullscreen (whole window) — plus close. The

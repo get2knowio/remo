@@ -108,7 +108,16 @@ The SPA is a two-pane **web console**:
   row (or its `+` button) **adds** it to a responsive grid (1/2/3 columns by count). In a grid, **drag
   a tile's header onto another to swap their positions** — a window outline follows the cursor and the
   swap target shows a dashed outline (mouse or touch press-and-hold; keyboard-accessible via the
-  handle); the arrangement persists until the grid is rebuilt. In a grid, **resting the pointer on a
+  handle); the arrangement persists until the grid is rebuilt. **Drag a tile to a pane edge instead of
+  onto another tile** and it takes that whole side as a *master area* — full height on the left/right,
+  full width on the top/bottom — with the remaining tiles tiling the leftover strip (the dwm/xmonad
+  master+stack model). A translucent band marks each edge while dragging and fills in when the drop
+  would land there. The **▦** control in a tile's header cycles the same thing without a drag
+  (▌ left → ▀ top → ▐ right → ▄ bottom → back to the even grid), which is the practical path on a touch
+  device. The master takes 60% by default, closing it promotes the head of the stack rather than
+  un-tiling everything, and the arrangement persists across reload alongside the tile order. This is
+  what lets three terminals fill the pane without the empty fourth cell a 2x2 grid would leave. In a
+  grid, **resting the pointer on a
   tile focuses it** (focus-follows-mouse, with a short dwell so passing through tiles doesn't steal
   focus) — keystrokes go where the pointer is, no click needed. The **◻** control solos a tile; **Esc**
   collapses the grid back to the focused terminal;

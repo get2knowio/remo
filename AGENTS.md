@@ -117,6 +117,7 @@ frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
 ├── src/
 │   ├── api/client.ts        # REST + WS terminal client (remo-terminal.v1 subprotocol)
 │   ├── components/          # Dashboard, InstanceGroup, TargetCard, GridView, TabView, TerminalCard
+│   │                        #   + masterLayout.ts (pure pane geometry: uniform grid + master/stack tiling)
 │   ├── state/                # discovery.ts, workspace.ts (layout persisted to localStorage)
 │   └── terminal/              # RendererAdapter (seam), XtermRenderer (the one engine), TerminalConnection, keymap
 
