@@ -121,7 +121,9 @@ The SPA is a two-pane **web console**:
   master+stack model). A translucent band marks each edge while dragging and fills in when the drop
   would land there. The **▦** control in a tile's header cycles the same thing without a drag
   (▌ left → ▀ top → ▐ right → ▄ bottom → back to the even grid), which is the practical path on a touch
-  device. The master's share is a setting (**Settings → Tiling split**: 40/60, 45/55 or 50/50, applied
+  device — and it is in the cluster in every mode, not just a grid: from a single view it rebuilds the
+  grid with the terminal you were looking at as the master (inert only when there is no grid to build).
+  The master's share is a setting (**Settings → Tiling split**: 40/60, 45/55 or 50/50, applied
   live to a tiling you already have), closing it promotes the head of the stack rather than
   un-tiling everything, and the arrangement persists across reload alongside the tile order. **⊞ flattens
   a tiling back to even tiles** — in a plain grid that control is inert, so it doubles as the way out

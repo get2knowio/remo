@@ -22,7 +22,7 @@ import type { SessionTarget } from "../api/client";
 import { requestBrowserFullscreen } from "../lib/fullscreen";
 import { useSettings } from "../state/settings";
 import { MASTER_SIDES, useWorkspace, type MasterSide } from "../state/workspace";
-import { dropIntent, nextMasterSide, paneLayout } from "./masterLayout";
+import { FIRST_MASTER_SIDE, dropIntent, nextMasterSide, paneLayout } from "./masterLayout";
 import { TerminalCard } from "./TerminalCard";
 import "./WorkspacePane.css";
 
@@ -199,6 +199,16 @@ export function WorkspacePane({
   const activeTarget = activeId ? targetsById.get(activeId) : undefined;
 
   const cycleTile = (id: string): void => {
+    // From a single view (or fullscreen), the control means "put me back in the
+    // grid, as the master" — a tiling is what it makes, so it should make one
+    // from wherever you are rather than only existing once you already have a
+    // grid. backToGrid may restore a remembered tiling; setMaster then hands
+    // mastership to THIS tile, which is the one the user was looking at.
+    if (paneMode !== "grid") {
+      workspace.backToGrid();
+      workspace.setMaster(id, FIRST_MASTER_SIDE);
+      return;
+    }
     const side = nextMasterSide(layout, id);
     if (side) {
       workspace.setMaster(id, side);
@@ -258,7 +268,12 @@ export function WorkspacePane({
                   layout.kind === "master" && layout.id === id ? layout.side : null
                 }
                 onCycleTile={
-                  reorderable && isVisible ? () => cycleTile(id) : undefined
+                  // Present in every mode for consistency with the other window
+                  // controls; undefined (and so rendered disabled) only when
+                  // there is no grid to tile — one lone terminal.
+                  (reorderable && isVisible) || (paneMode !== "grid" && canGrid && isVisible)
+                    ? () => cycleTile(id)
+                    : undefined
                 }
                 isVisible={isVisible}
                 isFocused={focusedId === id}

@@ -193,6 +193,39 @@ describe("WorkspacePane layout wiring", () => {
   });
 });
 
+describe("tiling control outside the grid", () => {
+  // It sits in the same cluster as ⊞ / ◻ / ⤢, which are always present and
+  // merely disabled when inapplicable. Vanishing was the odd one out.
+  it("stays in the cluster in a single view, and rebuilds the grid as master", async () => {
+    const { store } = await mount(["a", "b", "c"]);
+    act(() => store.soloTile("b"));
+
+    const button = screen.getByTestId("terminal-tile-b") as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+
+    act(() => button.click());
+    // Back to the remembered grid, with the tile you were looking at mastering.
+    expect(store.visible).toEqual(["a", "b", "c"]);
+    expect(store.layout).toMatchObject({ kind: "master", id: "b", side: "left" });
+  });
+
+  it("takes mastership from a remembered tiling rather than restoring it", async () => {
+    const { store } = await mount(["a", "b", "c"]);
+    act(() => store.setMaster("c", "right"));
+    act(() => store.soloTile("a"));
+
+    act(() => (screen.getByTestId("terminal-tile-a") as HTMLButtonElement).click());
+    expect(store.layout).toMatchObject({ kind: "master", id: "a" });
+  });
+
+  it("is present but inert when there is no grid to build", async () => {
+    await mount(["a"]);
+    const button = screen.getByTestId("terminal-tile-a") as HTMLButtonElement;
+    expect(button).toBeTruthy();
+    expect(button.disabled).toBe(true);
+  });
+});
+
 describe("tiling split setting", () => {
   // The point of putting the split in settings rather than the layout: changing
   // it re-flows the tiling you are looking at, no re-tiling required.

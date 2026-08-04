@@ -777,7 +777,7 @@ export function TerminalCard({
              * a touch device, where dragging to a 64px edge band with a thumb is
              * the awkward path. The half-block glyphs draw where the master area
              * lands, so the current state is legible without the tooltip. */}
-            {onCycleTile && (
+            {(
               <button
                 type="button"
                 className={`tc-btn tc-btn--icon${masterSide ? " tc-btn--active" : ""}`}
@@ -785,9 +785,10 @@ export function TerminalCard({
                 title={MASTER_GLYPH[masterSide ?? "grid"].title}
                 aria-label={MASTER_GLYPH[masterSide ?? "grid"].title}
                 aria-pressed={Boolean(masterSide)}
+                disabled={!onCycleTile}
                 onClick={(e) => {
                   e.stopPropagation();
-                  onCycleTile();
+                  onCycleTile?.();
                 }}
               >
                 {MASTER_GLYPH[masterSide ?? "grid"].glyph}

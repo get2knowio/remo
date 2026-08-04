@@ -181,6 +181,10 @@ export function dropIntent(
 /** Order the tile button cycles through. Drawn by the button's glyphs. */
 const MASTER_CYCLE: MasterSide[] = ["left", "top", "right", "bottom"];
 
+/** Where a tiling starts — used both by the cycle and by the control's
+ * "build me a grid with this tile as master" behaviour in a single view. */
+export const FIRST_MASTER_SIDE: MasterSide = MASTER_CYCLE[0];
+
 /** The next side for `id`, or null to return to the uniform grid. Taking
  * mastership from another tile restarts the cycle, so the button always
  * advances visibly rather than appearing to do nothing. */
