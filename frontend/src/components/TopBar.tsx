@@ -46,6 +46,9 @@ interface TopBarProps {
   onShortcuts: () => void;
   /** Site light/dark mode (this component stays pure-props; AppShell wires it
    * to the settings store). */
+  /** Whether each terminal shows its header; the toggle sits next to Settings. */
+  showTileChrome: boolean;
+  onToggleTileChrome: () => void;
   themeMode: SiteThemeMode;
   /** What the mode resolves to right now — only differs from `themeMode` under
    * "system", where it reflects the OS preference. */
@@ -76,6 +79,8 @@ export function TopBar({
   onRefresh,
   onSettings,
   onShortcuts,
+  showTileChrome,
+  onToggleTileChrome,
   themeMode,
   resolvedDark,
   onCycleTheme,
@@ -134,6 +139,21 @@ export function TopBar({
         <span className={refreshing ? "rail-spin" : undefined}>⟳</span> Refresh
       </button>
 
+      <button
+        type="button"
+        className={`topbar-icon-btn${showTileChrome ? "" : " topbar-icon-btn--off"}`}
+        title={
+          showTileChrome
+            ? "Hide terminal headers — more room per terminal, but the per-tile controls and drag handle go with them"
+            : "Show terminal headers"
+        }
+        aria-label="Terminal headers"
+        aria-pressed={showTileChrome}
+        data-testid="chrome-toggle"
+        onClick={onToggleTileChrome}
+      >
+        {showTileChrome ? "▤" : "▭"}
+      </button>
       <button
         type="button"
         className="topbar-icon-btn"

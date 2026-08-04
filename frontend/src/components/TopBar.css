@@ -30,6 +30,14 @@
   font-size: 14px;
 }
 
+/* A toggle that is currently OFF — dimmed and outlined rather than filled, so
+ * the header's "something is hidden" state reads at a glance. */
+.topbar-icon-btn--off {
+  background: transparent;
+  color: var(--text-dim);
+  border-style: dashed;
+}
+
 .topbar-brand {
   display: flex;
   align-items: center;

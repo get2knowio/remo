@@ -155,6 +155,25 @@ describe("WorkspacePane layout wiring", () => {
     }
   });
 
+  // The ⊞ control is dead UI in a plain grid; when the grid is TILED it becomes
+  // the way out, so "how do I undo this" has an obvious answer that isn't
+  // "cycle the ▦ button forward until it wraps".
+  it("flattens a tiling from the grid control, and stays inert in a plain grid", async () => {
+    const { store } = await mount(["a", "b", "c"]);
+    const gridBtn = (): HTMLButtonElement =>
+      screen.getByTestId("terminal-grid-a") as HTMLButtonElement;
+
+    expect(gridBtn().disabled).toBe(true);
+
+    act(() => store.setMaster("c", "right"));
+    expect(gridBtn().disabled).toBe(false);
+    expect(gridBtn().getAttribute("title")).toBe("Even out the grid");
+
+    act(() => gridBtn().click());
+    expect(store.layout).toEqual({ kind: "grid" });
+    expect(gridBtn().disabled).toBe(true);
+  });
+
   it("cycles a tile through the sides from its header control", async () => {
     const { store } = await mount(["a", "b"]);
     const button = (): HTMLElement => screen.getByTestId("terminal-tile-a");
@@ -171,5 +190,30 @@ describe("WorkspacePane layout wiring", () => {
     act(() => button().click());
     expect(store.layout).toEqual({ kind: "grid" });
     expect(button().getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("terminal chrome toggle", () => {
+  it("drops every tile header when chrome is off, and restores them", async () => {
+    const { view } = await mount(["a", "b"]);
+    const settings = await import("../state/settings");
+    const headers = (): number => view.container.querySelectorAll(".terminal-card-header").length;
+
+    expect(headers()).toBe(2);
+    act(() => settings.settingsActions.toggleTileChrome());
+    expect(headers()).toBe(0);
+    act(() => settings.settingsActions.toggleTileChrome());
+    expect(headers()).toBe(2);
+  });
+
+  // Fullscreen is the one place the header must stay: there is one card on
+  // screen so the saved space is negligible, and its controls are the way out.
+  it("keeps the header on a fullscreen terminal", async () => {
+    const { view, store } = await mount(["a", "b"]);
+    const settings = await import("../state/settings");
+    act(() => settings.settingsActions.toggleTileChrome());
+    act(() => store.maximize("a"));
+
+    expect(view.container.querySelectorAll(".terminal-card-header")).toHaveLength(1);
   });
 });

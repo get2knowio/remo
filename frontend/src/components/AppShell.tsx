@@ -230,6 +230,8 @@ export function AppShell(): JSX.Element {
         onRefresh={() => void discovery.refresh()}
         onSettings={() => setSettingsOpen(true)}
         onShortcuts={onToggleShortcuts}
+        showTileChrome={settings.showTileChrome}
+        onToggleTileChrome={() => settingsActions.toggleTileChrome()}
         themeMode={settings.themeMode}
         resolvedDark={resolvedSiteTheme(settings) === "dark"}
         onCycleTheme={() => settingsActions.cycleThemeMode()}

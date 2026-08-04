@@ -264,7 +264,24 @@ export function WorkspacePane({
                 reorderEnabled={reorderable && isVisible}
                 onClose={() => workspace.closeTerm(id)}
                 onNormal={() => workspace.soloTile(id)}
-                onGrid={canGrid ? workspace.backToGrid : undefined}
+                onGrid={
+                  // In a TILED grid the ⊞ control flattens back to even tiles —
+                  // it is otherwise dead UI in exactly the state where you want
+                  // a way out, since cycling the ▦ control forward until it
+                  // wraps is a poor answer to "how do I undo this".
+                  paneMode === "grid" && !maximized
+                    ? layout.kind === "master"
+                      ? workspace.clearMaster
+                      : undefined
+                    : canGrid
+                      ? workspace.backToGrid
+                      : undefined
+                }
+                gridTitle={
+                  paneMode === "grid" && !maximized && layout.kind === "master"
+                    ? "Even out the grid"
+                    : undefined
+                }
                 onToggleFullscreen={() => toggleFullscreen(id)}
                 onFocusRequest={() => workspace.setFocused(id)}
                 onHoverFocus={

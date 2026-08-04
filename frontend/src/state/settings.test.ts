@@ -266,6 +266,28 @@ describe("terminal themes", () => {
   });
 });
 
+describe("terminal chrome toggle", () => {
+  it("shows tile headers by default", async () => {
+    const settings = await load();
+    expect(settings.getSettings().showTileChrome).toBe(true);
+  });
+
+  it("toggles and round-trips through localStorage", async () => {
+    const first = await load();
+    act(() => first.settingsActions.toggleTileChrome());
+    expect(first.getSettings().showTileChrome).toBe(false);
+
+    const reloaded = await load();
+    expect(reloaded.getSettings().showTileChrome).toBe(false);
+  });
+
+  it("falls back to showing them when the stored value is garbage", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ showTileChrome: "no" }));
+    const settings = await load();
+    expect(settings.getSettings().showTileChrome).toBe(true);
+  });
+});
+
 describe("useSettings", () => {
   it("re-renders subscribers when the theme changes", async () => {
     const settings = await load();

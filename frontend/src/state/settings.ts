@@ -106,6 +106,11 @@ export interface SettingsState {
   termLiga: boolean;
   /** Scale each grid terminal to fit (true) vs keep font fixed + clip (false). */
   gridFit: boolean;
+  /** Show each terminal's header (identity, state, window controls). Hiding it
+   * buys back ~36px per tile, which is a real difference when three are stacked
+   * on a tablet — at the cost of the per-tile controls and the drag handle,
+   * since the header IS the handle. */
+  showTileChrome: boolean;
   railWidth: number;
   railCollapsed: boolean;
   /** Family name of the currently-registered uploaded Nerd Font, if any. */
@@ -130,6 +135,7 @@ const DEFAULTS: SettingsState = {
   termSizeNum: 13,
   termLiga: true,
   gridFit: false,
+  showTileChrome: true,
   railWidth: DEFAULT_RAIL_WIDTH,
   railCollapsed: false,
   nerdFontName: null,
@@ -199,6 +205,8 @@ function loadPersisted(): SettingsState {
           : DEFAULTS.termSizeNum,
       termLiga: typeof c.termLiga === "boolean" ? c.termLiga : DEFAULTS.termLiga,
       gridFit: typeof c.gridFit === "boolean" ? c.gridFit : DEFAULTS.gridFit,
+      showTileChrome:
+        typeof c.showTileChrome === "boolean" ? c.showTileChrome : DEFAULTS.showTileChrome,
       railWidth:
         typeof c.railWidth === "number"
           ? clamp(Math.round(c.railWidth), MIN_RAIL_WIDTH, MAX_RAIL_WIDTH)
@@ -364,6 +372,7 @@ export const settingsActions = {
     setState({ termSizeNum: clamp(Math.round(termSizeNum), MIN_TERM_SIZE, MAX_TERM_SIZE) }),
   toggleLiga: () => setState({ termLiga: !state.termLiga }),
   setGridFit: (gridFit: boolean) => setState({ gridFit }),
+  toggleTileChrome: () => setState({ showTileChrome: !state.showTileChrome }),
   setRailWidth: (railWidth: number) =>
     setState({ railWidth: clamp(Math.round(railWidth), MIN_RAIL_WIDTH, MAX_RAIL_WIDTH) }),
   toggleRailCollapsed: () => setState({ railCollapsed: !state.railCollapsed }),

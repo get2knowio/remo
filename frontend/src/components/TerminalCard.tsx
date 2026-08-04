@@ -29,12 +29,18 @@ import {
   type SettingsState,
   type TerminalFontOptions,
 } from "../state/settings";
-import { TERMINAL_THEMES, type TerminalThemeColors } from "../theme/terminalThemes";
+import {
+  TERMINAL_THEMES,
+  type TerminalThemeColors,
+} from "../theme/terminalThemes";
 import type { MasterSide } from "../state/workspace";
 import { removeLatency, reportLatency } from "../state/latency";
 import type { RendererAdapter } from "../terminal/RendererAdapter";
 import { createDefaultRenderer } from "../terminal/defaultRenderer";
-import { TerminalConnection, type TerminalConnectionState } from "../terminal/TerminalConnection";
+import {
+  TerminalConnection,
+  type TerminalConnectionState,
+} from "../terminal/TerminalConnection";
 import "./TerminalCard.css";
 
 const DEFAULT_COLS = 80;
@@ -44,7 +50,10 @@ const GRID_FIT_SCALE = 0.8;
 
 /** Glyph + label per tiling state. The glyph is a half block drawing where the
  * master area sits, so the button reads as a picture of the layout. */
-const MASTER_GLYPH: Record<MasterSide | "grid", { glyph: string; title: string }> = {
+const MASTER_GLYPH: Record<
+  MasterSide | "grid",
+  { glyph: string; title: string }
+> = {
   grid: { glyph: "▦", title: "Tile this terminal to the left" },
   left: { glyph: "▌", title: "Mastering the left — tile to the top" },
   top: { glyph: "▀", title: "Mastering the top — tile to the right" },
@@ -93,8 +102,12 @@ interface TerminalCardProps {
   onCycleTile?: () => void;
   /** Window-control "Normal": solo this terminal into the single view. */
   onNormal: () => void;
-  /** Window-control "Grid": show the grid — omitted when none is available. */
+  /** Window-control "Grid": show the grid, or — when the grid is already shown
+   * but tiled — flatten it back to even tiles. Omitted when neither applies. */
   onGrid?: () => void;
+  /** Overrides the ⊞ control's label when it does something other than "show
+   * the grid" (i.e. when it will flatten a tiling). */
+  gridTitle?: string;
   /** Window-control "Fullscreen": enter fullscreen, or exit if already in it. */
   onToggleFullscreen: () => void;
   /** Called when the user clicks into the surface (focus this terminal). */
@@ -149,19 +162,28 @@ export function themeMenuPosition(
     height: window.innerHeight,
   },
 ): ThemeMenuPosition {
-  const roomBelow = viewport.height - anchor.bottom - THEME_MENU_GAP - THEME_MENU_MARGIN;
+  const roomBelow =
+    viewport.height - anchor.bottom - THEME_MENU_GAP - THEME_MENU_MARGIN;
   const roomAbove = anchor.top - THEME_MENU_GAP - THEME_MENU_MARGIN;
   const placement: "below" | "above" =
-    roomBelow < THEME_MENU_MIN_USABLE && roomAbove > roomBelow ? "above" : "below";
+    roomBelow < THEME_MENU_MIN_USABLE && roomAbove > roomBelow
+      ? "above"
+      : "below";
 
   // Right-align to the swatch, then clamp both edges into the viewport.
   const left = Math.max(
     THEME_MENU_MARGIN,
-    Math.min(anchor.right - THEME_MENU_WIDTH, viewport.width - THEME_MENU_WIDTH - THEME_MENU_MARGIN),
+    Math.min(
+      anchor.right - THEME_MENU_WIDTH,
+      viewport.width - THEME_MENU_WIDTH - THEME_MENU_MARGIN,
+    ),
   );
   // Never negative: a zero-height anchor (jsdom, or a card mid-teardown) would
   // otherwise ask for a negative max-height and render an unusable sliver.
-  const maxHeight = Math.max(THEME_MENU_MIN_USABLE, placement === "above" ? roomAbove : roomBelow);
+  const maxHeight = Math.max(
+    THEME_MENU_MIN_USABLE,
+    placement === "above" ? roomAbove : roomBelow,
+  );
 
   return {
     placement,
@@ -173,14 +195,25 @@ export function themeMenuPosition(
             left,
             maxHeight,
           }
-        : { position: "fixed", top: anchor.bottom + THEME_MENU_GAP, left, maxHeight },
+        : {
+            position: "fixed",
+            top: anchor.bottom + THEME_MENU_GAP,
+            left,
+            maxHeight,
+          },
   };
 }
 
-function effectiveFont(settings: SettingsState, mode: TerminalCardMode): TerminalFontOptions {
+function effectiveFont(
+  settings: SettingsState,
+  mode: TerminalCardMode,
+): TerminalFontOptions {
   const base = terminalFontOptions(settings);
   if (mode === "grid" && settings.gridFit) {
-    return { ...base, fontSize: Math.max(9, Math.round(base.fontSize * GRID_FIT_SCALE)) };
+    return {
+      ...base,
+      fontSize: Math.max(9, Math.round(base.fontSize * GRID_FIT_SCALE)),
+    };
   }
   return base;
 }
@@ -199,6 +232,7 @@ export function TerminalCard({
   onCycleTile,
   onNormal,
   onGrid,
+  gridTitle,
   onToggleFullscreen,
   onFocusRequest,
   onHoverFocus,
@@ -220,7 +254,9 @@ export function TerminalCard({
   const onEndedRef = useRef(onEnded);
   const onStartedRef = useRef(onStarted);
   const fontRef = useRef<TerminalFontOptions>(effectiveFont(settings, mode));
-  const themeRef = useRef<TerminalThemeColors>(effectiveTerminalTheme(settings, target.id).colors);
+  const themeRef = useRef<TerminalThemeColors>(
+    effectiveTerminalTheme(settings, target.id).colors,
+  );
   // Coalesced-fit bookkeeping: a pending rAF handle, and the last dims we sent
   // (to skip redundant resize frames).
   const fitRafRef = useRef<number | null>(null);
@@ -231,7 +267,8 @@ export function TerminalCard({
   const dwellMsRef = useRef(settings.focusDwellMs);
   dwellMsRef.current = settings.focusDwellMs;
 
-  const [connectionState, setConnectionState] = useState<TerminalConnectionState>("connecting");
+  const [connectionState, setConnectionState] =
+    useState<TerminalConnectionState>("connecting");
   const [needsManualReconnect, setNeedsManualReconnect] = useState(false);
   const [error, setError] = useState<TypedError | null>(null);
   const [hasSelection, setHasSelection] = useState(false);
@@ -240,7 +277,9 @@ export function TerminalCard({
   const themeMenuRef = useRef<HTMLDivElement | null>(null);
   const themeButtonRef = useRef<HTMLButtonElement | null>(null);
   // Viewport-relative placement for the theme popup; null until measured.
-  const [themeMenuPos, setThemeMenuPos] = useState<ThemeMenuPosition | null>(null);
+  const [themeMenuPos, setThemeMenuPos] = useState<ThemeMenuPosition | null>(
+    null,
+  );
 
   // dnd-kit reorder: the tile is both a draggable (handle = header grip, below)
   // and a droppable (swap target). Disabled outside a reorderable grid. We use
@@ -350,38 +389,45 @@ export function TerminalCard({
     adapterRef.current = adapter;
     adapter.open(container);
 
-    const connection = new TerminalConnection(target.id, DEFAULT_COLS, DEFAULT_ROWS, {
-      onData: (data) => {
-        adapter.write(data);
-        if (!isVisibleRef.current) {
-          onActivityRef.current?.();
-        }
+    const connection = new TerminalConnection(
+      target.id,
+      DEFAULT_COLS,
+      DEFAULT_ROWS,
+      {
+        onData: (data) => {
+          adapter.write(data);
+          if (!isVisibleRef.current) {
+            onActivityRef.current?.();
+          }
+        },
+        onReady: () => {
+          setError(null);
+          // Attaching creates-or-attaches the target's Zellij session, so the
+          // rail can light its ⚡ now rather than waiting for the next discovery
+          // run to notice (which is what made a freshly-started devcontainer look
+          // sessionless until a page reload).
+          onStartedRef.current?.();
+        },
+        onExit: () => {
+          // The remote process exited — the Zellij session may have ended (e.g.
+          // the user quit Zellij). Re-run discovery so the rail's ⚡/git state
+          // reflects reality instead of the now-stale cache.
+          onEndedRef.current?.();
+        },
+        onError: (typedError) => setError(typedError),
+        onStateChange: (state) => {
+          setConnectionState(state);
+          setNeedsManualReconnect(
+            connectionRef.current?.needsManualReconnect ?? false,
+          );
+          // Only a connected terminal contributes to the header latency median.
+          if (state !== "ready") {
+            removeLatency(target.id);
+          }
+        },
+        onLatency: (rttMs) => reportLatency(target.id, rttMs),
       },
-      onReady: () => {
-        setError(null);
-        // Attaching creates-or-attaches the target's Zellij session, so the
-        // rail can light its ⚡ now rather than waiting for the next discovery
-        // run to notice (which is what made a freshly-started devcontainer look
-        // sessionless until a page reload).
-        onStartedRef.current?.();
-      },
-      onExit: () => {
-        // The remote process exited — the Zellij session may have ended (e.g.
-        // the user quit Zellij). Re-run discovery so the rail's ⚡/git state
-        // reflects reality instead of the now-stale cache.
-        onEndedRef.current?.();
-      },
-      onError: (typedError) => setError(typedError),
-      onStateChange: (state) => {
-        setConnectionState(state);
-        setNeedsManualReconnect(connectionRef.current?.needsManualReconnect ?? false);
-        // Only a connected terminal contributes to the header latency median.
-        if (state !== "ready") {
-          removeLatency(target.id);
-        }
-      },
-      onLatency: (rttMs) => reportLatency(target.id, rttMs),
-    });
+    );
     connectionRef.current = connection;
 
     const unsubscribeInput = adapter.onData((data) => {
@@ -391,7 +437,9 @@ export function TerminalCard({
     });
 
     // Show/hide the Copy affordance as the terminal selection changes.
-    const unsubscribeSelection = adapter.onSelectionChange((has) => setHasSelection(has));
+    const unsubscribeSelection = adapter.onSelectionChange((has) =>
+      setHasSelection(has),
+    );
 
     // Reflow on every container size change (window resize, rail drag, grid
     // <-> single, tile show/hide). scheduleFit coalesces bursts to one fit per
@@ -541,8 +589,17 @@ export function TerminalCard({
   // Cancel a pending dwell when the pointer leaves or the card unmounts.
   useEffect(() => clearHoverTimer, [clearHoverTimer]);
 
+  // Chrome off trades the header (identity, state, window controls, and the drag
+  // handle — the header IS the handle) for ~36px of terminal per tile. The
+  // toggle lives in the app header, which stays visible, so it is always one tap
+  // back. Fullscreen keeps its chrome regardless: there is exactly one card on
+  // screen, the space saved is negligible, and the ✕/⤡ controls are the way out.
+  const showChrome = settings.showTileChrome || viewState === "fullscreen";
+
   const prov = providerMeta(target.instance_type);
-  const badge = [prov.label, target.instance_name, region].filter(Boolean).join(" · ");
+  const badge = [prov.label, target.instance_name, region]
+    .filter(Boolean)
+    .join(" · ");
 
   // The Settings-wide choice, shown as the popup's "Default — …" entry. Under
   // "auto" that resolves per site mode, so the entry names what it means now.
@@ -552,7 +609,8 @@ export function TerminalCard({
 
   const isDragging = draggable.isDragging;
   // Highlight the tile the drop will land on (swap target) — but not the source.
-  const isDropTarget = Boolean(reorderEnabled) && droppable.isOver && !isDragging;
+  const isDropTarget =
+    Boolean(reorderEnabled) && droppable.isOver && !isDragging;
   const dragClasses = `${isDragging ? " terminal-card--dragging" : ""}${isDropTarget ? " terminal-card--drop-target" : ""}`;
 
   return (
@@ -575,214 +633,241 @@ export function TerminalCard({
       onMouseEnter={handleMouseEnter}
       onMouseLeave={clearHoverTimer}
     >
-      <header className="terminal-card-header">
-        {/* The header (left of the controls) is the drag handle for reordering
-         * grid tiles; it no longer solos on click — the ◻ control does that. */}
-        <div
-          ref={reorderEnabled ? draggable.setActivatorNodeRef : undefined}
-          className={`terminal-card-grip${reorderEnabled ? " terminal-card-grip--handle" : ""}`}
-          {...(reorderEnabled ? draggable.listeners : {})}
-          {...(reorderEnabled ? draggable.attributes : {})}
-        >
-          <span className="terminal-card-provider-dot" style={{ background: prov.color }} />
-          <div className="terminal-card-identity">
-            <span className="terminal-card-project">{target.project}</span>
-            {mode === "single" ? (
-              <span className="terminal-card-badge">{badge}</span>
-            ) : (
-              <span className="terminal-card-instance">{target.instance_name}</span>
-            )}
+      {showChrome && (
+        <header className="terminal-card-header">
+          {/* The header (left of the controls) is the drag handle for reordering
+           * grid tiles; it no longer solos on click — the ◻ control does that. */}
+          <div
+            ref={reorderEnabled ? draggable.setActivatorNodeRef : undefined}
+            className={`terminal-card-grip${reorderEnabled ? " terminal-card-grip--handle" : ""}`}
+            {...(reorderEnabled ? draggable.listeners : {})}
+            {...(reorderEnabled ? draggable.attributes : {})}
+          >
+            <span
+              className="terminal-card-provider-dot"
+              style={{ background: prov.color }}
+            />
+            <div className="terminal-card-identity">
+              <span className="terminal-card-project">{target.project}</span>
+              {mode === "single" ? (
+                <span className="terminal-card-badge">{badge}</span>
+              ) : (
+                <span className="terminal-card-instance">
+                  {target.instance_name}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
-        <span
-          className={`terminal-card-state terminal-card-state--${connectionState}`}
-          title={STATE_LABELS[connectionState]}
-        >
-          {STATE_LABELS[connectionState]}
-        </span>
-        <div className="terminal-card-controls">
-          {hasSelection && (
-            <button
-              type="button"
-              className="tc-btn"
-              data-testid={`terminal-copy-${target.id}`}
-              title="Copy selection (⌘C / Ctrl+Shift+C)"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleCopy();
-              }}
-            >
-              {copied ? "✓ Copied" : "⧉ Copy"}
-            </button>
-          )}
-          {needsManualReconnect && (
-            <button
-              type="button"
-              className="tc-btn tc-btn--accent"
-              data-testid={`terminal-reconnect-${target.id}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                handleReconnect();
-              }}
-            >
-              ↻ Reconnect
-            </button>
-          )}
-          {/* Per-terminal color scheme. The swatch shows what this card is
-           * painted with; the popup sets an override, or clears back to
-           * "Default" so the card follows the Settings-wide choice again. */}
-          <div className="tc-theme" ref={themeMenuRef}>
-            <button
-              type="button"
-              ref={themeButtonRef}
-              className="tc-btn tc-btn--swatch"
-              data-testid={`terminal-theme-${target.id}`}
-              title={`Terminal theme: ${theme.label}${hasThemeOverride ? "" : " (default)"}`}
-              aria-label="Terminal theme"
-              aria-haspopup="menu"
-              aria-expanded={themeMenuOpen}
-              style={{ background: theme.colors.background, color: theme.colors.foreground }}
-              onClick={(e) => {
-                e.stopPropagation();
-                setThemeMenuOpen((v) => !v);
-              }}
-            >
-              A
-            </button>
-            {themeMenuOpen && themeMenuPos && (
-              <div className="tc-theme-menu" role="menu" style={themeMenuPos.style}>
-                <button
-                  type="button"
-                  className={`tc-theme-item${hasThemeOverride ? "" : " tc-theme-item--on"}`}
-                  role="menuitem"
-                  data-testid={`terminal-theme-default-${target.id}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    settingsActions.setTermThemeOverride(target.id, null);
-                    setThemeMenuOpen(false);
-                  }}
+          <span
+            className={`terminal-card-state terminal-card-state--${connectionState}`}
+            title={STATE_LABELS[connectionState]}
+          >
+            {STATE_LABELS[connectionState]}
+          </span>
+          <div className="terminal-card-controls">
+            {hasSelection && (
+              <button
+                type="button"
+                className="tc-btn"
+                data-testid={`terminal-copy-${target.id}`}
+                title="Copy selection (⌘C / Ctrl+Shift+C)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCopy();
+                }}
+              >
+                {copied ? "✓ Copied" : "⧉ Copy"}
+              </button>
+            )}
+            {needsManualReconnect && (
+              <button
+                type="button"
+                className="tc-btn tc-btn--accent"
+                data-testid={`terminal-reconnect-${target.id}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleReconnect();
+                }}
+              >
+                ↻ Reconnect
+              </button>
+            )}
+            {/* Per-terminal color scheme. The swatch shows what this card is
+             * painted with; the popup sets an override, or clears back to
+             * "Default" so the card follows the Settings-wide choice again. */}
+            <div className="tc-theme" ref={themeMenuRef}>
+              <button
+                type="button"
+                ref={themeButtonRef}
+                className="tc-btn tc-btn--swatch"
+                data-testid={`terminal-theme-${target.id}`}
+                title={`Terminal theme: ${theme.label}${hasThemeOverride ? "" : " (default)"}`}
+                aria-label="Terminal theme"
+                aria-haspopup="menu"
+                aria-expanded={themeMenuOpen}
+                style={{
+                  background: theme.colors.background,
+                  color: theme.colors.foreground,
+                }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setThemeMenuOpen((v) => !v);
+                }}
+              >
+                A
+              </button>
+              {themeMenuOpen && themeMenuPos && (
+                <div
+                  className="tc-theme-menu"
+                  role="menu"
+                  style={themeMenuPos.style}
                 >
-                  <span
-                    className="tc-theme-swatch"
-                    style={{
-                      background: globalTheme.colors.background,
-                      borderColor: globalTheme.colors.brightBlack,
-                    }}
-                  />
-                  <span className="tc-theme-label">Default — {globalLabel}</span>
-                </button>
-                {TERMINAL_THEMES.map((t) => (
                   <button
-                    key={t.id}
                     type="button"
-                    className={`tc-theme-item${hasThemeOverride && t.id === theme.id ? " tc-theme-item--on" : ""}`}
+                    className={`tc-theme-item${hasThemeOverride ? "" : " tc-theme-item--on"}`}
                     role="menuitem"
+                    data-testid={`terminal-theme-default-${target.id}`}
                     onClick={(e) => {
                       e.stopPropagation();
-                      settingsActions.setTermThemeOverride(target.id, t.id);
+                      settingsActions.setTermThemeOverride(target.id, null);
                       setThemeMenuOpen(false);
                     }}
                   >
                     <span
                       className="tc-theme-swatch"
-                      style={{ background: t.colors.background, borderColor: t.colors.brightBlack }}
-                    >
-                      <i style={{ background: t.colors.red }} />
-                      <i style={{ background: t.colors.green }} />
-                      <i style={{ background: t.colors.blue }} />
+                      style={{
+                        background: globalTheme.colors.background,
+                        borderColor: globalTheme.colors.brightBlack,
+                      }}
+                    />
+                    <span className="tc-theme-label">
+                      Default — {globalLabel}
                     </span>
-                    <span className="tc-theme-label">{t.label}</span>
                   </button>
-                ))}
-              </div>
+                  {TERMINAL_THEMES.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className={`tc-theme-item${hasThemeOverride && t.id === theme.id ? " tc-theme-item--on" : ""}`}
+                      role="menuitem"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        settingsActions.setTermThemeOverride(target.id, t.id);
+                        setThemeMenuOpen(false);
+                      }}
+                    >
+                      <span
+                        className="tc-theme-swatch"
+                        style={{
+                          background: t.colors.background,
+                          borderColor: t.colors.brightBlack,
+                        }}
+                      >
+                        <i style={{ background: t.colors.red }} />
+                        <i style={{ background: t.colors.green }} />
+                        <i style={{ background: t.colors.blue }} />
+                      </span>
+                      <span className="tc-theme-label">{t.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            {/* Tiling control. Cycles rather than opening a menu: it is one tap on
+             * a touch device, where dragging to a 64px edge band with a thumb is
+             * the awkward path. The half-block glyphs draw where the master area
+             * lands, so the current state is legible without the tooltip. */}
+            {onCycleTile && (
+              <button
+                type="button"
+                className={`tc-btn tc-btn--icon${masterSide ? " tc-btn--active" : ""}`}
+                data-testid={`terminal-tile-${target.id}`}
+                title={MASTER_GLYPH[masterSide ?? "grid"].title}
+                aria-label={MASTER_GLYPH[masterSide ?? "grid"].title}
+                aria-pressed={Boolean(masterSide)}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onCycleTile();
+                }}
+              >
+                {MASTER_GLYPH[masterSide ?? "grid"].glyph}
+              </button>
             )}
+            {/* Window-control cluster: mutually-exclusive display modes ordered
+             * by how much space they take — Grid (smaller/tiled) → Normal (fills
+             * the app's main pane) → Fullscreen (whole window) — plus close. The
+             * current mode is shown active + disabled; Fullscreen toggles. Icons
+             * only; the label is the tooltip. */}
+            <div
+              className="tc-winctl"
+              role="group"
+              aria-label="Terminal display mode"
+            >
+              <button
+                type="button"
+                className={`tc-btn tc-btn--icon${viewState === "grid" ? " tc-btn--active" : ""}`}
+                data-testid={`terminal-grid-${target.id}`}
+                title={gridTitle ?? "Grid view"}
+                aria-label={gridTitle ?? "Grid view"}
+                aria-pressed={viewState === "grid"}
+                disabled={!onGrid}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onGrid?.();
+                }}
+              >
+                ⊞
+              </button>
+              <button
+                type="button"
+                className={`tc-btn tc-btn--icon${viewState === "normal" ? " tc-btn--active" : ""}`}
+                data-testid={`terminal-normal-${target.id}`}
+                title="Fill the main pane (single view)"
+                aria-label="Fill the main pane"
+                aria-pressed={viewState === "normal"}
+                disabled={viewState === "normal"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onNormal();
+                }}
+              >
+                ◻
+              </button>
+              <button
+                type="button"
+                className={`tc-btn tc-btn--icon${viewState === "fullscreen" ? " tc-btn--active" : ""}`}
+                data-testid={`terminal-fullscreen-${target.id}`}
+                title={
+                  viewState === "fullscreen" ? "Exit fullscreen" : "Fullscreen"
+                }
+                aria-label={
+                  viewState === "fullscreen" ? "Exit fullscreen" : "Fullscreen"
+                }
+                aria-pressed={viewState === "fullscreen"}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleFullscreen();
+                }}
+              >
+                {viewState === "fullscreen" ? "⤡" : "⤢"}
+              </button>
+              <button
+                type="button"
+                className="tc-btn tc-btn--icon tc-btn--close"
+                data-testid={`terminal-close-${target.id}`}
+                title="Close terminal — remote Zellij session stays alive"
+                aria-label="Close terminal"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleClose();
+                }}
+              >
+                ✕
+              </button>
+            </div>
           </div>
-          {/* Tiling control. Cycles rather than opening a menu: it is one tap on
-           * a touch device, where dragging to a 64px edge band with a thumb is
-           * the awkward path. The half-block glyphs draw where the master area
-           * lands, so the current state is legible without the tooltip. */}
-          {onCycleTile && (
-            <button
-              type="button"
-              className={`tc-btn tc-btn--icon${masterSide ? " tc-btn--active" : ""}`}
-              data-testid={`terminal-tile-${target.id}`}
-              title={MASTER_GLYPH[masterSide ?? "grid"].title}
-              aria-label={MASTER_GLYPH[masterSide ?? "grid"].title}
-              aria-pressed={Boolean(masterSide)}
-              onClick={(e) => {
-                e.stopPropagation();
-                onCycleTile();
-              }}
-            >
-              {MASTER_GLYPH[masterSide ?? "grid"].glyph}
-            </button>
-          )}
-          {/* Window-control cluster: mutually-exclusive display modes ordered
-           * by how much space they take — Grid (smaller/tiled) → Normal (fills
-           * the app's main pane) → Fullscreen (whole window) — plus close. The
-           * current mode is shown active + disabled; Fullscreen toggles. Icons
-           * only; the label is the tooltip. */}
-          <div className="tc-winctl" role="group" aria-label="Terminal display mode">
-            <button
-              type="button"
-              className={`tc-btn tc-btn--icon${viewState === "grid" ? " tc-btn--active" : ""}`}
-              data-testid={`terminal-grid-${target.id}`}
-              title="Grid view"
-              aria-label="Grid view"
-              aria-pressed={viewState === "grid"}
-              disabled={viewState === "grid" || !onGrid}
-              onClick={(e) => {
-                e.stopPropagation();
-                onGrid?.();
-              }}
-            >
-              ⊞
-            </button>
-            <button
-              type="button"
-              className={`tc-btn tc-btn--icon${viewState === "normal" ? " tc-btn--active" : ""}`}
-              data-testid={`terminal-normal-${target.id}`}
-              title="Fill the main pane (single view)"
-              aria-label="Fill the main pane"
-              aria-pressed={viewState === "normal"}
-              disabled={viewState === "normal"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onNormal();
-              }}
-            >
-              ◻
-            </button>
-            <button
-              type="button"
-              className={`tc-btn tc-btn--icon${viewState === "fullscreen" ? " tc-btn--active" : ""}`}
-              data-testid={`terminal-fullscreen-${target.id}`}
-              title={viewState === "fullscreen" ? "Exit fullscreen" : "Fullscreen"}
-              aria-label={viewState === "fullscreen" ? "Exit fullscreen" : "Fullscreen"}
-              aria-pressed={viewState === "fullscreen"}
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleFullscreen();
-              }}
-            >
-              {viewState === "fullscreen" ? "⤡" : "⤢"}
-            </button>
-            <button
-              type="button"
-              className="tc-btn tc-btn--icon tc-btn--close"
-              data-testid={`terminal-close-${target.id}`}
-              title="Close terminal — remote Zellij session stays alive"
-              aria-label="Close terminal"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleClose();
-              }}
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {error && (
         <div className="terminal-card-error">
@@ -790,7 +875,9 @@ export function TerminalCard({
             [{error.code}] {error.message}
           </p>
           {error.remediation && (
-            <p className="terminal-card-error-remediation">{error.remediation}</p>
+            <p className="terminal-card-error-remediation">
+              {error.remediation}
+            </p>
           )}
           {error.retryable && (
             <button

@@ -104,6 +104,13 @@ The SPA is a two-pane **web console**:
   row showing its name, git glyphs, and a Zellij-active bolt. A search box, provider-color filter
   chips, and an "⚡ Active only" toggle narrow the list; "⊞ Open all · N" opens every available
   target as a grid.
+- **Terminal headers** can be hidden wholesale from the **▤/▭** toggle in the app header, which buys
+  back ~37px of terminal per tile — a 16% gain on a stacked tile at tablet size, and the reason it
+  exists. The trade is real and deliberate: the header carries the per-tile controls AND is the drag
+  handle, so with it hidden a tile can't be dragged, tiled, themed or closed from the card itself (use
+  the rail, or toggle the headers back — the toggle is in the app header, which never hides). A
+  fullscreen terminal keeps its header regardless: there is only one card on screen, so the space saved
+  is negligible and its ✕/⤡ controls are the way out.
 - **Terminal pane** (right). Clicking a row opens that target **solo** (single view); ⌘/Ctrl-click a
   row (or its `+` button) **adds** it to a responsive grid (1/2/3 columns by count). In a grid, **drag
   a tile's header onto another to swap their positions** — a window outline follows the cursor and the
@@ -115,7 +122,9 @@ The SPA is a two-pane **web console**:
   would land there. The **▦** control in a tile's header cycles the same thing without a drag
   (▌ left → ▀ top → ▐ right → ▄ bottom → back to the even grid), which is the practical path on a touch
   device. The master takes 60% by default, closing it promotes the head of the stack rather than
-  un-tiling everything, and the arrangement persists across reload alongside the tile order. This is
+  un-tiling everything, and the arrangement persists across reload alongside the tile order. **⊞ flattens
+  a tiling back to even tiles** — in a plain grid that control is inert, so it doubles as the way out
+  rather than making you cycle ▦ forward until it wraps. This is
   what lets three terminals fill the pane without the empty fourth cell a 2x2 grid would leave. In a
   grid, **resting the pointer on a
   tile focuses it** (focus-follows-mouse, with a short dwell so passing through tiles doesn't steal
