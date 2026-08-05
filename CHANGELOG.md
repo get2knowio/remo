@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.2](https://github.com/get2knowio/remo/compare/v4.3.1...v4.3.2) (2026-08-05)
+
+
+### Bug Fixes
+
+* **ci:** stop release-please failing on every release ([#147](https://github.com/get2knowio/remo/issues/147)) ([1e78e8d](https://github.com/get2knowio/remo/commit/1e78e8dc65f36c8f8f143a7e9eb77dbd5749b69f))
+
 ## [4.3.1](https://github.com/get2knowio/remo/compare/v4.3.0...v4.3.1) (2026-08-05)
 
 
