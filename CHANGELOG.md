@@ -6,6 +6,8 @@
 ### Features
 
 * **web:** flatten a tiling from ⊞, and hide terminal headers wholesale ([#139](https://github.com/get2knowio/remo/issues/139)) ([e5890f0](https://github.com/get2knowio/remo/commit/e5890f031c214b835ec8eab9ff85e8e343c12832))
+* **web:** choose the tiling split (40/60, 45/55 or 50/50) from Settings — applied live to a tiling you already have ([#139](https://github.com/get2knowio/remo/issues/139)) ([89f6ee7](https://github.com/get2knowio/remo/commit/89f6ee7))
+* **web:** the tiling control now appears in every mode; from a single view it rebuilds the grid with that terminal as the master ([#139](https://github.com/get2knowio/remo/issues/139)) ([977a1d5](https://github.com/get2knowio/remo/commit/977a1d5))
 
 ## [4.1.0](https://github.com/get2knowio/remo/compare/v4.0.1...v4.1.0) (2026-08-04)
 
