@@ -76,6 +76,44 @@ describe("terminal themes", () => {
     expect(autoTerminalTheme(false).variant).toBe("light");
   });
 
+  // No theme may print text that is invisible on its own background.
+  //
+  // Reported from real use twice: Solarized Light's white and Gruvbox Light's
+  // black were literally the background colour (1.00:1), and Catppuccin Latte's
+  // whites were near enough. Upstream really does assign background tones to
+  // those slots — which is fine for a swatch and useless for text — so the
+  // fixed values are a deliberate deviation this test defends.
+  //
+  // `black` is exempt in DARK themes only: sitting near the background is what
+  // colour 0 is FOR there, and applications use it as a fill rather than as
+  // text. In a LIGHT theme the same slot IS printed as text, so it must be
+  // legible — which is exactly the Gruvbox Light bug.
+  //
+  // The floor is 2.0:1, well below the 3:1 the Remo pair holds to, because this
+  // catches INVISIBLE rather than merely quiet. The data splits cleanly: the
+  // worst canonical slot across all eight themes is Gruvbox Light's yellow at
+  // 2.19, while the five broken ones were all <= 1.91. A floor of 2.0 sits in
+  // that gap, so every upstream chromatic value stays untouched.
+  //
+  // `cursor` is exempt: it is a filled block, not text, and reads at ratios
+  // that would be unusable for glyphs.
+  it.each(TERMINAL_THEMES)("$label prints nothing invisible", (theme) => {
+    const bg = theme.colors.background;
+    for (const [slot, hex] of Object.entries(theme.colors)) {
+      if (
+        ["background", "cursor", "cursorAccent", "selectionBackground", "selectionForeground"].includes(
+          slot,
+        )
+      ) {
+        continue;
+      }
+      if (slot === "black" && theme.variant === "dark") {
+        continue;
+      }
+      expect(contrast(hex, bg), `${theme.id}.${slot} ${hex} on ${bg}`).toBeGreaterThan(2.0);
+    }
+  });
+
   // Every colour the Remo pair can PRINT must be legible on its own
   // background. This is the regression guard for a real report: Remo Light
   // shipped `white` at #d5d8db and `brightWhite` at #fbfcfd — 1.27:1 and

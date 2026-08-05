@@ -182,7 +182,12 @@ background is `--bg-term`, foreground `--text`, ANSI 1–6 the `--danger`/`--ok`
 (a terminal palette must be literal `#rrggbb`; xterm.js's `ITheme` accepts neither `oklch()` nor
 `var()`), so editing a token does not update them. Six curated third-party schemes are also available —
 Catppuccin Mocha/Latte, Dracula, Gruvbox Dark/Light, Solarized Light — and any theme can be used under
-either site mode; picking one explicitly stops the terminal following the site. The Settings choice is
+either site mode. Those ports are faithful with one deliberate exception: three of the light variants
+assign a *background* tone to a neutral slot that applications print as **text** (Solarized Light's
+white/brightWhite, Gruvbox Light's black, Catppuccin Latte's white/brightWhite), which made that text
+invisible on the theme's own background. Those five values are replaced — each with another colour from
+the same palette — and a contrast floor in `terminalThemes.test.ts` keeps every slot above 2.0:1. Every
+chromatic slot is untouched; picking one explicitly stops the terminal following the site. The Settings choice is
 the default for every terminal; an individual terminal can override it from the color swatch in its
 header, and clearing that override back to "Default" makes it follow the global choice again. Theme
 changes apply live — the terminal is recolored in place, keeping the connection and scrollback. Because a browser can't read fonts installed on the
