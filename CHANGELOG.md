@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.3.0](https://github.com/get2knowio/remo/compare/v4.2.0...v4.3.0) (2026-08-05)
+
+
+### Features
+
+* **cli:** configure manually-added SSH hosts with `remo configure` ([#143](https://github.com/get2knowio/remo/issues/143)) ([4a34f70](https://github.com/get2knowio/remo/commit/4a34f70674f9afd85f92529ac119cc97a015f3a0))
+
+
+### Bug Fixes
+
+* **web:** stop three light themes printing invisible text ([#141](https://github.com/get2knowio/remo/issues/141)) ([a1c2bea](https://github.com/get2knowio/remo/commit/a1c2bea06c13503fe6c623f2f18483c862c20b46))
+
 ## [4.2.0](https://github.com/get2knowio/remo/compare/v4.1.0...v4.2.0) (2026-08-05)
 
 
