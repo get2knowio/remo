@@ -14,6 +14,14 @@
 // tokens so the terminal matches the chrome — see the block comment on them.
 // The rest are the official upstream ports: catppuccin.com/palette,
 // draculatheme.com, github.com/morhetz/gruvbox, github.com/altercation/solarized.
+//
+// Three of those ports carry a flaw the originals share: in their LIGHT
+// variants, a neutral slot that applications print as text is assigned a
+// background tone, so that text is invisible on the theme's own background
+// (Solarized Light's white/brightWhite, Gruvbox Light's black, Catppuccin
+// Latte's white/brightWhite). Those five values are deliberately changed — each
+// to another colour from the same palette — and the contrast floor in
+// terminalThemes.test.ts keeps them that way. Every chromatic slot is untouched.
 
 /** The subset of xterm.js's `ITheme` the console sets. */
 export interface TerminalThemeColors {
@@ -250,6 +258,11 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
     },
   },
   {
+    // DELIBERATE DEVIATION from the upstream port, reported from real use.
+    // Upstream assigns background tones to slots that applications print as
+    // TEXT, so they were invisible on this theme's own background. Only those
+    // neutrals move, and only to another colour from this same palette — the
+    // chromatic slots stay canonical.
     id: "solarized-light",
     label: "Solarized Light",
     variant: "light",
@@ -267,7 +280,7 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       blue: "#268bd2",
       magenta: "#d33682",
       cyan: "#2aa198",
-      white: "#eee8d5",
+      white: "#657b83",
       brightBlack: "#002b36",
       brightRed: "#cb4b16",
       brightGreen: "#586e75",
@@ -275,10 +288,15 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       brightBlue: "#839496",
       brightMagenta: "#6c71c4",
       brightCyan: "#93a1a1",
-      brightWhite: "#fdf6e3",
+      brightWhite: "#586e75",
     },
   },
   {
+    // DELIBERATE DEVIATION from the upstream port, reported from real use.
+    // Upstream assigns background tones to slots that applications print as
+    // TEXT, so they were invisible on this theme's own background. Only those
+    // neutrals move, and only to another colour from this same palette — the
+    // chromatic slots stay canonical.
     id: "catppuccin-latte",
     label: "Catppuccin Latte",
     variant: "light",
@@ -296,7 +314,7 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       blue: "#1e66f5",
       magenta: "#ea76cb",
       cyan: "#179299",
-      white: "#acb0be",
+      white: "#7c7f93",
       brightBlack: "#6c6f85",
       brightRed: "#d20f39",
       brightGreen: "#40a02b",
@@ -304,10 +322,15 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       brightBlue: "#1e66f5",
       brightMagenta: "#ea76cb",
       brightCyan: "#179299",
-      brightWhite: "#bcc0cc",
+      brightWhite: "#4c4f69",
     },
   },
   {
+    // DELIBERATE DEVIATION from the upstream port, reported from real use.
+    // Upstream assigns background tones to slots that applications print as
+    // TEXT, so they were invisible on this theme's own background. Only those
+    // neutrals move, and only to another colour from this same palette — the
+    // chromatic slots stay canonical.
     id: "gruvbox-light",
     label: "Gruvbox Light",
     variant: "light",
@@ -318,7 +341,7 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       cursorAccent: "#fbf1c7",
       selectionBackground: "#d5c4a1",
       selectionForeground: "#3c3836",
-      black: "#fbf1c7",
+      black: "#282828",
       red: "#cc241d",
       green: "#98971a",
       yellow: "#d79921",
