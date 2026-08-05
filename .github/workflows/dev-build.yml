@@ -70,7 +70,7 @@ jobs:
       - name: Upload artifact
         # NOTE: SHA-pin to match the repo's action-pinning convention once the
         # v4 commit SHA is available (e.g. `@<sha> # v4`).
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: remo-wheel
           path: dist/*
