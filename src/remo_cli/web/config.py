@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from remo_cli.core.config import get_remo_home_readonly
+from remo_cli.models.host import KnownHost
 
 
 class WebConfigError(ValueError):
@@ -223,6 +224,30 @@ class WebSettings:
     def ssh_identity_file(self) -> str | None:
         if self._service_identity_active():
             return str(self.service_private_key_path)
+        return None
+
+    def ssh_identity_for(self, host: KnownHost) -> str | None:
+        """The identity *this service* should use to reach *host*.
+
+        In adopted mode that is always the service's own key — the one
+        ``remo web push`` authorized. Otherwise (mounted/unconfigured/broken)
+        fall back to an added host's registry identity, but **only when the
+        path resolves here**.
+
+        That guard is the fix for a real failure: the registry records a
+        *workstation* path (``/home/you/.ssh/key``), which a containerized
+        service generally does not have. Passing it anyway is not a harmless
+        no-op — :func:`~remo_cli.core.ssh.build_ssh_opts` pairs an identity
+        with ``IdentitiesOnly=yes``, which suppresses every key that *would*
+        have worked, so a missing file turns into a guaranteed auth failure.
+        Falling back to the mounted ``~/.ssh`` is both safer and what the
+        operator expects in mounted mode.
+        """
+        if self._service_identity_active():
+            return str(self.service_private_key_path)
+        identity = host.ssh_identity
+        if identity and Path(identity).expanduser().is_file():
+            return identity
         return None
 
     @property

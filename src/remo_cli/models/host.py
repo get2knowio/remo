@@ -126,6 +126,22 @@ class KnownHost:
             return self.region
         return None
 
+    @property
+    def display_region(self) -> str:
+        """``region`` when it really is a region, ``""`` when the slot is reused.
+
+        For an added (``ssh``-type) host the slot holds the operator's *private
+        key path*, so anything that surfaces ``region`` as a label — the web
+        service's discovery snapshot, which the console renders as a badge —
+        was publishing that path to every viewer of the console. Blanking it
+        here fixes it for every consumer at once rather than at one call site.
+
+        Proxmox reuses the same slot for the node login, which is mislabeled as
+        a "region" but is neither secret nor new; it is left alone deliberately
+        so this fix does not silently change what Proxmox users see.
+        """
+        return "" if self.type == "ssh" else (self.region or "")
+
     # ------------------------------------------------------------------
     # Display
     # ------------------------------------------------------------------
