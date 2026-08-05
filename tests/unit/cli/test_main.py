@@ -86,6 +86,7 @@ class TestSubcommandRegistration:
         "cp",
         "add",
         "remove",
+        "configure",
         "incus",
         "proxmox",
         "hetzner",

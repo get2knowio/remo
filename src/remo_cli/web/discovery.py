@@ -25,6 +25,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
+from remo_cli.core.config import ADDED_HOST_TYPE
 from remo_cli.core.registry import RegistryError, read_registry
 from remo_cli.core.remo_host_client import (
     IncompatibleProtocolError,
@@ -144,6 +145,25 @@ def _snapshot(
     )
 
 
+def _configure_remediation(host: KnownHost) -> str:
+    """Name the exact command that installs/refreshes this host's remo tools.
+
+    The verb differs by how the host got here, and the wrong one is worse than
+    vague: a provider host routed through the generic play would be configured
+    with the wrong one (no SSM ProxyCommand for AWS, no cloud-key bootstrap for
+    Hetzner), and an added host has no provider verb at all.
+    """
+    if host.type == ADDED_HOST_TYPE:
+        return f"Install the Remo host tools with: remo configure {host.name}"
+    # Host-scoped providers register as "node/container"; their CLI takes the
+    # container part alone.
+    short_name = host.name.split("/", maxsplit=1)[-1]
+    return (
+        f"Update this instance's Remo host tools with: "
+        f"remo {host.type} upgrade {short_name}"
+    )
+
+
 def _looks_like_missing_remo_host(exc: RemoHostCommandError) -> bool:
     """True when a non-SSH command failure looks like "remo-host not found".
 
@@ -250,7 +270,7 @@ async def _discover_one(
                     retryable=False,
                     remediation=(
                         "remo-host on this instance returned an unexpected response. "
-                        "Update this instance's Remo host tools (re-run configure)."
+                        + _configure_remediation(host)
                     ),
                 ),
             )
@@ -264,7 +284,10 @@ async def _discover_one(
                         code="no_remo_host",
                         message="remo-host not installed",
                         retryable=False,
-                        remediation="Update this instance's Remo host tools (re-run configure).",
+                        # Name the actual command. This used to say "re-run
+                        # configure", which for a `remo add` host pointed at
+                        # something that did not exist until `remo configure`.
+                        remediation=_configure_remediation(host),
                     ),
                 )
             return _snapshot(

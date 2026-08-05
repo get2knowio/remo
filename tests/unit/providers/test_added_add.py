@@ -169,6 +169,36 @@ class TestAddCreate:
         assert rc == 2
         save.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "field",
+        ["{{ lookup('pipe', 'id') }}", "{% for x in y %}", "a}}b", "c%}d"],
+    )
+    def test_jinja_delimiters_in_the_identity_rejected_no_write(
+        self, mocker, field: str
+    ) -> None:
+        # `remo configure` passes stored fields to ansible-playbook as
+        # extra-vars, and Ansible templates those on the CONTROL NODE — so a
+        # stored `{{ lookup('pipe', ...) }}` would execute on the workstation.
+        # Keeping the registry inert starts at the write path.
+        mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[])
+        save = mocker.patch("remo_cli.providers.added.save_known_host")
+        mocker.patch("remo_cli.providers.added.print_error")
+
+        rc = added.add(name="box", target="dev@host", identity=field)
+
+        assert rc == 2
+        save.assert_not_called()
+
+    def test_jinja_delimiters_in_the_user_rejected_no_write(self, mocker) -> None:
+        mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[])
+        save = mocker.patch("remo_cli.providers.added.save_known_host")
+        mocker.patch("remo_cli.providers.added.print_error")
+
+        rc = added.add(name="box", target="{{ evil }}@host")
+
+        assert rc == 2
+        save.assert_not_called()
+
     def test_bare_ipv6_target_accepted(self, mocker) -> None:
         mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[])
         save = mocker.patch("remo_cli.providers.added.save_known_host")

@@ -19,7 +19,13 @@ from unittest.mock import ANY
 
 import pytest
 
-from remo_cli.core.web_adopt import scan_and_verify_host_key
+from remo_cli.core.web_adopt import (
+    HostKeyScan,
+    _process_instance,
+    known_hosts_lookup_key,
+    scan_and_verify_host_key,
+)
+from remo_cli.models.host import KnownHost
 
 # Captured before any test patches subprocess.run, so hashed-known_hosts tests
 # can delegate ssh-keygen calls to the real binary.
@@ -552,3 +558,152 @@ class TestFingerprintRendering:
 
         assert result.decision == "no_trust"
         assert f"{HOST} {ED25519_KEY}" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Non-default SSH ports (`remo add NAME host:2222`)
+# ---------------------------------------------------------------------------
+#
+# Before this, `remo web push` always scanned port 22. For an added host on
+# another port that meant one of two silent failures: nothing answered on 22, so
+# the instance was reported "unreachable" and the service key was NEVER
+# authorized (`_process_instance` returns before `authorize_service_key`) — with
+# a remediation telling the user to check a host that was in fact reachable; or
+# a DIFFERENT machine answered on 22 and had its host keys pushed instead.
+#
+# Both halves have to move together: `ssh-keyscan -p` and the known_hosts lookup
+# must agree on OpenSSH's `[host]:port` record form, which is also the form the
+# service needs in its trust file to match when it later connects with
+# `-o Port=`.
+
+PORTED_HOST_KEYS = f"[{HOST}]:2222 {ED25519_KEY}"
+
+
+class TestNonDefaultPort:
+    def test_lookup_key_follows_openssh_record_form(self):
+        # Verified against the real ssh-keygen: `-F 10.0.0.9` does NOT find a
+        # `[10.0.0.9]:2222` record, and `-F "[10.0.0.5]:22"` does NOT find a
+        # bare `10.0.0.5` one. Neither direction is forgiving.
+        assert known_hosts_lookup_key(HOST) == HOST
+        assert known_hosts_lookup_key(HOST, 22) == HOST
+        assert known_hosts_lookup_key(HOST, 2222) == f"[{HOST}]:2222"
+
+    def test_port_22_argv_is_unchanged(self, mocker, known_hosts):
+        # Every provider-managed entry reports ssh_port 22, so this is the path
+        # that must stay byte-identical: no `-p`, bare hostname lookup.
+        dispatcher = RunDispatcher(
+            keyscan=_cp(["ssh-keyscan"], stdout=_keyscan_stdout(ED25519_KEY)),
+            keygen_f=_cp(["ssh-keygen"], stdout=_keygen_f_stdout(ED25519_KEY)),
+        )
+        _patch_run(mocker, dispatcher)
+
+        scan_and_verify_host_key(HOST, port=22, known_hosts_file=known_hosts)
+
+        keyscan_cmd = next(c for c in dispatcher.calls if c[0] == "ssh-keyscan")
+        assert "-p" not in keyscan_cmd
+        assert keyscan_cmd[-1] == HOST
+        keygen_cmd = next(c for c in dispatcher.calls if "-F" in c)
+        assert keygen_cmd[keygen_cmd.index("-F") + 1] == HOST
+
+    def test_custom_port_reaches_keyscan_and_the_trust_lookup(
+        self, mocker, tmp_path
+    ):
+        store = tmp_path / "known_hosts"
+        store.write_text(PORTED_HOST_KEYS + "\n")
+        dispatcher = RunDispatcher(
+            keyscan=_cp(
+                ["ssh-keyscan"],
+                stdout=f"# [{HOST}]:2222 SSH-2.0-OpenSSH_9.6\n{PORTED_HOST_KEYS}\n",
+            ),
+            keygen_f=_cp(
+                ["ssh-keygen"], stdout=_keygen_f_stdout(ED25519_KEY, host=f"[{HOST}]:2222")
+            ),
+        )
+        _patch_run(mocker, dispatcher)
+
+        result = scan_and_verify_host_key(HOST, port=2222, known_hosts_file=store)
+
+        assert result.decision == "trusted"
+        keyscan_cmd = next(c for c in dispatcher.calls if c[0] == "ssh-keyscan")
+        assert keyscan_cmd[keyscan_cmd.index("-p") + 1] == "2222"
+        keygen_cmd = next(c for c in dispatcher.calls if "-F" in c)
+        assert keygen_cmd[keygen_cmd.index("-F") + 1] == f"[{HOST}]:2222"
+
+    def test_scanned_lines_carry_the_bracketed_form_to_the_service(
+        self, mocker, tmp_path
+    ):
+        # The service writes these lines verbatim into its own known_hosts and
+        # then connects with `-o Port=2222`, where OpenSSH looks up
+        # `[host]:2222`. Bare-hostname lines would not match, and the service
+        # would report auth_failed for a host that had just been "pushed".
+        store = tmp_path / "known_hosts"
+        store.write_text(PORTED_HOST_KEYS + "\n")
+        dispatcher = RunDispatcher(
+            keyscan=_cp(["ssh-keyscan"], stdout=PORTED_HOST_KEYS + "\n"),
+            keygen_f=_cp(
+                ["ssh-keygen"], stdout=_keygen_f_stdout(ED25519_KEY, host=f"[{HOST}]:2222")
+            ),
+        )
+        _patch_run(mocker, dispatcher)
+
+        result = scan_and_verify_host_key(HOST, port=2222, known_hosts_file=store)
+
+        assert result.lines == [PORTED_HOST_KEYS]
+
+    def test_real_ssh_keygen_agrees_with_the_lookup_key(self, tmp_path):
+        """Pin the OpenSSH behavior the whole fix rests on, with the real binary."""
+        store = tmp_path / "known_hosts"
+        store.write_text(f"[{HOST}]:2222 {ED25519_KEY}\n{HOST} {RSA_KEY}\n")
+
+        def found(query: str) -> bool:
+            return (
+                _REAL_RUN(
+                    ["ssh-keygen", "-F", query, "-f", str(store)],
+                    capture_output=True,
+                ).returncode
+                == 0
+            )
+
+        assert found(known_hosts_lookup_key(HOST, 2222))
+        assert found(known_hosts_lookup_key(HOST, 22))
+        # The two forms are NOT interchangeable in either direction.
+        assert not found(f"[{HOST}]:22")
+
+
+class TestPushThreadsThePort:
+    def test_process_instance_scans_the_entrys_own_port(self, mocker, tmp_path):
+        # The whole fix is worthless if the caller keeps passing nothing.
+        scan = mocker.patch(
+            "remo_cli.core.web_adopt.scan_and_verify_host_key",
+            return_value=HostKeyScan("unreachable", detail="stub"),
+        )
+        host = KnownHost(
+            type="ssh",
+            name="mbp",
+            host=HOST,
+            user="remo",
+            instance_id="2222",
+            access_mode="direct",
+        )
+
+        _process_instance(host, "ssh-ed25519 AAAA", interactive=False, host_keys={})
+
+        assert scan.call_args.kwargs["port"] == 2222
+
+    def test_provider_hosts_still_scan_port_22(self, mocker):
+        scan = mocker.patch(
+            "remo_cli.core.web_adopt.scan_and_verify_host_key",
+            return_value=HostKeyScan("unreachable", detail="stub"),
+        )
+        host = KnownHost(
+            type="hetzner",
+            name="web1",
+            host=HOST,
+            user="remo",
+            instance_id="",
+            access_mode="direct",
+        )
+
+        _process_instance(host, "ssh-ed25519 AAAA", interactive=False, host_keys={})
+
+        assert scan.call_args.kwargs["port"] == 22

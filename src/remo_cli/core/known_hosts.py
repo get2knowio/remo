@@ -215,6 +215,57 @@ def guard_not_added_ssh_host(name: str, provider: str) -> None:
     )
 
 
+def guard_added_ssh_host_only(name: str) -> KnownHost:
+    """Return *name*'s added-SSH entry, or raise explaining what to run instead.
+
+    The counterpart of :func:`guard_not_added_ssh_host`. ``remo configure`` runs
+    the *generic* ``ssh_configure.yml`` play; resolving *name* to a
+    provider-managed entry would run the wrong one. The five configure plays are
+    not interchangeable — AWS builds an SSM ``ProxyCommand``, Hetzner bootstraps
+    the cloud-injected key, incus/proxmox deliberately suppress that bootstrap
+    (#121) — so a mis-target would *succeed* while configuring the host wrongly.
+    Refusing is the only behavior whose failure mode is a message.
+    """
+    from remo_cli.core.config import ADDED_HOST_TYPE  # noqa: PLC0415
+    from remo_cli.core.errors import PreconditionError  # noqa: PLC0415
+
+    hosts = get_known_hosts()
+
+    entry = next(
+        (h for h in hosts if h.type == ADDED_HOST_TYPE and h.name == name), None
+    )
+    if entry is not None:
+        return entry
+
+    # Match as broadly as resolve_remo_host_by_name (including the host-scoped
+    # "node/container" short name) so a provider host produces the *right*
+    # message rather than a misleading "not registered".
+    other = next((h for h in hosts if h.name == name), None)
+    if other is None:
+        other = next(
+            (
+                h
+                for h in hosts
+                if _is_host_scoped_type(h.type)
+                and "/" in h.name
+                and h.name.split("/", maxsplit=1)[1] == name
+            ),
+            None,
+        )
+
+    if other is not None:
+        raise PreconditionError(
+            f"'{name}' is a {other.type}-managed host, not one added with "
+            f"'remo add'. Refresh its dev tools with: "
+            f"remo {other.type} upgrade {name}"
+        )
+
+    raise PreconditionError(
+        f"No environment named '{name}' is registered. Add it first: "
+        f"remo add {name} <host>   (list registered environments with 'remo shell')"
+    )
+
+
 def resolve_remo_host_by_name(name: str) -> KnownHost:
     """Find a registered host by name, matching across all types.
 

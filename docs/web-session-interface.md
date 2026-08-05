@@ -631,7 +631,9 @@ Your web deployment may now be out of date — run 'remo web status' to see what
 ```
 
 It fires after a successful `remo <provider> create`/`destroy`, an **applied** `remo <provider> sync`
-(the shared reconcile/`run_sync` path), `remo add`, and `remo remove`. It never fires when this
+(the shared reconcile/`run_sync` path), `remo add`, `remo remove`, and `remo configure` (which does not
+mutate the registry, but is normally the point at which a newly added host first becomes worth
+pushing). It never fires when this
 workstation has never pushed (no cache to be out of date against), on a dry-run or no-op `sync`, or
 on `remo aws stop`/`start`/`reboot` (which don't mutate the registry). The nudge is gated on cache
 existence only — a rare false positive after a no-op mutation is acceptable because `remo web status`

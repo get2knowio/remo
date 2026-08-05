@@ -42,13 +42,17 @@ PROXMOX_CONTAINER_TASKS = ANSIBLE_DIR / "roles" / "proxmox_container" / "tasks" 
 BOOTSTRAP_FLAG = "user_setup_bootstrap_cloud_keys"
 NEEDS_FACT = "user_setup_needs_key_bootstrap"
 
-#: Playbooks whose configure play must disable the bootstrap: these providers
-#: install the key into the remo user's own file at create time.
+#: Playbooks whose configure play must disable the bootstrap. Incus/Proxmox
+#: install the key into the remo user's own file at create time. `ssh_configure`
+#: has a different reason for the same answer: no cloud provider injected a key
+#: on a manually-added host, and root's authorized_keys there belongs to the
+#: machine's owner, not to a workspace account remo may copy from.
 SCOPED_OFF_PLAYBOOKS = [
     "proxmox_configure.yml",
     "incus_configure.yml",
     "proxmox_site.yml",
     "incus_site.yml",
+    "ssh_configure.yml",
 ]
 #: Playbooks that must keep it on: the key only exists under root/ubuntu there.
 SCOPED_ON_PLAYBOOKS = [

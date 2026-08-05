@@ -444,8 +444,24 @@ def _parse_known_hosts_pairs(text: str) -> list[tuple[str, str]]:
     return pairs
 
 
-def _lookup_trusted_keys(hostname: str, known_hosts_file: Path) -> list[tuple[str, str]] | None:
-    """Return trusted (type, key) pairs for *hostname*, or None if no record.
+def known_hosts_lookup_key(hostname: str, port: int = DEFAULT_SSH_PORT) -> str:
+    """Render *hostname* the way OpenSSH records it in ``known_hosts``.
+
+    OpenSSH brackets the host and appends the port for a non-default port
+    (``[10.0.0.9]:2222``) and uses the bare host for port 22. Both directions
+    matter and neither is forgiving: ``ssh-keygen -F 10.0.0.9`` does not find a
+    ``[10.0.0.9]:2222`` record, and ``-F "[10.0.0.5]:22"`` does not find a bare
+    ``10.0.0.5`` one. Getting this wrong makes an already-trusted host read as
+    untrusted, so an added host on a custom port could never be pushed.
+    """
+    return hostname if port == DEFAULT_SSH_PORT else f"[{hostname}]:{port}"
+
+
+def _lookup_trusted_keys(lookup_key: str, known_hosts_file: Path) -> list[tuple[str, str]] | None:
+    """Return trusted (type, key) pairs for *lookup_key*, or None if no record.
+
+    *lookup_key* comes from :func:`known_hosts_lookup_key` — a bare hostname for
+    port 22, the bracketed ``[host]:port`` form otherwise.
 
     Uses ``ssh-keygen -F`` so hashed known_hosts entries (HashKnownHosts yes)
     are handled transparently (research R8).
@@ -454,7 +470,7 @@ def _lookup_trusted_keys(hostname: str, known_hosts_file: Path) -> list[tuple[st
         return None
     try:
         result = subprocess.run(
-            ["ssh-keygen", "-F", hostname, "-f", str(known_hosts_file)],
+            ["ssh-keygen", "-F", lookup_key, "-f", str(known_hosts_file)],
             capture_output=True,
             text=True,
             timeout=10,
@@ -493,12 +509,22 @@ def _render_fingerprints(lines: list[str]) -> str:
 def scan_and_verify_host_key(
     hostname: str,
     *,
+    port: int = DEFAULT_SSH_PORT,
     known_hosts_file: Path | None = None,
     interactive: bool = False,
     confirm_fn: Callable[[str], bool] | None = None,
     scan_timeout: float = 20.0,
 ) -> HostKeyScan:
-    """Scan *hostname*'s SSH host keys and verify them against local trust.
+    """Scan *hostname*'s SSH host keys on *port* and verify them against trust.
+
+    *port* is threaded through to both ``ssh-keyscan -p`` and the known_hosts
+    lookup. Without it an added host on a custom port (``remo add … :2222``)
+    scanned port 22 instead: at best nothing answered and the instance was
+    reported unreachable — so the service key was never authorized — and at
+    worst a *different* host answering on 22 had its keys pushed. ``-p`` is
+    omitted for port 22 so every provider host's argv is byte-identical to
+    before, and ``ssh-keyscan -p`` already emits the bracketed ``[host]:port``
+    line form the service needs to match on when it connects.
 
     Decision table (research R8, clarification Q2):
 
@@ -513,10 +539,16 @@ def scan_and_verify_host_key(
     trusted_store = known_hosts_file or (Path.home() / ".ssh" / "known_hosts")
     if confirm_fn is None:
         confirm_fn = confirm
+    lookup_key = known_hosts_lookup_key(hostname, port)
+
+    scan_cmd = ["ssh-keyscan", "-T", "5", "-t", _KEYSCAN_TYPES]
+    if port != DEFAULT_SSH_PORT:
+        scan_cmd.extend(["-p", str(port)])
+    scan_cmd.append(hostname)
 
     try:
         result = subprocess.run(
-            ["ssh-keyscan", "-T", "5", "-t", _KEYSCAN_TYPES, hostname],
+            scan_cmd,
             capture_output=True,
             text=True,
             timeout=scan_timeout,
@@ -547,7 +579,7 @@ def scan_and_verify_host_key(
         detail = stderr_lines[-1].strip() if stderr_lines else "no host keys returned by ssh-keyscan"
         return HostKeyScan("unreachable", detail=detail)
 
-    trusted_pairs = _lookup_trusted_keys(hostname, trusted_store)
+    trusted_pairs = _lookup_trusted_keys(lookup_key, trusted_store)
     if trusted_pairs is not None:
         trusted_by_type: dict[str, set[str]] = {}
         for key_type, key in trusted_pairs:
@@ -575,15 +607,15 @@ def scan_and_verify_host_key(
         return HostKeyScan(
             "no_trust",
             detail=(
-                f"no trusted host key for {hostname} in {trusted_store} "
+                f"no trusted host key for {lookup_key} in {trusted_store} "
                 "(non-interactive run; fingerprint confirmation skipped)"
             ),
         )
 
-    print_warning(f"No trusted host key for {hostname} in {trusted_store}.")
+    print_warning(f"No trusted host key for {lookup_key} in {trusted_store}.")
     print("Scanned key fingerprints:")
     print(_render_fingerprints(scanned_lines))
-    if confirm_fn(f"Trust these keys for {hostname} and include them in the push?"):
+    if confirm_fn(f"Trust these keys for {lookup_key} and include them in the push?"):
         return HostKeyScan(
             "trusted", lines=scanned_lines, detail="fingerprint confirmed interactively"
         )
@@ -1079,6 +1111,9 @@ def _process_instance(
     try:
         scan = scan_and_verify_host_key(
             host.host,
+            # `KnownHost.ssh_port` is 22 for every provider-managed entry, so
+            # this only changes behavior for `remo add` hosts on a custom port.
+            port=host.ssh_port,
             known_hosts_file=known_hosts_file,
             interactive=interactive,
         )

@@ -35,17 +35,31 @@ from remo_cli.core.output import (
 from remo_cli.models.host import KnownHost
 
 
+#: Jinja delimiters. Registry fields become ``-e name=value`` extra-vars on the
+#: ``remo configure`` path, and Ansible templates extra-var values on the
+#: CONTROL NODE — so a stored ``{{ lookup('pipe', '…') }}`` would execute
+#: locally. Rejecting them at the boundary keeps the registry inert data.
+_JINJA_DELIMITERS = ("{{", "}}", "{%", "%}")
+
+
 def _reject_unsafe_field(label: str, value: str) -> None:
-    """Reject a control character in a registry field value.
+    """Reject a control character or Jinja delimiter in a registry field value.
 
     The registry (registry.json, format v2) rejects control characters and
     newlines in any string field (data-model.md V2); checking here gives a
     friendlier, ``add``-specific error message before the value is parsed any
     further. Colons are unrestricted in the JSON registry — the previous
     colon-delimited format's positional-overloading problem no longer exists.
+
+    Jinja delimiters are rejected because these fields are passed to
+    ``ansible-playbook`` as extra-vars by ``remo configure``; see
+    :data:`_JINJA_DELIMITERS`.
     """
     if any(ord(c) < 0x20 or ord(c) == 0x7F for c in value):
         raise ValueError(f"{label} contains control characters")
+    for delimiter in _JINJA_DELIMITERS:
+        if delimiter in value:
+            raise ValueError(f"{label} contains a Jinja delimiter ({delimiter})")
 
 
 def _find_name_conflict(name: str) -> KnownHost | None:
@@ -310,6 +324,126 @@ def add(
     print_success(f"{verb} '{name}' as {eff_user}@{eff_host}:{eff_port} (SSH user: {eff_user}).")
     print_info(f"Connect with:  remo shell {name}")
     return 0
+
+
+# ---------------------------------------------------------------------------
+# configure
+# ---------------------------------------------------------------------------
+
+
+def configure(
+    *,
+    name: str,
+    tools_only: tuple[str, ...] = (),
+    tools_skip: tuple[str, ...] = (),
+    assume_yes: bool = False,
+    verbose: bool = False,
+) -> None:
+    """Install or refresh remo's dev tools on a manually-added SSH host.
+
+    Runs the generic ``ansible/ssh_configure.yml`` play — the same shared
+    ``tasks/configure_dev_tools.yml`` role list every provider applies — against
+    a registry ``type="ssh"`` entry. This is what installs ``remo-host``, and so
+    what makes the host yield session targets in ``remo web`` instead of sitting
+    permanently badged ``no_remo_host``.
+
+    Only ``remo_ssh_*`` names are passed as extra-vars, never an ``ansible_*``
+    one: extra-vars are the highest-precedence source, so an ``ansible_port``
+    emitted here would apply to every host in the run and be unoverridable. The
+    playbook owns the mapping onto ``ansible_port`` /
+    ``ansible_ssh_private_key_file``, where "no identity" can mean ``omit``
+    rather than the wrong key.
+
+    Raises the :mod:`remo_cli.core.errors` taxonomy; never exits.
+    """
+    from remo_cli.core.ansible_runner import build_configure_extra_vars, run_playbook
+    from remo_cli.core.errors import (
+        MissingDependencyError,
+        OperationFailedError,
+        PreconditionError,
+        UserAbortedError,
+    )
+    from remo_cli.core.known_hosts import guard_added_ssh_host_only
+
+    entry = guard_added_ssh_host_only(name)
+
+    if entry.user == "root":
+        raise PreconditionError(
+            f"'{name}' is registered as root@{entry.host}. remo configures the "
+            f"registered account as the workspace user and pins it to UID 1000, "
+            f"which would break root. Re-register with a normal user: "
+            f"remo add {name} {entry.host} --user <user>"
+        )
+
+    # Registry values become extra-vars below, and Ansible templates those on
+    # the control node. Entries written before _reject_unsafe_field learned
+    # about Jinja are covered by re-checking on this read path.
+    for label, value in (
+        ("host", entry.host),
+        ("user", entry.user),
+        ("identity path", entry.ssh_identity or ""),
+    ):
+        try:
+            _reject_unsafe_field(label, value)
+        except ValueError as e:
+            raise PreconditionError(
+                f"Registry entry '{name}' has an unusable {label}: {e}. "
+                f"Re-register it with 'remo add'."
+            ) from None
+
+    target = f"{entry.user}@{entry.host}:{entry.ssh_port}"
+
+    if not assume_yes and not confirm(
+        f"Configure {target}? remo will apt-upgrade the system, install Docker, "
+        f"Node.js, zellij and its host tools, and give '{entry.user}' "
+        f"passwordless sudo.",
+        default=False,
+    ):
+        raise UserAbortedError("Aborted; nothing was configured.")
+
+    # Same argv builder as `remo shell` (port + identity + IdentitiesOnly), so a
+    # reachability or auth problem surfaces as ssh's own stderr rather than an
+    # opaque Ansible UNREACHABLE dump — and the pre-flight can never disagree
+    # with the run that follows it.
+    print_info(f"Checking SSH reachability of {target}...")
+    ok, err = verify_reachable(entry)
+    if not ok:
+        raise PreconditionError(
+            f"Cannot reach {target}:\n"
+            f"  {err}\n"
+            f"  Nothing was configured."
+        )
+
+    print_info(f"Configuring {target}...")
+
+    extra_vars: list[str] = [
+        "-e",
+        f"remo_ssh_host={entry.host}",
+        "-e",
+        f"remo_ssh_user={entry.user}",
+        "-e",
+        f"remo_ssh_port={entry.ssh_port}",
+    ]
+    if entry.ssh_identity:
+        extra_vars.extend(["-e", f"remo_ssh_identity={entry.ssh_identity}"])
+    extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
+
+    try:
+        rc = run_playbook("ssh_configure.yml", extra_vars, verbose=verbose)
+    except FileNotFoundError as e:
+        raise MissingDependencyError(
+            "ansible-playbook was not found; 'remo configure' runs an Ansible "
+            "play against the host. Install it with: "
+            "uv tool install --with ansible-core remo"
+        ) from e
+
+    if rc != 0:
+        raise OperationFailedError(
+            f"Failed to configure '{name}' (playbook rc={rc})."
+        )
+
+    print_success(f"Configured '{name}'.")
+    print_info(f"Connect with:  remo shell {name}")
 
 
 # ---------------------------------------------------------------------------
