@@ -1,0 +1,240 @@
+---
+# Generic SSH Configure Playbook — install/refresh remo's dev tools on a host
+# that NO provider manages (registry type="ssh", registered via `remo add`).
+#
+# Caller: src/remo_cli/providers/added.py::configure  (`remo configure NAME`)
+#
+# Usage:
+#   ./run.sh ssh_configure.yml \
+#     -e remo_ssh_host=10.0.0.5 -e remo_ssh_user=remo -e remo_ssh_port=2222 \
+#     -e remo_ssh_identity=~/.ssh/k
+#
+# Required variables (the CLI ALWAYS passes all three; none is defaulted here on
+# purpose — a missing port must fail loudly, never quietly fall back to 22):
+#   remo_ssh_host: address of the registered host
+#   remo_ssh_user: SSH user, which is ALSO the account this play configures
+#   remo_ssh_port: SSH port
+#
+# Optional variables:
+#   remo_ssh_identity: private key path. `~` is expanded by the ssh connection
+#     plugin (os.path.expanduser), so no client-side expansion is needed.
+#   configure_docker / configure_user_setup / configure_nodejs /
+#   configure_devcontainers / configure_github_cli / configure_fzf /
+#   configure_zellij: per-tool toggles — see tasks/configure_dev_tools.yml
+#
+# Host key checking is INHERITED from ansible.cfg, which disables it repo-wide
+# (host_key_checking=False AND StrictHostKeyChecking=no in ssh_args). That is a
+# deliberate inheritance, not an oversight: ssh_common_args is appended AFTER
+# ssh_args and ssh honours the first occurrence of an option, so a play-level
+# override here would be silently ignored. Tightening it is a repo-wide change
+# to ansible.cfg across every playbook, not a per-play special case.
+
+- name: Build the inventory for the registered SSH host
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Validate the connection variables supplied by the CLI
+      ansible.builtin.assert:
+        that:
+          - remo_ssh_host is defined and (remo_ssh_host | string | length) > 0
+          - remo_ssh_user is defined and (remo_ssh_user | string | length) > 0
+          - remo_ssh_port is defined
+          - (remo_ssh_port | int) > 0
+          - (remo_ssh_port | int) < 65536
+        fail_msg: >-
+          ssh_configure.yml needs remo_ssh_host, remo_ssh_user and remo_ssh_port.
+          Run it through 'remo configure <name>' rather than directly.
+        quiet: true
+
+    - name: Refuse to reconfigure the root account
+      ansible.builtin.assert:
+        that:
+          - remo_ssh_user != 'root'
+        fail_msg: >-
+          remo configures the SSH user you registered as the workspace account,
+          and user_setup pins that account to UID 1000 — doing that to root
+          would break the host. Re-register with a normal user:
+          remo add <name> {{ remo_ssh_host | default('<host>') }} --user <user>
+        quiet: true
+
+    # Fixed, colon-free name: add_host runs its `name` through parse_address(),
+    # so an IP-with-port name would set ansible_ssh_port behind our back.
+    - name: Add the registered SSH host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: remo_ssh_target
+        groups:
+          - remo_ssh_hosts
+        ansible_host: "{{ remo_ssh_host }}"
+        ansible_user: "{{ remo_ssh_user }}"
+        ansible_port: "{{ remo_ssh_port | int }}"
+        ansible_python_interpreter: /usr/bin/python3
+        # `omit`, NOT a '~/.ssh/id_rsa' fallback. "No identity stored" means
+        # "let ssh/agent resolve the key"; defaulting to a path here is exactly
+        # how aws_configure.yml can silently offer the WRONG key.
+        ansible_ssh_private_key_file: "{{ remo_ssh_identity | default(omit) }}"
+        # ansible-core emits `-o IdentityFile=` for private_key_file but NOT
+        # `-o IdentitiesOnly=yes` (that pairing exists only on the `private_key`
+        # branch of connection/ssh.py). Without this, ssh offers every agent key
+        # first and a busy agent hits MaxAuthTries — "Too many authentication
+        # failures" — while the key you passed is never tried. core/ssh.py pairs
+        # them for this exact reason; match it.
+        ansible_ssh_common_args: >-
+          {{ '-o IdentitiesOnly=yes'
+             if (remo_ssh_identity | default('') | length) > 0
+             else omit }}
+
+- name: Configure a manually-registered SSH host with development tools
+  hosts: remo_ssh_hosts
+  become: true
+  # Facts are gathered explicitly in pre_tasks, AFTER the interpreter probe: the
+  # implicit gather runs a Python module, so on a host with no python3 it fails
+  # first, with a message that never names the actual problem.
+  gather_facts: false
+
+  vars:
+    # The account remo configures IS the account you registered. Everything
+    # user_setup installs lands in /home/{{ remo_user }}/.local/bin — including
+    # remo-host, which `remo web` discovery invokes over SSH as the REGISTERED
+    # user. Inventing a second 'remo' user here would leave discovery reporting
+    # no_remo_host after a "successful" configure. For the default `remo add`
+    # user this is a no-op: remo_user is 'remo' either way. It also skips the
+    # UID-1000 displacement in user_setup, which only fires when the holder of
+    # UID 1000 is someone other than remo_user.
+    remo_user: "{{ remo_ssh_user }}"
+    # No cloud provider injected a key on this host, so there is nothing to
+    # bootstrap FROM — and root's authorized_keys on a machine remo does not own
+    # belongs to its owner, not to a workspace account (#121). With remo_user
+    # set above, the connecting user's own authorized_keys is already non-empty,
+    # so the first-contact gate would decline anyway; false makes it structural.
+    user_setup_bootstrap_cloud_keys: false
+
+  pre_tasks:
+    # `raw` needs no interpreter on the target, so it can diagnose the absence
+    # of one. `become: false` is mandatory on both probes: ansible.cfg sets
+    # become=True globally, so without it they run THROUGH sudo and prove
+    # nothing — the sudo probe would report success on a host where the user
+    # cannot in fact sudo, because the connection itself would have failed.
+    - name: Probe for a Python 3 interpreter
+      ansible.builtin.raw: command -v python3
+      become: false
+      register: remo_python_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with actionable guidance when the host has no Python 3
+      ansible.builtin.fail:
+        msg: >-
+          No python3 on {{ ansible_host }}:{{ ansible_port }} — Ansible needs a
+          Python 3 interpreter on the target. Install it and retry:
+          ssh -p {{ ansible_port }} {{ ansible_user }}@{{ ansible_host }}
+          'sudo apt-get update && sudo apt-get install -y python3'
+      when: (remo_python_probe.rc | default(1)) != 0
+
+    - name: Probe for passwordless sudo
+      ansible.builtin.raw: sudo -n true
+      become: false
+      register: remo_sudo_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Fail with actionable guidance when the SSH user cannot sudo
+      ansible.builtin.fail:
+        msg: >-
+          '{{ ansible_user }}' cannot sudo without a password on
+          {{ ansible_host }}. remo installs packages and system services, so it
+          needs passwordless sudo. Grant it once, then retry:
+          echo '{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL' | sudo tee
+          /etc/sudoers.d/{{ ansible_user }} && sudo chmod 440
+          /etc/sudoers.d/{{ ansible_user }}
+      when: (remo_sudo_probe.rc | default(1)) != 0
+
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Fail on a non-apt host before any role starts changing it
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family | default('') == 'Debian'
+        fail_msg: >-
+          {{ ansible_host }} runs {{ ansible_distribution | default('an unknown
+          distribution') }} {{ ansible_distribution_version | default('') }};
+          every remo role is apt-based (Ubuntu and Debian are supported).
+          Nothing was changed.
+        quiet: true
+
+    - name: Wait for apt to be ready
+      ansible.builtin.shell: |
+        while fuser /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+          sleep 5
+        done
+      args:
+        executable: /bin/bash
+      register: apt_lock_result
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: apt_lock_result.rc | default(1) == 0
+
+    # Unwedge apt before the first apt call: a sources line naming a keyring
+    # that no longer exists makes apt refuse to read ANY source list, which
+    # would fail the cache update below and leave the host unrepairable (#120).
+    - name: Repair apt sources referencing a missing keyring
+      ansible.builtin.include_tasks: tasks/repair_apt_sources.yml
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+
+    - name: Check if reboot is required
+      ansible.builtin.stat:
+        path: /var/run/reboot-required
+      register: reboot_required_file
+
+  tasks:
+    - name: Configure dev tools
+      ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
+
+  post_tasks:
+    # Deliberately NOT ansible.builtin.reboot: hetzner/aws reboot because remo
+    # created and solely owns those VMs. This host is the user's own machine and
+    # may be running their other work; remo has no API to bring it back, and no
+    # way to notice if it doesn't. Report and let them choose.
+    #
+    # The message lives in the task NAME, not the debug body: the non-verbose
+    # output filter (core/ansible_runner.py::_filter_line) suppresses debug msg
+    # bodies entirely but does print task names — and clears them on `skipping:`,
+    # so this line appears exactly when a reboot really is pending.
+    - name: "Reboot pending — remo did NOT reboot this host (it is yours, not remo-provisioned); run 'sudo reboot' when convenient"
+      ansible.builtin.debug:
+        msg: >-
+          Package updates need a reboot:
+          ssh -p {{ ansible_port }} {{ ansible_user }}@{{ ansible_host }} 'sudo reboot'
+      when: reboot_required_file.stat.exists | default(false)
+
+    - name: Display completion message
+      ansible.builtin.debug:
+        msg: |
+          Host configuration complete!
+
+          Configured account: {{ remo_user }}
+          Workspace:          {{ dev_workspace_dir }}
+
+          Installed:
+          - Docker (with docker-compose plugin)
+          - User '{{ remo_user }}' with sudo NOPASSWD access and docker group
+          - Node.js LTS (v{{ nodejs_version }})
+          - fzf, @devcontainers/cli, GitHub CLI (gh), Zellij
+          - remo-host, which is what makes this host appear in 'remo web'
+
+          Connect with:
+            remo shell
+            ssh -p {{ ansible_port }} {{ ansible_user }}@{{ ansible_host }}

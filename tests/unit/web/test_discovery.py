@@ -22,7 +22,8 @@ from remo_cli.models.discovery import InstanceStatus
 from remo_cli.models.session_target import DevcontainerRunning, ZellijState
 from remo_cli.web import discovery as discovery_module
 from remo_cli.web.config import WebSettings
-from remo_cli.web.discovery import DiscoveryService
+from remo_cli.models.host import KnownHost
+from remo_cli.web.discovery import DiscoveryService, _configure_remediation
 
 pytestmark = pytest.mark.usefixtures("tmp_config_dir")
 
@@ -291,3 +292,45 @@ async def test_find_target_and_get_targets(tmp_config_dir, monkeypatch):
     assert len(targets) == 2
     for target in targets:
         assert service.find_target(target.id) is target
+
+
+# ---------------------------------------------------------------------------
+# `no_remo_host` remediation
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureRemediation:
+    """The remediation must name a command that exists for *this* host.
+
+    It used to read "re-run configure" for every instance. For a `remo add`
+    host that pointed at nothing — provisioning an added host was out of scope
+    until `remo configure` — so the console told the operator to run a command
+    the CLI would reject as unknown.
+    """
+
+    def _host(self, type_: str, name: str) -> KnownHost:
+        return KnownHost(
+            type=type_,
+            name=name,
+            host="10.0.0.5",
+            user="remo",
+            instance_id="",
+            access_mode="direct",
+        )
+
+    def test_added_ssh_host_gets_the_provider_neutral_verb(self):
+        remediation = _configure_remediation(self._host("ssh", "mbp"))
+        assert "remo configure mbp" in remediation
+
+    def test_provider_host_keeps_its_own_upgrade_verb(self):
+        # Routing a provider host through the generic play would configure it
+        # with the wrong one (no SSM ProxyCommand, no cloud-key bootstrap).
+        remediation = _configure_remediation(self._host("hetzner", "web1"))
+        assert "remo hetzner upgrade web1" in remediation
+        assert "remo configure" not in remediation
+
+    def test_host_scoped_name_is_shortened_for_the_cli(self):
+        # incus/proxmox register as "node/container" but their CLI takes the
+        # container part alone, so the full name would not be accepted.
+        remediation = _configure_remediation(self._host("incus", "node1/dev"))
+        assert "remo incus upgrade dev" in remediation

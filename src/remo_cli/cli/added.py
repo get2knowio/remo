@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import click
 
+from remo_cli.cli.providers.factory import provider_command
+
 
 @click.command("add")
 @click.argument("name")
@@ -104,3 +106,72 @@ def remove(name: str, assume_yes: bool) -> None:
     if rc:
         raise SystemExit(rc)
     emit_out_of_date_notice()  # 017 US2: a registered SSH host was removed
+
+
+@click.command("configure")
+@click.argument("name")
+@click.option(
+    "--only",
+    "tools_only",
+    multiple=True,
+    metavar="TOOL",
+    help="Only install/configure these tools.",
+)
+@click.option(
+    "--skip",
+    "tools_skip",
+    multiple=True,
+    metavar="TOOL",
+    help="Skip these tools.",
+)
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    help="Skip the confirmation prompt.",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    default=False,
+    help="Stream raw ansible-playbook output.",
+)
+@provider_command
+def configure(
+    name: str,
+    tools_only: tuple[str, ...],
+    tools_skip: tuple[str, ...],
+    assume_yes: bool,
+    verbose: bool,
+) -> None:
+    """Install or refresh remo's dev tools on a host added with 'remo add'.
+
+    Runs the same configure play the providers use, so NAME gains remo-host,
+    zellij and project-launch — which is what makes it appear as a session
+    target in 'remo web' instead of showing "update req.".
+
+    Configures the account NAME is registered with, and grants it passwordless
+    sudo. For a provider-managed host use 'remo <type> upgrade' instead.
+
+    \b
+    Examples:
+      remo configure mybox
+      remo configure mybox --skip docker --yes
+    """
+    from remo_cli.core.validation import validate_name  # noqa: PLC0415
+    from remo_cli.core.web_drift import emit_out_of_date_notice  # noqa: PLC0415
+    from remo_cli.providers.added import configure as provider_configure  # noqa: PLC0415
+
+    validate_name(name)
+    provider_configure(
+        name=name,
+        tools_only=tools_only,
+        tools_skip=tools_skip,
+        assume_yes=assume_yes,
+        verbose=verbose,
+    )
+    # A newly configured host usually still needs its key pushed to the web
+    # service; the notice is a no-op when the push cache already matches.
+    emit_out_of_date_notice()

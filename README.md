@@ -260,9 +260,45 @@ as any other host.
 
 ```bash
 remo add mybox 10.0.0.5 --port 2222 --identity ~/.ssh/mybox_ed25519 --verify
+remo configure mybox                # install the dev tools (see below)
 remo shell mybox                    # open a shell over direct SSH
 remo cp ./deploy.sh mybox:/tmp/     # copy a file up
 remo remove mybox                   # deregister when you're done
+```
+
+### Install the dev tools: `remo configure`
+
+`add` only *registers* a host — it installs nothing. Until you configure it, an
+added host has no `remo-host`, no zellij and no project launcher, so `remo web`
+lists it with an **"update req."** badge and no sessions you can open.
+
+```bash
+remo configure NAME [--only TOOL] [--skip TOOL] [--yes] [-v]
+```
+
+This runs the same Ansible play the providers use, so the host ends up with
+Docker, Node.js, zellij, fzf, the GitHub CLI, the devcontainers CLI and
+`remo-host`. It is idempotent — re-run it any time to refresh the tools, which
+is also how you update a host after upgrading `remo` itself.
+
+Two things worth knowing before the first run:
+
+- It configures **the account you registered** and grants that account
+  passwordless sudo. It also apt-upgrades the system. You are asked to confirm
+  (defaulting to *no*); `--yes` skips the prompt.
+- The host must be Debian/Ubuntu with `python3` and sudo available. Registering
+  as `root` is refused — the workspace account is pinned to UID 1000, which
+  would break the host.
+
+Unlike the provider `create` path, remo **never reboots** a host it did not
+provision; if package updates need one, it tells you and leaves the decision to
+you. For a provider-managed host use `remo <provider> upgrade NAME` instead —
+`remo configure` refuses those and names the right command.
+
+```bash
+remo configure mybox                # first-time setup, or refresh the tools
+remo configure mybox --skip docker  # everything except Docker
+remo web push                       # authorize the web service on it
 ```
 
 `remo remove NAME [--yes]` deregisters an added host by deleting **only** the
@@ -297,6 +333,8 @@ remo add NAME [user@]host[:port]    # Register a single SSH host
 remo add NAME host --port 2222 --identity ~/.ssh/key   # Custom port + key
 remo add NAME host --verify         # Fail-closed SSH reachability check first
 remo add NAME host --user alice     # Override default SSH user (default: remo)
+remo configure NAME                 # Install/refresh the dev tools on an added host
+remo configure NAME --skip docker   # Skip a tool (repeatable; --only is the inverse)
 remo remove NAME [--yes]            # Deregister an added host (local-only)
 
 # Hetzner Cloud

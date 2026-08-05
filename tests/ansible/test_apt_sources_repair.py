@@ -41,6 +41,7 @@ PLAYBOOKS = [
     "incus_configure.yml",
     "hetzner_configure.yml",
     "aws_configure.yml",
+    "ssh_configure.yml",
     "proxmox_site.yml",
     "incus_site.yml",
     "hetzner_site.yml",

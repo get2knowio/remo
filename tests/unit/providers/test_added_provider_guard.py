@@ -16,7 +16,11 @@ from __future__ import annotations
 import pytest
 
 from remo_cli.core.errors import PreconditionError
-from remo_cli.core.known_hosts import guard_not_added_ssh_host, save_known_host
+from remo_cli.core.known_hosts import (
+    guard_added_ssh_host_only,
+    guard_not_added_ssh_host,
+    save_known_host,
+)
 from remo_cli.models.host import KnownHost
 from remo_cli.providers import aws as providers_aws
 from remo_cli.providers import hetzner as providers_hetzner
@@ -212,3 +216,77 @@ def test_guard_allows_same_type_managed_container_sharing_name(added_ssh_host):
         )
     )
     guard_not_added_ssh_host(ADDED_NAME, "incus")
+
+
+# ---------------------------------------------------------------------------
+# The counterpart guard (core/known_hosts.guard_added_ssh_host_only)
+# ---------------------------------------------------------------------------
+#
+# `remo configure` runs the GENERIC ssh_configure.yml play. The five configure
+# playbooks are not interchangeable — AWS builds an SSM ProxyCommand, Hetzner
+# bootstraps the cloud-injected key, incus/proxmox deliberately suppress that
+# bootstrap (#121) — so resolving a provider host here would not fail, it would
+# succeed at configuring the host wrongly. Refusing is the only behavior whose
+# failure mode is a message.
+
+
+def test_configure_guard_returns_the_added_entry(added_ssh_host):
+    entry = guard_added_ssh_host_only(ADDED_NAME)
+    assert entry.type == "ssh"
+    assert entry.name == ADDED_NAME
+
+
+def test_configure_guard_names_the_providers_own_upgrade_verb(tmp_config_dir):
+    save_known_host(
+        KnownHost(
+            type="hetzner",
+            name="web1",
+            host="1.2.3.4",
+            user="remo",
+            instance_id="",
+            access_mode="direct",
+        )
+    )
+    with pytest.raises(PreconditionError, match="remo hetzner upgrade web1"):
+        guard_added_ssh_host_only("web1")
+
+
+def test_configure_guard_matches_host_scoped_short_names(tmp_config_dir):
+    # `remo configure box` must report "that's an incus host" rather than the
+    # misleading "not registered" — the same short-name matching
+    # resolve_remo_host_by_name does, so the message agrees with what the user
+    # sees everywhere else.
+    save_known_host(
+        KnownHost(
+            type="incus",
+            name=f"node1/{ADDED_NAME}",
+            host="node1",
+            user="remo",
+            instance_id="",
+            access_mode="direct",
+        )
+    )
+    with pytest.raises(PreconditionError, match="incus-managed host"):
+        guard_added_ssh_host_only(ADDED_NAME)
+
+
+def test_configure_guard_points_unregistered_names_at_remo_add(tmp_config_dir):
+    with pytest.raises(PreconditionError, match="remo add"):
+        guard_added_ssh_host_only("nosuch")
+
+
+def test_configure_guard_prefers_the_added_host_when_a_name_is_shared(added_ssh_host):
+    # Mirror image of test_guard_allows_same_type_managed_container_sharing_name:
+    # with both an added host `box` and an incus `node1/box`, `remo configure
+    # box` targets the added one — that is the host this command exists for.
+    save_known_host(
+        KnownHost(
+            type="incus",
+            name=f"node1/{ADDED_NAME}",
+            host="node1",
+            user="remo",
+            instance_id="",
+            access_mode="direct",
+        )
+    )
+    assert guard_added_ssh_host_only(ADDED_NAME).type == "ssh"

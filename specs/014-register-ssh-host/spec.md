@@ -264,6 +264,9 @@ registry entry, and exits non-zero.
 - **Provisioning dev tools onto an added host** (running the Ansible dev-tools
   configure flow). An added host is registered as-is; installing the managed
   tooling onto it is a possible future enhancement, not part of this feature.
+  **Superseded by 022-configure-added-hosts**, which delivered that enhancement
+  as `remo configure NAME` (`ansible/ssh_configure.yml`). The exclusion above
+  describes this feature's scope, not a standing limitation.
 - **Web service (`remo web`) discovery of added hosts.** Whether the browser
   session interface surfaces added hosts (which may lack `remo-host`
   capabilities) is deferred; this feature targets the CLI connection path.
