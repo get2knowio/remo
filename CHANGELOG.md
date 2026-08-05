@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.1](https://github.com/get2knowio/remo/compare/v4.3.0...v4.3.1) (2026-08-05)
+
+
+### Bug Fixes
+
+* three defects found while building `remo configure` ([#144](https://github.com/get2knowio/remo/issues/144)) ([608a914](https://github.com/get2knowio/remo/commit/608a9146560b9e1bf0e45811ce76a0c517dafa45))
+
 ## [4.3.0](https://github.com/get2knowio/remo/compare/v4.2.0...v4.3.0) (2026-08-05)
 
 
