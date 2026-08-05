@@ -1,7 +1,7 @@
 import { act, renderHook, type RenderHookResult } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { SessionTarget } from "../api/client";
-import type { UseWorkspaceResult } from "./workspace";
+import { MASTER_SIDES, type UseWorkspaceResult } from "./workspace";
 
 const target = (id: string) => ({ id }) as unknown as SessionTarget;
 
@@ -111,21 +111,16 @@ describe("workspace master layout", () => {
     act(() => result.current.openMany([target("a"), target("b"), target("c")]));
     act(() => result.current.setMaster("c", "right"));
 
-    expect(result.current.layout).toEqual({
-      kind: "master",
-      id: "c",
-      side: "right",
-      fraction: 0.6,
-    });
+    expect(result.current.layout).toEqual({ kind: "master", id: "c", side: "right" });
   });
 
-  it("keeps the current split when re-tiling to another edge", async () => {
+  it("re-tiles to another edge", async () => {
     const { result } = await mount();
     act(() => result.current.openMany([target("a"), target("b")]));
     act(() => result.current.setMaster("a", "right"));
     act(() => result.current.setMaster("a", "top"));
 
-    expect(result.current.layout).toMatchObject({ side: "top", fraction: 0.6 });
+    expect(result.current.layout).toEqual({ kind: "master", id: "a", side: "top" });
   });
 
   it("clearMaster returns to the grid without disturbing the tile order", async () => {
@@ -150,10 +145,9 @@ describe("workspace master layout", () => {
     expect(result.current.layout).toEqual({ kind: "grid" });
   });
 
-  it("clamps the split into the usable range", async () => {
-    // Only reachable through a hand-edited store today (the splitter is stage
-    // 2), but the clamp is what stops a 0.99 master squeezing the stack to
-    // nothing. NB: mount() clears localStorage, so seed it and import directly.
+  // 4.1.0 persisted the split inside the layout. It moved to settings.masterSplit,
+  // so the stale key must simply be ignored rather than needing a migration.
+  it("loads a 4.1.0 layout, dropping its embedded split", async () => {
     window.localStorage.clear();
     window.localStorage.setItem(
       STORAGE_KEY,
@@ -167,7 +161,7 @@ describe("workspace master layout", () => {
     vi.resetModules();
     const mod = await import("./workspace");
     const { result } = renderHook(() => mod.useWorkspace());
-    expect((result.current.layout as { fraction: number }).fraction).toBe(0.75);
+    expect(result.current.layout).toEqual({ kind: "master", id: "a", side: "left" });
   });
 
   // Closing the master moves ONE tile instead of reflowing every survivor.
@@ -271,7 +265,7 @@ describe("workspace master layout persistence", () => {
   it.each([
     ["a stale master id", { kind: "master", id: "gone", side: "left", fraction: 0.6 }],
     ["a bad side", { kind: "master", id: "a", side: "sideways", fraction: 0.6 }],
-    ["a non-numeric fraction", { kind: "master", id: "a", side: "left", fraction: "wide" }],
+    ["a stale embedded split from 4.1.0", { kind: "master", id: "a", side: "left", fraction: "wide" }],
     ["an unknown kind from a newer build", { kind: "columns", id: "a" }],
     ["a non-object", "master"],
     ["an array", []],
@@ -288,7 +282,7 @@ describe("workspace master layout persistence", () => {
     const restored = result.current.layout;
     if (restored.kind === "master") {
       expect(result.current.visible).toContain(restored.id);
-      expect(restored.fraction).toBeGreaterThanOrEqual(0.3);
+      expect(MASTER_SIDES).toContain(restored.side);
     } else {
       expect(restored).toEqual({ kind: "grid" });
     }

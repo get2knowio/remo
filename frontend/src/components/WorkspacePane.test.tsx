@@ -155,6 +155,25 @@ describe("WorkspacePane layout wiring", () => {
     }
   });
 
+  // The ⊞ control is dead UI in a plain grid; when the grid is TILED it becomes
+  // the way out, so "how do I undo this" has an obvious answer that isn't
+  // "cycle the ▦ button forward until it wraps".
+  it("flattens a tiling from the grid control, and stays inert in a plain grid", async () => {
+    const { store } = await mount(["a", "b", "c"]);
+    const gridBtn = (): HTMLButtonElement =>
+      screen.getByTestId("terminal-grid-a") as HTMLButtonElement;
+
+    expect(gridBtn().disabled).toBe(true);
+
+    act(() => store.setMaster("c", "right"));
+    expect(gridBtn().disabled).toBe(false);
+    expect(gridBtn().getAttribute("title")).toBe("Even out the grid");
+
+    act(() => gridBtn().click());
+    expect(store.layout).toEqual({ kind: "grid" });
+    expect(gridBtn().disabled).toBe(true);
+  });
+
   it("cycles a tile through the sides from its header control", async () => {
     const { store } = await mount(["a", "b"]);
     const button = (): HTMLElement => screen.getByTestId("terminal-tile-a");
@@ -171,5 +190,82 @@ describe("WorkspacePane layout wiring", () => {
     act(() => button().click());
     expect(store.layout).toEqual({ kind: "grid" });
     expect(button().getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("tiling control outside the grid", () => {
+  // It sits in the same cluster as ⊞ / ◻ / ⤢, which are always present and
+  // merely disabled when inapplicable. Vanishing was the odd one out.
+  it("stays in the cluster in a single view, and rebuilds the grid as master", async () => {
+    const { store } = await mount(["a", "b", "c"]);
+    act(() => store.soloTile("b"));
+
+    const button = screen.getByTestId("terminal-tile-b") as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+
+    act(() => button.click());
+    // Back to the remembered grid, with the tile you were looking at mastering.
+    expect(store.visible).toEqual(["a", "b", "c"]);
+    expect(store.layout).toMatchObject({ kind: "master", id: "b", side: "left" });
+  });
+
+  it("takes mastership from a remembered tiling rather than restoring it", async () => {
+    const { store } = await mount(["a", "b", "c"]);
+    act(() => store.setMaster("c", "right"));
+    act(() => store.soloTile("a"));
+
+    act(() => (screen.getByTestId("terminal-tile-a") as HTMLButtonElement).click());
+    expect(store.layout).toMatchObject({ kind: "master", id: "a" });
+  });
+
+  it("is present but inert when there is no grid to build", async () => {
+    await mount(["a"]);
+    const button = screen.getByTestId("terminal-tile-a") as HTMLButtonElement;
+    expect(button).toBeTruthy();
+    expect(button.disabled).toBe(true);
+  });
+});
+
+describe("tiling split setting", () => {
+  // The point of putting the split in settings rather than the layout: changing
+  // it re-flows the tiling you are looking at, no re-tiling required.
+  it("re-flows the current tiling when the split changes", async () => {
+    const { store } = await mount(["a", "b", "c"]);
+    const settings = await import("../state/settings");
+    act(() => store.setMaster("c", "right"));
+
+    const cols = (): string => body().style.gridTemplateColumns;
+    expect(cols()).toBe("repeat(1, minmax(0, 40fr)) minmax(0, 60fr)");
+
+    act(() => settings.settingsActions.setMasterSplit(0.5));
+    expect(cols()).toBe("repeat(1, minmax(0, 50fr)) minmax(0, 50fr)");
+
+    act(() => settings.settingsActions.setMasterSplit(0.55));
+    expect(cols()).toBe("repeat(1, minmax(0, 45fr)) minmax(0, 55fr)");
+  });
+});
+
+describe("terminal chrome toggle", () => {
+  it("drops every tile header when chrome is off, and restores them", async () => {
+    const { view } = await mount(["a", "b"]);
+    const settings = await import("../state/settings");
+    const headers = (): number => view.container.querySelectorAll(".terminal-card-header").length;
+
+    expect(headers()).toBe(2);
+    act(() => settings.settingsActions.toggleTileChrome());
+    expect(headers()).toBe(0);
+    act(() => settings.settingsActions.toggleTileChrome());
+    expect(headers()).toBe(2);
+  });
+
+  // Fullscreen is the one place the header must stay: there is one card on
+  // screen so the saved space is negligible, and its controls are the way out.
+  it("keeps the header on a fullscreen terminal", async () => {
+    const { view, store } = await mount(["a", "b"]);
+    const settings = await import("../state/settings");
+    act(() => settings.settingsActions.toggleTileChrome());
+    act(() => store.maximize("a"));
+
+    expect(view.container.querySelectorAll(".terminal-card-header")).toHaveLength(1);
   });
 });

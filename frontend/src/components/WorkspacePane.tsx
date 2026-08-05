@@ -20,8 +20,9 @@ import {
 } from "@dnd-kit/core";
 import type { SessionTarget } from "../api/client";
 import { requestBrowserFullscreen } from "../lib/fullscreen";
+import { useSettings } from "../state/settings";
 import { MASTER_SIDES, useWorkspace, type MasterSide } from "../state/workspace";
-import { dropIntent, nextMasterSide, paneLayout } from "./masterLayout";
+import { FIRST_MASTER_SIDE, dropIntent, nextMasterSide, paneLayout } from "./masterLayout";
 import { TerminalCard } from "./TerminalCard";
 import "./WorkspacePane.css";
 
@@ -108,6 +109,7 @@ export function WorkspacePane({
   onTerminalStarted,
   narrow,
 }: WorkspacePaneProps): JSX.Element {
+  const settings = useSettings();
   const workspace = useWorkspace();
   const { attached, visible, focusedId, prevGrid, maximizedId, layout } = workspace;
 
@@ -175,7 +177,7 @@ export function WorkspacePane({
   // `paneMode` is the single-vs-grid axis; `layout.kind` is the separate
   // uniform-vs-tiled axis. Two different "grid"s, hence the distinct name.
   const paneMode = maximized || visible.length <= 1 ? "single" : "grid";
-  const pane = paneMode === "grid" ? paneLayout(layout, visible, narrow) : null;
+  const pane = paneMode === "grid" ? paneLayout(layout, visible, narrow, settings.masterSplit) : null;
   // The Grid control is available when a grid can be shown — either the visible
   // set is already a grid (fullscreen opened over one) or a grid was remembered.
   const canGrid =
@@ -197,6 +199,16 @@ export function WorkspacePane({
   const activeTarget = activeId ? targetsById.get(activeId) : undefined;
 
   const cycleTile = (id: string): void => {
+    // From a single view (or fullscreen), the control means "put me back in the
+    // grid, as the master" — a tiling is what it makes, so it should make one
+    // from wherever you are rather than only existing once you already have a
+    // grid. backToGrid may restore a remembered tiling; setMaster then hands
+    // mastership to THIS tile, which is the one the user was looking at.
+    if (paneMode !== "grid") {
+      workspace.backToGrid();
+      workspace.setMaster(id, FIRST_MASTER_SIDE);
+      return;
+    }
     const side = nextMasterSide(layout, id);
     if (side) {
       workspace.setMaster(id, side);
@@ -256,7 +268,12 @@ export function WorkspacePane({
                   layout.kind === "master" && layout.id === id ? layout.side : null
                 }
                 onCycleTile={
-                  reorderable && isVisible ? () => cycleTile(id) : undefined
+                  // Present in every mode for consistency with the other window
+                  // controls; undefined (and so rendered disabled) only when
+                  // there is no grid to tile — one lone terminal.
+                  (reorderable && isVisible) || (paneMode !== "grid" && canGrid && isVisible)
+                    ? () => cycleTile(id)
+                    : undefined
                 }
                 isVisible={isVisible}
                 isFocused={focusedId === id}
@@ -264,7 +281,24 @@ export function WorkspacePane({
                 reorderEnabled={reorderable && isVisible}
                 onClose={() => workspace.closeTerm(id)}
                 onNormal={() => workspace.soloTile(id)}
-                onGrid={canGrid ? workspace.backToGrid : undefined}
+                onGrid={
+                  // In a TILED grid the ⊞ control flattens back to even tiles —
+                  // it is otherwise dead UI in exactly the state where you want
+                  // a way out, since cycling the ▦ control forward until it
+                  // wraps is a poor answer to "how do I undo this".
+                  paneMode === "grid" && !maximized
+                    ? layout.kind === "master"
+                      ? workspace.clearMaster
+                      : undefined
+                    : canGrid
+                      ? workspace.backToGrid
+                      : undefined
+                }
+                gridTitle={
+                  paneMode === "grid" && !maximized && layout.kind === "master"
+                    ? "Even out the grid"
+                    : undefined
+                }
                 onToggleFullscreen={() => toggleFullscreen(id)}
                 onFocusRequest={() => workspace.setFocused(id)}
                 onHoverFocus={

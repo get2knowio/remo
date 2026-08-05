@@ -89,18 +89,6 @@ describe("site theme mode", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
   });
 
-  it("cycles system → light → dark → system", async () => {
-    const settings = await load();
-    settings.initSettings();
-
-    const seen: string[] = [];
-    for (let i = 0; i < 3; i += 1) {
-      act(() => settings.settingsActions.cycleThemeMode());
-      seen.push(settings.getSettings().themeMode);
-    }
-    expect(seen).toEqual(["light", "dark", "system"]);
-  });
-
   it("resolves 'system' from the OS preference, live", async () => {
     const media = stubMatchMedia(false);
     const settings = await load();
@@ -263,6 +251,56 @@ describe("terminal themes", () => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ termThemeOverrides: "nope" }));
     const settings = await load();
     expect(settings.getSettings().termThemeOverrides).toEqual({});
+  });
+});
+
+describe("terminal chrome toggle", () => {
+  it("shows tile headers by default", async () => {
+    const settings = await load();
+    expect(settings.getSettings().showTileChrome).toBe(true);
+  });
+
+  it("toggles and round-trips through localStorage", async () => {
+    const first = await load();
+    act(() => first.settingsActions.toggleTileChrome());
+    expect(first.getSettings().showTileChrome).toBe(false);
+
+    const reloaded = await load();
+    expect(reloaded.getSettings().showTileChrome).toBe(false);
+  });
+
+  it("falls back to showing them when the stored value is garbage", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ showTileChrome: "no" }));
+    const settings = await load();
+    expect(settings.getSettings().showTileChrome).toBe(true);
+  });
+});
+
+describe("tiling split", () => {
+  it("defaults to 40/60 in the master's favour", async () => {
+    const settings = await load();
+    expect(settings.getSettings().masterSplit).toBe(0.6);
+  });
+
+  it("accepts the offered splits and round-trips them", async () => {
+    const first = await load();
+    act(() => first.settingsActions.setMasterSplit(0.5));
+    expect(first.getSettings().masterSplit).toBe(0.5);
+
+    const reloaded = await load();
+    expect(reloaded.getSettings().masterSplit).toBe(0.5);
+  });
+
+  // A value outside the offered set would render a layout that no menu item
+  // matches, so it is refused at both the setter and the load.
+  it("refuses a split that isn't offered", async () => {
+    const settings = await load();
+    act(() => settings.settingsActions.setMasterSplit(0.9));
+    expect(settings.getSettings().masterSplit).toBe(0.6);
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ masterSplit: 0.9 }));
+    const reloaded = await load();
+    expect(reloaded.getSettings().masterSplit).toBe(0.6);
   });
 });
 
