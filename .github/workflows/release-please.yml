@@ -71,13 +71,23 @@ jobs:
       - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         if: ${{ steps.release.outputs.pr }}
 
+      # `pr` is passed through as raw JSON and parsed in the shell rather than
+      # with `fromJSON(...)` here. A step's `env:` expressions are evaluated even
+      # when its `if:` is false, and on the push that MERGES a release there are
+      # no new commits, so release-please emits no PR and `outputs.pr` is the
+      # empty string — `fromJSON('')` then fails the whole job with "Error
+      # reading JToken from JsonReader", after the tag and publish have already
+      # succeeded. That made this workflow red after every single release and
+      # would have masked a real failure. The neighbouring setup-uv step, which
+      # has the same `if:` but no `env:`, skipped correctly throughout.
       - name: Sync uv.lock onto the release PR
         if: ${{ steps.release.outputs.pr }}
         env:
-          RELEASE_BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
           GH_TOKEN: ${{ steps.app-token.outputs.token || secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          RELEASE_BRANCH="$(jq -er '.headBranchName' <<<"$RELEASE_PR")"
           git clone --branch "$RELEASE_BRANCH" --depth 1 \
             "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" release-pr
           cd release-pr
