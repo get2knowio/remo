@@ -361,3 +361,69 @@ class TestSsmInteraction:
             "-o", "UserKnownHostsFile=/state/web-identity/known_hosts",
             "remo@i-0abc123def",
         ]
+
+
+class TestUseRegistryIdentity:
+    """The registry stores a WORKSTATION key path — not every caller shares it.
+
+    `build_ssh_opts` pairs an identity with `IdentitiesOnly=yes`, so handing it
+    a path that does not exist in the caller's filesystem is not a harmless
+    no-op: it suppresses every key that WOULD have authenticated. The web
+    service, which may run in a container with no such file, opts out.
+    """
+
+    @staticmethod
+    def _build():
+        from remo_cli.core.ssh import build_ssh_base_cmd, build_ssh_opts
+
+        return build_ssh_opts, build_ssh_base_cmd
+
+    def _added_host(self):
+        return KnownHost(
+            type="ssh",
+            name="box",
+            host="10.0.0.5",
+            user="remo",
+            instance_id="22",
+            access_mode="direct",
+            region="/home/me/.ssh/id_ed25519",
+        )
+
+    def test_defaults_to_using_the_registry_identity(self):
+        # The CLI's behavior, unchanged: its filesystem is the one the path
+        # was recorded against.
+        build_ssh_opts, _bc = self._build()
+        opts, _ = build_ssh_opts(self._added_host())
+        assert "IdentityFile=/home/me/.ssh/id_ed25519" in opts
+        assert "IdentitiesOnly=yes" in opts
+
+    def test_opting_out_emits_no_identity_at_all(self):
+        build_ssh_opts, _bc = self._build()
+        opts, _ = build_ssh_opts(self._added_host(), use_registry_identity=False)
+        assert not any(o.startswith("IdentityFile=") for o in opts)
+        assert "IdentitiesOnly=yes" not in opts
+
+    def test_an_explicit_identity_still_wins_when_opted_out(self):
+        # This is the adopted-mode service path: its own key, never the
+        # operator's.
+        build_ssh_opts, _bc = self._build()
+        opts, _ = build_ssh_opts(
+            self._added_host(),
+            identity_file="/svc/web-identity/id_ed25519",
+            use_registry_identity=False,
+        )
+        assert "IdentityFile=/svc/web-identity/id_ed25519" in opts
+        assert "IdentityFile=/home/me/.ssh/id_ed25519" not in opts
+        assert "IdentitiesOnly=yes" in opts
+
+    def test_opting_out_is_a_no_op_for_provider_hosts(self):
+        # `ssh_identity` is None for every non-ssh type, so their argv must be
+        # byte-identical either way.
+        build_ssh_opts, _bc = self._build()
+        host = KnownHost(type="hetzner", name="web1", host="1.2.3.4", user="remo")
+        assert build_ssh_opts(host)[0] == build_ssh_opts(host, use_registry_identity=False)[0]
+
+    def test_flag_is_threaded_through_build_ssh_base_cmd(self):
+        _bo, build_ssh_base_cmd = self._build()
+        cmd = build_ssh_base_cmd(self._added_host(), use_registry_identity=False)
+        assert not any(a.startswith("IdentityFile=") for a in cmd)

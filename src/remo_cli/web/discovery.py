@@ -109,13 +109,16 @@ def _discover_one_sync(
     host: KnownHost, settings: WebSettings
 ) -> tuple[RemoteCapability, list[ProjectEntry]]:
     """Blocking discovery of one instance; run in a worker thread."""
-    # identity_file/known_hosts_file resolve to the service identity only in
-    # adopted mode (R6); in mounted/unconfigured/broken mode both properties
-    # return None and the argv is byte-identical to before (FR-005/FR-023).
+    # Adopted mode uses the service's own key (R6). Other modes fall back to
+    # the mounted ~/.ssh — and to a registry identity only when that path
+    # actually resolves here; see WebSettings.ssh_identity_for.
     ssh_argv_prefix = build_ssh_base_cmd(
         host,
         control_dir=settings.ssh_control_dir,
-        identity_file=settings.ssh_identity_file,
+        identity_file=settings.ssh_identity_for(host),
+        # The service must not inherit a WORKSTATION key path from the
+        # registry; ssh_identity_for() decides, and only when usable here.
+        use_registry_identity=False,
         known_hosts_file=settings.ssh_known_hosts_file,
     )
     capability = get_capabilities(ssh_argv_prefix, timeout=settings.discovery_timeout_s)
@@ -141,7 +144,10 @@ def _snapshot(
         targets=targets or [],
         error=error,
         refreshed_at=_now_iso(),
-        region=host.region or "",
+        # NOT `host.region`: for an added SSH host that slot holds the
+        # operator's private key path, and this value is rendered as a badge in
+        # the console.
+        region=host.display_region,
     )
 
 

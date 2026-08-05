@@ -301,6 +301,22 @@ remo configure mybox --skip docker  # everything except Docker
 remo web push                       # authorize the web service on it
 ```
 
+#### Example: an OrbStack VM
+
+[`docs/examples/orbstack-cloud-init.yaml`](docs/examples/orbstack-cloud-init.yaml)
+prepares an [OrbStack](https://orbstack.dev) VM on a Mac so `remo add` and
+`remo configure` work first time:
+
+```bash
+orb create ubuntu remo-mbp -c docs/examples/orbstack-cloud-init.yaml
+```
+
+It installs only what Ansible needs to connect and hand over — `remo configure`
+does the rest. It deliberately creates no user: OrbStack already makes one named
+after your macOS account holding UID 1000, and registering *that* user is what
+puts `remo-host` in the home directory the web service logs into, while skipping
+`user_setup`'s UID-1000 reassignment entirely.
+
 `remo remove NAME [--yes]` deregisters an added host by deleting **only** the
 local registry entry — it makes no connection to and no change on the remote
 environment (unlike a provider `destroy`, which tears down infrastructure). It

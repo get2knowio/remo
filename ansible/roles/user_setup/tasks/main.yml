@@ -243,11 +243,25 @@
     - user_setup_cloud_keys.content | default('') | length > 0
 # --- end cloud-injected key bootstrap --------------------------------------
 
+# The docker group only exists if the `docker` role ran. Skipping that role
+# (`--skip docker`, or `configure_docker=false`) previously made the next task
+# fail outright with "Group docker does not exist", taking the whole configure
+# down after it had already changed the host — so `--skip docker` was, in
+# effect, not a supported option on any provider. Gate on the group rather than
+# on `configure_docker` so a host where Docker was installed by other means
+# (or by an earlier run) still gets the membership.
+- name: Check whether a docker group exists
+  ansible.builtin.command: getent group docker
+  register: user_setup_docker_group
+  changed_when: false
+  failed_when: false
+
 - name: Add remo user to docker group
   ansible.builtin.user:
     name: "{{ remo_user }}"
     groups: docker
     append: true
+  when: user_setup_docker_group.rc | default(1) == 0
 
 - name: Configure passwordless sudo for remo user
   ansible.builtin.lineinfile:

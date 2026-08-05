@@ -1,0 +1,120 @@
+#cloud-config
+#
+# OrbStack VM prepared for `remo add` + `remo configure` (remo >= 4.3.0).
+#
+#   orb create ubuntu remo-mbp -c orbstack-remo-cloud-init.yaml
+#
+# Deliberately minimal: this installs ONLY what Ansible needs in order to
+# connect and take over. Docker, Node.js, zellij, fzf, the GitHub CLI, the
+# devcontainers CLI and remo-host are all installed by `remo configure`, which
+# is idempotent — duplicating any of that here would only drift.
+#
+# It also does NOT create a user. OrbStack already creates one named after your
+# macOS account, holding UID 1000 with passwordless sudo. `remo configure`
+# binds its workspace account to whichever user you register, so registering
+# that existing user means:
+#   * remo-host lands in the home directory discovery actually logs into, and
+#   * user_setup's UID-1000 reassignment (which rewrites /etc/passwd and drops
+#     the live SSH session) is skipped entirely, because the holder of UID 1000
+#     is already the account being configured.
+# Creating a separate `remo` user here would forfeit both.
+
+# ---------------------------------------------------------------------------
+# EDIT THIS: the public key of the workstation that will run `remo`.
+# ---------------------------------------------------------------------------
+# If remo runs on this same Mac, that is ~/.ssh/id_ed25519.pub.
+# Leave the placeholder in place and cloud-init keeps password auth enabled
+# rather than locking you out (see the guard in runcmd).
+ssh_authorized_keys:
+  - ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY workstation
+
+package_update: true
+packages:
+  # Ansible needs a Python 3 interpreter on the target. ssh_configure.yml
+  # probes for it with `raw` and fails with an actionable message if absent,
+  # but there is no reason to make you see that message.
+  - python3
+  # hwclock. `community.general.timezone` — the first task in remo's shared
+  # role list — hard-fails with 'Failed to find required executable "hwclock"'
+  # without it, and on Ubuntu 24.04 it lives in util-linux-extra, which minimal
+  # images do not install. Found the hard way while testing this feature.
+  - util-linux-extra
+  - openssh-server
+  # remo's configure play installs rsync itself, but having it up front means
+  # `remo cp` works the moment the host is registered.
+  - rsync
+
+# ---------------------------------------------------------------------------
+# SSH port
+# ---------------------------------------------------------------------------
+# 22 is right when remo runs on this Mac: the VM gets its own IP that macOS can
+# reach directly, so nothing needs forwarding.
+#
+# Change it if you are reaching this VM from somewhere else (e.g. your homelab
+# box) via a forwarded port — remo stores the port per host and threads it
+# through `remo shell`, `remo configure` and `remo web push`. Register it with
+#     remo add mbp <user>@<host>:<port>
+# Note this is NOT OrbStack's own SSH (127.0.0.1:32222, Mac-local only); this
+# is a normal sshd inside the VM, which is what remo drives.
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-remo.conf
+    permissions: '0644'
+    content: |
+      # Managed by cloud-init for remo. Ubuntu's sshd_config Includes this dir.
+      Port 22
+      PubkeyAuthentication yes
+
+runcmd:
+  # Put the key on the UID-1000 account explicitly. `ssh_authorized_keys` above
+  # targets cloud-init's notion of the default user, which is not guaranteed to
+  # be the user OrbStack created — this makes it deterministic either way.
+  - |
+    set -eu
+    KEY='ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY workstation'
+    USER_1000="$(getent passwd 1000 | cut -d: -f1)"
+    if [ -z "$USER_1000" ]; then
+      echo "remo-cloud-init: no UID 1000 account; skipping key install" >&2
+      exit 0
+    fi
+    HOME_1000="$(getent passwd 1000 | cut -d: -f6)"
+    install -d -m 700 -o "$USER_1000" -g "$USER_1000" "$HOME_1000/.ssh"
+    touch "$HOME_1000/.ssh/authorized_keys"
+    case "$KEY" in
+      *REPLACE_WITH_YOUR_PUBLIC_KEY*)
+        # Refuse to harden SSH when no real key was supplied — disabling
+        # password auth here would leave the VM unreachable over SSH.
+        echo "remo-cloud-init: placeholder key not replaced; leaving password auth as-is" >&2
+        ;;
+      *)
+        grep -qxF "$KEY" "$HOME_1000/.ssh/authorized_keys" \
+          || echo "$KEY" >> "$HOME_1000/.ssh/authorized_keys"
+        echo 'PasswordAuthentication no' > /etc/ssh/sshd_config.d/20-remo-hardening.conf
+        ;;
+    esac
+    chown -R "$USER_1000:$USER_1000" "$HOME_1000/.ssh"
+    chmod 600 "$HOME_1000/.ssh/authorized_keys"
+
+  # Passwordless sudo: OrbStack already grants it, but an explicit drop-in
+  # makes this file work on a plain cloud image too. remo needs it — the
+  # configure play installs packages and system services, and probes for it
+  # up front rather than failing halfway through.
+  - |
+    set -eu
+    USER_1000="$(getent passwd 1000 | cut -d: -f1)"
+    [ -n "$USER_1000" ] || exit 0
+    echo "$USER_1000 ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-remo-$USER_1000"
+    chmod 440 "/etc/sudoers.d/90-remo-$USER_1000"
+
+  - systemctl enable --now ssh
+  - systemctl restart ssh
+
+final_message: |
+  remo-ready after $UPTIME seconds.
+
+  From the workstation running remo:
+    remo add mbp <user>@<this-vm-ip> --verify     # add :PORT if you changed it
+    remo configure mbp
+    remo web push                                 # if you use the web console
+
+  Do not pass `--skip docker` to configure: the shared role list adds the user
+  to the docker group, which only exists if the docker role ran.

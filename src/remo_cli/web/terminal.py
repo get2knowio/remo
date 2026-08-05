@@ -201,7 +201,10 @@ def build_attach_argv(
         tty=True,
         multiplex=True,
         control_dir=control_dir,
-        identity_file=resolved_settings.ssh_identity_file,
+        identity_file=resolved_settings.ssh_identity_for(host),
+        # The service must not inherit a WORKSTATION key path from the
+        # registry; ssh_identity_for() decides, and only when usable here.
+        use_registry_identity=False,
         known_hosts_file=resolved_settings.ssh_known_hosts_file,
     )
     remote_cmd = build_remo_host_shell_cmd("sessions attach", project=project)

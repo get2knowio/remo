@@ -76,6 +76,7 @@ def build_ssh_opts(
     control_dir: str | None = None,
     identity_file: str | None = None,
     known_hosts_file: str | None = None,
+    use_registry_identity: bool = True,
 ) -> tuple[list[str], str]:
     """Build SSH option flags and target string for the given host.
 
@@ -98,6 +99,15 @@ def build_ssh_opts(
         to ambient ``~/.ssh`` identities or agent keys (adopted-mode web
         service identity, R6). ``None`` (the default) emits nothing, leaving
         the argv byte-identical to before this parameter existed.
+    use_registry_identity:
+        When ``True`` (the default) and *identity_file* is ``None``, fall back
+        to an added host's stored ``ssh_identity``. Set ``False`` when the
+        caller cannot assume that path resolves in *its* filesystem — the
+        registry records a **workstation** path, so the web service running in
+        a container may not have it. Emitting it anyway is not a harmless
+        no-op: it comes with ``IdentitiesOnly=yes``, which suppresses every
+        key that *would* have worked, turning a missing file into a guaranteed
+        auth failure.
     known_hosts_file:
         When set, emit ``-o UserKnownHostsFile=<path>``. ``None`` (the
         default) emits nothing. For SSM hosts the access-mode block's
@@ -152,7 +162,9 @@ def build_ssh_opts(
     # wins; otherwise an added (ssh-type) host's stored identity is used
     # (``ssh_identity`` is None for every other type, so their argv is unchanged).
     # ------------------------------------------------------------------
-    effective_identity = identity_file if identity_file is not None else host.ssh_identity
+    effective_identity = identity_file
+    if effective_identity is None and use_registry_identity:
+        effective_identity = host.ssh_identity
     if effective_identity is not None:
         ssh_opts += [
             "-o", f"IdentityFile={effective_identity}",
@@ -180,6 +192,7 @@ def build_ssh_base_cmd(
     control_dir: str | None = None,
     identity_file: str | None = None,
     known_hosts_file: str | None = None,
+    use_registry_identity: bool = True,
     extra_opts: list[str] | None = None,
 ) -> list[str]:
     """Build the full ``ssh`` argv for connecting to *host*.
@@ -213,6 +226,9 @@ def build_ssh_base_cmd(
         Forwarded to :func:`build_ssh_opts` — emits ``-o
         UserKnownHostsFile=<path>`` when set; ``None`` (the default) leaves
         the argv unchanged.
+    use_registry_identity:
+        Forwarded to :func:`build_ssh_opts`. Leave ``True`` on the CLI, whose
+        filesystem is the one the registry path was recorded against.
     extra_opts:
         Extra argv elements inserted after *ssh_opts* but before the
         ``-tt``/target elements — e.g. ``["-L", "8080:localhost:8080"]``
@@ -233,6 +249,7 @@ def build_ssh_base_cmd(
         control_dir=control_dir,
         identity_file=identity_file,
         known_hosts_file=known_hosts_file,
+        use_registry_identity=use_registry_identity,
     )
 
     cmd: list[str] = ["ssh"] + ssh_opts

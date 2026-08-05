@@ -96,6 +96,25 @@ class TestSshAccessors:
         h = KnownHost(type="ssh", name="box", host="h", user="remo")
         assert h.ssh_identity is None
 
+    # `region` is a reused slot: for an added host it holds the operator's
+    # PRIVATE KEY PATH. The web service copies `region` onto every discovery
+    # snapshot and the console renders it as a badge, so returning it verbatim
+    # published that path to everyone with console access.
+    def test_display_region_hides_an_added_hosts_key_path(self) -> None:
+        h = KnownHost(
+            type="ssh", name="box", host="h", user="remo", region="/home/me/.ssh/id_ed25519"
+        )
+        assert h.ssh_identity == "/home/me/.ssh/id_ed25519"  # still usable internally
+        assert h.display_region == ""  # but never displayed
+
+    def test_display_region_passes_through_a_real_region(self) -> None:
+        h = KnownHost(type="aws", name="dev", host="h", user="remo", region="us-west-2")
+        assert h.display_region == "us-west-2"
+
+    def test_display_region_is_a_string_when_unset(self) -> None:
+        # The API field is a plain `str`; None would break serialization.
+        assert KnownHost(type="aws", name="d", host="h", user="remo").display_region == ""
+
     def test_non_ssh_types_return_neutral_values(self) -> None:
         # A proxmox host stores a numeric vmid in instance_id — it must NOT be
         # read as a port, and it has no ssh identity.

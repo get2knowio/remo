@@ -23,7 +23,7 @@ from remo_cli.models.session_target import DevcontainerRunning, ZellijState
 from remo_cli.web import discovery as discovery_module
 from remo_cli.web.config import WebSettings
 from remo_cli.models.host import KnownHost
-from remo_cli.web.discovery import DiscoveryService, _configure_remediation
+from remo_cli.web.discovery import DiscoveryService, _configure_remediation, _snapshot
 
 pytestmark = pytest.mark.usefixtures("tmp_config_dir")
 
@@ -334,3 +334,35 @@ class TestConfigureRemediation:
         # container part alone, so the full name would not be accepted.
         remediation = _configure_remediation(self._host("incus", "node1/dev"))
         assert "remo incus upgrade dev" in remediation
+
+
+class TestSnapshotDoesNotPublishTheKeyPath:
+    """The snapshot's `region` reaches the browser and is rendered as a badge.
+
+    For an added host the registry's `region` slot holds the operator's PRIVATE
+    KEY PATH, so copying it verbatim published that path to everyone with
+    console access. Covering the model property alone is not enough — this
+    pins the call site, which is what a revert would touch.
+    """
+
+    def test_added_host_snapshot_carries_no_key_path(self):
+        host = KnownHost(
+            type="ssh",
+            name="mbp",
+            host="10.0.0.5",
+            user="remo",
+            instance_id="2222",
+            access_mode="direct",
+            region="/home/me/.ssh/id_ed25519",
+        )
+
+        snap = _snapshot("iid", host, InstanceStatus.OK)
+
+        assert snap.region == ""
+        assert "id_ed25519" not in snap.region
+
+    def test_a_real_region_still_reaches_the_console(self):
+        host = KnownHost(
+            type="aws", name="dev", host="h", user="remo", region="us-west-2"
+        )
+        assert _snapshot("iid", host, InstanceStatus.OK).region == "us-west-2"
