@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/get2knowio/remo/compare/v4.1.0...v4.2.0) (2026-08-05)
+
+
+### Features
+
+* **web:** flatten a tiling from ⊞, and hide terminal headers wholesale ([#139](https://github.com/get2knowio/remo/issues/139)) ([e5890f0](https://github.com/get2knowio/remo/commit/e5890f031c214b835ec8eab9ff85e8e343c12832))
+
 ## [4.1.0](https://github.com/get2knowio/remo/compare/v4.0.1...v4.1.0) (2026-08-04)
 
 
