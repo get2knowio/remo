@@ -1,0 +1,182 @@
+#cloud-config
+#
+# OrbStack VM prepared for `remo add` + `remo configure`, joined to your
+# Tailscale tailnet (remo >= 4.3.0).
+#
+#   orb create ubuntu remo-mbp -c orbstack-cloud-init-tailscale.yaml
+#
+# This is `orbstack-cloud-init.yaml` plus Tailscale. Everything that file says
+# still applies: it installs only what Ansible needs to connect and take over,
+# and it creates no user — OrbStack already makes one named after your macOS
+# account holding UID 1000, and registering *that* user is what puts remo-host
+# in the home directory `remo web` discovery logs into while skipping
+# user_setup's UID-1000 reassignment.
+#
+# WHY YOU WANT THIS ONE
+#
+# An OrbStack VM's own IP is reachable from its Mac and nowhere else. That is
+# fine when remo runs on the same Mac, and useless the moment you want the
+# workstation, your homelab box, or the `remo web` service to reach it. Joining
+# the tailnet gives the VM a stable address that works from anywhere you are
+# already logged in — the same way you reach dev1.
+#
+# The practical consequence for remo: register the MagicDNS name, not the
+# OrbStack IP.
+#
+#     remo add mbp <user>@remo-mbp.<your-tailnet>.ts.net --verify
+#
+# That address is what gets stored in the registry and pushed to the web
+# service, so it must be one the service can resolve too — i.e. the service
+# host must also be on the tailnet.
+
+# ---------------------------------------------------------------------------
+# EDIT THIS (1/2): the public key of the workstation that will run `remo`.
+# ---------------------------------------------------------------------------
+# Leave the placeholder and cloud-init keeps password auth enabled rather than
+# locking you out of a keyless VM (see the guard in runcmd).
+ssh_authorized_keys:
+  - ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY workstation
+
+package_update: true
+packages:
+  # Ansible needs a Python 3 interpreter on the target.
+  - python3
+  # hwclock, which `community.general.timezone` — the first task in remo's
+  # shared role list — hard-fails without. On Ubuntu 24.04 it lives here, and
+  # minimal images do not install it.
+  - util-linux-extra
+  - openssh-server
+  # `remo configure` installs rsync itself; having it up front means `remo cp`
+  # works the moment the host is registered.
+  - rsync
+  # For the Tailscale install script.
+  - curl
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-remo.conf
+    permissions: '0644'
+    content: |
+      # Managed by cloud-init for remo. Ubuntu's sshd_config Includes this dir.
+      Port 22
+      PubkeyAuthentication yes
+
+  # ---------------------------------------------------------------------------
+  # EDIT THIS (2/2): a Tailscale auth key.
+  # ---------------------------------------------------------------------------
+  # Generate one at https://login.tailscale.com/admin/settings/keys
+  #
+  # Make it **ephemeral** and **pre-approved**, and tag it (e.g. `tag:remo`).
+  # Ephemeral matters here for a real reason: cloud-init writes this user-data
+  # to disk on the VM (/var/lib/cloud/instance/user-data.txt) and keeps it, so
+  # the key outlives the boot that used it. An ephemeral key expires on its own
+  # and its node is reaped when it goes offline, which bounds the damage if the
+  # VM image or a snapshot is ever shared. A reusable non-expiring key in this
+  # file is a standing credential to your tailnet.
+  #
+  # Keep this file out of version control once you put a real key in it.
+  - path: /etc/remo-tailscale.env
+    permissions: '0600'
+    owner: root:root
+    content: |
+      TS_AUTHKEY=tskey-auth-REPLACE_WITH_YOUR_AUTH_KEY
+      # The machine name on your tailnet; MagicDNS makes this
+      # <hostname>.<your-tailnet>.ts.net
+      TS_HOSTNAME=remo-mbp
+
+runcmd:
+  # Install the key on whichever account holds UID 1000 — OrbStack names it
+  # after your macOS user, so it cannot be hardcoded here.
+  - |
+    set -eu
+    KEY='ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY workstation'
+    USER_1000="$(getent passwd 1000 | cut -d: -f1)"
+    if [ -z "$USER_1000" ]; then
+      echo "remo-cloud-init: no UID 1000 account; skipping key install" >&2
+      exit 0
+    fi
+    HOME_1000="$(getent passwd 1000 | cut -d: -f6)"
+    install -d -m 700 -o "$USER_1000" -g "$USER_1000" "$HOME_1000/.ssh"
+    touch "$HOME_1000/.ssh/authorized_keys"
+    case "$KEY" in
+      *REPLACE_WITH_YOUR_PUBLIC_KEY*)
+        echo "remo-cloud-init: placeholder key not replaced; leaving password auth as-is" >&2
+        ;;
+      *)
+        grep -qxF "$KEY" "$HOME_1000/.ssh/authorized_keys" \
+          || echo "$KEY" >> "$HOME_1000/.ssh/authorized_keys"
+        echo 'PasswordAuthentication no' > /etc/ssh/sshd_config.d/20-remo-hardening.conf
+        ;;
+    esac
+    chown -R "$USER_1000:$USER_1000" "$HOME_1000/.ssh"
+    chmod 600 "$HOME_1000/.ssh/authorized_keys"
+
+  # Passwordless sudo. OrbStack already grants it; the explicit drop-in makes
+  # this file work on a plain cloud image too. `remo configure` probes for it
+  # up front rather than failing halfway through.
+  - |
+    set -eu
+    USER_1000="$(getent passwd 1000 | cut -d: -f1)"
+    [ -n "$USER_1000" ] || exit 0
+    echo "$USER_1000 ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-remo-$USER_1000"
+    chmod 440 "/etc/sudoers.d/90-remo-$USER_1000"
+
+  - systemctl enable --now ssh
+  - systemctl restart ssh
+
+  # Tailscale, via the vendor install script (what Tailscale's own cloud-init
+  # documentation uses). It adds the apt repo and installs tailscaled.
+  - curl -fsSL https://tailscale.com/install.sh | sh
+
+  # Join the tailnet. Split from the install so a bad key fails visibly here
+  # rather than looking like an install failure.
+  - |
+    set -eu
+    . /etc/remo-tailscale.env
+    case "${TS_AUTHKEY:-}" in
+      ''|*REPLACE_WITH_YOUR_AUTH_KEY*)
+        # Not fatal: the VM is still perfectly usable over its OrbStack IP from
+        # this Mac. Only the reach-it-from-anywhere part is missing.
+        echo "remo-cloud-init: no Tailscale auth key set — installed tailscaled but did not join." >&2
+        echo "  Join later with: sudo tailscale up --hostname=${TS_HOSTNAME:-remo-mbp}" >&2
+        exit 0
+        ;;
+    esac
+    tailscale up --auth-key="$TS_AUTHKEY" --hostname="${TS_HOSTNAME:-remo-mbp}"
+    # The key has been redeemed; it does not need to stay readable on disk.
+    # (The copy cloud-init keeps in /var/lib/cloud is why an ephemeral key is
+    # recommended above — this only removes the copy we created.)
+    rm -f /etc/remo-tailscale.env
+
+  # Report the address to register, so it is in the console output rather than
+  # something you have to go and look up.
+  - |
+    set -eu
+    command -v tailscale >/dev/null 2>&1 || exit 0
+    tailscale status --json >/dev/null 2>&1 || exit 0
+    # Parse the JSON properly rather than grepping for the first "DNSName":
+    # peers have that field too, so a text match can hand back a DIFFERENT
+    # machine on your tailnet and tell you to register it. python3 is present
+    # (it is in `packages` above, because Ansible needs it anyway).
+    NAME="$(tailscale status --json | python3 -c \
+      'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null || true)"
+    ADDR="$(tailscale ip -4 2>/dev/null | head -1)"
+    [ -n "$NAME" ] || exit 0
+    USER_1000="$(getent passwd 1000 | cut -d: -f1)"
+    echo "remo-cloud-init: tailnet name=${NAME} addr=${ADDR:-none}"
+    echo "remo-cloud-init: register with -> remo add mbp ${USER_1000}@${NAME} --verify"
+
+final_message: |
+  remo-ready after $UPTIME seconds.
+
+  This VM is on your tailnet. Register the MagicDNS name, NOT the OrbStack IP —
+  the OrbStack address only works from this Mac, which defeats the point:
+
+    remo add mbp <user>@remo-mbp.<your-tailnet>.ts.net --verify
+    remo configure mbp
+    remo web push          # the web service must be on the tailnet too
+
+  The exact name and address were printed above by cloud-init; `tailscale
+  status` on the VM will show them again.
+
+  Do not pass `--skip docker` to configure: the shared role list adds the user
+  to the docker group, which only exists if the docker role ran.

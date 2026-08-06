@@ -317,6 +317,22 @@ after your macOS account holding UID 1000, and registering *that* user is what
 puts `remo-host` in the home directory the web service logs into, while skipping
 `user_setup`'s UID-1000 reassignment entirely.
 
+To reach the VM from anywhere — your workstation, a homelab box, or the
+`remo web` service — rather than only from its Mac, use
+[`docs/examples/orbstack-cloud-init-tailscale.yaml`](docs/examples/orbstack-cloud-init-tailscale.yaml)
+instead. Same file plus Tailscale; it prints the address to register on first
+boot. Register the MagicDNS name, **not** the OrbStack IP:
+
+```bash
+orb create ubuntu remo-mbp -c docs/examples/orbstack-cloud-init-tailscale.yaml
+remo add mbp <user>@remo-mbp.<your-tailnet>.ts.net --verify
+```
+
+An OrbStack VM's own IP is reachable from its Mac and nowhere else, so a
+registry entry pointing at it is useless to a `remo web` service running
+anywhere else. Use an **ephemeral** auth key: cloud-init keeps your user-data
+on the VM's disk, so the key outlives the boot that used it.
+
 `remo remove NAME [--yes]` deregisters an added host by deleting **only** the
 local registry entry — it makes no connection to and no change on the remote
 environment (unlike a provider `destroy`, which tears down infrastructure). It
