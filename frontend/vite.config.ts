@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [react()],
   // Vitest unit/component layer (jsdom). Fast, backend-free coverage of store
   // logic, key mapping, and the reconnect state machine — complements the
-  // Playwright e2e suite (tests/e2e), which needs a live backend. See
+  // Playwright e2e suite (frontend/tests/e2e), which needs a live backend. See
   // docs/web-session-interface.md.
   test: {
     environment: "jsdom",

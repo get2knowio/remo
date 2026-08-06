@@ -144,7 +144,7 @@ jobs:
     runs-on: ubuntu-latest
     # Fast, backend-free coverage of the SPA: tsc typecheck, the Vitest
     # unit/component suite (frontend/src/**/*.test.ts), and a production build.
-    # The Playwright e2e suite (tests/e2e) is NOT run here — it needs a live
+    # The Playwright e2e suite (frontend/tests/e2e) is NOT run here — it needs a live
     # `remo web serve` backend (REMO_E2E_BASE_URL); see playwright.config.ts.
     defaults:
       run:
