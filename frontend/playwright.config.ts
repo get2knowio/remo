@@ -1,15 +1,17 @@
 // Playwright config for the browser (T044, US3/FR-033) test suite.
 //
-// Location choice: this file lives at the REPO ROOT (not `frontend/`)
-// because the task wording puts spec files at `tests/e2e/` — a
-// repo-root-relative path, matching the Python `tests/` tree's sibling
-// directories (`tests/unit`, `tests/integration`) rather than a
-// frontend-only concern. `testDir` below points at that directory. The
-// frontend package.json gets a matching `test:e2e` script
-// (`playwright test --config ../playwright.config.ts` run from `frontend/`,
-// or simply `playwright test` from the repo root) once `@playwright/test`
-// is installed — see the frontend `devDependencies` entry added alongside
-// this file.
+// Location choice: this config and the specs it runs both live under
+// `frontend/`, because both import `@playwright/test` and the only install of
+// it is `frontend/node_modules`.
+//
+// They used to live at the repo root (`playwright.config.ts`, `tests/e2e/`),
+// as siblings of the Python `tests/unit` and `tests/integration` trees. That
+// reads nicely but could never run: Node resolves a bare import by walking UP
+// from the importing file, so from the repo root `frontend/node_modules` is
+// *below* the search path and never consulted. `npm run test:e2e` died with
+// "Cannot find module '@playwright/test'" — first on this config, then on the
+// specs themselves. Co-locating both with the dependency is what makes the
+// script actually executable.
 //
 // NOT RUN in this sandbox: `npm`/`playwright` are not installed here (no
 // network access), so these specs are written-but-unexecuted. They are
@@ -67,7 +69,7 @@ export default defineConfig({
     ? undefined
     : {
         command: "npm run dev",
-        cwd: "./frontend",
+        cwd: ".",
         url: baseURL,
         reuseExistingServer: !process.env.CI,
         timeout: 60_000,

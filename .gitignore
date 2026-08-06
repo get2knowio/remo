@@ -27,6 +27,10 @@ id_rsa.pub
 
 # Test and coverage artifacts
 .coverage
+coverage/
+# Playwright run output (frontend/test-results, frontend/playwright-report)
+test-results/
+playwright-report/
 .coverage.*
 htmlcov/
 .pytest_cache/
