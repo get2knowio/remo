@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.3](https://github.com/get2knowio/remo/compare/v4.3.2...v4.3.3) (2026-08-06)
+
+
+### Bug Fixes
+
+* **test:** make `npm run test:e2e` actually runnable ([#151](https://github.com/get2knowio/remo/issues/151)) ([050f71a](https://github.com/get2knowio/remo/commit/050f71a48965e67c2a410e4c2c09f5f20c8ce8e3))
+
 ## [4.3.2](https://github.com/get2knowio/remo/compare/v4.3.1...v4.3.2) (2026-08-05)
 
 
