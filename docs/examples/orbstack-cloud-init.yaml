@@ -2,22 +2,87 @@
 #
 # OrbStack VM prepared for `remo add` + `remo configure` (remo >= 4.3.0).
 #
-#   orb create ubuntu remo-mbp -c orbstack-remo-cloud-init.yaml
+#   orb create ubuntu remo-mbp -u orbadmin -c docs/examples/orbstack-cloud-init.yaml
 #
 # Deliberately minimal: this installs ONLY what Ansible needs in order to
 # connect and take over. Docker, Node.js, zellij, fzf, the GitHub CLI, the
 # devcontainers CLI and remo-host are all installed by `remo configure`, which
 # is idempotent — duplicating any of that here would only drift.
 #
-# It also does NOT create a user. OrbStack already creates one named after your
-# macOS account, holding UID 1000 with passwordless sudo. `remo configure`
-# binds its workspace account to whichever user you register, so registering
-# that existing user means:
-#   * remo-host lands in the home directory discovery actually logs into, and
-#   * user_setup's UID-1000 reassignment (which rewrites /etc/passwd and drops
-#     the live SSH session) is skipped entirely, because the holder of UID 1000
-#     is already the account being configured.
-# Creating a separate `remo` user here would forfeit both.
+# ---------------------------------------------------------------------------
+# `-u orbadmin` IS NOT OPTIONAL. Leave it off and this file does not work.
+# ---------------------------------------------------------------------------
+# OrbStack creates a Linux account named after your macOS user and pins it to
+# your **macOS UID** — 501 on a normal Mac, not 1000 — and it does so AFTER
+# cloud-init has finished. Two consequences, both verified on OrbStack 2.2.1 +
+# Ubuntu 26.04 (2026-08-06):
+#
+#   * Anything cloud-init does to "whichever account holds UID 1000" runs before
+#     that account exists. During runcmd the only UID-1000 account is the image's
+#     transient default user, so an SSH key installed there lands in a home
+#     directory OrbStack later deletes. cloud-init still reports `status: done`
+#     with `errors: []` — the only symptom is `remo add --verify` failing to
+#     authenticate afterwards.
+#   * OrbStack renumbers its own default user even if cloud-init already created
+#     it at UID 1000. A `remo` account made here was moved 1000 -> 501 when
+#     `remo` was also OrbStack's default user name.
+#
+# Naming OrbStack's default user something else (`orbadmin`) leaves UID 1000
+# free for the account this file creates. `orbadmin` is vestigial — it exists so
+# `orb` has its integration account, and you never log into it.
+#
+# WHY UID 1000 MATTERS TO REMO
+#
+# remo's user_setup role pins remo_user to UID 1000 (it matches the devcontainer
+# `vscode` user). Register an account at any other UID and `remo configure`
+# reaches "Create remo user with UID 1000" and runs `usermod -u 1000` against
+# the very account Ansible is logged in as — which shadow-utils refuses to do
+# for a user with running processes. Creating `remo` at 1000 up front makes that
+# task a no-op and means the UID-displacement branch (which rewrites /etc/passwd
+# and drops the live SSH session) never fires at all.
+#
+# OPTIONAL: add `--isolated` to the `orb create` line to turn off OrbStack's Mac
+# file sharing and integration — no /mnt/mac, no ~/.ssh symlinked back to macOS.
+# It is independent of the UID fix above (both were verified with and without
+# it); use it if you want the VM to be a plain Linux box.
+#
+# ---------------------------------------------------------------------------
+# WHICH NAME TO REGISTER
+# ---------------------------------------------------------------------------
+# Do NOT register the VM's own IP. An OrbStack VM is not on your LAN: it gets a
+# static address on OrbStack's internal bridge, and OrbStack has no bridged /
+# DHCP-from-your-router mode, so that address means nothing to any other
+# machine — including a `remo web` service running elsewhere.
+#
+# Register your MAC's name instead. OrbStack forwards a port the VM listens on
+# to the Mac and, with `machines.expose_ports_to_lan` on (the default), exposes
+# it on every interface — so `<your-mac>:22` reaches the VM's sshd from your
+# LAN, and over a VPN like Tailscale, with nothing installed in the VM.
+# Verified end-to-end: a remote host connecting to the Mac's port 22 gets the
+# VM's SSH banner, not macOS's.
+#
+# Two consequences worth knowing before you pick a name:
+#
+#   * The VM's :22 occupies the MAC's :22. Only one VM can own it, and it
+#     collides with macOS Remote Login. For a second VM, change `Port` in the
+#     sshd drop-in below and register `remo add name remo@<mac>:<port>`.
+#
+#   * A Mac does not register itself in your router's DNS the way a Linux DHCP
+#     client does. macOS sends the DHCP hostname option only when `HostName` is
+#     set, and it is unset by default — `scutil --get HostName` says "not set",
+#     while `LocalHostName` (the mDNS `.local` name) is never sent. So the
+#     router has no name for your Mac, and mDNS `.local` will not help: Linux
+#     hosts typically lack avahi/nss-mdns and cannot resolve it. Fix it once:
+#
+#         sudo scutil --set HostName <name> && sudo ipconfig set en0 DHCP
+#
+#     After that the Mac is registered like any other DHCP client and its
+#     address may change freely — DNS follows it, so no static IP or reservation
+#     is needed.
+#
+# Prefer a bare name over an FQDN or an IP. A bare name resolves through
+# whichever search domain is available — your VPN's when it is up, your
+# router's when it is not — so one registry entry keeps working as you move.
 
 # ---------------------------------------------------------------------------
 # EDIT THIS: the public key of the workstation that will run `remo`.
@@ -25,8 +90,22 @@
 # If remo runs on this same Mac, that is ~/.ssh/id_ed25519.pub.
 # Leave the placeholder in place and cloud-init keeps password auth enabled
 # rather than locking you out (see the guard in runcmd).
-ssh_authorized_keys:
-  - ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY workstation
+#
+# The key is installed here, by cloud-init, at account-creation time — NOT from
+# runcmd. That is what makes it deterministic: the account is created by this
+# file, so there is no "find the right user" step to get wrong.
+users:
+  - name: remo
+    uid: 1000
+    shell: /bin/bash
+    # `remo configure` probes `sudo -n true` up front rather than failing
+    # halfway through installing packages and system services.
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY workstation
+
+# Declaring `users:` also suppresses the image's own default account, which is
+# what would otherwise be sitting on UID 1000.
 
 package_update: true
 packages:
@@ -36,7 +115,7 @@ packages:
   - python3
   # hwclock. `community.general.timezone` — the first task in remo's shared
   # role list — hard-fails with 'Failed to find required executable "hwclock"'
-  # without it, and on Ubuntu 24.04 it lives in util-linux-extra, which minimal
+  # without it, and on Ubuntu 24.04+ it lives in util-linux-extra, which minimal
   # images do not install. Found the hard way while testing this feature.
   - util-linux-extra
   - openssh-server
@@ -53,7 +132,7 @@ packages:
 # Change it if you are reaching this VM from somewhere else (e.g. your homelab
 # box) via a forwarded port — remo stores the port per host and threads it
 # through `remo shell`, `remo configure` and `remo web push`. Register it with
-#     remo add mbp <user>@<host>:<port>
+#     remo add mbp remo@<host>:<port>
 # Note this is NOT OrbStack's own SSH (127.0.0.1:32222, Mac-local only); this
 # is a normal sshd inside the VM, which is what remo drives.
 write_files:
@@ -65,45 +144,21 @@ write_files:
       PubkeyAuthentication yes
 
 runcmd:
-  # Put the key on the UID-1000 account explicitly. `ssh_authorized_keys` above
-  # targets cloud-init's notion of the default user, which is not guaranteed to
-  # be the user OrbStack created — this makes it deterministic either way.
+  # Harden SSH only once a real key is in place. The key itself was installed
+  # by the `users:` block above; all this does is decide whether turning
+  # passwords off is safe.
   - |
     set -eu
     KEY='ssh-ed25519 AAAA_REPLACE_WITH_YOUR_PUBLIC_KEY workstation'
-    USER_1000="$(getent passwd 1000 | cut -d: -f1)"
-    if [ -z "$USER_1000" ]; then
-      echo "remo-cloud-init: no UID 1000 account; skipping key install" >&2
-      exit 0
-    fi
-    HOME_1000="$(getent passwd 1000 | cut -d: -f6)"
-    install -d -m 700 -o "$USER_1000" -g "$USER_1000" "$HOME_1000/.ssh"
-    touch "$HOME_1000/.ssh/authorized_keys"
     case "$KEY" in
       *REPLACE_WITH_YOUR_PUBLIC_KEY*)
         # Refuse to harden SSH when no real key was supplied — disabling
         # password auth here would leave the VM unreachable over SSH.
         echo "remo-cloud-init: placeholder key not replaced; leaving password auth as-is" >&2
-        ;;
-      *)
-        grep -qxF "$KEY" "$HOME_1000/.ssh/authorized_keys" \
-          || echo "$KEY" >> "$HOME_1000/.ssh/authorized_keys"
-        echo 'PasswordAuthentication no' > /etc/ssh/sshd_config.d/20-remo-hardening.conf
+        exit 0
         ;;
     esac
-    chown -R "$USER_1000:$USER_1000" "$HOME_1000/.ssh"
-    chmod 600 "$HOME_1000/.ssh/authorized_keys"
-
-  # Passwordless sudo: OrbStack already grants it, but an explicit drop-in
-  # makes this file work on a plain cloud image too. remo needs it — the
-  # configure play installs packages and system services, and probes for it
-  # up front rather than failing halfway through.
-  - |
-    set -eu
-    USER_1000="$(getent passwd 1000 | cut -d: -f1)"
-    [ -n "$USER_1000" ] || exit 0
-    echo "$USER_1000 ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/90-remo-$USER_1000"
-    chmod 440 "/etc/sudoers.d/90-remo-$USER_1000"
+    echo 'PasswordAuthentication no' > /etc/ssh/sshd_config.d/20-remo-hardening.conf
 
   - systemctl enable --now ssh
   - systemctl restart ssh
@@ -111,8 +166,12 @@ runcmd:
 final_message: |
   remo-ready after $UPTIME seconds.
 
+  The `remo` account exists at UID 1000 with your workstation key. The account
+  named on `orb create -u …` (UID 501) is OrbStack's own integration account —
+  ignore it; it is not the one to register.
+
   From the workstation running remo:
-    remo add mbp <user>@<this-vm-ip> --verify     # add :PORT if you changed it
+    remo add mbp remo@<this-vm-ip> --verify       # add :PORT if you changed it
     remo configure mbp
     remo web push                                 # if you use the web console
 
