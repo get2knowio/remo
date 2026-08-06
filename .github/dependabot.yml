@@ -40,3 +40,25 @@ updates:
         update-types:
           - "minor"
           - "patch"
+
+  # Docker base images. Two Dockerfiles ship images:
+  #   /Dockerfile        — the CLI image (python:3.13-slim)
+  #   /docker/Dockerfile — the remo-web service (node:20-slim, python:3.11-slim)
+  # Nothing watched these before, so a base image could sit on an unpatched
+  # tag indefinitely — the CVEs that matter for a container usually arrive via
+  # the base image, not via the app's own dependencies.
+  - package-ecosystem: "docker"
+    directories:
+      - "/"
+      - "/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      docker-images:
+        update-types:
+          - "minor"
+          - "patch"
