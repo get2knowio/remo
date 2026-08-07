@@ -526,6 +526,17 @@
         "title": "SessionsResponse",
         "type": "object"
       },
+      "SetupEndResponse": {
+        "properties": {
+          "ended": {
+            "default": true,
+            "title": "Ended",
+            "type": "boolean"
+          }
+        },
+        "title": "SetupEndResponse",
+        "type": "object"
+      },
       "SetupStatusResponse": {
         "properties": {
           "deployment_id": {
@@ -925,6 +936,25 @@
         "summary": "Get Sessions"
       }
     },
+    "/api/v1/setup/end": {
+      "post": {
+        "description": "`POST /api/v1/setup/end` -- end the pairing session (FR-007).\n\nThe explicit close the CLI calls once its flow has succeeded, returning the\nsetup surface to dormant. Previously `POST /verify` ended the session as a\nside effect, which broke the push flow's self-heal re-PUT + re-verify\n(#158); ending is now a step of its own, so any number of setup calls may\nprecede it.\n\nIdempotent: ending an already-ended session is a no-op \u2014 though a second\ncall from the *same* client sees the dormant 404 from the router gate, since\nits code is no longer live. The CLI treats that as success.\n\nThis lives on the setup router (not the browser-only `/api/v1/pairing/*`\ncontrol plane) deliberately: it is pairing-code-authenticated like the rest\nof the flow, and only `/api/v1/setup/*` is exempt from the Origin allowlist,\nwhich every Origin-less CLI request needs.",
+        "operationId": "post_end_api_v1_setup_end_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SetupEndResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Post End"
+      }
+    },
     "/api/v1/setup/identity": {
       "get": {
         "description": "`GET /api/v1/setup/identity` -- deployment id + public key.\n\nA mount-configured service has no service identity to authorize -> 409\n(FR-017). Otherwise the identity is generated on first call when absent\n(idempotent: an existing keypair is loaded, NEVER regenerated, FR-002).",
@@ -1018,7 +1048,7 @@
     },
     "/api/v1/setup/verify": {
       "post": {
-        "description": "`POST /api/v1/setup/verify` -- the existing check pass, as JSON.\n\nThin wrapper over `web.check.run_checks()` (research R4: verify reuses\nthe check module, never duplicates it), instance round-trips included.\nDeliberately a sync route: FastAPI executes it in a threadpool, so the\nup-to-~5s-per-unreachable-instance runtime never blocks the event loop.",
+        "description": "`POST /api/v1/setup/verify` -- the existing check pass, as JSON.\n\nThin wrapper over `web.check.run_checks()` (research R4: verify reuses\nthe check module, never duplicates it), instance round-trips included.\nDeliberately a sync route: FastAPI executes it in a threadpool, so the\nup-to-~5s-per-unreachable-instance runtime never blocks the event loop.\n\nVerify is repeatable and does NOT end the pairing session. It used to\n(it was the flow's last authenticated step), but the push flow's\nself-heal pass re-PUTs the mirror and re-verifies *after* that first\nverify, and both calls hit the now-dormant surface as a 404 \u2014 the repair\nnever landed and the local push cache was never written (#158). Ending is\nnow the client's explicit call: `POST /setup/end`.",
         "operationId": "post_verify_api_v1_setup_verify_post",
         "responses": {
           "200": {
