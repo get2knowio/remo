@@ -25,7 +25,7 @@ tests (skip honestly rather than fail when infra isn't available):
    reports ready (200) once the required mounts are present.
 
    This tier is opt-in because a multi-arch image build (pulling
-   `python:3.11-slim` / `node:20-slim`, installing AWS CLI v2 / SSM plugin,
+   `python:3.11-slim` / `node:24-slim`, installing AWS CLI v2 / SSM plugin,
    `npm ci`, `pip install`, and -- for arm64 -- running most of that under
    QEMU emulation) is a multi-minute, network-heavy operation: not
    appropriate to run unconditionally on every `pytest` invocation / in
@@ -333,7 +333,7 @@ requires_image_build = pytest.mark.skipif(
     reason=(
         "opt-in image-build test: set REMO_RUN_IMAGE_TESTS=1 with a working "
         "`docker buildx` (network access to pull python:3.11-slim / "
-        "node:20-slim and install packages) to run this"
+        "node:24-slim and install packages) to run this"
     ),
 )
 

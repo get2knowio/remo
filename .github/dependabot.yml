@@ -43,7 +43,7 @@ updates:
 
   # Docker base images. Two Dockerfiles ship images:
   #   /Dockerfile        — the CLI image (python:3.13-slim)
-  #   /docker/Dockerfile — the remo-web service (node:20-slim, python:3.11-slim)
+  #   /docker/Dockerfile — the remo-web service (node:24-slim, python:3.11-slim)
   # Nothing watched these before, so a base image could sit on an unpatched
   # tag indefinitely — the CVEs that matter for a container usually arrive via
   # the base image, not via the app's own dependencies.
@@ -62,3 +62,14 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    ignore:
+      # Dependabot picks the highest published tag and has no concept of
+      # Node's release lines. Left alone it proposed node:20-slim ->
+      # node:25-slim (#156): 25 is an odd-numbered "Current" release that
+      # never becomes LTS and went EOL on 2026-06-01, so that bump would have
+      # swapped one unpatched base image for another — the exact failure this
+      # ecosystem entry exists to prevent. Node majors are picked by hand
+      # instead, on the LTS cadence (even-numbered, each October). Minor and
+      # patch bumps, which carry the base-image CVE fixes, keep flowing.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
