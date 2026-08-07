@@ -53,6 +53,11 @@ capability.
 The idle TTL remains the authoritative backstop; the service never depends on
 this call for correctness (FR-004).
 
+**Browser-only.** The CLI never calls any `/api/v1/pairing/*` route: it has no
+Origin header, and only `/api/v1/setup/*` is exempt from the Origin allowlist,
+so a CLI call here would be refused. The CLI ends its session through
+`POST /api/v1/setup/end` instead (see `setup-api.md`).
+
 ---
 
 ## Operator-auth configuration (mint gating)

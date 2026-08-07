@@ -704,10 +704,11 @@ intervening external push, never warn.
 
 ### The setup API and pairing codes
 
-The CLI talks to four endpoints under `/api/v1/setup/*`
+The CLI talks to five endpoints under `/api/v1/setup/*`
 ([`setup-api.md`](../specs/012-web-adopt-pairing/contracts/setup-api.md)): `GET /status`,
-`GET /identity`, `PUT /registry`, `POST /verify`. The surface is **dormant** unless a pairing session
-is live; each route requires `Authorization: Bearer <pairing-code>`, compared in constant time:
+`GET /identity`, `PUT /registry`, `POST /verify`, `POST /end`. The surface is **dormant** unless a
+pairing session is live; each route requires `Authorization: Bearer <pairing-code>`, compared in
+constant time:
 
 - **No live session → the setup surface does not exist.** Every `/api/v1/setup/*` request gets a plain
   `404`, indistinguishable from an absent feature — fail closed. A session is live only while an
@@ -715,9 +716,17 @@ is live; each route requires `Authorization: Bearer <pairing-code>`, compared in
 - **Wrong/missing/expired code → the same dormant `404`** — never a distinguishable `401` that would
   reveal a session exists. The attempt is logged without the presented code; codes and `Authorization`
   headers are covered by the service's log redaction (`src/remo_cli/web/logging_config.py`).
-- **The session ends when the flow completes** (on the terminal `POST /verify`), and a code is
-  single-use per handoff — reopening the page mints a fresh one and invalidates the prior. There is no
-  rotation to manage: codes are ephemeral by construction.
+- **The session ends when the flow completes** — the CLI calls `POST /setup/end` once its push has
+  succeeded. `POST /verify` is repeatable and does *not* end the session: the push flow re-PUTs the
+  mirror and re-verifies after a self-heal, and ending on verify made both of those calls hit the
+  dormant `404`, so the repair never landed and the next push reported a phantom flap (#158). A
+  failed or aborted push deliberately leaves the session live, so you can retry with the same code.
+  A code is single-use per handoff — reopening the page mints a fresh one and invalidates the prior.
+  There is no rotation to manage: codes are ephemeral by construction.
+  *Version skew:* an older CLI against an upgraded service never calls `/setup/end`, so its session
+  lingers until the idle TTL expires (or the page-hide beacon fires); a newer CLI against an older
+  service gets a `404` from `/setup/end`, which it treats as "already ended" — that service had
+  ended the session on verify.
 
 ### Service key rotation
 

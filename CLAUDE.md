@@ -104,7 +104,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── pairing.py              # In-memory, single-live, TTL'd pairing-code session manager replacing the static setup API token
 │   └── api/
 │       ├── hosts.py            # GET /api/v1/hosts, /sessions, POST /discovery/refresh
-│       ├── setup.py            # Token-gated /api/v1/setup/{status,identity,registry,verify} (011-web-adopt)
+│       ├── setup.py            # Pairing-gated /api/v1/setup/{status,identity,registry,verify,end} (011-web-adopt; `end` added by #158)
 │       ├── terminals.py        # POST/GET/DELETE /api/v1/terminals, WS /api/v1/terminals/{id}
 │       └── pairing.py          # POST /api/v1/pairing/{mint,end} — operator-auth-gated pairing-code control plane, outside the dormant setup router
 └── models/

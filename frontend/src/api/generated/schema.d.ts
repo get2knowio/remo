@@ -152,6 +152,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/setup/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Post End
+         * @description `POST /api/v1/setup/end` -- end the pairing session (FR-007).
+         *
+         *     The explicit close the CLI calls once its flow has succeeded, returning the
+         *     setup surface to dormant. Previously `POST /verify` ended the session as a
+         *     side effect, which broke the push flow's self-heal re-PUT + re-verify
+         *     (#158); ending is now a step of its own, so any number of setup calls may
+         *     precede it.
+         *
+         *     Idempotent: ending an already-ended session is a no-op — though a second
+         *     call from the *same* client sees the dormant 404 from the router gate, since
+         *     its code is no longer live. The CLI treats that as success.
+         *
+         *     This lives on the setup router (not the browser-only `/api/v1/pairing/*`
+         *     control plane) deliberately: it is pairing-code-authenticated like the rest
+         *     of the flow, and only `/api/v1/setup/*` is exempt from the Origin allowlist,
+         *     which every Origin-less CLI request needs.
+         */
+        post: operations["post_end_api_v1_setup_end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/setup/identity": {
         parameters: {
             query?: never;
@@ -246,6 +281,13 @@ export interface paths {
          *     the check module, never duplicates it), instance round-trips included.
          *     Deliberately a sync route: FastAPI executes it in a threadpool, so the
          *     up-to-~5s-per-unreachable-instance runtime never blocks the event loop.
+         *
+         *     Verify is repeatable and does NOT end the pairing session. It used to
+         *     (it was the flow's last authenticated step), but the push flow's
+         *     self-heal pass re-PUTs the mirror and re-verifies *after* that first
+         *     verify, and both calls hit the now-dormant surface as a 404 — the repair
+         *     never landed and the local push cache was never written (#158). Ending is
+         *     now the client's explicit call: `POST /setup/end`.
          */
         post: operations["post_verify_api_v1_setup_verify_post"];
         delete?: never;
@@ -521,6 +563,14 @@ export interface components {
             /** Targets */
             targets: components["schemas"]["SessionTargetOut"][];
         };
+        /** SetupEndResponse */
+        SetupEndResponse: {
+            /**
+             * Ended
+             * @default true
+             */
+            ended: boolean;
+        };
         /** SetupStatusResponse */
         SetupStatusResponse: {
             /** Deployment Id */
@@ -766,6 +816,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionsResponse"];
+                };
+            };
+        };
+    };
+    post_end_api_v1_setup_end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetupEndResponse"];
                 };
             };
         };

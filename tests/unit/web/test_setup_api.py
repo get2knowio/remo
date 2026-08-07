@@ -296,7 +296,7 @@ def test_put_registry_happy_path_applies_mirror_and_flips_to_adopted(state_dir):
         assert doc["hosts"] == _EXPECTED_V2_HOSTS
         assert not state_dir.registry_path.exists()  # legacy mirror never written
 
-        # The PUT does not end the session (verify is the terminal step, FR-007).
+        # The PUT does not end the session (the CLI's POST /setup/end does, FR-007).
         status = client.get("/api/v1/setup/status", headers=_AUTH).json()
     assert status["state"] == "adopted"
     assert status["registry_instances"] == 2

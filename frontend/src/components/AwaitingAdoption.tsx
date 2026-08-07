@@ -59,6 +59,11 @@ export function AwaitingAdoption(): JSX.Element {
   }, []);
 
   // Best-effort end on hide/unload (FR-004); idle TTL is the real backstop.
+  // Unmount ends the session too: this component unmounts exactly when adoption
+  // completes, and since #158 the CLI's verify call no longer ends it for us
+  // (the CLI's own POST /setup/end does, but an operator who never finished the
+  // flow — or a service that predates that route — would otherwise leave the
+  // session live for the full idle TTL).
   useEffect(() => {
     const onHide = () => {
       if (document.visibilityState === "hidden") endPairing();
@@ -68,6 +73,7 @@ export function AwaitingAdoption(): JSX.Element {
     return () => {
       window.removeEventListener("pagehide", endPairing);
       document.removeEventListener("visibilitychange", onHide);
+      endPairing();
     };
   }, []);
 

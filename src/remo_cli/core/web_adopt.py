@@ -244,6 +244,16 @@ class SetupApiClient:
     def post_verify(self) -> dict[str, Any]:
         return self._request("POST", "/api/v1/setup/verify", timeout=self.verify_timeout)
 
+    def post_end(self) -> dict[str, Any]:
+        """End the pairing session, returning the setup surface to dormant.
+
+        Called once the flow has succeeded (#158). Verify used to end the
+        session itself, which severed the self-heal pass that runs after it —
+        so the close is now an explicit step. An older service without this
+        route answers 404, which the caller treats as "already ended".
+        """
+        return self._request("POST", "/api/v1/setup/end")
+
     # -- internals ----------------------------------------------------------
 
     def _request(
@@ -1638,6 +1648,22 @@ def render_verification(
         print_warning("Some service-side checks failed (see above).")
 
 
+def _end_session_best_effort(client: SetupApiClient) -> None:
+    """Return the service's setup surface to dormant (#158, FR-007).
+
+    Best effort by design: the flow has already succeeded and the mirror is
+    applied, so a failure to close cannot be allowed to fail the push. Only
+    `SetupApiError` is swallowed — a 404 from a service that predates
+    `/setup/end` (or one that already ended the session on verify) is the
+    expected skew case. The idle TTL and the page-hide beacon remain the
+    backstop either way.
+    """
+    try:
+        client.post_end()
+    except SetupApiError:
+        pass
+
+
 def _run_flow_maybe_tunneled(
     url: str,
     token: str,
@@ -1647,12 +1673,21 @@ def _run_flow_maybe_tunneled(
 ) -> AdoptResult:
     """Run *flow* against a `SetupApiClient`, optionally through a `--via` SSH
     tunnel. A 400/403 seen through the tunnel is remapped to Host-allowlist
-    guidance (FR-018); *verb* ("adopting"/"pushing") tailors that message."""
+    guidance (FR-018); *verb* ("adopting"/"pushing") tailors that message.
+
+    On success — and only on success — the pairing session is ended. A failed
+    or aborted flow deliberately leaves it live so the operator can retry with
+    the same code instead of minting (and rotating to) a new one.
+    """
     if via:
         print_info(f"Opening SSH tunnel via {via}...")
         with open_via_tunnel(via, url) as tunneled_url:
+            client = SetupApiClient(tunneled_url, token)
             try:
-                return flow(SetupApiClient(tunneled_url, token))
+                result = flow(client)
+                # Inside the `with`: the tunnel must still be up for the call.
+                _end_session_best_effort(client)
+                return result
             except SetupApiError as e:
                 if e.status in (400, 403):
                     raise AdoptError(
@@ -1662,7 +1697,10 @@ def _run_flow_maybe_tunneled(
                         "127.0.0.1."
                     ) from e
                 raise
-    return flow(SetupApiClient(url, token))
+    client = SetupApiClient(url, token)
+    result = flow(client)
+    _end_session_best_effort(client)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -1865,15 +1903,39 @@ def _push_flow(
     # the instances the fast path skipped, then re-PUT (a repaired instance may
     # carry rescanned host-key lines) and re-verify so the report reflects the
     # repaired state rather than the state that triggered it.
+    #
+    # Everything from here on is best-effort: the mirror is already applied, so
+    # a failure in the repair round must not abort the run before step 7 writes
+    # the cache. Losing that write is what turned #158 into a phantom
+    # "another workstation" flap on the following push.
     repaired = _repair_auth_failures(
         outcomes, verify, host_keys, interactive=interactive, public_key=public_key
     )
+    repair_put_failed = False
     if repaired:
         payload = build_adoption_payload(hosts, host_keys, allow_empty=True)
         payload["workstation"] = _workstation_label()
-        applied = client.put_registry(payload, allow_empty=allow_empty)
-        print_info("Re-running service-side verification after repair...")
-        verify = client.post_verify()
+        try:
+            # `applied` is reassigned ONLY on success: the service bumps the
+            # mirror generation on every PUT, so caching a generation from a
+            # failed call would mis-arm the next push's flap detection.
+            applied = client.put_registry(payload, allow_empty=allow_empty)
+        except SetupApiError as e:
+            repair_put_failed = True
+            print_warning(
+                f"Could not re-push the mirror after repair: {e}. The repaired "
+                "instances will be re-scanned and re-authorized in full on the "
+                "next `remo web push`."
+            )
+        else:
+            print_info("Re-running service-side verification after repair...")
+            try:
+                verify = client.post_verify()
+            except SetupApiError as e:
+                print_warning(
+                    f"Could not re-run service-side verification after repair: {e}. "
+                    "The report below predates the repair."
+                )
 
     # Step 7: only after a successful PUT, rewrite the delta cache for this
     # deployment (removed instances drop out; skipped/flagged instances get no
@@ -1895,6 +1957,14 @@ def _push_flow(
         still_failing = auth_failed_labels(verify)
         for outcome in outcomes:
             if outcome.label in still_failing:
+                cache_entries.pop(outcome.host.name, None)
+            elif repair_put_failed and outcome.outcome == OUTCOME_REPAIRED:
+                # The service never received this instance's rescanned host-key
+                # lines, so it is not really in sync. Caching it would re-arm
+                # the `unchanged` fast path that hid the breakage in the first
+                # place. (When only the re-verify failed, the stale report's
+                # own auth_failed labels prune these above — conservative on
+                # purpose: an instance we cannot confirm is never cached.)
                 cache_entries.pop(outcome.host.name, None)
         _update_push_cache(deployment_id, cache_entries, new_generation)
 

@@ -12,9 +12,9 @@ therefore see genuinely different registries/homes, exactly like a real
 workstation adopting a real container.
 
 Each adopt/push obtains a FRESH pairing code (minted via
-`POST /api/v1/pairing/mint`); the code authenticates the whole flow and the
-service ends the session on the terminal `POST /setup/verify` (FR-007), so a
-subsequent probe re-mints.
+`POST /api/v1/pairing/mint`); the code authenticates the whole flow and the CLI
+ends the session with an explicit `POST /setup/end` once the flow succeeds
+(FR-007; verify no longer ends it — #158), so a subsequent probe re-mints.
 
 No real SSH instances exist here, so the workstation-side per-instance SSH
 work is selectively substituted (see `adoption_ssh_mocks`):
@@ -516,8 +516,8 @@ def test_registry_put_preserves_established_sessions(
     the service-side registry (standing in for an established session's held
     resources) and a live keep-alive HTTP connection spanning the PUT.
     """
-    # One minted code drives every call here: the flow never calls /verify, so
-    # the session stays live across both PUTs (it would end only on verify).
+    # One minted code drives every call here: nothing calls /setup/end, so the
+    # session stays live across both PUTs.
     code = service.mint()
     client = web_adopt.SetupApiClient(service.url, code)
 

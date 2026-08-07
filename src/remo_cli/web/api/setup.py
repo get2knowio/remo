@@ -35,6 +35,10 @@ T011/T012/T013), all inheriting the router-level token dependency:
 - ``POST /verify`` -- JSON wrapper around `web.check.run_checks()` with
   instance checks included (sync route: FastAPI runs it in a threadpool, so
   the ~5s-per-unreachable-instance round-trips never block the event loop).
+  Repeatable: a flow may verify, repair, re-PUT and verify again.
+- ``POST /end`` -- end the pairing session, returning the surface to dormant
+  (FR-007). Explicit rather than a side effect of ``/verify``, which broke the
+  push flow's self-heal re-PUT + re-verify (#158).
 """
 
 from __future__ import annotations
@@ -203,6 +207,12 @@ class VerifyCheckOut(BaseModel):
 class VerifyResponse(BaseModel):
     results: list[VerifyCheckOut]
     all_passed: bool
+
+
+class SetupEndResponse(BaseModel):
+    #: Always true — ending is idempotent, so "there was nothing to end" and
+    #: "a live session was ended" are the same successful outcome.
+    ended: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -579,17 +589,16 @@ def post_verify(request: Request) -> VerifyResponse:
     the check module, never duplicates it), instance round-trips included.
     Deliberately a sync route: FastAPI executes it in a threadpool, so the
     up-to-~5s-per-unreachable-instance runtime never blocks the event loop.
+
+    Verify is repeatable and does NOT end the pairing session. It used to
+    (it was the flow's last authenticated step), but the push flow's
+    self-heal pass re-PUTs the mirror and re-verifies *after* that first
+    verify, and both calls hit the now-dormant surface as a 404 — the repair
+    never landed and the local push cache was never written (#158). Ending is
+    now the client's explicit call: `POST /setup/end`.
     """
     settings = _get_settings(request)
     results = web_check.run_checks(settings, include_instances=True)
-
-    # The verification pass is the terminal authenticated step of both the
-    # adopt and push flows (status -> identity -> registry -> verify). Ending
-    # the session here returns the setup surface to dormant once the flow
-    # completes (FR-007) without severing the in-flight verify call that ending
-    # on the registry PUT would have broken. If a client skips verify, the idle
-    # TTL / page-hide beacon remain the backstop.
-    request.app.state.pairing_manager.end()
 
     return VerifyResponse(
         results=[
@@ -603,3 +612,26 @@ def post_verify(request: Request) -> VerifyResponse:
         ],
         all_passed=web_check.all_passed(results),
     )
+
+
+@router.post("/end", response_model=SetupEndResponse)
+def post_end(request: Request) -> SetupEndResponse:
+    """`POST /api/v1/setup/end` -- end the pairing session (FR-007).
+
+    The explicit close the CLI calls once its flow has succeeded, returning the
+    setup surface to dormant. Previously `POST /verify` ended the session as a
+    side effect, which broke the push flow's self-heal re-PUT + re-verify
+    (#158); ending is now a step of its own, so any number of setup calls may
+    precede it.
+
+    Idempotent: ending an already-ended session is a no-op — though a second
+    call from the *same* client sees the dormant 404 from the router gate, since
+    its code is no longer live. The CLI treats that as success.
+
+    This lives on the setup router (not the browser-only `/api/v1/pairing/*`
+    control plane) deliberately: it is pairing-code-authenticated like the rest
+    of the flow, and only `/api/v1/setup/*` is exempt from the Origin allowlist,
+    which every Origin-less CLI request needs.
+    """
+    request.app.state.pairing_manager.end()
+    return SetupEndResponse(ended=True)
