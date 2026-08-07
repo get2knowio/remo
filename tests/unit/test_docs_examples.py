@@ -91,6 +91,60 @@ def test_placeholder_key_is_obviously_a_placeholder(path: Path) -> None:
 
 
 @pytest.mark.parametrize("path", ALL_EXAMPLES, ids=lambda p: p.name)
+def test_creates_the_login_at_uid_1000(path: Path) -> None:
+    """The registered account must be created here, at UID 1000.
+
+    `user_setup` pins remo_user to UID 1000. An account registered at any other
+    UID sends `remo configure` into `usermod -u 1000` against the account
+    Ansible is logged in as — which shadow-utils refuses for a user with running
+    processes, failing the play.
+
+    On OrbStack this cannot be left to the platform: it names its default user
+    after the macOS account and pins it to the macOS UID (501), *after*
+    cloud-init has run. Hence `orb create -u orbadmin` in the header, which
+    leaves 1000 free for this account.
+    """
+    users = _load(path).get("users")
+    assert users, "the example must create the account it tells you to register"
+    remo = [u for u in users if isinstance(u, dict) and u.get("name") == "remo"]
+    assert remo, f"expected a `remo` user, got {[u.get('name') for u in users]}"
+    assert remo[0].get("uid") == 1000, "the registered account must hold UID 1000"
+    assert remo[0].get("ssh_authorized_keys"), (
+        "install the key here, not from runcmd — see "
+        "test_does_not_resolve_the_account_by_uid_lookup"
+    )
+
+
+@pytest.mark.parametrize("path", ALL_EXAMPLES, ids=lambda p: p.name)
+def test_does_not_resolve_the_account_by_uid_lookup(path: Path) -> None:
+    """No runcmd may look the account up with `getent passwd 1000`.
+
+    That is the bug these examples used to ship. On OrbStack, runcmd executes
+    before the platform has created its user, so UID 1000 resolves to the
+    image's transient default account and anything written there lands in a home
+    directory that is subsequently deleted. cloud-init still reports
+    `status: done` with `errors: []`; the only symptom is `remo add --verify`
+    failing to authenticate later.
+    """
+    for i, cmd in enumerate(_load(path)["runcmd"], start=1):
+        if not isinstance(cmd, str):
+            continue
+        assert "getent passwd 1000" not in cmd, (
+            f"runcmd[{i}] resolves the account by UID lookup; declare it under "
+            "`users:` instead, where cloud-init creates it deterministically"
+        )
+
+
+@pytest.mark.parametrize("path", ALL_EXAMPLES, ids=lambda p: p.name)
+def test_header_documents_the_required_default_user_flag(path: Path) -> None:
+    # Without `-u <throwaway>`, OrbStack renumbers the `remo` account created
+    # above from 1000 to the macOS UID, and the file silently stops working.
+    assert "-u orbadmin" in path.read_text(), (
+        "the `orb create` line must pass -u to keep UID 1000 free"
+    )
+
+
+@pytest.mark.parametrize("path", ALL_EXAMPLES, ids=lambda p: p.name)
 def test_does_not_duplicate_what_remo_configure_installs(path: Path) -> None:
     # Duplicating the toolchain here would drift from the Ansible role list.
     for owned_by_configure in ("docker-ce", "docker.io", "nodejs", "zellij"):

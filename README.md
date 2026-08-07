@@ -308,30 +308,67 @@ prepares an [OrbStack](https://orbstack.dev) VM on a Mac so `remo add` and
 `remo configure` work first time:
 
 ```bash
-orb create ubuntu remo-mbp -c docs/examples/orbstack-cloud-init.yaml
+orb create ubuntu remo-mbp -u orbadmin -c docs/examples/orbstack-cloud-init.yaml
+remo add mbp remo@<name-that-resolves> --verify
 ```
 
 It installs only what Ansible needs to connect and hand over — `remo configure`
-does the rest. It deliberately creates no user: OrbStack already makes one named
-after your macOS account holding UID 1000, and registering *that* user is what
-puts `remo-host` in the home directory the web service logs into, while skipping
-`user_setup`'s UID-1000 reassignment entirely.
+does the rest. It creates a `remo` account at **UID 1000** and installs your key
+there, which is the account to register.
 
-To reach the VM from anywhere — your workstation, a homelab box, or the
-`remo web` service — rather than only from its Mac, use
+`-u orbadmin` is not optional. OrbStack creates a Linux account named after your
+macOS user, pins it to your **macOS UID** (501, not 1000), and does so *after*
+cloud-init finishes — it will even renumber a cloud-init-created account that
+shares its name. Giving OrbStack a throwaway name to own leaves UID 1000 free.
+That matters because `user_setup` pins `remo_user` to UID 1000: register an
+account at any other UID and `remo configure` runs `usermod -u 1000` against the
+account Ansible is logged in as, which shadow-utils refuses to do for a user with
+running processes. Add `--isolated` too if you want a plain VM with no Mac file
+sharing; it is independent of the UID fix.
+
+**Which name to register.** An OrbStack VM is not on your LAN — it gets a static
+address on OrbStack's internal bridge, and OrbStack has no bridged/DHCP-from-your
+-router mode — so its own IP means nothing to any other machine. Three paths, in
+increasing reach:
+
+| From | Register | Notes |
+|------|----------|-------|
+| The Mac itself | `remo-mbp.orb.local` | OrbStack's DNS. Nothing to set up. |
+| Your LAN, or a VPN | `<your-mac>` | OrbStack forwards the VM's `:22` to the Mac and exposes it on every interface, so the Mac's name reaches the VM's sshd with nothing installed in the VM. |
+| Anywhere | `remo-mbp.<tailnet>.ts.net` | The Tailscale example below — needed only if you want the VM itself on the tailnet. |
+
+Prefer a **bare name** over an FQDN or an IP: it resolves through whichever
+search domain is up — your VPN's or your router's — so one entry keeps working
+as you move. That is why a registered host reads `"host": "dev1"`.
+
+Two gotchas on the middle row. It routes through the *Mac's* `:22`, so only one
+VM can own it (and it collides with macOS Remote Login) — for a second VM,
+change `Port` in the sshd drop-in and register `remo@<mac>:<port>`. And a Mac
+does not register itself in your router's DNS the way a Linux DHCP client does:
+macOS sends the DHCP hostname only when `HostName` is set, which it is not by
+default (`LocalHostName`, the mDNS `.local` name, is never sent, and Linux hosts
+generally cannot resolve `.local` at all). Fix it once with
+`sudo scutil --set HostName <name> && sudo ipconfig set en0 DHCP` — after which
+the address may change freely, since DNS follows it.
+If a VPN or a Tailscale exit node with LAN access claims OrbStack's subnet
+(`orb config get network.subnet4`), even the Mac-local path black-holes; check
+with `route -n get <vm-ip>`.
+
+To reach the VM from anywhere — including a `remo web` service that cannot reach
+your Mac — use
 [`docs/examples/orbstack-cloud-init-tailscale.yaml`](docs/examples/orbstack-cloud-init-tailscale.yaml)
 instead. Same file plus Tailscale; it prints the address to register on first
-boot. Register the MagicDNS name, **not** the OrbStack IP:
+boot:
 
 ```bash
-orb create ubuntu remo-mbp -c docs/examples/orbstack-cloud-init-tailscale.yaml
-remo add mbp <user>@remo-mbp.<your-tailnet>.ts.net --verify
+orb create ubuntu remo-mbp -u orbadmin -c docs/examples/orbstack-cloud-init-tailscale.yaml
+remo add mbp remo@remo-mbp.<your-tailnet>.ts.net --verify
 ```
 
-An OrbStack VM's own IP is reachable from its Mac and nowhere else, so a
-registry entry pointing at it is useless to a `remo web` service running
-anywhere else. Use an **ephemeral** auth key: cloud-init keeps your user-data
-on the VM's disk, so the key outlives the boot that used it.
+Use an **ephemeral** auth key: cloud-init keeps your user-data on the VM's disk,
+so the key outlives the boot that used it. Leaving the placeholder is fine —
+tailscaled still installs, and `sudo tailscale up` joins interactively with no
+credential on disk.
 
 `remo remove NAME [--yes]` deregisters an added host by deleting **only** the
 local registry entry — it makes no connection to and no change on the remote
