@@ -13,7 +13,7 @@ Spin up an EC2 instance with EBS storage for persistent home directories.
 
 ```bash
 # Install remo
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 
 # Configure AWS credentials (choose one method)
 aws configure                  # Interactive setup (stores in ~/.aws/)
