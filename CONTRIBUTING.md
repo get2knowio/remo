@@ -206,6 +206,6 @@ remo incus destroy test-container --yes --host <incus-host>
 ### Test Installer
 
 ```bash
-# Test from branch
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --branch my-feature
+# Test the latest pre-release
+curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
 ```
