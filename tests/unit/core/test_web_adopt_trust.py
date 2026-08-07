@@ -261,10 +261,16 @@ class TestNoTrustedRecord:
         assert result.detail == "fingerprint confirmed interactively"
         assert len(prompts) == 1
         assert HOST in prompts[0]
+        # #157: the confirmation is recorded locally too, without disturbing
+        # the unrelated entry that was already there.
+        assert known_hosts.read_text() == (
+            "other.example.com ssh-ed25519 AAAAunrelated\n" f"{HOST} {ED25519_KEY}\n"
+        )
 
-    def test_interactive_decline_is_no_trust(self, mocker, known_hosts):
+    def test_interactive_decline_is_no_trust(self, mocker, known_hosts, tmp_path):
         dispatcher = self._dispatcher_not_found()
         _patch_run(mocker, dispatcher)
+        before = known_hosts.read_text()
 
         result = scan_and_verify_host_key(
             HOST,
@@ -276,6 +282,8 @@ class TestNoTrustedRecord:
         assert result.decision == "no_trust"
         assert result.lines == []
         assert result.detail == "fingerprint confirmation declined"
+        # A declined fingerprint must never be trusted locally either (#157).
+        assert known_hosts.read_text() == before
 
     def test_non_interactive_is_no_trust_without_prompting(self, mocker, known_hosts):
         dispatcher = self._dispatcher_not_found()
@@ -294,19 +302,213 @@ class TestNoTrustedRecord:
         assert "non-interactive" in result.detail
         # The fingerprint-rendering path must not run either.
         assert dispatcher.lf_file_contents == []
+        # Nothing was confirmed, so nothing may be trusted locally (#157).
+        assert known_hosts.read_text() == f"{HOST} {ED25519_KEY}\n"
 
     def test_missing_known_hosts_file_skips_keygen_f(self, mocker, tmp_path):
         dispatcher = RunDispatcher(
             keyscan=_cp(["ssh-keyscan"], stdout=_keyscan_stdout(ED25519_KEY)),
         )
         _patch_run(mocker, dispatcher)
+        missing = tmp_path / "does-not-exist"
 
         result = scan_and_verify_host_key(
-            HOST, known_hosts_file=tmp_path / "does-not-exist", interactive=False
+            HOST, known_hosts_file=missing, interactive=False
         )
 
         assert result.decision == "no_trust"
         assert dispatcher.commands() == ["ssh-keyscan"]
+        # A non-interactive run must not create a trust store either (#157).
+        assert not missing.exists()
+
+
+# ---------------------------------------------------------------------------
+# Confirmed fingerprints are persisted to the workstation's known_hosts (#157)
+# ---------------------------------------------------------------------------
+
+
+class TestConfirmPersistsTrust:
+    """Issue #157: confirming a fingerprint used to update only the push
+    payload, so the authorize step that immediately follows (ssh with
+    BatchMode=yes) died with "Host key verification failed"."""
+
+    def _dispatcher(self, *keys: str, found: str | None = None) -> RunDispatcher:
+        return RunDispatcher(
+            keyscan=_cp(["ssh-keyscan"], stdout=_keyscan_stdout(*keys)),
+            keygen_f=(
+                _cp(["ssh-keygen"], stdout=_keygen_f_stdout(found))
+                if found
+                else _cp(["ssh-keygen"], rc=1)
+            ),
+            keygen_lf=_cp(["ssh-keygen"], stdout="256 SHA256:zZz fingerprint\n"),
+        )
+
+    def test_creates_store_with_tight_permissions(self, mocker, tmp_path):
+        _patch_run(mocker, self._dispatcher(ED25519_KEY))
+        store = tmp_path / "ssh" / "known_hosts"
+
+        result = scan_and_verify_host_key(
+            HOST,
+            known_hosts_file=store,
+            interactive=True,
+            confirm_fn=lambda _prompt: True,
+        )
+
+        assert result.decision == "trusted"
+        assert store.read_text() == f"{HOST} {ED25519_KEY}\n"
+        assert store.stat().st_mode & 0o777 == 0o600
+        assert store.parent.stat().st_mode & 0o777 == 0o700
+
+    def test_appends_all_scanned_key_types(self, mocker, tmp_path):
+        _patch_run(mocker, self._dispatcher(ED25519_KEY, RSA_KEY))
+        store = tmp_path / "known_hosts"
+
+        result = scan_and_verify_host_key(
+            HOST,
+            known_hosts_file=store,
+            interactive=True,
+            confirm_fn=lambda _prompt: True,
+        )
+
+        assert result.lines == [f"{HOST} {ED25519_KEY}", f"{HOST} {RSA_KEY}"]
+        assert store.read_text() == f"{HOST} {ED25519_KEY}\n{HOST} {RSA_KEY}\n"
+
+    def test_appends_only_the_missing_line(self, mocker, tmp_path):
+        """Never duplicate a line the store already holds verbatim — the
+        lookup can come back empty for a line that is physically present (an
+        unusable `ssh-keygen`, a record `-F` could not parse), and a second
+        confirmed run must still leave one copy."""
+        _patch_run(mocker, self._dispatcher(ED25519_KEY, RSA_KEY))
+        store = tmp_path / "known_hosts"
+        store.write_text(f"{HOST} {RSA_KEY}\n")
+
+        result = scan_and_verify_host_key(
+            HOST,
+            known_hosts_file=store,
+            interactive=True,
+            confirm_fn=lambda _prompt: True,
+        )
+
+        assert result.decision == "trusted"
+        assert store.read_text() == f"{HOST} {RSA_KEY}\n{HOST} {ED25519_KEY}\n"
+
+    def test_unterminated_existing_file_gets_a_separator(self, mocker, tmp_path):
+        _patch_run(mocker, self._dispatcher(ED25519_KEY))
+        store = tmp_path / "known_hosts"
+        store.write_text("other.example.com ssh-ed25519 AAAAunrelated")  # no newline
+
+        scan_and_verify_host_key(
+            HOST,
+            known_hosts_file=store,
+            interactive=True,
+            confirm_fn=lambda _prompt: True,
+        )
+
+        assert store.read_text() == (
+            "other.example.com ssh-ed25519 AAAAunrelated\n" f"{HOST} {ED25519_KEY}\n"
+        )
+
+    def test_non_default_port_is_recorded_in_bracketed_form(self, mocker, tmp_path):
+        """`ssh-keyscan -p` emits the `[host]:port` line form; it is stored
+        verbatim, which is exactly what `ssh -p 2222` later looks up."""
+        line = f"[{HOST}]:2222 {ED25519_KEY}"
+        _patch_run(
+            mocker,
+            RunDispatcher(
+                keyscan=_cp(["ssh-keyscan"], stdout=line + "\n"),
+                keygen_f=_cp(["ssh-keygen"], rc=1),
+                keygen_lf=_cp(["ssh-keygen"], stdout="256 SHA256:zZz fingerprint\n"),
+            ),
+        )
+        store = tmp_path / "known_hosts"
+
+        result = scan_and_verify_host_key(
+            HOST,
+            port=2222,
+            known_hosts_file=store,
+            interactive=True,
+            confirm_fn=lambda _prompt: True,
+        )
+
+        assert result.decision == "trusted"
+        assert store.read_text() == line + "\n"
+
+    def test_mismatch_never_writes(self, mocker, known_hosts):
+        _patch_run(mocker, self._dispatcher(ED25519_OTHER, found=ED25519_KEY))
+        before = known_hosts.read_text()
+
+        result = scan_and_verify_host_key(
+            HOST,
+            known_hosts_file=known_hosts,
+            interactive=True,
+            confirm_fn=lambda _prompt: pytest.fail("must not prompt on mismatch"),
+        )
+
+        assert result.decision == "mismatch"
+        assert known_hosts.read_text() == before
+
+    def test_second_run_takes_the_trusted_path_without_prompting(
+        self, mocker, tmp_path, real_pubkeys
+    ):
+        """Round-trip against the REAL ssh-keygen: what the first (confirmed)
+        run wrote is what the second run's `-F` lookup must find, so the
+        operator is asked exactly once (Principle VII — the write is a no-op
+        the second time)."""
+        key_a, _key_b = real_pubkeys
+        store = tmp_path / "known_hosts"
+
+        def dispatch(cmd: list[str], **kwargs: object):
+            if cmd[0] == "ssh-keyscan":
+                return _cp(cmd, stdout=_keyscan_stdout(key_a))
+            return _REAL_RUN(cmd, **kwargs)  # type: ignore[arg-type]
+
+        mocker.patch("remo_cli.core.web_adopt.subprocess.run", side_effect=dispatch)
+
+        first = scan_and_verify_host_key(
+            HOST,
+            known_hosts_file=store,
+            interactive=True,
+            confirm_fn=lambda _prompt: True,
+        )
+        after_first = store.read_text()
+
+        second = scan_and_verify_host_key(
+            HOST,
+            known_hosts_file=store,
+            interactive=True,
+            confirm_fn=lambda _prompt: pytest.fail("already trusted; must not prompt"),
+        )
+
+        assert first.decision == "trusted"
+        assert first.detail == "fingerprint confirmed interactively"
+        assert second.decision == "trusted"
+        assert second.detail == "matches trusted known_hosts entry"
+        assert store.read_text() == after_first
+
+    def test_write_failure_warns_but_still_trusts(self, mocker, tmp_path, capsys):
+        """The scanned lines are still valid for the payload, so a failed local
+        write must not turn a confirmed key into a skipped instance."""
+        _patch_run(mocker, self._dispatcher(ED25519_KEY))
+        parent = tmp_path / "readonly"
+        parent.mkdir()
+        store = parent / "known_hosts"
+        parent.chmod(0o500)
+        try:
+            result = scan_and_verify_host_key(
+                HOST,
+                known_hosts_file=store,
+                interactive=True,
+                confirm_fn=lambda _prompt: True,
+            )
+        finally:
+            parent.chmod(0o700)
+
+        assert result.decision == "trusted"
+        assert result.lines == [f"{HOST} {ED25519_KEY}"]
+        assert result.detail == "fingerprint confirmed interactively"
+        out = capsys.readouterr().out
+        assert str(store) in out
+        assert not store.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -504,6 +706,10 @@ class TestMultipleKeyTypes:
 
         assert result.decision == "trusted"
         assert result.lines == [f"{HOST} {ED25519_KEY}"]
+        # The fixture store already holds this exact line (the `-F` lookup here
+        # is mocked to report only an rsa record), so the confirmed write
+        # dedupes to a no-op rather than duplicating it.
+        assert known_hosts.read_text() == f"{HOST} {ED25519_KEY}\n"
 
 
 # ---------------------------------------------------------------------------
@@ -707,3 +913,53 @@ class TestPushThreadsThePort:
         _process_instance(host, "ssh-ed25519 AAAA", interactive=False, host_keys={})
 
         assert scan.call_args.kwargs["port"] == 22
+
+
+class TestAuthorizeFailureRemediation:
+    """#157: an authorize failure caused by an untrusted host key used to point
+    the operator at a host that was demonstrably reachable."""
+
+    def _run(self, mocker, error: str, *, port: int = 22) -> str:
+        mocker.patch(
+            "remo_cli.core.web_adopt.scan_and_verify_host_key",
+            return_value=HostKeyScan("trusted", lines=[f"{HOST} {ED25519_KEY}"]),
+        )
+        mocker.patch(
+            "remo_cli.core.web_adopt.authorize_service_key",
+            return_value=(False, error),
+        )
+        host = KnownHost(
+            type="ssh",
+            name="mbp",
+            host=HOST,
+            user="remo",
+            instance_id=str(port),
+            access_mode="direct",
+        )
+        outcome = _process_instance(
+            host, "ssh-ed25519 AAAA", interactive=False, host_keys={}
+        )
+        assert outcome.outcome == "skipped_unreachable"
+        assert error in outcome.detail
+        return outcome.remediation or ""
+
+    def test_host_key_verification_failure_names_the_real_cause(self, mocker):
+        remediation = self._run(
+            mocker, "Host key verification failed.\r\nlost connection"
+        )
+
+        assert "known_hosts" in remediation
+        assert HOST in remediation
+        assert "remo shell mbp" in remediation
+        assert "ssh remo@" not in remediation
+
+    def test_custom_port_remediation_names_the_bracketed_record(self, mocker):
+        remediation = self._run(mocker, "Host key verification failed.", port=2222)
+
+        assert f"[{HOST}]:2222" in remediation
+
+    def test_other_failures_keep_the_generic_ssh_hint(self, mocker):
+        remediation = self._run(mocker, "Permission denied (publickey).")
+
+        assert f"ssh remo@{HOST}" in remediation
+        assert "known_hosts" not in remediation

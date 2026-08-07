@@ -506,6 +506,55 @@ def _render_fingerprints(lines: list[str]) -> str:
             pass
 
 
+def _persist_confirmed_host_keys(lines: list[str], trusted_store: Path) -> str | None:
+    """Append interactively-confirmed *lines* to the workstation's known_hosts.
+
+    Issue #157: confirming a fingerprint used to affect only the *push payload*
+    (the service's known_hosts). The workstation's own store was left untouched,
+    so the very next step — :func:`authorize_service_key`, which runs ssh with
+    ``BatchMode=yes`` — died with "Host key verification failed" and the instance
+    was reported unreachable. The operator had just said "yes, I trust this key";
+    recording that answer locally is what makes the rest of the push work.
+
+    Returns ``None`` on success (including the no-op case) or a warning string
+    the caller should print. A write failure is never fatal: the scanned lines
+    are still valid for the payload, so trust is reported either way.
+
+    Deliberately pure Python file I/O — no ``ssh-keygen``/``ssh-keyscan``
+    subprocess — so the write cannot fail on a workstation without those tools.
+    """
+    try:
+        existing = trusted_store.read_text() if trusted_store.exists() else ""
+    except OSError as e:
+        return f"could not read {trusted_store} to record the confirmed host key: {e}"
+
+    already = {line.strip() for line in existing.splitlines() if line.strip()}
+    # Verbatim comparison: a record may already exist for *other* key types
+    # (the fall-through above), in which case only the missing lines are added.
+    missing = [line for line in lines if line.strip() not in already]
+    if not missing:
+        return None
+
+    payload = "".join(f"{line}\n" for line in missing)
+    if existing and not existing.endswith("\n"):
+        payload = "\n" + payload
+
+    try:
+        trusted_store.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # os.open with mode 0600 so a *newly created* known_hosts is never
+        # briefly world-readable (a create-then-chmod would race).
+        fd = os.open(trusted_store, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a") as fh:
+            fh.write(payload)
+    except OSError as e:
+        return (
+            f"could not record the confirmed host key in {trusted_store}: {e}. "
+            "Authorizing the service key over ssh will likely fail until this "
+            "host is trusted locally."
+        )
+    return None
+
+
 def scan_and_verify_host_key(
     hostname: str,
     *,
@@ -535,6 +584,11 @@ def scan_and_verify_host_key(
         interactive TTY           -> SHA256 fingerprint confirmation
                                      (accept -> ``trusted``, decline -> ``no_trust``)
         non-interactive           -> ``no_trust``
+
+    Side effect, confirmation branch only: an accepted fingerprint is also
+    appended to *known_hosts_file* (see :func:`_persist_confirmed_host_keys`).
+    Nothing else here writes to the workstation's trust store — a match needs no
+    write, and mismatch/decline/non-interactive must not create one.
     """
     trusted_store = known_hosts_file or (Path.home() / ".ssh" / "known_hosts")
     if confirm_fn is None:
@@ -616,6 +670,11 @@ def scan_and_verify_host_key(
     print("Scanned key fingerprints:")
     print(_render_fingerprints(scanned_lines))
     if confirm_fn(f"Trust these keys for {lookup_key} and include them in the push?"):
+        # Record the answer locally too (#157) — the authorize step that follows
+        # runs ssh with BatchMode=yes and fails outright on an untrusted host.
+        warning = _persist_confirmed_host_keys(scanned_lines, trusted_store)
+        if warning:
+            print_warning(warning)
         return HostKeyScan(
             "trusted", lines=scanned_lines, detail="fingerprint confirmed interactively"
         )
@@ -1151,14 +1210,26 @@ def _process_instance(
 
         ok, error = authorize_service_key(host, public_key)
         if not ok:
+            if "Host key verification failed" in (error or ""):
+                # Name the real cause instead of sending the operator to check a
+                # host that is demonstrably reachable (#157).
+                lookup_key = known_hosts_lookup_key(host.host, host.ssh_port)
+                remediation = (
+                    f"There is no trusted host key for {lookup_key} in this "
+                    "workstation's ~/.ssh/known_hosts, so ssh refused to connect. "
+                    f"Connect once (e.g. `remo shell {host.name}`) to trust it, "
+                    "then re-run `remo web push`."
+                )
+            else:
+                remediation = (
+                    f"Check you can `ssh {host.user}@{host.host}` from this "
+                    "workstation, then re-run `remo web push`."
+                )
             return InstanceOutcome(
                 host,
                 OUTCOME_SKIPPED_UNREACHABLE,
                 detail=f"host key verified, but authorizing the service key failed: {error}",
-                remediation=(
-                    f"Check you can `ssh {host.user}@{host.host}` from this "
-                    "workstation, then re-run `remo web push`."
-                ),
+                remediation=remediation,
             )
 
         host_keys[host.name] = scan.lines

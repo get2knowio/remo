@@ -540,7 +540,9 @@ longer valid), verifies the payload version, fetches the service's public key an
 — per direct-access instance, with a bounded per-instance time budget so one slow instance delays
 only itself — `ssh-keyscan`s the host, verifies the scanned key against your own trusted
 `~/.ssh/known_hosts` record (`ssh-keygen -F`, so hashed known_hosts files work; the service itself
-**never** makes a trust-on-first-use decision), and installs the service's key into that instance's
+**never** makes a trust-on-first-use decision — if you have no record for the host, *you* are asked to
+confirm its SHA256 fingerprint, and confirming appends it to your `~/.ssh/known_hosts` so the
+authorization step that follows can connect), and installs the service's key into that instance's
 `~/.ssh/authorized_keys` idempotently. Instances that are **unchanged since the last successful push**
 (their registry entry matches the non-secret push cache for this `deployment_id`) skip that
 keyscan/authorize work and reuse their cached host-key lines — reported `unchanged`. New or changed
@@ -568,7 +570,7 @@ remediation where applicable:
 | `repaired` | The instance was skipped as `unchanged`, service-side verification then reported `auth_failed` for it, and the push re-keyscanned and re-authorized it. The service key had gone missing host-side; no action needed. |
 | `skipped_unreachable` | Keyscan failed or timed out — instance down or unreachable from the workstation. Not fatal; re-run push when it's back. |
 | `skipped_by_design` | SSM-routed instance (AWS-managed transport). No action needed — SSM instances are excluded from host-key and service-key push by design; see [Credentials and SSM](#credentials-and-ssm). |
-| `skipped_no_trust` | Your workstation has no trusted host-key record and the run was non-interactive (`--yes`), so nothing was pushed. Interactively, you're prompted to confirm the SHA256 fingerprint instead. |
+| `skipped_no_trust` | Your workstation has no trusted host-key record and the run was non-interactive (`--yes`), so nothing was pushed. Interactively, you're prompted to confirm the SHA256 fingerprint instead — confirming also records the key in your own `~/.ssh/known_hosts`, which the authorization step immediately needs. |
 | `security_flagged` | **The scanned host key does not match your workstation's trusted record.** Rendered prominently as a potential MITM warning; nothing is pushed for that instance and the rest of the run continues. Investigate before trusting; if the instance was legitimately rebuilt, `ssh-keygen -R <host>`, reconnect once to re-trust it, then re-run the push. |
 
 Removed instances (in the last push but no longer in the registry) get their own **Revocation**
