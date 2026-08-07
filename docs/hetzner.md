@@ -12,7 +12,7 @@ Spin up a cloud VM with full dev tooling and persistent storage.
 
 ```bash
 # Install remo
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 
 # Set your Hetzner API token
 export HETZNER_API_TOKEN=your-hetzner-api-token

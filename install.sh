@@ -2,7 +2,7 @@
 # remo installer — installs remo-cli from PyPI via uv
 #
 # Usage:
-#   curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --version 0.4.0
 #   curl -fsSL .../install.sh | bash -s -- --pre-release
 
@@ -45,7 +45,7 @@ while [[ $# -gt 0 ]]; do
 remo installer — installs remo-cli from PyPI via uv
 
 USAGE:
-    curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
     curl -fsSL .../install.sh | bash -s -- [OPTIONS]
 
 OPTIONS:
@@ -55,7 +55,7 @@ OPTIONS:
 
 EXAMPLES:
     # Install latest stable
-    curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 
     # Install specific version
     curl -fsSL .../install.sh | bash -s -- --version 0.4.0

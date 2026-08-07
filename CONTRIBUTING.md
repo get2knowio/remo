@@ -104,7 +104,7 @@ pre-release, and publishes the prerelease to PyPI + GHCR (`latest` is never
 moved). Users can install with:
 
 ```bash
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --pre-release
 ```
 
 > Prefer testing **without** publishing when you can — a local wheel or a
@@ -127,7 +127,7 @@ You do **not** bump the version or push a tag by hand for stable releases:
 
 Users install the stable release with:
 ```bash
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 ```
 
 > **One-time setup — publish trigger:** the tag release-please creates must be
@@ -180,12 +180,24 @@ We use [Semantic Versioning](https://semver.org/):
 
 ## Updating the Installer
 
-When you modify `install.sh`:
+`install.sh` at the repo root is the one copy, served straight off `main`:
 
-1. The `sync-install.yml` workflow automatically copies it to `docs/install.sh`
-2. GitHub Pages serves the updated version at https://get2knowio.github.io/remo/install.sh
+```
+https://raw.githubusercontent.com/get2knowio/remo/main/install.sh
+```
 
-No manual sync needed.
+There is no publish step and no second copy to keep in sync — a merge to
+`main` *is* the deploy. Note the URL is pinned to `main`, not to a tag: users
+should always get the current installer, and pinning a *release* is what the
+script's own `--version` flag is for.
+
+Because it ships the instant it merges, treat a change to `install.sh` as a
+change to production: run `bash -n install.sh` at minimum, and prefer testing
+the raw URL from your own branch first —
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/<your-branch>/install.sh | bash
+```
 
 ## Testing Changes
 
@@ -207,5 +219,5 @@ remo incus destroy test-container --yes --host <incus-host>
 
 ```bash
 # Test the latest pre-release
-curl -fsSL https://get2knowio.github.io/remo/install.sh | bash -s -- --pre-release
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --pre-release
 ```
