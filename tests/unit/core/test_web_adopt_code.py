@@ -39,7 +39,7 @@ def test_bearer_header_carries_the_pairing_code(mocker):
     assert captured["auth"] == "Bearer the-pairing-code"
 
 
-def test_dormant_404_maps_to_reopen_message(mocker):
+def test_dormant_404_leads_with_code_rotation(mocker):
     client = SetupApiClient("http://svc:8080", "stale-code")
 
     def raise_404(request, timeout=None):
@@ -53,4 +53,8 @@ def test_dormant_404_maps_to_reopen_message(mocker):
     message = str(excinfo.value)
     assert "dormant" in message
     assert "fresh code" in message
-    assert "reopen the adopt page" in message.lower()
+    # #159: the leading advice is "copy the code from the MOST RECENT mint",
+    # not "reopen the page" — reopening mints again, rotating away whatever the
+    # operator just copied, which is how the trap compounds.
+    assert "most recent" in message.lower()
+    assert message.lower().index("most recent") < message.lower().index("reopen")

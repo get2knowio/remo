@@ -522,8 +522,11 @@ shows the "awaiting adoption" page. (Bare-metal `remo web serve` on a writable h
 now — see [How the service decides its mode](#how-the-service-decides-its-mode).)
 
 **2. Copy the pairing code and run `remo web push`.** On the awaiting-adoption page (or, after the
-first push, the dashboard's **Pair CLI to sync** affordance), click **Copy pairing code** — the code
-lands on your clipboard and is never displayed. On the workstation, inputs resolve in this order:
+first push, the dashboard's **Pair CLI to sync** affordance), the code is copied to your clipboard
+the moment it is minted. If the browser refuses that (page load is not a user gesture, so this is
+normal on the adopt page), the button says **Copy pairing code (required)** — click it, because the
+code is never displayed anywhere else. Note that every mint rotates the previous code, so always copy
+after the most recent one. On the workstation, inputs resolve in this order:
 
 | Input | Resolution order |
 |---|---|
@@ -852,7 +855,7 @@ interactive session (only `remo-host capabilities` is invoked, never `sessions a
 | Failure | What it means | Fix |
 |---|---|---|
 | `/api/v1/setup/*` returns `404` for everything | No pairing session is live — the surface is dormant (fail closed). | Open the awaiting-adoption page (through your SSO proxy) to mint a code; if the page can't mint, set `REMO_WEB_OPERATOR_AUTH` (`forward` + header, or `none` for loopback). |
-| `remo web push` (or the deprecated `adopt`) fails: "pairing code is no longer valid … dormant" | The code expired (idle TTL), was rotated by reopening the page, or was already used. | Reopen the awaiting-adoption page (or the dashboard's "Pair CLI to sync" affordance) for a fresh code and retry. |
+| `remo web push` (or the deprecated `adopt`) fails: "pairing code is no longer valid … dormant" | Usually the clipboard holds a code that a *later* mint rotated away — every open of the adopt page / "Pair CLI to sync" mints and rotates. Otherwise the code expired (idle TTL) or the session was already ended. | Click **Copy pairing code** after the most recent mint and paste that one. Only if the page is closed, reopen it for a fresh code — and copy it before retrying, since reopening rotates again. |
 | Mint page shows "you are not signed in" / `POST /pairing/mint` returns `403` | Forward auth is required but the request reached the service without the trusted identity header. | Ensure the request goes through the SSO proxy that injects `REMO_WEB_FORWARD_AUTH_HEADER`; verify the proxy sets and strips it. |
 | adopt fails: deployment "configured via read-only mounts" | The target is a bind-mount deployment (`mount_configured`) — its configuration is operator-provided and read-only, so adoption does not apply. | Update the mounted files instead, or deploy the adopted-mode service (writable state volume, no mounts) if you want adoption. |
 | adopt refuses: empty registry | Your local registry has no instances — pushing would wipe a previously adopted service (a classic wrong-workstation accident). | Register/sync instances first, or pass `--allow-empty` if wiping is intentional. |

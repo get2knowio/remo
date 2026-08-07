@@ -312,18 +312,21 @@ class SetupApiClient:
 
         if status == 401:
             return SetupAuthError(
-                "the service returned HTTP 401. Reopen the adopt page (or the "
-                "dashboard's re-sync affordance) to mint a fresh pairing code, "
-                "then retry.",
+                "the service returned HTTP 401 — this pairing code was not "
+                "accepted. Codes rotate on every mint, so make sure you clicked "
+                "'Copy pairing code' after the most recent mint, and paste that "
+                "code. If in doubt, mint a fresh code and copy it before retrying.",
                 status=401,
             )
         if status == 404:
             return SetupNotFoundError(
                 f"the pairing code is no longer valid — the setup surface at "
-                f"{self.base_url} is dormant (HTTP 404). The code may have expired "
-                "or been rotated by a page reopen (or the URL is wrong). Reopen "
-                "the adopt page (or the dashboard's re-sync affordance) to mint a "
-                "fresh code, then retry.",
+                f"{self.base_url} is dormant (HTTP 404). Every mint rotates the "
+                "previous code, so the usual cause is a code copied before a "
+                "later mint: click 'Copy pairing code' after the most recent "
+                "mint and paste that one. The code may also have expired, or "
+                "the URL may be wrong. If the page is no longer open, reopen it "
+                "for a fresh code — and copy it before retrying.",
                 status=404,
             )
         if status == 409:

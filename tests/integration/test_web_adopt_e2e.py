@@ -702,14 +702,14 @@ def test_push_after_adopt_processes_only_the_new_instance(
 
 
 @requires_live_web
-def test_push_with_dormant_code_fails_with_reopen_guidance(
+def test_push_with_dormant_code_fails_with_stale_code_guidance(
     service: LiveService,
     workstation: Path,
     adoption_ssh_mocks: dict,
 ):
     """A stale/dormant code (never minted, or already used) makes every setup
-    call return the dormant 404, which the CLI maps to reopen-the-page guidance
-    -- before any per-instance work or registry PUT."""
+    call return the dormant 404, which the CLI maps to "copy the code from the
+    most recent mint" guidance -- before any per-instance work or registry PUT."""
     # Adopt once so there is a registry to (not) disturb.
     web_adopt.run_adopt(service.url, service.mint(), interactive=False)
     adoption_ssh_mocks["scanned"].clear()
@@ -722,7 +722,8 @@ def test_push_with_dormant_code_fails_with_reopen_guidance(
 
     message = str(excinfo.value)
     assert "dormant" in message
-    assert "fresh code" in message  # reopen-the-page remediation
+    assert "fresh code" in message
+    assert "most recent" in message.lower()  # #159: rotation is the usual cause
 
     # Failed at the first setup call: no instance touched, no PUT.
     assert adoption_ssh_mocks["scanned"] == []
