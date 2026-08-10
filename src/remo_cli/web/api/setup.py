@@ -291,6 +291,31 @@ def _mount_configured_response() -> JSONResponse:
 
 
 def _invalid_payload(detail: str) -> JSONResponse:
+    """422 with an actionable *detail* (contracts/setup-api.md).
+
+    The detail is deliberately specific -- the CLI surfaces it verbatim as
+    ``PayloadRejectedError``, and it is the only thing telling the operator
+    which entry of their own registry the service refused.
+
+    CodeQL flags this as ``py/stack-trace-exposure`` because two of the four
+    call sites derive *detail* from a caught exception. That reading fails on
+    both prongs, so the alert is dismissed rather than coded around:
+
+    * It is not a stack trace. The ``ValidationError`` branch joins only
+      ``loc`` and ``msg`` from :meth:`pydantic.ValidationError.errors` -- never
+      ``input``, ``__traceback__``, or ``repr`` -- and
+      ``RegistryValidationError`` carries a hand-written message. Both describe
+      the caller's own submitted fields ("control characters", "fewer than 3
+      fields"); neither can reach a path or any service-side internal.
+    * There is no external user. Every route on this router sits behind
+      ``Depends(require_pairing_code)``; without a live code the whole surface
+      is a uniform 404, so reaching this response already requires the
+      operator's own single-use pairing secret.
+
+    Degrading the message to satisfy the query would cost the operator the one
+    diagnostic that makes a rejected push fixable. ``test_setup_api.py``'s
+    ``test_put_registry_invalid_payload_writes_nothing`` pins the shape.
+    """
     return JSONResponse(
         status_code=422, content={"reason": "invalid_payload", "detail": detail}
     )
