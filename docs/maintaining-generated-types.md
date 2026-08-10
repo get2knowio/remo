@@ -100,6 +100,18 @@ If none of these checks fail because of a change you made, check whether `fastap
 alter the emitted bytes (formatting, ordering, added metadata) with zero first-party
 source change. The fix is identical either way: regenerate and commit.
 
+### The `js-yaml` override
+
+`frontend/package.json` carries one `overrides` entry, `"js-yaml": "^4.3.1"`. It exists
+only because of this toolchain: `openapi-typescript` depends on `@redocly/openapi-core`,
+which pins `js-yaml` to an exact version. When that pin last landed on a version with an
+open advisory (GHSA / CVE-2026-59870, quadratic CPU consumption in `!!omap` resolution)
+there was no upgrade path — `@redocly/openapi-core@1.x` is the tip of its line and
+`openapi-typescript` won't accept `2.x` — so the transitive resolution is forced here
+instead. Re-evaluate the entry whenever `openapi-typescript` is bumped: once the
+dependency chain resolves to a patched version on its own, the override is dead weight
+and should be deleted rather than carried forward.
+
 ## Not an external contract
 
 All four artifacts are an **internal build input** for this repository's own console —
