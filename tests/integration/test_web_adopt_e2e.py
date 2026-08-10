@@ -12,9 +12,9 @@ therefore see genuinely different registries/homes, exactly like a real
 workstation adopting a real container.
 
 Each adopt/push obtains a FRESH pairing code (minted via
-`POST /api/v1/pairing/mint`); the code authenticates the whole flow and the
-service ends the session on the terminal `POST /setup/verify` (FR-007), so a
-subsequent probe re-mints.
+`POST /api/v1/pairing/mint`); the code authenticates the whole flow and the CLI
+ends the session with an explicit `POST /setup/end` once the flow succeeds
+(FR-007; verify no longer ends it — #158), so a subsequent probe re-mints.
 
 No real SSH instances exist here, so the workstation-side per-instance SSH
 work is selectively substituted (see `adoption_ssh_mocks`):
@@ -516,8 +516,8 @@ def test_registry_put_preserves_established_sessions(
     the service-side registry (standing in for an established session's held
     resources) and a live keep-alive HTTP connection spanning the PUT.
     """
-    # One minted code drives every call here: the flow never calls /verify, so
-    # the session stays live across both PUTs (it would end only on verify).
+    # One minted code drives every call here: nothing calls /setup/end, so the
+    # session stays live across both PUTs.
     code = service.mint()
     client = web_adopt.SetupApiClient(service.url, code)
 
@@ -702,14 +702,14 @@ def test_push_after_adopt_processes_only_the_new_instance(
 
 
 @requires_live_web
-def test_push_with_dormant_code_fails_with_reopen_guidance(
+def test_push_with_dormant_code_fails_with_stale_code_guidance(
     service: LiveService,
     workstation: Path,
     adoption_ssh_mocks: dict,
 ):
     """A stale/dormant code (never minted, or already used) makes every setup
-    call return the dormant 404, which the CLI maps to reopen-the-page guidance
-    -- before any per-instance work or registry PUT."""
+    call return the dormant 404, which the CLI maps to "copy the code from the
+    most recent mint" guidance -- before any per-instance work or registry PUT."""
     # Adopt once so there is a registry to (not) disturb.
     web_adopt.run_adopt(service.url, service.mint(), interactive=False)
     adoption_ssh_mocks["scanned"].clear()
@@ -722,7 +722,8 @@ def test_push_with_dormant_code_fails_with_reopen_guidance(
 
     message = str(excinfo.value)
     assert "dormant" in message
-    assert "fresh code" in message  # reopen-the-page remediation
+    assert "fresh code" in message
+    assert "most recent" in message.lower()  # #159: rotation is the usual cause
 
     # Failed at the first setup call: no instance touched, no PUT.
     assert adoption_ssh_mocks["scanned"] == []

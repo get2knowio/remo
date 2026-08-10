@@ -69,3 +69,13 @@
 .pairsync-close:hover {
   color: var(--text, #e6e8ec);
 }
+
+/* The clipboard write is attempted on mint; when the browser refuses it, this
+ * button is the ONLY way to get a usable code (it is never displayed), so it
+ * has to read as required rather than optional. */
+.pairsync-btn-attention {
+  border-color: var(--accent, #6ea8fe);
+  background: var(--bg-btn-hover, #2c2f36);
+  color: var(--text-1, #e6e8ec);
+  font-weight: 600;
+}

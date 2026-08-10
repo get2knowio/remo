@@ -27,7 +27,7 @@ One live record for a single adoption/push handoff. At most one exists at a time
 LIVE   --successful setup call (touch)--> LIVE  (last_activity reset)
 LIVE   --mint() again (rotation)--> LIVE (new code; prior code invalid)   [FR-003]
 LIVE   --idle > ttl_s--> (none)  (lazy expiry on is_live/authenticate)     [FR-002]
-LIVE   --successful adoption/push apply--> (none)  (end)                   [FR-007]
+LIVE   --client POST /setup/end (flow succeeded)--> (none)  (end)          [FR-007]
 LIVE   --pagehide sendBeacon /pairing/end--> (none)  (best-effort)         [FR-004]
 LIVE   --process restart--> (none)  (never persisted)                      [FR-008]
 ```

@@ -67,7 +67,7 @@ instances, and confirm the dashboard shows all instances with working terminals.
 
 ### Tests for User Story 1
 
-- [X] T009 [P] [US1] Integration coverage in `tests/integration/test_web_adopt_e2e.py` (migrated from 011): boots a live `remo web serve` in the network-restricted posture, mints a code via `POST /pairing/mint`, runs the adopt orchestration, and asserts identity→registry→verify all succeed with the code as bearer and the session ends on the terminal verify (FR-007).
+- [X] T009 [P] [US1] Integration coverage in `tests/integration/test_web_adopt_e2e.py` (migrated from 011): boots a live `remo web serve` in the network-restricted posture, mints a code via `POST /pairing/mint`, runs the adopt orchestration, and asserts identity→registry→verify all succeed with the code as bearer and the session ends when the CLI calls `POST /setup/end` (FR-007; verify itself is repeatable and no longer ends it — #158).
 - [X] T010 [P] [US1] Unit test `tests/unit/core/test_web_adopt_code.py`: adopt sends the pasted code as `Authorization: Bearer`, and a dormant `404` from a setup call maps to the "reopen the adopt page for a fresh code" message (FR-020).
 
 ### Implementation for User Story 1

@@ -281,9 +281,11 @@ after the affordance closes.
   expired/rotated session MUST receive the same dormant `404`, never a
   distinguishable `401` that would reveal a session exists. (Rationale: a dormant
   surface must be indistinguishable from an absent one, mirroring 011 FR-021.)
-- **FR-007**: Successful adoption/push (a registry apply that transitions or
-  refreshes configured state) MUST end the pairing session so the surface returns
-  to dormant.
+- **FR-007**: A successful adoption/push MUST end the pairing session so the
+  surface returns to dormant. The client ends it explicitly (`POST /setup/end`)
+  once the whole flow has succeeded; no other setup route may end it as a side
+  effect — in particular `POST /verify` MUST remain repeatable, since the push
+  flow re-PUTs and re-verifies after a self-heal (#158).
 - **FR-008**: Pairing sessions and codes MUST NOT be persisted to disk; a process
   restart MUST drop all sessions.
 

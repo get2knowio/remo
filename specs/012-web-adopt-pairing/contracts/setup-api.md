@@ -23,13 +23,22 @@ Notes:
 - Dormancy is **the default state**: the surface exists only while an operator
   is on the adopt page / re-sync affordance (a live session). SC-001: with no
   session live, 100% of setup requests return the dormant `404`.
-- Completing the flow **ends the session** (FR-007): because the CLI runs
-  `status → identity → PUT /registry → POST /verify` on one code, the session is
-  ended by the **`POST /verify`** handler (the terminal authenticated step), not
-  by the `PUT` — ending on the `PUT` would sever the in-flight `verify` call.
-  The surface returns to dormant immediately after the flow (US2 scenario 3, US4
-  scenario 2); a client that skips `verify` falls back to the idle-TTL / page-hide
-  backstop.
+- Completing the flow **ends the session** (FR-007) via an explicit
+  **`POST /setup/end`** (pairing-code-gated like every other setup route, and
+  inside the Origin-exempt `/api/v1/setup/*` prefix an Origin-less CLI request
+  needs). The CLI calls it once its flow has succeeded; a failed or aborted flow
+  deliberately leaves the session live so a retry can reuse the same code.
+  `POST /verify` does **not** end the session and may be called more than once:
+  the push flow's self-heal pass re-PUTs the mirror and re-verifies *after* the
+  first verify, and ending there made both of those calls hit the dormant `404`,
+  stranding the repair and the workstation's push cache (#158). The surface
+  returns to dormant immediately after `/setup/end` (US2 scenario 3, US4
+  scenario 2); a client that never calls it falls back to the idle-TTL /
+  page-hide backstop.
+- `POST /setup/end` -> `200 {"ended": true}`. Idempotent in effect, though a
+  second call from the same client sees the dormant `404` (its code is no longer
+  live) — the CLI treats that, and a `404` from a service predating the route,
+  as success.
 - The presented code is **never logged** (FR-016); an auth failure is logged
   with route/method context only, exactly as 011 logged its failures minus the
   credential.

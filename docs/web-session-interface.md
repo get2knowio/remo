@@ -522,8 +522,11 @@ shows the "awaiting adoption" page. (Bare-metal `remo web serve` on a writable h
 now — see [How the service decides its mode](#how-the-service-decides-its-mode).)
 
 **2. Copy the pairing code and run `remo web push`.** On the awaiting-adoption page (or, after the
-first push, the dashboard's **Pair CLI to sync** affordance), click **Copy pairing code** — the code
-lands on your clipboard and is never displayed. On the workstation, inputs resolve in this order:
+first push, the dashboard's **Pair CLI to sync** affordance), the code is copied to your clipboard
+the moment it is minted. If the browser refuses that (page load is not a user gesture, so this is
+normal on the adopt page), the button says **Copy pairing code (required)** — click it, because the
+code is never displayed anywhere else. Note that every mint rotates the previous code, so always copy
+after the most recent one. On the workstation, inputs resolve in this order:
 
 | Input | Resolution order |
 |---|---|
@@ -540,7 +543,9 @@ longer valid), verifies the payload version, fetches the service's public key an
 — per direct-access instance, with a bounded per-instance time budget so one slow instance delays
 only itself — `ssh-keyscan`s the host, verifies the scanned key against your own trusted
 `~/.ssh/known_hosts` record (`ssh-keygen -F`, so hashed known_hosts files work; the service itself
-**never** makes a trust-on-first-use decision), and installs the service's key into that instance's
+**never** makes a trust-on-first-use decision — if you have no record for the host, *you* are asked to
+confirm its SHA256 fingerprint, and confirming appends it to your `~/.ssh/known_hosts` so the
+authorization step that follows can connect), and installs the service's key into that instance's
 `~/.ssh/authorized_keys` idempotently. Instances that are **unchanged since the last successful push**
 (their registry entry matches the non-secret push cache for this `deployment_id`) skip that
 keyscan/authorize work and reuse their cached host-key lines — reported `unchanged`. New or changed
@@ -568,7 +573,7 @@ remediation where applicable:
 | `repaired` | The instance was skipped as `unchanged`, service-side verification then reported `auth_failed` for it, and the push re-keyscanned and re-authorized it. The service key had gone missing host-side; no action needed. |
 | `skipped_unreachable` | Keyscan failed or timed out — instance down or unreachable from the workstation. Not fatal; re-run push when it's back. |
 | `skipped_by_design` | SSM-routed instance (AWS-managed transport). No action needed — SSM instances are excluded from host-key and service-key push by design; see [Credentials and SSM](#credentials-and-ssm). |
-| `skipped_no_trust` | Your workstation has no trusted host-key record and the run was non-interactive (`--yes`), so nothing was pushed. Interactively, you're prompted to confirm the SHA256 fingerprint instead. |
+| `skipped_no_trust` | Your workstation has no trusted host-key record and the run was non-interactive (`--yes`), so nothing was pushed. Interactively, you're prompted to confirm the SHA256 fingerprint instead — confirming also records the key in your own `~/.ssh/known_hosts`, which the authorization step immediately needs. |
 | `security_flagged` | **The scanned host key does not match your workstation's trusted record.** Rendered prominently as a potential MITM warning; nothing is pushed for that instance and the rest of the run continues. Investigate before trusting; if the instance was legitimately rebuilt, `ssh-keygen -R <host>`, reconnect once to re-trust it, then re-run the push. |
 
 Removed instances (in the last push but no longer in the registry) get their own **Revocation**
@@ -702,10 +707,11 @@ intervening external push, never warn.
 
 ### The setup API and pairing codes
 
-The CLI talks to four endpoints under `/api/v1/setup/*`
+The CLI talks to five endpoints under `/api/v1/setup/*`
 ([`setup-api.md`](../specs/012-web-adopt-pairing/contracts/setup-api.md)): `GET /status`,
-`GET /identity`, `PUT /registry`, `POST /verify`. The surface is **dormant** unless a pairing session
-is live; each route requires `Authorization: Bearer <pairing-code>`, compared in constant time:
+`GET /identity`, `PUT /registry`, `POST /verify`, `POST /end`. The surface is **dormant** unless a
+pairing session is live; each route requires `Authorization: Bearer <pairing-code>`, compared in
+constant time:
 
 - **No live session → the setup surface does not exist.** Every `/api/v1/setup/*` request gets a plain
   `404`, indistinguishable from an absent feature — fail closed. A session is live only while an
@@ -713,9 +719,17 @@ is live; each route requires `Authorization: Bearer <pairing-code>`, compared in
 - **Wrong/missing/expired code → the same dormant `404`** — never a distinguishable `401` that would
   reveal a session exists. The attempt is logged without the presented code; codes and `Authorization`
   headers are covered by the service's log redaction (`src/remo_cli/web/logging_config.py`).
-- **The session ends when the flow completes** (on the terminal `POST /verify`), and a code is
-  single-use per handoff — reopening the page mints a fresh one and invalidates the prior. There is no
-  rotation to manage: codes are ephemeral by construction.
+- **The session ends when the flow completes** — the CLI calls `POST /setup/end` once its push has
+  succeeded. `POST /verify` is repeatable and does *not* end the session: the push flow re-PUTs the
+  mirror and re-verifies after a self-heal, and ending on verify made both of those calls hit the
+  dormant `404`, so the repair never landed and the next push reported a phantom flap (#158). A
+  failed or aborted push deliberately leaves the session live, so you can retry with the same code.
+  A code is single-use per handoff — reopening the page mints a fresh one and invalidates the prior.
+  There is no rotation to manage: codes are ephemeral by construction.
+  *Version skew:* an older CLI against an upgraded service never calls `/setup/end`, so its session
+  lingers until the idle TTL expires (or the page-hide beacon fires); a newer CLI against an older
+  service gets a `404` from `/setup/end`, which it treats as "already ended" — that service had
+  ended the session on verify.
 
 ### Service key rotation
 
@@ -841,7 +855,7 @@ interactive session (only `remo-host capabilities` is invoked, never `sessions a
 | Failure | What it means | Fix |
 |---|---|---|
 | `/api/v1/setup/*` returns `404` for everything | No pairing session is live — the surface is dormant (fail closed). | Open the awaiting-adoption page (through your SSO proxy) to mint a code; if the page can't mint, set `REMO_WEB_OPERATOR_AUTH` (`forward` + header, or `none` for loopback). |
-| `remo web push` (or the deprecated `adopt`) fails: "pairing code is no longer valid … dormant" | The code expired (idle TTL), was rotated by reopening the page, or was already used. | Reopen the awaiting-adoption page (or the dashboard's "Pair CLI to sync" affordance) for a fresh code and retry. |
+| `remo web push` (or the deprecated `adopt`) fails: "pairing code is no longer valid … dormant" | Usually the clipboard holds a code that a *later* mint rotated away — every open of the adopt page / "Pair CLI to sync" mints and rotates. Otherwise the code expired (idle TTL) or the session was already ended. | Click **Copy pairing code** after the most recent mint and paste that one. Only if the page is closed, reopen it for a fresh code — and copy it before retrying, since reopening rotates again. |
 | Mint page shows "you are not signed in" / `POST /pairing/mint` returns `403` | Forward auth is required but the request reached the service without the trusted identity header. | Ensure the request goes through the SSO proxy that injects `REMO_WEB_FORWARD_AUTH_HEADER`; verify the proxy sets and strips it. |
 | adopt fails: deployment "configured via read-only mounts" | The target is a bind-mount deployment (`mount_configured`) — its configuration is operator-provided and read-only, so adoption does not apply. | Update the mounted files instead, or deploy the adopted-mode service (writable state volume, no mounts) if you want adoption. |
 | adopt refuses: empty registry | Your local registry has no instances — pushing would wipe a previously adopted service (a classic wrong-workstation accident). | Register/sync instances first, or pass `--allow-empty` if wiping is intentional. |

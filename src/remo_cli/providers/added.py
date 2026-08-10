@@ -200,6 +200,8 @@ def verify_reachable(host: KnownHost, timeout: int = 10) -> tuple[bool, str | No
     key verification failed" — wrongly reporting a reachable, never-before-seen
     host as unreachable. It deliberately does not pre-seed ``~/.ssh/known_hosts``
     (the first real ``remo shell`` still follows normal host-key behavior).
+    Contrast ``core/web_adopt.py``'s fingerprint-confirmation branch, which
+    *does* write known_hosts — there the operator explicitly approved the key.
     """
     from remo_cli.core.ssh import build_ssh_opts
 

@@ -113,3 +113,10 @@
   background: var(--warn);
   animation: rpulse 1.5s ease infinite;
 }
+
+/* Mint-time copy was refused (no user gesture on page load): this button is the
+ * only way to obtain the code, which is never displayed. */
+.adopt-copy-btn-attention {
+  border-color: var(--accent);
+  background: var(--bg-btn-hover);
+}

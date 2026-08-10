@@ -4,9 +4,16 @@
 // Rendered by AppRoot instead of the console shell while GET /api/v1/ready
 // reports status "unconfigured". On mount it mints an ephemeral pairing code
 // (rotation-on-open, FR-003) and holds it ONLY in a non-rendered ref — the
-// value never enters the DOM (FR-015/FR-016). The operator clicks "Copy pairing
-// code", pastes it into `remo web adopt <origin>` on their workstation, and the
-// browser flips to the dashboard the moment adoption completes.
+// value never enters the DOM (FR-015/FR-016). The code goes straight to the
+// clipboard, the operator pastes it into `remo web adopt <origin>` on their
+// workstation, and the browser flips to the dashboard the moment adoption
+// completes.
+//
+// The clipboard write is attempted on mint (#159) — the code is never shown, so
+// "minted but not copied" is an invisible dead end. There is no user gesture on
+// page load, so most browsers refuse that write; the Copy button then carries a
+// non-expiring "(required)" state rather than a quiet fallback, because until
+// it is clicked the clipboard holds nothing usable.
 //
 // The code is fetched at runtime (never embedded in the served bundle) and the
 // page best-effort ends the session on hide/unload (FR-004); the server's idle
@@ -36,6 +43,20 @@ export function AwaitingAdoption(): JSX.Element {
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   const copyResetHandle = useRef<ReturnType<typeof setTimeout>>();
 
+  const copyCode = useCallback(async () => {
+    clearTimeout(copyResetHandle.current);
+    const code = codeRef.current;
+    if (!code) {
+      setCopyState("failed");
+      return;
+    }
+    const ok = await copyText(code);
+    setCopyState(ok ? "copied" : "failed");
+    // Only the success state auto-clears; "copy required" must persist, since
+    // in that state the clipboard does NOT hold a usable code.
+    if (ok) copyResetHandle.current = setTimeout(() => setCopyState("idle"), 2_000);
+  }, []);
+
   // Mint on open (rotation-on-open, FR-003). The response code is stashed in the
   // ref; only expires_in / auth status drive rendering.
   useEffect(() => {
@@ -45,6 +66,7 @@ export function AwaitingAdoption(): JSX.Element {
         if (cancelled) return;
         codeRef.current = res.code;
         setMintState("ready");
+        void copyCode();
       })
       .catch((err) => {
         if (cancelled) return;
@@ -56,9 +78,14 @@ export function AwaitingAdoption(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [copyCode]);
 
   // Best-effort end on hide/unload (FR-004); idle TTL is the real backstop.
+  // Unmount ends the session too: this component unmounts exactly when adoption
+  // completes, and since #158 the CLI's verify call no longer ends it for us
+  // (the CLI's own POST /setup/end does, but an operator who never finished the
+  // flow — or a service that predates that route — would otherwise leave the
+  // session live for the full idle TTL).
   useEffect(() => {
     const onHide = () => {
       if (document.visibilityState === "hidden") endPairing();
@@ -68,6 +95,7 @@ export function AwaitingAdoption(): JSX.Element {
     return () => {
       window.removeEventListener("pagehide", endPairing);
       document.removeEventListener("visibilitychange", onHide);
+      endPairing();
     };
   }, []);
 
@@ -77,19 +105,6 @@ export function AwaitingAdoption(): JSX.Element {
   }, [retry]);
 
   useEffect(() => () => clearTimeout(copyResetHandle.current), []);
-
-  const onCopy = useCallback(() => {
-    const code = codeRef.current;
-    if (!code) {
-      setCopyState("failed");
-      return;
-    }
-    void copyText(code).then((ok) => {
-      setCopyState(ok ? "copied" : "failed");
-      clearTimeout(copyResetHandle.current);
-      copyResetHandle.current = setTimeout(() => setCopyState("idle"), 2_000);
-    });
-  }, []);
 
   return (
     <div className="adopt-page" data-testid="awaiting-adoption">
@@ -111,6 +126,16 @@ export function AwaitingAdoption(): JSX.Element {
           <code className="adopt-command-text">{command}</code>
         </div>
 
+        {mintState === "ready" && (
+          <p className="adopt-body">
+            {copyState === "copied"
+              ? "The pairing code is on your clipboard — paste it when the CLI prompts."
+              : copyState === "failed"
+                ? "Click “Copy pairing code” below before you run the command — this browser does not allow copying without a click, and the code is never shown."
+                : "The pairing code is never shown; copy it to your clipboard below."}
+          </p>
+        )}
+
         {mintState === "unauthorized" ? (
           <p className="adopt-body adopt-error">
             You are not signed in. This service mints pairing codes only for an authenticated
@@ -125,15 +150,17 @@ export function AwaitingAdoption(): JSX.Element {
             <span className="adopt-command-text">Pairing code ready (hidden)</span>
             <button
               type="button"
-              className="adopt-copy-btn"
-              onClick={onCopy}
+              className={
+                copyState === "failed" ? "adopt-copy-btn adopt-copy-btn-attention" : "adopt-copy-btn"
+              }
+              onClick={() => void copyCode()}
               disabled={mintState !== "ready"}
               data-testid="adopt-copy"
             >
               {mintState !== "ready" && "…"}
               {mintState === "ready" && copyState === "idle" && "Copy pairing code"}
               {mintState === "ready" && copyState === "copied" && "Copied ✓"}
-              {mintState === "ready" && copyState === "failed" && "Copy failed"}
+              {mintState === "ready" && copyState === "failed" && "Copy pairing code (required)"}
             </button>
           </div>
         )}

@@ -19,6 +19,7 @@ _SETUP_ROUTES = [
     ("GET", "/api/v1/setup/identity"),
     ("PUT", "/api/v1/setup/registry"),
     ("POST", "/api/v1/setup/verify"),
+    ("POST", "/api/v1/setup/end"),
 ]
 
 
@@ -65,28 +66,69 @@ def test_idle_expiry_returns_to_dormant(state_dir):
     assert resp.status_code == 404
 
 
+_PAYLOAD = {
+    "version": 1,
+    "registry": [{"type": "incus", "name": "dev", "host": "10.0.0.5", "user": "remo"}],
+    "host_keys": {},
+}
+
+
 def test_adoption_completion_ends_session(state_dir):
     state_dir.adopted()
     client = make_client(state_dir)
     code = mint(client)
-    payload = {
-        "version": 1,
-        "registry": [{"type": "incus", "name": "dev", "host": "10.0.0.5", "user": "remo"}],
-        "host_keys": {},
-    }
     applied = client.put(
-        "/api/v1/setup/registry", headers={**bearer(code), "Origin": ORIGIN}, json=payload
+        "/api/v1/setup/registry", headers={**bearer(code), "Origin": ORIGIN}, json=_PAYLOAD
     )
     assert applied.status_code == 200
-    # The PUT alone does NOT end the session — verify is the terminal step of the
-    # adopt/push flow and must still run with the same code.
+    # The PUT does NOT end the session — the flow continues with the same code.
     assert client.get("/api/v1/setup/status", headers=bearer(code)).status_code == 200
 
     verified = client.post("/api/v1/setup/verify", headers={**bearer(code), "Origin": ORIGIN})
     assert verified.status_code == 200
-    # FR-007: completing the flow (verify) ends the session -> dormant again.
-    after = client.get("/api/v1/setup/status", headers=bearer(code))
-    assert after.status_code == 404
+    # Nor does verify (#158): it used to end the session here, which severed the
+    # push flow's self-heal re-PUT + re-verify.
+    assert client.get("/api/v1/setup/status", headers=bearer(code)).status_code == 200
+
+    # FR-007: the client's explicit close ends it -> dormant again.
+    ended = client.post("/api/v1/setup/end", headers={**bearer(code), "Origin": ORIGIN})
+    assert ended.status_code == 200
+    assert ended.json() == {"ended": True}
+    assert client.get("/api/v1/setup/status", headers=bearer(code)).status_code == 404
+    # And the close itself is now behind the dormant gate, like every setup route.
+    assert (
+        client.post("/api/v1/setup/end", headers={**bearer(code), "Origin": ORIGIN}).status_code
+        == 404
+    )
+
+
+def test_self_heal_sequence_survives_on_one_code(state_dir):
+    """#158 regression: the exact push sequence, including the self-heal pass
+    that runs AFTER the first verify. Every step must stay authenticated by the
+    single minted code until the CLI ends the session itself."""
+    state_dir.adopted()
+    client = make_client(state_dir)
+    code = mint(client)
+    auth = {**bearer(code), "Origin": ORIGIN}
+
+    assert client.get("/api/v1/setup/status", headers=bearer(code)).status_code == 200
+    assert client.get("/api/v1/setup/identity", headers=bearer(code)).status_code == 200
+
+    first = client.put("/api/v1/setup/registry", headers=auth, json=_PAYLOAD)
+    assert first.status_code == 200
+    assert client.post("/api/v1/setup/verify", headers=auth).status_code == 200
+
+    # The self-heal re-PUT + re-verify — both used to hit a dormant 404.
+    second = client.put("/api/v1/setup/registry", headers=auth, json=_PAYLOAD)
+    assert second.status_code == 200
+    assert client.post("/api/v1/setup/verify", headers=auth).status_code == 200
+
+    # The generation advances per successful PUT, which is what the workstation
+    # caches for flap detection — so it must come from the LAST successful one.
+    assert second.json()["mirror_generation"] == first.json()["mirror_generation"] + 1
+
+    assert client.post("/api/v1/setup/end", headers=auth).status_code == 200
+    assert client.get("/api/v1/setup/status", headers=bearer(code)).status_code == 404
 
 
 def _health_ready(client):

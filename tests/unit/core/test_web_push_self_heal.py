@@ -35,6 +35,10 @@ from remo_cli.core.web_adopt import (
     InstanceOutcome,
     auth_failed_labels,
     instance_fingerprint,
+    PayloadRejectedError,
+    SetupApiError,
+    SetupConnectionError,
+    SetupNotFoundError,
     load_push_cache,
     run_push,
     save_push_cache,
@@ -417,3 +421,183 @@ class TestRemediationNamesTheCommand:
         run_push(URL, CODE, assume_yes=True)
 
         assert "--force" not in capsys.readouterr().out
+
+
+class TestSessionIsEndedExplicitly:
+    """#158: `POST /setup/verify` used to end the pairing session as a side
+    effect, so the self-heal pass above — a re-PUT and re-verify that run
+    *after* it — hit a dormant 404 and aborted the push before the cache write.
+    Ending is now the CLI's own call, made once the flow has succeeded."""
+
+    def test_successful_push_ends_the_session(
+        self, tmp_config_dir, api_client, registry, mocker
+    ):
+        registry.return_value = [_host()]
+        api_client.post_verify.return_value = {"all_passed": True, "results": []}
+        _patch_process(mocker)
+
+        run_push(URL, CODE, assume_yes=True)
+
+        assert api_client.post_end.call_count == 1
+
+    def test_session_is_ended_after_the_self_heal_pass(
+        self, tmp_config_dir, api_client, registry, mocker
+    ):
+        """Ordering is the whole point: the close must come last, never before
+        the repair's re-PUT + re-verify."""
+        host = _host()
+        registry.return_value = [host]
+        _seed_cache(host)
+        _patch_process(mocker)
+        order: list[str] = []
+        verifies = [
+            {
+                "all_passed": False,
+                "results": [
+                    _instance_check("incus/node1/dev", passed=False, detail="auth_failed")
+                ],
+            },
+            {"all_passed": True, "results": [_instance_check("incus/node1/dev", passed=True)]},
+        ]
+        applied = {"registry_instances": 1, "host_key_instances": 1, "mirror_generation": 2}
+        api_client.put_registry.side_effect = _recording(order, "put_registry", [applied] * 2)
+        api_client.post_verify.side_effect = _recording(order, "post_verify", verifies)
+        api_client.post_end.side_effect = _recording(order, "post_end", [{"ended": True}])
+
+        run_push(URL, CODE, assume_yes=True)
+
+        assert order == ["put_registry", "post_verify", "put_registry", "post_verify", "post_end"]
+
+    def test_end_failure_never_fails_the_push(
+        self, tmp_config_dir, api_client, registry, mocker
+    ):
+        """An older service without /setup/end (or one that already ended the
+        session on verify) answers 404. The mirror is applied either way."""
+        registry.return_value = [_host()]
+        api_client.post_verify.return_value = {"all_passed": True, "results": []}
+        api_client.post_end.side_effect = SetupNotFoundError("dormant", status=404)
+        _patch_process(mocker)
+
+        result = run_push(URL, CODE, assume_yes=True)
+
+        assert result.all_verified
+
+    def test_failed_push_leaves_the_session_live(
+        self, tmp_config_dir, api_client, registry, mocker
+    ):
+        """A retry should be able to reuse the same code — minting another one
+        would rotate this one away (#159)."""
+        registry.return_value = [_host()]
+        api_client.put_registry.side_effect = PayloadRejectedError(
+            "rejected", reason="invalid_payload"
+        )
+        _patch_process(mocker)
+
+        with pytest.raises(SetupApiError):
+            run_push(URL, CODE, assume_yes=True)
+
+        api_client.post_end.assert_not_called()
+
+
+def _recording(order, name, responses):
+    """A side_effect returning *responses* in turn and logging the call order."""
+    pending = list(responses)
+
+    def call(*_args, **_kwargs):
+        order.append(name)
+        return pending.pop(0)
+
+    return call
+
+
+class TestRepairFailuresStillWriteTheCache:
+    """Everything after the first successful PUT is best-effort: the mirror is
+    already applied, so a failure in the repair round must not strand the local
+    cache — that lost write is what turned #158 into a phantom flap warning on
+    the following push."""
+
+    @pytest.fixture
+    def _failing_first_verify(self, api_client):
+        api_client.post_verify.side_effect = [
+            {
+                "all_passed": False,
+                "results": [
+                    _instance_check("incus/node1/dev", passed=False, detail="auth_failed")
+                ],
+            },
+            {"all_passed": True, "results": [_instance_check("incus/node1/dev", passed=True)]},
+        ]
+
+    def test_repair_put_failure_still_caches_the_generation(
+        self, tmp_config_dir, api_client, registry, mocker, _failing_first_verify, capsys
+    ):
+        host = _host()
+        registry.return_value = [host]
+        _seed_cache(host)
+        api_client.put_registry.side_effect = [
+            {"registry_instances": 1, "host_key_instances": 1, "mirror_generation": 2},
+            SetupNotFoundError("dormant", status=404),
+        ]
+        _patch_process(mocker)
+
+        result = run_push(URL, CODE, assume_yes=True)
+
+        cache = load_push_cache()[DEPLOYMENT_ID]
+        # The generation must come from the last SUCCESSFUL PUT — the service
+        # bumps it on every PUT, so a failed call's generation would be wrong.
+        assert cache.mirror_generation == 2
+        # The service never received the rescanned host keys, so caching this
+        # instance would re-arm the very `unchanged` fast path #122 fixed.
+        assert cache.instances == {}
+        assert result.outcomes[0].outcome == OUTCOME_REPAIRED
+        assert "re-push the mirror after repair" in capsys.readouterr().out
+
+    def test_repair_put_failure_skips_the_re_verify(
+        self, tmp_config_dir, api_client, registry, mocker, _failing_first_verify
+    ):
+        host = _host()
+        registry.return_value = [host]
+        _seed_cache(host)
+        api_client.put_registry.side_effect = [
+            {"registry_instances": 1, "host_key_instances": 1, "mirror_generation": 2},
+            SetupNotFoundError("dormant", status=404),
+        ]
+        _patch_process(mocker)
+
+        result = run_push(URL, CODE, assume_yes=True)
+
+        assert api_client.post_verify.call_count == 1
+        assert not result.all_verified, "the pre-repair report is the only one we have"
+
+    def test_re_verify_failure_still_caches_the_new_generation(
+        self, tmp_config_dir, api_client, registry, mocker, capsys
+    ):
+        """The re-PUT succeeded, so the service DID advance a generation — the
+        cache has to record it or the next push reads a flap."""
+        host = _host()
+        registry.return_value = [host]
+        _seed_cache(host)
+        api_client.put_registry.side_effect = [
+            {"registry_instances": 1, "host_key_instances": 1, "mirror_generation": 2},
+            {"registry_instances": 1, "host_key_instances": 1, "mirror_generation": 3},
+        ]
+        api_client.post_verify.side_effect = [
+            {
+                "all_passed": False,
+                "results": [
+                    _instance_check("incus/node1/dev", passed=False, detail="auth_failed")
+                ],
+            },
+            SetupConnectionError("connection reset"),
+        ]
+        _patch_process(mocker)
+
+        result = run_push(URL, CODE, assume_yes=True)
+
+        cache = load_push_cache()[DEPLOYMENT_ID]
+        assert cache.mirror_generation == 3
+        # Conservative on purpose: the stale report still says auth_failed, and
+        # an instance we cannot confirm is never cached.
+        assert cache.instances == {}
+        assert result.verify["all_passed"] is False
+        assert "report below predates the repair" in capsys.readouterr().out

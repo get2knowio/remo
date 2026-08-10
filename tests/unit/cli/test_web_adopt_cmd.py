@@ -197,11 +197,11 @@ class TestExitCodes:
         assert "read-only mounts" in result.output
         assert "adoption does not apply" in result.output
 
-    def test_dormant_surface_exits_one_with_reopen_message(self, runner, mock_run_push):
+    def test_dormant_surface_exits_one_with_stale_code_message(self, runner, mock_run_push):
         mock_run_push.side_effect = SetupNotFoundError(
             "the pairing code is no longer valid — the setup surface at "
-            "http://svc:8080 is dormant (HTTP 404). Reopen the adopt page to mint "
-            "a fresh code, then retry.",
+            "http://svc:8080 is dormant (HTTP 404). Click 'Copy pairing code' "
+            "after the most recent mint and paste that one, or mint a fresh code.",
             status=404,
         )
 
