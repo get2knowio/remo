@@ -1,0 +1,21 @@
+name: "remo CodeQL config"
+
+# Scope the scan to code this repository actually ships.
+#
+# `docs/remo-web.html` is an 881 KB single-file design mockup produced by a
+# page bundler, checked in as the visual reference the console's design was
+# adopted from (cited by `frontend/src/theme/tokens.css` and
+# `frontend/src/state/workspace.ts`). It is not served by anything: no Pages
+# workflow publishes `docs/`, nothing links to it, and it is absent from both
+# the wheel and the container image. You open it from disk.
+#
+# Scanning it produced one alert (js/xss-through-dom) whose "DOM text" source
+# is the file's OWN embedded `<script type="__bundler/template">` literal,
+# read back at line 86 and handed to `DOMParser.parseFromString`. That is how
+# every self-unpacking bundle works; there is no external input anywhere in
+# the flow, and no origin to be cross-site against.
+#
+# Only the one file is excluded, not `docs/` -- `docs/examples/` holds real
+# cloud-init YAML, and anything executable added there later should be scanned.
+paths-ignore:
+  - docs/remo-web.html
