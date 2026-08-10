@@ -508,8 +508,8 @@ class TestConfirmPersistsTrust:
         assert result.detail == "fingerprint confirmed interactively"
         out = capsys.readouterr().out
         # The path reaches the operator through the OSError rather than being
-        # interpolated from `trusted_store` (CodeQL reads that flow as a leaked
-        # secret) — it still has to be there, whichever way it arrives.
+        # interpolated a second time into the warning body — it still has to be
+        # there, whichever way it arrives.
         assert str(store) in out
         assert not store.exists()
 
