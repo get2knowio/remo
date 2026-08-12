@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+#
+# devcontainer — remo shim. Managed by Ansible (roles/nested_docker); do not
+# edit manually. Installed only on hosts whose kernel refuses nested overlayfs
+# mounts (OrbStack machines). See docs/nested-overlayfs.md, issues #160/#171.
+#
+# WHY THIS EXISTS
+#
+# The devcontainer CLI shells out to two different Docker builders, and on such
+# a host their requirements are mutually exclusive:
+#
+#   Features, image-based   docker buildx build    ignores DOCKER_BUILDKIT
+#   Features, Compose       docker compose build   needs DOCKER_BUILDKIT=1
+#   updateUID               docker build           needs DOCKER_BUILDKIT=0
+#
+# `docker compose build` HONOURS DOCKER_BUILDKIT=0 and drops to the classic
+# builder, which rejects the `additional_contexts` the CLI injects in order to
+# install Features ("the classic builder doesn't support additional contexts").
+# `docker buildx build` ignores the variable entirely. So the one setting that
+# rescues updateUID is the one that kills Compose projects, and no global value
+# is correct for both. This shim decides per invocation, from the project's own
+# devcontainer.json.
+#
+# TWO PLACEMENT RULES, BOTH LEARNED THE HARD WAY
+#
+#   * It lives on the SYSTEM path, not in ~/.local/bin. That directory is added
+#     to PATH inside ~/.bashrc, which returns early for non-interactive shells
+#     (`case $- in *i*) ;; *) return;; esac`) — so a shim there would miss
+#     `ssh host 'devcontainer up …'`, precisely the case that needs it, while
+#     passing every interactive test.
+#   * It calls the real CLI by ABSOLUTE PATH. `command devcontainer` resolves
+#     through PATH, finds this shim ahead of the real one, and recurses.
+
+set -uo pipefail
+
+REAL_CLI="{{ nested_docker_real_cli_path }}"
+BUILDER="{{ nested_docker_builder_name }}"
+PINNED_UID="{{ nested_docker_pinned_uid }}"
+
+if [[ ! -x "$REAL_CLI" ]]; then
+    printf 'devcontainer (remo shim): the real CLI is missing at %s\n' "$REAL_CLI" >&2
+    printf '  Reinstall it:  sudo npm install -g @devcontainers/cli\n' >&2
+    exit 127
+fi
+
+# The CLI takes its subcommand first (`devcontainer up …`), so argv[1] is it.
+# Anything starting with `-` (--version, --help) is not a subcommand and needs
+# no special handling.
+subcmd=""
+if [[ "${1-}" != -* ]]; then
+    subcmd="${1-}"
+fi
+
+workspace=""
+config=""
+uid_flag_given=0
+prev=""
+for arg in "$@"; do
+    case "$arg" in
+        --workspace-folder=*)
+            workspace="${arg#*=}"
+            ;;
+        --config=*)
+            config="${arg#*=}"
+            ;;
+        --update-remote-user-uid-default|--update-remote-user-uid-default=*)
+            uid_flag_given=1
+            ;;
+        *)
+            case "$prev" in
+                --workspace-folder) workspace="$arg" ;;
+                --config)           config="$arg" ;;
+            esac
+            ;;
+    esac
+    prev="$arg"
+done
+
+# Which devcontainer.json applies. An explicit --config wins; otherwise the two
+# standard locations, then any per-configuration subfolder. A project only has
+# to be Compose-based in ONE of them for the Compose environment to be needed.
+declare -a candidates=()
+if [[ -n "$config" ]]; then
+    candidates=("$config")
+else
+    ws="${workspace:-$PWD}"
+    candidates=(
+        "$ws/.devcontainer/devcontainer.json"
+        "$ws/.devcontainer.json"
+        "$ws"/.devcontainer/*/devcontainer.json
+    )
+fi
+
+# A textual test, not a parse: devcontainer.json is JSONC and the CLI itself is
+# the only thing that reads it properly. A "dockerComposeFile" mentioned inside
+# a comment would false-positive here — the cost of that is a Compose-style
+# environment on an image-based project, which still builds.
+compose_project=0
+for candidate in ${candidates[@]+"${candidates[@]}"}; do
+    [[ -f "$candidate" ]] || continue
+    if grep -q '"dockerComposeFile"' "$candidate" 2>/dev/null; then
+        compose_project=1
+        break
+    fi
+done
+
+declare -a extra_args=()
+
+if (( compose_project )); then
+    # COMPOSE_BAKE routes the Compose build through buildx (and so through the
+    # native-snapshotter builder below); DOCKER_BUILDKIT=1 is what stops
+    # Compose forcing the classic builder anyway. Verified on an affected host:
+    # COMPOSE_BAKE alone fails identically — both are required together.
+    export DOCKER_BUILDKIT=1
+    export COMPOSE_BAKE=1
+
+    # updateUID runs a plain `docker build`, which ignores the selected builder
+    # and hits the daemon's embedded BuildKit — the exact overlay mount that is
+    # refused here. It is a no-op whenever the host UID already matches the
+    # image user's, which is what user_setup's UID-1000 pin buys against the
+    # standard base images, so skip it rather than let it fail while changing
+    # nothing. Only `up` and `build` accept the flag: appending it to `exec`
+    # makes the CLI reject the command, and project-launch uses `exec`.
+    if (( ! uid_flag_given )) && [[ "$subcmd" == "up" || "$subcmd" == "build" ]]; then
+        if [[ "$(id -u)" == "$PINNED_UID" ]]; then
+            extra_args=(--update-remote-user-uid-default never)
+        else
+            printf 'devcontainer (remo shim): running as UID %s, not %s.\n' "$(id -u)" "$PINNED_UID" >&2
+            printf '  Not skipping updateUID — at this UID it may genuinely have to remap the\n' >&2
+            printf '  container user, and skipping it would leave bind-mounted files unwritable.\n' >&2
+            printf '  If the build now fails on an overlay mount, re-run with\n' >&2
+            printf '  --update-remote-user-uid-default never and check that files under the\n' >&2
+            printf '  workspace stay writable inside the container. See docs/nested-overlayfs.md.\n' >&2
+        fi
+    fi
+else
+    # Image-based, or no devcontainer.json at all. The Features build goes
+    # through `docker buildx build`, which ignores DOCKER_BUILDKIT and honours
+    # BUILDX_BUILDER below; nothing on this path runs `docker compose build`,
+    # so pinning DOCKER_BUILDKIT=0 is safe and is what makes updateUID work.
+    export DOCKER_BUILDKIT=0
+fi
+
+# Name the builder explicitly rather than relying on whichever one
+# `docker buildx use` last selected, so a user changing their default builder
+# cannot silently break every devcontainer on the host.
+export BUILDX_BUILDER="$BUILDER"
+
+exec "$REAL_CLI" "$@" ${extra_args[@]+"${extra_args[@]}"}

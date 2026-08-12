@@ -354,6 +354,15 @@ If a VPN or a Tailscale exit node with LAN access claims OrbStack's subnet
 (`orb config get network.subnet4`), even the Mac-local path black-holes; check
 with `route -n get <vm-ip>`.
 
+**Devcontainer builds.** An OrbStack machine is a container on a shared kernel,
+so Docker inside it is nested and the kernel refuses the overlayfs mounts
+BuildKit's default snapshotter needs — without help, no devcontainer builds at
+all. `remo configure` detects this and provisions a `native`-snapshotter buildx
+builder plus a `devcontainer` shim that picks the right build environment per
+project; builds work, but are noticeably slower. Two limits it cannot fix —
+`apt` inside a running container, and therefore `playwright install --with-deps`
+— are covered in [`docs/nested-overlayfs.md`](docs/nested-overlayfs.md).
+
 To reach the VM from anywhere — including a `remo web` service that cannot reach
 your Mac — use
 [`docs/examples/orbstack-cloud-init-tailscale.yaml`](docs/examples/orbstack-cloud-init-tailscale.yaml)

@@ -19,6 +19,27 @@ aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
 # User Configuration
 remo_user: "remo"
 
+# Does this host's kernel refuse NESTED overlayfs mounts? If it does, BuildKit's
+# default snapshotter cannot run and no devcontainer can be built without the
+# workarounds in roles/nested_docker (#160, #171).
+#
+# `-orbstack-` in the kernel release is the discriminator, and it is clean:
+#
+#   OrbStack machine : 7.0.11-orbstack-00360-gc9bc4d96ac70
+#   Proxmox guest    : 7.0.2-2-pve
+#
+# The two other available signals are worse. The `orbstack` group exists but is
+# a platform integration detail, and /mnt/mac is ABSENT when the machine is
+# created with `--isolated` — using it would silently skip the fix on exactly
+# the configuration a user picks for a cleaner VM.
+#
+# Every configure playbook gathers facts before including
+# tasks/configure_dev_tools.yml (ssh_configure.yml and aws_configure.yml do it
+# explicitly in pre_tasks), so ansible_kernel is always populated by then; the
+# default() is belt-and-braces per Constitution principle V. Force the
+# workarounds on elsewhere with `-e docker_nested_overlayfs=true`.
+docker_nested_overlayfs: "{{ '-orbstack-' in (ansible_kernel | default('')) }}"
+
 # Development workspace directory (used by devshell script)
 dev_workspace_dir: "/home/{{ remo_user }}/projects"
 

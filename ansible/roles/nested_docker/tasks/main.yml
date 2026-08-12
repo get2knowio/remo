@@ -1,0 +1,260 @@
+---
+# Docker/devcontainer workarounds for hosts whose kernel refuses NESTED
+# overlayfs mounts (#160, #171). In practice that means OrbStack "machines",
+# which are containers on a shared kernel — the rootfs is a btrfs subvolume
+# under /scon/containers/<id>/rootfs — not virtual machines. Docker installed
+# inside one is therefore nested, and an overlay mount from in there is
+# refused outright:
+#
+#   mount source: "overlay", target: ".../cachemounts/buildkit1256162528",
+#   fstype: overlay, … err: operation not permitted
+#
+# Two distinct failures follow, and this role fixes both.
+#
+# 1. BUILDKIT'S SNAPSHOTTER (#160). Docker 29 makes the containerd snapshotter
+#    the default, and its cache mount is an overlay mount, so every
+#    `docker buildx build` dies on the first RUN. containerd v1 worked only
+#    because it fell back to another snapshotter. The fix is a builder on the
+#    `docker-container` driver configured with the `native` snapshotter, which
+#    COPIES layers instead of overlaying them. That is correct and materially
+#    slower — the price of building at all on this platform.
+#
+# 2. THE DEVCONTAINER CLI'S TWO BUILDERS (#171). The CLI shells out to two
+#    different builders with incompatible requirements here, and no single
+#    environment satisfies both:
+#
+#      step                                    needs
+#      ------------------------------------    -------------------------------
+#      Features, image-based (buildx build)    the native builder
+#      Features, Compose (compose build)       DOCKER_BUILDKIT=1 + COMPOSE_BAKE=1
+#      updateUID (plain docker build)          DOCKER_BUILDKIT=0
+#
+#    `docker compose build` HONORS DOCKER_BUILDKIT=0 and drops to the classic
+#    builder, which rejects the `additional_contexts` the CLI injects to build
+#    Features ("the classic builder doesn't support additional contexts"),
+#    while `docker buildx build` ignores the variable entirely. So the one
+#    setting that rescues updateUID is the one that kills Compose projects.
+#    The fix is a PATH shim that picks per invocation — see the template.
+#
+# Two things that look like cleaner fixes and are not, both established by
+# bisection on an affected host rather than assumed:
+#
+#   * COMPOSE_BAKE=1 alone. Bake does route Compose through the selected
+#     builder, but with DOCKER_BUILDKIT=0 still set Compose forces the classic
+#     builder anyway and fails identically. Both variables are required.
+#   * `docker buildx install` (aliasing `docker build` -> `docker buildx
+#     build`). The docker-container driver cannot resolve local-only images,
+#     and updateUID's `FROM $BASE_IMAGE` names the image Compose just built
+#     into the local daemon store — so it fails with "pull access denied".
+#
+# Everything the builder half touches is USER-scoped (buildx state lives in
+# ~/.docker/buildx), so it runs as remo_user throughout.
+
+- name: Check whether docker buildx is usable by the remo user
+  ansible.builtin.command: docker buildx version
+  become: true
+  become_user: "{{ remo_user }}"
+  environment:
+    HOME: "/home/{{ remo_user }}"
+  register: nested_docker_buildx
+  changed_when: false
+  failed_when: false
+
+# The message has to live in the task NAME: the non-verbose output filter
+# (core/ansible_runner.py::_filter_line) prints task names but suppresses
+# debug msg bodies entirely, and clears the pending name on `skipping:` — so
+# this line appears exactly when the workaround really was skipped.
+- name: "Nested-overlayfs workaround SKIPPED — docker buildx is not usable by this account, so devcontainer builds will fail (run 'remo configure' without --skip docker)"
+  ansible.builtin.debug:
+    msg: >-
+      `docker buildx version` failed as {{ remo_user }}:
+      {{ nested_docker_buildx.stderr | default(nested_docker_buildx.stdout | default('no output')) }}
+  when: nested_docker_buildx.rc | default(1) != 0
+
+- name: Provision a native-snapshotter builder and a devcontainer shim
+  when: nested_docker_buildx.rc | default(1) == 0
+  block:
+
+    # ---------------------------------------------------------------------
+    # 1. The builder (#160)
+    # ---------------------------------------------------------------------
+
+    - name: Create the buildkit config directory for the remo user
+      ansible.builtin.file:
+        path: "{{ nested_docker_config_dir }}"
+        state: directory
+        owner: "{{ remo_user }}"
+        group: "{{ remo_user }}"
+        mode: '0755'
+
+    - name: Write the buildkitd config that selects the native snapshotter
+      ansible.builtin.copy:
+        dest: "{{ nested_docker_config_dir }}/buildkitd.toml"
+        content: |
+          # Managed by Ansible (remo) - do not edit manually.
+          #
+          # `native` copies layers instead of overlaying them. It is the only
+          # snapshotter that works on a host whose kernel refuses nested
+          # overlayfs mounts, and it is slower than overlayfs by a wide margin.
+          # See docs/nested-overlayfs.md.
+          [worker.oci]
+            snapshotter = "native"
+        owner: "{{ remo_user }}"
+        group: "{{ remo_user }}"
+        mode: '0644'
+      register: nested_docker_buildkitd
+
+    - name: Check whether the native buildx builder already exists
+      ansible.builtin.command: "docker buildx inspect {{ nested_docker_builder_name }}"
+      become: true
+      become_user: "{{ remo_user }}"
+      environment:
+        HOME: "/home/{{ remo_user }}"
+      register: nested_docker_builder_state
+      changed_when: false
+      failed_when: false
+
+    # `docker buildx create` reads --config once, at creation time: editing
+    # buildkitd.toml afterwards never reaches an existing builder. Without this
+    # the host would keep building on the old snapshotter while the file on
+    # disk claimed otherwise — a silent divergence, which is the failure mode
+    # this whole role exists to eliminate.
+    - name: Remove the native builder so a changed buildkitd config takes effect
+      ansible.builtin.command: "docker buildx rm {{ nested_docker_builder_name }}"
+      become: true
+      become_user: "{{ remo_user }}"
+      environment:
+        HOME: "/home/{{ remo_user }}"
+      when:
+        - nested_docker_builder_state.rc | default(1) == 0
+        - nested_docker_buildkitd.changed | default(false)
+
+    # --bootstrap starts the builder container now rather than on first build,
+    # so a broken image pull fails the configure instead of surfacing days
+    # later as an opaque devcontainer error. --use makes it this account's
+    # default builder so a hand-run `docker buildx build` works too; the shim
+    # does not depend on that (it sets BUILDX_BUILDER explicitly), which is
+    # what lets a user switch back without breaking devcontainers.
+    - name: Create the native-snapshotter buildx builder
+      ansible.builtin.command: >-
+        docker buildx create
+        --name {{ nested_docker_builder_name }}
+        --driver docker-container
+        --config {{ nested_docker_config_dir }}/buildkitd.toml
+        --bootstrap --use
+      become: true
+      become_user: "{{ remo_user }}"
+      environment:
+        HOME: "/home/{{ remo_user }}"
+      when: >-
+        nested_docker_builder_state.rc | default(1) != 0
+        or (nested_docker_buildkitd.changed | default(false))
+
+    # ---------------------------------------------------------------------
+    # 2. The devcontainer shim (#171)
+    # ---------------------------------------------------------------------
+
+    - name: Find the npm global prefix the devcontainer CLI was installed under
+      ansible.builtin.command: npm prefix -g
+      register: nested_docker_npm_prefix
+      changed_when: false
+      failed_when: false
+
+    - name: Locate the real devcontainer CLI
+      ansible.builtin.stat:
+        path: "{{ nested_docker_npm_prefix.stdout | default('') | trim }}/bin/devcontainer"
+      register: nested_docker_real_cli
+      when: (nested_docker_npm_prefix.rc | default(1)) == 0
+
+    # A deacon-only host, or one configured with --skip devcontainers/nodejs,
+    # has no @devcontainers/cli to wrap. Say so rather than installing a shim
+    # that delegates to nothing. (deacon is a separate binary with a different
+    # flag set; it is not covered by this shim — see docs/nested-overlayfs.md.)
+    - name: "Devcontainer shim SKIPPED — no @devcontainers/cli found on this host, so Compose-based devcontainers will not build (see docs/nested-overlayfs.md)"
+      ansible.builtin.debug:
+        msg: >-
+          npm prefix -g rc={{ nested_docker_npm_prefix.rc | default('n/a') }};
+          looked for
+          {{ nested_docker_npm_prefix.stdout | default('') | trim }}/bin/devcontainer
+      when: not (nested_docker_real_cli.stat.exists | default(false))
+
+    - name: Install the devcontainer shim
+      when: nested_docker_real_cli.stat.exists | default(false)
+      block:
+        # If npm's global prefix were /usr/local, the real CLI would already
+        # BE at the shim's path and templating over it would destroy the very
+        # binary the shim delegates to. remo's own nodejs role installs under
+        # /usr (NodeSource), so this cannot happen on a remo-provisioned host;
+        # it is a guard against a hand-installed Node, and it fails loudly
+        # because the alternative is a host that silently has no devcontainer
+        # CLI at all.
+        - name: Refuse to overwrite the real devcontainer CLI with the shim
+          ansible.builtin.assert:
+            that:
+              - nested_docker_real_cli.stat.path != nested_docker_shim_path
+            fail_msg: >-
+              The devcontainer CLI is installed at {{ nested_docker_shim_path }},
+              which is where remo needs to install its shim. Move the npm global
+              prefix off /usr/local (npm config set prefix /usr) and re-run
+              `remo configure`, or install the shim yourself — see
+              docs/nested-overlayfs.md.
+            quiet: true
+
+        - name: Install the devcontainer shim on the system PATH
+          ansible.builtin.template:
+            src: devcontainer-shim.sh.j2
+            dest: "{{ nested_docker_shim_path }}"
+            owner: root
+            group: root
+            mode: '0755'
+          vars:
+            nested_docker_real_cli_path: "{{ nested_docker_real_cli.stat.path }}"
+
+    # ---------------------------------------------------------------------
+    # 3. Report what the operator now has, and what remo did not touch
+    # ---------------------------------------------------------------------
+
+    # DOCKER_BUILDKIT=0 was the hand-rolled workaround before this role
+    # existed, and it is exactly what breaks Compose projects (#171). The shim
+    # sets the variable per invocation so a stale global no longer breaks
+    # devcontainers — but it still breaks a hand-run `docker compose build`,
+    # and it is confusing. remo does NOT delete it: these are the operator's
+    # own lines, in files remo has no managed block in, and silently editing
+    # someone's shell profile is the same class of mistake as the
+    # authorized_keys overwrite in #121. Name it and let them remove it.
+    - name: Look for a hand-added global DOCKER_BUILDKIT setting
+      ansible.builtin.shell:
+        cmd: >-
+          grep -l DOCKER_BUILDKIT
+          /etc/environment
+          /home/{{ remo_user }}/.bashrc
+          /home/{{ remo_user }}/.bash_profile
+          /home/{{ remo_user }}/.profile
+          2>/dev/null || true
+      register: nested_docker_stale_buildkit
+      changed_when: false
+
+    - name: "A global DOCKER_BUILDKIT is set on this host and is no longer needed — it breaks 'docker compose build'; remove it (remo left it alone: it is not remo's line)"
+      ansible.builtin.debug:
+        msg: >-
+          DOCKER_BUILDKIT is set in:
+          {{ nested_docker_stale_buildkit.stdout_lines | default([]) | join(', ') }}.
+          The devcontainer shim now sets it per invocation, so these are
+          redundant. See docs/nested-overlayfs.md.
+      when: (nested_docker_stale_buildkit.stdout | default('') | trim | length) > 0
+
+    - name: "Nested overlayfs detected: container builds use the slower 'native' snapshotter, and apt inside a running container can fail with 'Invalid cross-device link' (see docs/nested-overlayfs.md)"
+      ansible.builtin.debug:
+        msg: |
+          buildx builder : {{ nested_docker_builder_name }} (docker-container, native snapshotter)
+          devcontainer   : {{ nested_docker_shim_path if (nested_docker_real_cli.stat.exists | default(false)) else 'shim NOT installed' }}
+
+          Builds copy layers instead of overlaying them, so they are slower —
+          a large image can take several minutes to export. That is the cost of
+          building at all on this platform.
+
+          Not fixable here: overlayfs also breaks dpkg INSIDE running
+          containers ("unable to install new version of …: Invalid cross-device
+          link"), so `apt-get` in a postCreateCommand — `playwright install
+          --with-deps`, for instance — can fail while `devcontainer up` still
+          reports success.
