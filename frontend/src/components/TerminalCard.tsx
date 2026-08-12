@@ -483,6 +483,21 @@ export function TerminalCard({
     }
   }, [isFocused, isVisible]);
 
+  // Re-assert the remote window size whenever this card is shown.
+  //
+  // A hidden card measures 0x0, so scheduleFit skips every fit while it is
+  // away; when it comes back, a fit that lands on the SAME cols/rows sends
+  // nothing (the grid genuinely did not change). That is correct for the local
+  // emulator but leaves no way to repair a remote that missed the SIGWINCH for
+  // this size — and nothing else will ever re-send it. Showing the card is the
+  // cheapest moment to fix that: the operator is looking at this terminal, so
+  // the redraw an already-correct remote performs is free and invisible.
+  useEffect(() => {
+    if (isVisible) {
+      connectionRef.current?.reassertSize();
+    }
+  }, [isVisible]);
+
   // Measure the popup's placement before paint, and keep it anchored while it
   // is open. A grid tile can be far smaller than the list, so the menu is
   // positioned against the VIEWPORT (see ThemeMenuPosition) rather than the

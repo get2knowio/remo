@@ -131,3 +131,69 @@ async def test_session_resize_delivers_sigwinch_to_child():
         assert await _drain_until(b"WINCH"), "child did not receive SIGWINCH on resize"
     finally:
         await session.close()
+
+
+@pytest.mark.asyncio
+async def test_session_resize_signals_even_when_the_size_is_unchanged():
+    """Re-sending the SAME dims must still deliver SIGWINCH.
+
+    A resize reaches the remote as exactly one SIGWINCH, and everything below
+    this PTY -- ssh, the remote PTY, Zellij, and the ``docker exec`` TTY that
+    ``devcontainer exec`` runs a TUI on -- has to be listening at that instant.
+    Miss it and nothing regenerates it, so the remote stays pinned at the stale
+    size while the browser shows the correct one: observed in the field as
+    ``stty size`` reporting 67 rows against a panel with room for 59, curable
+    only by forcing a *different* size by hand (maximize, then restore).
+
+    The browser therefore re-asserts its current dims after every resize
+    (``RESIZE_REASSERT_DELAYS_MS`` in frontend/src/terminal/TerminalConnection.ts)
+    and whenever a hidden card is shown again. That repair rests entirely on
+    this property: the kernel suppresses a same-size ``TIOCSWINSZ``, so an
+    unchanged resize raises no signal of its own, and :meth:`TerminalSession.
+    resize` signalling unconditionally is the only reason a re-assert is worth
+    anything. Gate that here -- "skip the signal when nothing changed" looks
+    like a safe optimisation and would silently restore the bug.
+    """
+    child = (
+        "import signal,sys,time\n"
+        "signal.signal(signal.SIGWINCH, lambda *a: (sys.stdout.write('WINCH\\n'), sys.stdout.flush()))\n"
+        "sys.stdout.write('READY\\n'); sys.stdout.flush()\n"
+        "time.sleep(5)\n"
+    )
+    session = TerminalSession([sys.executable, "-u", "-c", child], cols=80, rows=24)
+    await session.start()
+
+    async def _drain_until(marker: bytes, timeout: float = 3.0) -> bool:
+        acc = bytearray()
+
+        async def _pump() -> bool:
+            while True:
+                chunk = await session.read_output()
+                if not chunk:
+                    return False
+                acc.extend(chunk)
+                if marker in acc:
+                    return True
+
+        try:
+            return await asyncio.wait_for(_pump(), timeout)
+        except (TimeoutError, asyncio.TimeoutError):
+            return False
+
+    try:
+        assert await _drain_until(b"READY"), "child never started"
+
+        session.resize(120, 40)
+        assert await _drain_until(b"WINCH"), "no SIGWINCH on the initial resize"
+        assert _read_winsize(session._master_fd) == (120, 40)  # noqa: SLF001
+
+        # The re-assert: identical dims, nothing for the kernel to change.
+        session.resize(120, 40)
+        assert await _drain_until(b"WINCH"), (
+            "re-asserting the same size delivered no SIGWINCH — a remote that "
+            "missed the first one can no longer be repaired without the "
+            "operator forcing a different size by hand"
+        )
+        assert _read_winsize(session._master_fd) == (120, 40)  # noqa: SLF001
+    finally:
+        await session.close()

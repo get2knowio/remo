@@ -40,6 +40,8 @@ vi.mock("../terminal/defaultRenderer", () => ({
   }),
 }));
 
+const connections: Array<{ reassertSize: ReturnType<typeof vi.fn> }> = [];
+
 vi.mock("../terminal/TerminalConnection", () => ({
   TerminalConnection: class {
     needsManualReconnect = false;
@@ -47,6 +49,10 @@ vi.mock("../terminal/TerminalConnection", () => ({
     close = vi.fn().mockResolvedValue(undefined);
     sendInput = vi.fn();
     sendResize = vi.fn();
+    reassertSize = vi.fn();
+    constructor() {
+      connections.push(this as unknown as { reassertSize: ReturnType<typeof vi.fn> });
+    }
   },
 }));
 
@@ -71,6 +77,7 @@ async function mount(): Promise<{
 }> {
   vi.resetModules();
   adapters.length = 0;
+  connections.length = 0;
   window.localStorage.clear();
   const settings = await import("../state/settings");
   const card = await import("./TerminalCard");
@@ -251,5 +258,76 @@ describe("themeMenuPosition", () => {
     const pos = themeMenuPosition({ top: 0, bottom: 0, right: 0 }, { width: 0, height: 0 });
     expect(pos.style.maxHeight as number).toBeGreaterThan(0);
     expect(pos.style.left as number).toBeGreaterThanOrEqual(0);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Remote size repair on show.
+//
+// A hidden card measures 0x0, so scheduleFit skips every fit while it is away.
+// On return, a fit landing on the SAME cols/rows sends nothing — correct for
+// the local emulator, but it leaves no way to repair a remote that missed the
+// SIGWINCH for this size, and nothing else will ever re-send it. That is what
+// stranded `stty size` at 67 rows against a panel with room for 59.
+// ---------------------------------------------------------------------------
+describe("TerminalCard remote size repair", () => {
+  function renderWithVisibility(
+    TerminalCard: typeof import("./TerminalCard").TerminalCard,
+    isVisible: boolean,
+  ) {
+    return render(
+      <DndContext>
+        <TerminalCard
+          target={target}
+          mode="single"
+          isVisible={isVisible}
+          isFocused
+          viewState="normal"
+          onClose={() => {}}
+          onNormal={() => {}}
+          onToggleFullscreen={() => {}}
+        />
+      </DndContext>,
+    );
+  }
+
+  it("re-asserts the remote size when a hidden card is shown again", async () => {
+    const { card } = await mount();
+    const { rerender } = renderWithVisibility(card.TerminalCard, false);
+
+    expect(connections).toHaveLength(1);
+    const connection = connections[0];
+    // Hidden on mount: nothing to repair, and a hidden card must not touch the
+    // remote at all.
+    expect(connection.reassertSize).not.toHaveBeenCalled();
+
+    rerender(
+      <DndContext>
+        <card.TerminalCard
+          target={target}
+          mode="single"
+          isVisible
+          isFocused
+          viewState="normal"
+          onClose={() => {}}
+          onNormal={() => {}}
+          onToggleFullscreen={() => {}}
+        />
+      </DndContext>,
+    );
+
+    expect(connection.reassertSize).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-asserts on mount when the card starts visible", async () => {
+    const { card } = await mount();
+    renderWithVisibility(card.TerminalCard, true);
+
+    expect(connections).toHaveLength(1);
+    // Harmless before the socket is open — sendControl drops it, and the
+    // `ready` handler re-sends the same dims — but it is the right shape: the
+    // card asserts its size whenever it is on screen.
+    expect(connections[0].reassertSize).toHaveBeenCalledTimes(1);
   });
 });
