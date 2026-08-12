@@ -74,6 +74,18 @@
     - configure_devcontainers | default(true) | bool
     - (devcontainer_runtime | default('devcontainer')) == 'deacon'
 
+# Hosts whose kernel refuses nested overlayfs mounts cannot build ANY
+# devcontainer with the stock Docker setup (#160), and the obvious workaround
+# for that breaks Compose-based ones (#171). Both fixes are user-scoped, so
+# this has to run after user_setup (the account and its docker-group
+# membership) and after the devcontainer runtime it shims. It has no
+# configure_* toggle of its own: it is a repair for the tools already selected,
+# not another tool, and it no-ops on every host that does not need it.
+- name: Work around a kernel that refuses nested overlayfs mounts
+  ansible.builtin.include_role:
+    name: nested_docker
+  when: docker_nested_overlayfs | default(false) | bool
+
 - name: Install GitHub CLI
   ansible.builtin.include_role:
     name: github_cli

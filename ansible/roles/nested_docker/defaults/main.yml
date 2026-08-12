@@ -1,0 +1,31 @@
+---
+# Name of the buildx builder this role provisions. It is deliberately distinct
+# from buildx's own `default` builder, which stays untouched: `default` is the
+# daemon's embedded BuildKit and is the thing that cannot work here.
+nested_docker_builder_name: "remo-native"
+
+# Where the buildkitd config that selects the `native` snapshotter lives. Under
+# the remo user's home because the builder is created as that user — buildx
+# state is per-user (~/.docker/buildx), and a builder created for root leaves
+# project-launch just as broken as no builder at all.
+nested_docker_config_dir: "/home/{{ remo_user }}/.config/buildkit"
+
+# The devcontainer shim goes on the SYSTEM path, not in ~/.local/bin.
+# ~/.local/bin is added to PATH inside ~/.bashrc, which returns early for
+# non-interactive shells:
+#
+#     case $- in *i*) ;; *) return;; esac
+#
+# so `ssh host 'devcontainer up …'` — the case `remo web` and `remo shell -c`
+# actually use — would never see a shim installed there, while every
+# interactive test of it passed. /usr/local/bin is on the default PATH from
+# /etc/environment and precedes /usr/bin, so it covers interactive, login,
+# auto-start and non-interactive invocations alike.
+nested_docker_shim_path: "/usr/local/bin/devcontainer"
+
+# The UID user_setup pins remo_user to. The shim compares against it before it
+# skips the devcontainer CLI's updateUID stage: skipping is only safe when the
+# host UID already matches the image user's, and 1000 is the value that makes
+# that true for the standard devcontainer base images (`vscode`, `node`).
+# Keep in sync with roles/user_setup/tasks/main.yml.
+nested_docker_pinned_uid: 1000

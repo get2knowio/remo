@@ -177,3 +177,9 @@ final_message: |
 
   Do not pass `--skip docker` to configure: the shared role list adds the user
   to the docker group, which only exists if the docker role ran.
+
+  Devcontainer builds need extra work on OrbStack — Docker in here is nested,
+  and the kernel refuses the overlayfs mounts BuildKit wants. `remo configure`
+  handles it (a native-snapshotter builder plus a `devcontainer` shim); builds
+  are slower, and `apt` inside a running container still cannot work. See
+  docs/nested-overlayfs.md.
