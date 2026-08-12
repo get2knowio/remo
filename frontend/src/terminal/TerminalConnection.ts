@@ -40,6 +40,29 @@ const MAX_AUTO_RECONNECT_ATTEMPTS = 3;
 const RECONNECT_BACKOFF_MS = [500, 1500, 3500];
 /** How often to ping the WS to measure round-trip latency (also a keepalive). */
 const PING_INTERVAL_MS = 4000;
+/**
+ * Delays (ms) at which a just-sent resize is re-asserted.
+ *
+ * A resize reaches the remote as exactly ONE SIGWINCH: the service applies the
+ * winsize to its PTY and signals the child unconditionally (web/terminal.py
+ * `TerminalSession.resize`), and `ssh` only forwards a window-change when it
+ * catches that signal. Everything below — ssh, the remote PTY, Zellij, and the
+ * `docker exec` TTY that `devcontainer exec` runs Claude Code on — has to be
+ * listening at that instant. If any of them is mid-startup or busy, the signal
+ * is lost, and NOTHING regenerates it: `TerminalCard` sends a given grid only
+ * once (it skips a fit whose cols/rows are unchanged), so the remote stays
+ * pinned at the stale size until the operator forces a *different* one by hand.
+ * That is the "maximize and restore to bring the prompt back" workaround —
+ * observed as `stty size` reporting 67 rows against a panel with room for 59.
+ *
+ * Re-asserting is safe and idempotent in both directions: the service signals
+ * on every resize frame regardless of whether the size changed, so an unchanged
+ * size still produces the SIGWINCH a dropped one never will, while a remote
+ * that is already correct simply redraws to identical output. Bounded on
+ * purpose — each re-assert costs a remote redraw, so this buys convergence
+ * after a resize without any steady-state churn.
+ */
+const RESIZE_REASSERT_DELAYS_MS = [400, 1200, 3000];
 
 export interface TerminalConnectionCallbacks {
   onData?: (data: Uint8Array) => void;
@@ -79,6 +102,8 @@ export class TerminalConnection {
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   /** performance.now() when the outstanding ping was sent (null if none). */
   private pingSentAt: number | null = null;
+  /** Pending re-asserts of the last-sent size (RESIZE_REASSERT_DELAYS_MS). */
+  private resizeReassertTimers: Array<ReturnType<typeof setTimeout>> = [];
 
   constructor(
     sessionTargetId: string,
@@ -121,11 +146,46 @@ export class TerminalConnection {
     this.socket.send(typeof data === "string" ? new TextEncoder().encode(data) : data);
   }
 
-  /** Sends a `resize` control frame; server clamps to safe bounds (FR-060). */
+  /** Sends a `resize` control frame; server clamps to safe bounds (FR-060).
+   *
+   * Also schedules the bounded re-assert burst (RESIZE_REASSERT_DELAYS_MS), so
+   * a SIGWINCH dropped by a busy or still-starting remote chain gets further
+   * chances instead of leaving the remote pinned at the stale size forever.
+   */
   sendResize(cols: number, rows: number): void {
     this.cols = cols;
     this.rows = rows;
     this.sendControl({ v: 1, type: "resize", cols, rows });
+    this.scheduleResizeReasserts();
+  }
+
+  /**
+   * Re-send the current dims without scheduling another burst.
+   *
+   * Deliberately NOT routed through `sendResize`: that would re-arm the timers
+   * and the burst would never terminate.
+   */
+  reassertSize(): void {
+    if (this.cols <= 0 || this.rows <= 0) {
+      return;
+    }
+    this.sendControl({ v: 1, type: "resize", cols: this.cols, rows: this.rows });
+  }
+
+  private scheduleResizeReasserts(): void {
+    // A window drag calls this many times; only the final size deserves a
+    // burst, so each call replaces the pending one rather than stacking.
+    this.clearResizeReasserts();
+    this.resizeReassertTimers = RESIZE_REASSERT_DELAYS_MS.map((delay) =>
+      setTimeout(() => this.reassertSize(), delay),
+    );
+  }
+
+  private clearResizeReasserts(): void {
+    for (const timer of this.resizeReassertTimers) {
+      clearTimeout(timer);
+    }
+    this.resizeReassertTimers = [];
   }
 
   /** Sends a `ping` control frame (keepalive / liveness probe). */
@@ -139,6 +199,7 @@ export class TerminalConnection {
     this.removeWakeListeners();
     this.stopPinging();
     this.clearReconnectTimer();
+    this.clearResizeReasserts();
     const socket = this.socket;
     const terminalId = this.terminalId;
     this.socket = null;

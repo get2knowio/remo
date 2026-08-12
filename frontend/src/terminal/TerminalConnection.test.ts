@@ -145,3 +145,136 @@ describe("TerminalConnection", () => {
     expect(socket.sent.some((f) => typeof f === "string" && f.includes('"ping"'))).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Resize re-assertion.
+//
+// A resize reaches the remote as exactly ONE SIGWINCH, and the chain below the
+// service PTY (ssh -> remote PTY -> Zellij -> the `docker exec` TTY under
+// `devcontainer exec`) has to be listening at that instant. Miss it and nothing
+// regenerates it: TerminalCard sends a given grid only once, so the remote stays
+// pinned at the stale size until the operator forces a different one by hand.
+// These pin the bounded re-assert that makes such a loss self-heal.
+// ---------------------------------------------------------------------------
+
+/** Every `resize` control frame sent on *socket*, oldest first. */
+const resizeFrames = (
+  socket: { sent: unknown[] },
+): Array<{ cols: number; rows: number }> =>
+  socket.sent
+    .filter((f): f is string => typeof f === "string")
+    .map((f) => JSON.parse(f) as { type: string; cols: number; rows: number })
+    .filter((f) => f.type === "resize")
+    .map(({ cols, rows }) => ({ cols, rows }));
+
+describe("TerminalConnection resize re-assertion", () => {
+  it("re-asserts the same dims after a resize, then stops", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    last().ready();
+    const socket = last();
+    const before = resizeFrames(socket).length; // the `ready` handler's re-send
+
+    conn.sendResize(100, 40);
+    expect(resizeFrames(socket).length).toBe(before + 1);
+
+    // Three bounded re-asserts, each carrying the SAME dims: an unchanged size
+    // still makes the service signal SIGWINCH, which is the whole repair.
+    await vi.advanceTimersByTimeAsync(400);
+    await vi.advanceTimersByTimeAsync(800); // 1200 total
+    await vi.advanceTimersByTimeAsync(1800); // 3000 total
+    const afterBurst = resizeFrames(socket);
+    expect(afterBurst.length).toBe(before + 4);
+    expect(afterBurst.slice(-4)).toEqual([
+      { cols: 100, rows: 40 },
+      { cols: 100, rows: 40 },
+      { cols: 100, rows: 40 },
+      { cols: 100, rows: 40 },
+    ]);
+
+    // Bounded: no steady-state churn once the burst is spent. Every re-assert
+    // costs a remote redraw, so an unbounded loop would be a real cost.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(resizeFrames(socket).length).toBe(before + 4);
+  });
+
+  it("a newer resize replaces the pending burst instead of stacking", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    last().ready();
+    const socket = last();
+
+    // A window drag: many resizes in quick succession. Only the final size
+    // deserves a burst — stacking one per intermediate size would fire dozens
+    // of SIGWINCHes at the remote for sizes it should never see again.
+    conn.sendResize(100, 40);
+    await vi.advanceTimersByTimeAsync(100);
+    conn.sendResize(101, 41);
+    await vi.advanceTimersByTimeAsync(100);
+    conn.sendResize(102, 42);
+
+    await vi.advanceTimersByTimeAsync(5000);
+    const frames = resizeFrames(socket);
+    // The three drag frames, then exactly three re-asserts of the LAST size.
+    expect(frames.slice(-4)).toEqual([
+      { cols: 102, rows: 42 },
+      { cols: 102, rows: 42 },
+      { cols: 102, rows: 42 },
+      { cols: 102, rows: 42 },
+    ]);
+    expect(frames.filter((f) => f.cols === 100).length).toBe(1);
+    expect(frames.filter((f) => f.cols === 101).length).toBe(1);
+  });
+
+  it("reassertSize() re-sends the current dims without re-arming the burst", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    last().ready();
+    const socket = last();
+
+    conn.sendResize(90, 30);
+    await vi.advanceTimersByTimeAsync(5000); // let the burst finish
+    const settled = resizeFrames(socket).length;
+
+    conn.reassertSize();
+    expect(resizeFrames(socket).length).toBe(settled + 1);
+
+    // Routing reassertSize through sendResize would re-arm the timers and the
+    // burst would never terminate.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(resizeFrames(socket).length).toBe(settled + 1);
+    expect(resizeFrames(socket).at(-1)).toEqual({ cols: 90, rows: 30 });
+  });
+
+  it("cancels pending re-asserts when the terminal is closed", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    last().ready();
+    const socket = last();
+
+    conn.sendResize(120, 50);
+    const atClose = resizeFrames(socket).length;
+    await conn.close();
+    conn = null;
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(resizeFrames(socket).length).toBe(atClose);
+  });
+
+  it("re-asserts the dims the remote missed while the socket was down", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    last().ready();
+
+    // Resize while disconnected: sendControl drops the frame, but cols/rows are
+    // still recorded, so the reconnect's `ready` re-send carries the real size
+    // rather than the 80x24 the PTY was spawned at.
+    last().drop(1006);
+    conn.sendResize(140, 60);
+    await vi.advanceTimersByTimeAsync(500);
+    const reconnected = last();
+    reconnected.ready();
+
+    expect(resizeFrames(reconnected)[0]).toEqual({ cols: 140, rows: 60 });
+  });
+});

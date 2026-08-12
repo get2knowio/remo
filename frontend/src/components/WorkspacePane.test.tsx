@@ -44,6 +44,9 @@ vi.mock("../terminal/TerminalConnection", () => ({
     close = vi.fn().mockResolvedValue(undefined);
     sendInput = vi.fn();
     sendResize = vi.fn();
+    // TerminalCard re-asserts the remote size whenever a card is shown, so a
+    // double that omits this throws on every render of a visible tile.
+    reassertSize = vi.fn();
   },
 }));
 
