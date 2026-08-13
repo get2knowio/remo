@@ -37,6 +37,7 @@ import type { MasterSide } from "../state/workspace";
 import { removeLatency, reportLatency } from "../state/latency";
 import type { RendererAdapter } from "../terminal/RendererAdapter";
 import { createDefaultRenderer } from "../terminal/defaultRenderer";
+import { createFitLoop, type FitLoop } from "../terminal/fitLoop";
 import {
   TerminalConnection,
   type TerminalConnectionState,
@@ -257,10 +258,8 @@ export function TerminalCard({
   const themeRef = useRef<TerminalThemeColors>(
     effectiveTerminalTheme(settings, target.id).colors,
   );
-  // Coalesced-fit bookkeeping: a pending rAF handle, and the last dims we sent
-  // (to skip redundant resize frames).
-  const fitRafRef = useRef<number | null>(null);
-  const lastSentDimsRef = useRef<{ cols: number; rows: number } | null>(null);
+  // The coalescing fit loop (terminal/fitLoop.ts); created on first render.
+  const fitLoopRef = useRef<FitLoop | null>(null);
   // Pending focus-follows-mouse dwell timer (cleared if the pointer leaves first).
   const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Latest focus-dwell setting, read inside the timer without re-creating the handler.
@@ -311,39 +310,25 @@ export function TerminalCard({
     onStartedRef.current = onStarted;
   }, [onEnded, onStarted]);
 
-  // Coalesce fit()+resize into at most one per animation frame, and only send a
-  // resize frame when the cell grid actually changed. A window drag fires the
-  // ResizeObserver many times per second; without this each tick would fit()
-  // and push a SIGWINCH-triggering resize to the remote PTY (and can trip the
-  // browser's "ResizeObserver loop" warning). Stable identity (empty deps): it
-  // reads everything through refs.
-  const scheduleFit = useCallback(() => {
-    if (fitRafRef.current !== null) {
-      return; // a fit is already scheduled for this frame
-    }
-    fitRafRef.current = requestAnimationFrame(() => {
-      fitRafRef.current = null;
-      const adapter = adapterRef.current;
-      const connection = connectionRef.current;
-      const container = containerRef.current;
-      if (!adapter || !connection || !container) {
-        return;
-      }
-      // A hidden pane collapses to 0x0; fitting then would shrink the remote
-      // PTY to 1x1 and corrupt a backgrounded TUI. Skip — the observer fires
-      // again with real dimensions when the card is shown, and TerminalConnection
-      // re-sends the last dims on `ready` after a reconnect.
-      if (container.clientWidth === 0 || container.clientHeight === 0) {
-        return;
-      }
-      const dims = adapter.fit();
-      const last = lastSentDimsRef.current;
-      if (last && last.cols === dims.cols && last.rows === dims.rows) {
-        return; // grid unchanged — no need to resize the remote PTY
-      }
-      lastSentDimsRef.current = dims;
-      connection.sendResize(dims.cols, dims.rows);
+  // The fit loop itself lives in terminal/fitLoop.ts so the browser geometry
+  // suite drives the shipped implementation rather than a copy (jsdom measures
+  // every element 0x0, so this can only be tested for real in a browser).
+  // Created lazily at first render so the font effect below — which is declared
+  // earlier and therefore runs first — can call scheduleFit on a live loop.
+  if (fitLoopRef.current === null) {
+    fitLoopRef.current = createFitLoop({
+      // Null until the connection exists: fitting before then would compute a
+      // grid with nowhere to send it, and the observer fires again once the
+      // mount effect below has wired everything up.
+      getAdapter: () => (connectionRef.current ? adapterRef.current : null),
+      getContainer: () => containerRef.current,
+      onGridChange: (dims) => connectionRef.current?.sendResize(dims.cols, dims.rows),
     });
+  }
+
+  // Stable identity (empty deps): everything is reached through refs.
+  const scheduleFit = useCallback(() => {
+    fitLoopRef.current?.schedule();
   }, []);
 
   // Apply live font/size/ligature changes (and grid-fit scaling) to the open
@@ -451,11 +436,7 @@ export function TerminalCard({
 
     return () => {
       createdRef.current = false;
-      if (fitRafRef.current !== null) {
-        cancelAnimationFrame(fitRafRef.current);
-        fitRafRef.current = null;
-      }
-      lastSentDimsRef.current = null;
+      fitLoopRef.current?.dispose();
       removeLatency(target.id);
       unsubscribeInput();
       unsubscribeSelection();

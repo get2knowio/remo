@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>remo terminal geometry harness</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+      /* Mirrors AppShell's containment: a fixed-height column with
+       * overflow hidden, which is what makes `.workspace-body`'s flex:1 +
+       * min-height:0 resolve to the pane's real height. */
+      #harness {
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="harness"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>
