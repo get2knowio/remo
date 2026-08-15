@@ -13,7 +13,8 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "generate:types": "node scripts/generate-schema-types.mjs && node scripts/generate-frame-types.mjs",
-    "check:types-fresh": "node scripts/check-types-fresh.mjs"
+    "check:types-fresh": "node scripts/check-types-fresh.mjs",
+    "test:geometry": "playwright test -c playwright.geometry.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

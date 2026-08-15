@@ -834,6 +834,49 @@ Both are comfortably above the nine-terminal (3 instances × 3 projects) baselin
 against. Exceeding either cap returns `429` from `POST /api/v1/terminals` with a clear message rather
 than silently queuing or degrading existing terminals.
 
+## Terminal geometry tests
+
+The console has one class of bug that the Vitest suite structurally cannot
+catch: **jsdom has no layout engine**, so every element measures 0x0 and any
+assertion about the terminal grid fitting the box that clips it passes
+vacuously. Two real defects lived in that blind spot:
+
+- the emulator painting below `.terminal-card`'s `overflow: hidden`, which hides
+  the bottom rows of a TUI — typically its input box — with no scrollbar and no
+  other symptom;
+- a container change that never reaches the remote PTY, stranding it at a stale
+  size until the operator forces a different one by hand (`stty size` reporting
+  67 rows against a panel with room for 59).
+
+`frontend/tests/geometry` covers that gap in a real browser:
+
+```bash
+cd frontend && npm run test:geometry
+```
+
+It gates CI, and unlike `npm run test:e2e` it needs **no backend** — it serves
+its own Vite fixture (`tests/geometry/harness`) and answers the terminal API and
+WebSocket from inside the spec with `page.route`/`page.routeWebSocket`, so
+`TerminalConnection` still runs its real code path.
+
+Three properties are worth preserving if you edit it:
+
+1. **It drives shipped code, not a copy.** The fixture mounts the real
+   `TerminalCard` and the real `paneLayout()`, and the fit loop lives in
+   `src/terminal/fitLoop.ts` specifically so the suite exercises it rather than
+   a re-implementation. A regression test that duplicates its subject proves
+   nothing — the copy stays correct while the original rots.
+2. **The assertion is a three-way agreement**: what the emulator painted, what
+   the surface has room for, and what the remote was last told must all match.
+   Checking any two of those against each other can be satisfied by a card that
+   fitted correctly and never told the remote.
+3. **It runs twice, on both renderers.** xterm uses WebGL where a GPU context is
+   available and falls back to the DOM renderer otherwise, and only the DOM
+   renderer paints `.xterm-rows` — which is the suite's one *independent* read
+   of the emulator's grid. Without the `chromium-dom-renderer` project the cell
+   height is derived from the rows the card reported, and the check goes
+   circular.
+
 ## Troubleshooting
 
 Run `remo web check` (or `docker compose exec remo-web remo web check` in the container) for a

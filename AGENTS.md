@@ -121,6 +121,12 @@ frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
 │   │                        #   + masterLayout.ts (pure pane geometry: uniform grid + master/stack tiling)
 │   ├── state/                # discovery.ts, workspace.ts (layout persisted to localStorage)
 │   └── terminal/              # RendererAdapter (seam), XtermRenderer (the one engine), TerminalConnection, keymap
+│                            #   + fitLoop.ts (the container->emulator->PTY fit, extracted so the
+│                            #   browser geometry suite drives the shipped code and not a copy)
+└── tests/
+    ├── e2e/               # Playwright console suite — needs a live `remo web serve` (REMO_E2E_BASE_URL)
+    └── geometry/          # Playwright terminal-geometry suite — no backend, gates CI
+        └── harness/       # Vite fixture mounting the REAL TerminalCard + paneLayout
 
 docker/                    # remo-web container packaging (010-web-session-interface, US4)
 ├── Dockerfile               # multi-stage: frontend build -> wheel build -> slim Python runtime
@@ -234,6 +240,9 @@ cd frontend && npm ci
 npm run build                     # tsc -b && vite build -> frontend/dist
 npm run lint                      # tsc --noEmit
 npm run test                      # Vitest unit/component suite (jsdom, no backend)
+npm run test:geometry             # Playwright terminal-geometry suite (no backend; serves its own
+                                  #   fixture. jsdom has no layout engine, so this is the only place
+                                  #   the terminal grid is checked against the box that clips it)
 npm run test:e2e                  # Playwright (needs REMO_E2E_BASE_URL -> live remo web serve)
 ```
 
@@ -288,6 +297,7 @@ made conditional to get a build green — fix the code or amend the gate by PR.
 | Lint | `uv run ruff check src/remo_cli` | Code Style |
 | Types | `uv run mypy src/remo_cli` | Code Style |
 | Frontend | `cd frontend && npm run lint && npm run test && npm run build` | Code Style |
+| Browser geometry | `cd frontend && npm run test:geometry` | Terminal grid fits its box (jsdom cannot check this) |
 | Fish completion | `./tests/integration/fish_completion.sh` | Principle VI (completion runs, not just reads) |
 | Packaging | wheel install smoke, Docker amd64+arm64 | Distribution integrity |
 | Security | CodeQL, dependency review | Supply chain |

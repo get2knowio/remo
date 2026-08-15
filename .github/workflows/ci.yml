@@ -143,9 +143,17 @@ jobs:
     name: Frontend (typecheck + unit + build)
     runs-on: ubuntu-latest
     # Fast, backend-free coverage of the SPA: tsc typecheck, the Vitest
-    # unit/component suite (frontend/src/**/*.test.ts), and a production build.
-    # The Playwright e2e suite (frontend/tests/e2e) is NOT run here — it needs a live
-    # `remo web serve` backend (REMO_E2E_BASE_URL); see playwright.config.ts.
+    # unit/component suite (frontend/src/**/*.test.ts), the browser geometry
+    # suite (frontend/tests/geometry), and a production build.
+    #
+    # The geometry suite runs here because it is self-contained: it serves a
+    # fixture page with Vite and answers the terminal API/WebSocket from inside
+    # the spec. It covers what jsdom structurally cannot — jsdom has no layout
+    # engine, so every element measures 0x0 and any assertion about the terminal
+    # grid fitting its box passes vacuously there.
+    #
+    # The Playwright e2e suite (frontend/tests/e2e) is still NOT run here — it needs
+    # a live `remo web serve` backend (REMO_E2E_BASE_URL); see playwright.config.ts.
     defaults:
       run:
         working-directory: frontend
@@ -169,6 +177,14 @@ jobs:
 
       - name: Unit tests
         run: npm run test
+
+      # Chromium only — the geometry suite runs the same specs twice against it
+      # (WebGL and DOM renderers) and needs no other browser.
+      - name: Install Chromium for the geometry suite
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser geometry tests
+        run: npm run test:geometry
 
       - name: Build
         run: npm run build
