@@ -1,5 +1,15 @@
 # Changelog
 
+## [4.3.4](https://github.com/get2knowio/remo/compare/v4.3.3...v4.3.4) (2026-08-15)
+
+
+### Bug Fixes
+
+* **ansible:** make devcontainers buildable where nested overlayfs is refused ([#173](https://github.com/get2knowio/remo/issues/173)) ([d500ff0](https://github.com/get2knowio/remo/commit/d500ff0e6ee397822be36d6c2de4d6489f47aa2c)), closes [#160](https://github.com/get2knowio/remo/issues/160) [#171](https://github.com/get2knowio/remo/issues/171)
+* **web:** re-assert the terminal size so a dropped resize self-heals ([#174](https://github.com/get2knowio/remo/issues/174)) ([78b1dd4](https://github.com/get2knowio/remo/commit/78b1dd435a7305006c97eddf6817eaa624f9ab5b))
+* **web:** rename trusted_store so CodeQL stops reading a path as a secret ([#168](https://github.com/get2knowio/remo/issues/168)) ([d370ab6](https://github.com/get2knowio/remo/commit/d370ab661f7d1d988595645b9f91cbca82cd5fa4))
+* **web:** the push/adopt defect trio ([#157](https://github.com/get2knowio/remo/issues/157), [#158](https://github.com/get2knowio/remo/issues/158), [#159](https://github.com/get2knowio/remo/issues/159)) ([#166](https://github.com/get2knowio/remo/issues/166)) ([fe4bf31](https://github.com/get2knowio/remo/commit/fe4bf31d1acb8f9ca1efa5bddeee4f23e33668ee))
+
 ## [4.3.3](https://github.com/get2knowio/remo/compare/v4.3.2...v4.3.3) (2026-08-06)
 
 
