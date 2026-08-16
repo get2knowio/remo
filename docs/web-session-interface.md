@@ -145,7 +145,15 @@ The SPA is a two-pane **web console**:
 
 **Clipboard & links.** Select text and press **⌘C** (macOS) / **Ctrl+Shift+C** (Linux/Windows), or click
 the **⧉ Copy** button that appears on selection, to copy to the system clipboard; bare **Ctrl+C** stays
-SIGINT. **Paste** with ⌘V / Ctrl+V. **http(s) URLs are clickable** and open in a new tab. Remote apps that
+SIGINT. **Paste** with ⌘V / Ctrl+V.
+
+> **Selecting while a full-screen app is running.** Claude Code, vim, htop and
+> anything else that turns on mouse reporting receive your drags, so an ordinary
+> drag selects nothing. Hold a modifier to select locally instead:
+> **Option+drag** on macOS, **Shift+drag** on Linux/Windows. (The split is
+> xterm's, not ours — Shift is not consulted on macOS at all.)
+
+**http(s) URLs are clickable** and open in a new tab. Remote apps that
 emit **OSC 52** (e.g. Claude Code's copy-on-select) can write to the browser clipboard — best-effort: it
 must traverse Zellij and the browser must permit a gesture-less clipboard write. OSC 52 *reads* are denied
 (a remote app can never read your clipboard). Clipboard access needs a secure context (HTTPS or localhost).

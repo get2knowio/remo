@@ -76,6 +76,24 @@ export class XtermRenderer implements RendererAdapter {
       // @xterm/addon-ligatures registers a character joiner, which lives behind
       // xterm's "proposed API" guard; without this the addon throws on load.
       allowProposedApi: true,
+      // Makes text selectable on macOS while a TUI owns the mouse.
+      //
+      // Once an application enables mouse reporting (Claude Code, vim, htop,
+      // ...), xterm forwards drags to it instead of selecting locally. Its
+      // escape hatch is asymmetric:
+      //
+      //   shouldForceSelection(e) {
+      //     return isMac ? e.altKey && macOptionClickForcesSelection
+      //                  : e.shiftKey;
+      //   }
+      //
+      // Shift is not consulted on macOS at all, and this option defaults to
+      // false — so a Mac user inside any mouse-reporting TUI had NO way to
+      // select text, while Shift+drag worked fine on every other platform.
+      // Enabling it restores parity via Option+drag. The trade is that
+      // Option+click no longer reaches the application, which is not a chord
+      // terminal programs bind.
+      macOptionClickForcesSelection: true,
     });
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
