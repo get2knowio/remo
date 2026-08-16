@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.6](https://github.com/get2knowio/remo/compare/v4.3.5...v4.3.6) (2026-08-16)
+
+
+### Bug Fixes
+
+* **web:** let macOS users select terminal text while a TUI owns the mouse ([#181](https://github.com/get2knowio/remo/issues/181)) ([84285e8](https://github.com/get2knowio/remo/commit/84285e8aa4414b225bfe2f820d6fc2d1cdb70103))
+
 ## [4.3.5](https://github.com/get2knowio/remo/compare/v4.3.4...v4.3.5) (2026-08-16)
 
 
