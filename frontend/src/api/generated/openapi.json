@@ -163,10 +163,15 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
           }
         },
         "required": [
-          "status"
+          "status",
+          "version"
         ],
         "title": "HealthResponse",
         "type": "object"

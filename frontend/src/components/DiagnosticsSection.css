@@ -1,0 +1,35 @@
+/* Settings ▸ Diagnostics — one button plus a line of provenance. Follows
+ * PairToSync's inline-in-a-section shape. */
+.diagnostics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.diagnostics-btn {
+  padding: 7px 12px;
+  border-radius: 7px;
+  border: 1px solid var(--border-strong, #444);
+  background: var(--bg-btn, #24262c);
+  color: var(--text-1, #e6e8ec);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.diagnostics-btn:hover {
+  background: var(--bg-btn-hover, #2c2f36);
+}
+
+.diagnostics-meta {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim, #b8bcc4);
+}
+
+.diagnostics-meta code {
+  font-family: var(--font-mono, monospace);
+  color: var(--text, #e6e8ec);
+  word-break: break-all;
+}

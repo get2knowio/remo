@@ -414,6 +414,8 @@ export interface components {
         HealthResponse: {
             /** Status */
             status: string;
+            /** Version */
+            version: string;
         };
         /** HostsResponse */
         HostsResponse: {

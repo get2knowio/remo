@@ -120,6 +120,8 @@ frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
 │   ├── components/          # Dashboard, InstanceGroup, TargetCard, GridView, TabView, TerminalCard
 │   │                        #   + masterLayout.ts (pure pane geometry: uniform grid + master/stack tiling)
 │   ├── state/                # discovery.ts, workspace.ts (layout persisted to localStorage)
+│   │                        #   + diagnostics.ts (read-only snapshot: pane registry + `window.__remo.diagnostics()`;
+│   │                        #   redaction contract — no buffer text, no ws_token, no socket url/protocol)
 │   └── terminal/              # RendererAdapter (seam), XtermRenderer (the one engine), TerminalConnection, keymap
 │                            #   + fitLoop.ts (the container->emulator->PTY fit, extracted so the
 │                            #   browser geometry suite drives the shipped code and not a copy)

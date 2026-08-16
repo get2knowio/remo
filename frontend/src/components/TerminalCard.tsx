@@ -22,6 +22,7 @@ import type { SessionTarget, TypedError } from "../api/client";
 import { providerMeta } from "./providerMeta";
 import {
   effectiveTerminalTheme,
+  getSettings,
   settingsActions,
   terminalThemeLabel,
   terminalFontOptions,
@@ -34,8 +35,12 @@ import {
   type TerminalThemeColors,
 } from "../theme/terminalThemes";
 import type { MasterSide } from "../state/workspace";
-import { removeLatency, reportLatency } from "../state/latency";
-import type { RendererAdapter } from "../terminal/RendererAdapter";
+import {
+  registerPaneDiagnostics,
+  removePaneDiagnostics,
+} from "../state/diagnostics";
+import { getLatencyFor, removeLatency, reportLatency } from "../state/latency";
+import type { RendererAdapter, RendererRect } from "../terminal/RendererAdapter";
 import { createDefaultRenderer } from "../terminal/defaultRenderer";
 import { createFitLoop, type FitLoop } from "../terminal/fitLoop";
 import {
@@ -202,6 +207,23 @@ export function themeMenuPosition(
             left,
             maxHeight,
           },
+  };
+}
+
+/** The surface's box in viewport coordinates, rounded. Measured fresh at each
+ * diagnostics read — a cached rect would report the layout as it was when the
+ * card mounted, which is precisely the fact under investigation. */
+function surfaceRect(element: HTMLElement | null): RendererRect | null {
+  if (!element) {
+    return null;
+  }
+  const r = element.getBoundingClientRect();
+  return {
+    top: Math.round(r.top),
+    left: Math.round(r.left),
+    width: Math.round(r.width),
+    height: Math.round(r.height),
+    bottom: Math.round(r.bottom),
   };
 }
 
@@ -415,6 +437,36 @@ export function TerminalCard({
     );
     connectionRef.current = connection;
 
+    // Offer this pane's facts to the diagnostics snapshot for as long as the
+    // card is mounted. Everything is read at CALL time (refs, a fresh rect, the
+    // live adapter/connection), so the entry describes the pane as it is when
+    // the snapshot is taken — including while hidden, where a ~0x0 box is
+    // exactly the evidence a tab-switch resize bug needs.
+    registerPaneDiagnostics(target.id, () => ({
+      id: target.id,
+      target: {
+        project: target.project,
+        instanceType: target.instance_type,
+        instanceName: target.instance_name,
+      },
+      visible: isVisibleRef.current,
+      focused: isFocusedRef.current,
+      connection: connection.diagnostics(),
+      geometry: {
+        containerPx: surfaceRect(containerRef.current),
+        fitLoop: fitLoopRef.current!.snapshot(),
+      },
+      renderer: adapter.diagnostics(),
+      font: {
+        family: fontRef.current.fontFamily,
+        size: fontRef.current.fontSize,
+        ligatures: fontRef.current.ligatures,
+      },
+      // Resolved fresh rather than read off themeRef, which holds colors only.
+      themeLabel: effectiveTerminalTheme(getSettings(), target.id).label,
+      rttMs: getLatencyFor(target.id),
+    }));
+
     const unsubscribeInput = adapter.onData((data) => {
       if (isFocusedRef.current) {
         connection.sendInput(data);
@@ -438,6 +490,7 @@ export function TerminalCard({
       createdRef.current = false;
       fitLoopRef.current?.dispose();
       removeLatency(target.id);
+      removePaneDiagnostics(target.id);
       unsubscribeInput();
       unsubscribeSelection();
       resizeObserver.disconnect();

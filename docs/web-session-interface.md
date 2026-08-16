@@ -885,6 +885,45 @@ Three properties are worth preserving if you edit it:
    height is derived from the rows the card reported, and the check goes
    circular.
 
+## Diagnostics snapshot
+
+Most console questions — a terminal grid that doesn't fit its box, selection
+dying under a TUI, a link that won't open, a pane that never resized after a tab
+switch — turn on facts the browser holds and nothing displays. The console can
+hand you all of them at once, as JSON:
+
+- **Settings ▸ Diagnostics ▸ Copy diagnostics** — the normal path.
+- **`copy(JSON.stringify(__remo.diagnostics(), null, 2))`** in the browser
+  devtools console — the same data without the UI, published before the app
+  mounts so it still answers when the shell never renders (an unconfigured
+  service, a failed health gate, a crashed tree). The pane list is simply empty
+  in that case.
+
+The snapshot is read-only: it *reports* what a fit would compute
+(`renderer.proposedGrid`) rather than performing one, so taking it can never
+resize a remote PTY.
+
+What it contains:
+
+| Section | Contents |
+|---|---|
+| `versions.service` | the running service version, from `GET /api/v1/health` |
+| `env` | user agent, platform, device pixel ratio, pinch-zoom scale, viewport size, whether the narrow layout is active |
+| `layout` | uniform-vs-tiled (`kind`, `masterId`, `masterSide`), single-vs-grid (`paneMode`), focused/maximized ids, attached and visible counts |
+| `panes[]` | one entry per **attached** pane, visible tiles first then the hidden-but-mounted ones — each with its target identity, visibility/focus, connection state (including the last close code/reason and any dropped control frames), the surface's box in viewport pixels, the fit loop's last-sent grid and skip reason, the renderer kind/addons/modes, font, theme label, and WS round-trip |
+
+Reading the geometry fields: `renderer.grid` ≠ `renderer.proposedGrid` means the
+emulator is sized for a different box than the one it now occupies, while
+`geometry.containerPx.bottom` > `env.viewport.height` means the box itself hangs
+below the fold — two different bugs that look identical on screen.
+`renderer.modes.mouseTrackingMode` ≠ `"none"` means an application (Claude Code,
+vim, htop) has taken the mouse, which is why a plain drag stops selecting text.
+
+What it deliberately does **not** contain: terminal buffer or selection text,
+the WS terminal token, and the WebSocket `url`/`protocol` — the auth token rides
+as a WS subprotocol value, so a socket is reported by `readyState` and
+`bufferedAmount` only. The blob is safe to paste into a public bug report.
+
 ## Troubleshooting
 
 Run `remo web check` (or `docker compose exec remo-web remo web check` in the container) for a

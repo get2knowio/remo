@@ -26,6 +26,8 @@ import { copyText } from "../lib/clipboard";
 import { inputForKeyEvent, isCopyChord } from "./keymap";
 import type {
   RendererAdapter,
+  RendererDiagnostics,
+  RendererRect,
   TerminalDimensions,
   TerminalFontOptions,
   TerminalThemeColors,
@@ -47,6 +49,22 @@ const DEFAULT_FONT: TerminalFontOptions = {
   fontSize: 13,
   ligatures: false,
 };
+
+/** Viewport-relative box of `element`, rounded to whole pixels. Null when there
+ * is no element (the renderer was never opened). */
+function rectOf(element: HTMLElement | null): RendererRect | null {
+  if (!element) {
+    return null;
+  }
+  const r = element.getBoundingClientRect();
+  return {
+    top: Math.round(r.top),
+    left: Math.round(r.left),
+    width: Math.round(r.width),
+    height: Math.round(r.height),
+    bottom: Math.round(r.bottom),
+  };
+}
 
 export class XtermRenderer implements RendererAdapter {
   private readonly terminal: Terminal;
@@ -263,6 +281,33 @@ export class XtermRenderer implements RendererAdapter {
       return false;
     }
     return copyText(selection);
+  }
+
+  // Read-only. Everything here is observed off the live terminal: the grid is
+  // read (not re-fitted), and the proposal comes from `proposeDimensions()`,
+  // which computes what `fit()` WOULD apply without applying it. Calling
+  // `fit()` here would make opening the diagnostics panel resize every remote
+  // PTY — the exact class of bug this snapshot exists to investigate.
+  diagnostics(): RendererDiagnostics {
+    const addons = ["fit"];
+    if (this.webglAddon) {
+      addons.push("webgl");
+    }
+    if (this.ligaturesAddon) {
+      addons.push("ligatures");
+    }
+    if (this.opened) {
+      // Both are loaded unconditionally by open(), and neither is retained.
+      addons.push("web-links", "clipboard");
+    }
+    return {
+      kind: !this.opened ? "unopened" : this.webglAddon ? "webgl" : "dom",
+      addons,
+      grid: { cols: this.terminal.cols, rows: this.terminal.rows },
+      proposedGrid: this.opened ? (this.fitAddon.proposeDimensions() ?? null) : null,
+      containerPx: rectOf(this.container),
+      modes: { ...this.terminal.modes },
+    };
   }
 
   dispose(): void {

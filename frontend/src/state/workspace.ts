@@ -65,7 +65,7 @@ interface PersistedWorkspaceState {
   layout: WorkspaceLayout;
 }
 
-interface WorkspaceState extends PersistedWorkspaceState {
+export interface WorkspaceState extends PersistedWorkspaceState {
   prevGrid: string[] | null;
   prevLayout: WorkspaceLayout | null;
   unread: string[];
@@ -206,6 +206,12 @@ function subscribe(listener: () => void): () => void {
 }
 
 function getSnapshot(): WorkspaceState {
+  return state;
+}
+
+/** Non-React accessor for the current workspace (mirrors settings.getSettings).
+ * Used by the diagnostics snapshot, which must work outside a render. */
+export function getWorkspace(): WorkspaceState {
   return state;
 }
 

@@ -20,6 +20,7 @@ import {
   type FontOption,
 } from "../state/settings";
 import { AUTO_TERMINAL_THEME, TERMINAL_THEMES } from "../theme/terminalThemes";
+import { DiagnosticsSection } from "./DiagnosticsSection";
 import { PairToSync } from "./PairToSync";
 import "./SettingsPage.css";
 
@@ -400,6 +401,17 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
               to your clipboard — it is never shown.
             </p>
             <PairToSync />
+          </section>
+
+          {/* Diagnostics (read-only snapshot for bug reports) */}
+          <section>
+            <div className="settings-heading">Diagnostics</div>
+            <p className="settings-sub">
+              Copy a read-only snapshot of this console — layout, per-pane geometry, connection
+              state, renderer and fonts — to paste into a bug report. It contains no terminal
+              contents and no credentials.
+            </p>
+            <DiagnosticsSection />
           </section>
         </div>
       </div>

@@ -293,6 +293,18 @@ export type ReadinessCheck = string; // e.g. "ok" | "missing" | "unreadable" | .
  */
 export type ServiceStatus = "ok" | "unconfigured" | (string & {});
 
+export type HealthResponse = components["schemas"]["HealthResponse"];
+
+/**
+ * `GET /api/v1/health` — liveness plus the running service version. Read by
+ * the diagnostics snapshot (state/diagnostics.ts) so a pasted blob names the
+ * build it came from; the SPA ships inside the same wheel, so the one version
+ * covers both halves.
+ */
+export async function getHealth(): Promise<HealthResponse> {
+  return request<HealthResponse>("/api/v1/health", { method: "GET" });
+}
+
 export interface ReadinessResponse {
   /** true when GET /ready returned 200 (all gating checks pass). */
   ready: boolean;

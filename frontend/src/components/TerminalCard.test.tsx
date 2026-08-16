@@ -26,6 +26,24 @@ function fakeAdapter(): RendererAdapter {
     onSelectionChange: vi.fn().mockReturnValue(() => {}),
     getSelection: vi.fn().mockReturnValue(null),
     copySelection: vi.fn().mockResolvedValue(false),
+    diagnostics: vi.fn().mockReturnValue({
+      kind: "dom",
+      addons: ["fit"],
+      grid: { cols: 80, rows: 24 },
+      proposedGrid: { cols: 80, rows: 24 },
+      containerPx: { top: 0, left: 0, width: 640, height: 400, bottom: 400 },
+      modes: {
+        applicationCursorKeysMode: false,
+        applicationKeypadMode: false,
+        bracketedPasteMode: false,
+        insertMode: false,
+        mouseTrackingMode: "none",
+        originMode: false,
+        reverseWraparoundMode: false,
+        sendFocusMode: false,
+        wraparoundMode: true,
+      },
+    }),
     dispose: vi.fn(),
   };
 }
@@ -50,6 +68,15 @@ vi.mock("../terminal/TerminalConnection", () => ({
     sendInput = vi.fn();
     sendResize = vi.fn();
     reassertSize = vi.fn();
+    diagnostics = vi.fn().mockReturnValue({
+      state: "ready",
+      needsManualReconnect: false,
+      reconnectAttempts: 0,
+      lastSentGrid: { cols: 80, rows: 24 },
+      lastClose: null,
+      droppedControlFrames: 0,
+      socket: { readyState: 1, bufferedAmount: 0 },
+    });
     constructor() {
       connections.push(this as unknown as { reassertSize: ReturnType<typeof vi.fn> });
     }
@@ -74,6 +101,7 @@ const target = {
 async function mount(): Promise<{
   settings: typeof import("../state/settings");
   card: typeof import("./TerminalCard");
+  diagnostics: typeof import("../state/diagnostics");
 }> {
   vi.resetModules();
   adapters.length = 0;
@@ -81,7 +109,8 @@ async function mount(): Promise<{
   window.localStorage.clear();
   const settings = await import("../state/settings");
   const card = await import("./TerminalCard");
-  return { settings, card };
+  const diagnostics = await import("../state/diagnostics");
+  return { settings, card, diagnostics };
 }
 
 function renderCard(TerminalCard: typeof import("./TerminalCard").TerminalCard): void {
@@ -329,5 +358,74 @@ describe("TerminalCard remote size repair", () => {
     // `ready` handler re-sends the same dims — but it is the right shape: the
     // card asserts its size whenever it is on screen.
     expect(connections[0].reassertSize).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostics registration.
+//
+// The card is the only holder of its adapter/connection/fit-loop, so the
+// diagnostics snapshot can only see a pane that registered itself here — and
+// must not keep seeing one after it unmounts (a stale provider would call into
+// a disposed adapter).
+// ---------------------------------------------------------------------------
+describe("TerminalCard diagnostics", () => {
+  it("registers this pane while mounted and removes it on unmount", async () => {
+    const { card, diagnostics } = await mount();
+    const { unmount } = render(
+      <DndContext>
+        <card.TerminalCard
+          target={target}
+          mode="single"
+          isVisible
+          isFocused
+          viewState="normal"
+          onClose={() => {}}
+          onNormal={() => {}}
+          onToggleFullscreen={() => {}}
+        />
+      </DndContext>,
+    );
+
+    const entry = diagnostics
+      .collectDiagnostics()
+      .panes.find((p) => p.id === target.id);
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({
+      visible: true,
+      focused: true,
+      target: { project: "demo", instanceType: "incus", instanceName: "box" },
+      connection: { state: "ready" },
+      renderer: { kind: "dom" },
+    });
+
+    unmount();
+    expect(diagnostics.collectDiagnostics().panes).toHaveLength(0);
+  });
+
+  it("reports a hidden pane as attached-but-invisible", async () => {
+    // The tab-switch resize evidence: a card kept mounted behind display:none
+    // still answers, so a snapshot shows what the pane was doing while away.
+    const { card, diagnostics } = await mount();
+    render(
+      <DndContext>
+        <card.TerminalCard
+          target={target}
+          mode="single"
+          isVisible={false}
+          isFocused={false}
+          viewState="normal"
+          onClose={() => {}}
+          onNormal={() => {}}
+          onToggleFullscreen={() => {}}
+        />
+      </DndContext>,
+    );
+
+    expect(diagnostics.collectDiagnostics().panes[0]).toMatchObject({
+      id: target.id,
+      visible: false,
+      focused: false,
+    });
   });
 });
