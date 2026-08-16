@@ -47,7 +47,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 ├── __main__.py            # python -m remo_cli entry point
 ├── cli/                   # Click command layer (parsing only, no business logic)
 │   ├── main.py            # Root CLI group; mounts one group per remo_cli.core.provider_registry.all_descriptors()
-│   ├── shell.py           # remo shell — registry-dispatched update_entry() (delegates to upgrade()); prompt names the exact `remo <type> upgrade <name>` it will run; unknown type/ssh handled explicitly (no silent no-op)
+│   ├── shell.py           # remo shell — pre-connect version check for EVERY host type; _run_tools_upgrade() dispatches to the provider's update_entry() (delegates to upgrade()) or, for type="ssh", providers/added.configure(); prompt names the exact `remo <type> upgrade <name>` / `remo configure <name>` it will run; unknown type raises (no silent no-op); an added host with no `~/.remo-version` marker connects silently (FR-011)
 │   ├── cp.py              # remo cp
 │   ├── added.py           # remo add / remo remove / remo configure — provider-neutral SSH host registration (014) and configure (022)
 │   ├── web.py             # remo web {serve,check,push,status,adopt} — serve/check lazy-import remo_cli.web.* (NFR-008); push/status/adopt use core/web_adopt + core/web_drift only (adopt is a deprecated alias for push)

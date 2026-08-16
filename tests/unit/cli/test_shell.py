@@ -431,41 +431,42 @@ class TestBuildProjectLaunchRemoteCmd:
 
 
 class TestRunProviderUpgrade:
-    """Tests for _run_provider_upgrade(): registry-dispatched via
-    provider_registry + the Protocol's update_entry(entry) verb (018)."""
+    """Tests for _run_tools_upgrade(): registry-dispatched via
+    provider_registry + the Protocol's update_entry(entry) verb (018), plus the
+    added-host path onto providers.added.configure() (#178)."""
 
     def test_aws_update(self, mocker):
-        from remo_cli.cli.shell import _run_provider_upgrade
+        from remo_cli.cli.shell import _run_tools_upgrade
 
         host = KnownHost(type="aws", name="devbox", host="1.2.3.4", user="remo")
         mock_update_entry = mocker.patch("remo_cli.providers.aws.update_entry")
 
-        _run_provider_upgrade(host)
+        _run_tools_upgrade(host)
 
         mock_update_entry.assert_called_once_with(host)
 
     def test_hetzner_update(self, mocker):
-        from remo_cli.cli.shell import _run_provider_upgrade
+        from remo_cli.cli.shell import _run_tools_upgrade
 
         host = KnownHost(type="hetzner", name="webserver", host="5.6.7.8", user="remo")
         mock_update_entry = mocker.patch("remo_cli.providers.hetzner.update_entry")
 
-        _run_provider_upgrade(host)
+        _run_tools_upgrade(host)
 
         mock_update_entry.assert_called_once_with(host)
 
     def test_incus_update(self, mocker):
-        from remo_cli.cli.shell import _run_provider_upgrade
+        from remo_cli.cli.shell import _run_tools_upgrade
 
         host = KnownHost(type="incus", name="myhost/devcontainer", host="192.168.1.50", user="remo")
         mock_update_entry = mocker.patch("remo_cli.providers.incus.update_entry")
 
-        _run_provider_upgrade(host)
+        _run_tools_upgrade(host)
 
         mock_update_entry.assert_called_once_with(host)
 
     def test_proxmox_update(self, mocker):
-        from remo_cli.cli.shell import _run_provider_upgrade
+        from remo_cli.cli.shell import _run_tools_upgrade
 
         host = KnownHost(
             type="proxmox",
@@ -478,21 +479,49 @@ class TestRunProviderUpgrade:
         )
         mock_update_entry = mocker.patch("remo_cli.providers.proxmox.update_entry")
 
-        _run_provider_upgrade(host)
+        _run_tools_upgrade(host)
 
         mock_update_entry.assert_called_once_with(host)
 
     def test_unknown_type_raises_precondition_error_naming_the_type(self):
-        from remo_cli.cli.shell import _run_provider_upgrade
+        from remo_cli.cli.shell import _run_tools_upgrade
         from remo_cli.core.errors import PreconditionError
 
         host = KnownHost(type="totally-unknown", name="foo", host="1.2.3.4", user="remo")
 
         with pytest.raises(PreconditionError, match="totally-unknown"):
-            _run_provider_upgrade(host)
+            _run_tools_upgrade(host)
+
+    def test_added_ssh_host_dispatches_to_configure(self, mocker):
+        """An added host has no provider; `remo configure` is its upgrade verb.
+
+        Pinned because get_provider("ssh") would raise: the dispatch has to
+        branch before the registry lookup, not after it.
+        """
+        from remo_cli.cli.shell import _run_tools_upgrade
+
+        host = KnownHost(type="ssh", name="mybox", host="1.2.3.4", user="remo")
+        configure = mocker.patch("remo_cli.providers.added.configure")
+
+        _run_tools_upgrade(host)
+
+        configure.assert_called_once_with(name="mybox", assume_yes=True)
+
+    def test_added_ssh_host_configure_failure_propagates(self, mocker):
+        from remo_cli.cli.shell import _run_tools_upgrade
+        from remo_cli.core.errors import OperationFailedError
+
+        host = KnownHost(type="ssh", name="mybox", host="1.2.3.4", user="remo")
+        mocker.patch(
+            "remo_cli.providers.added.configure",
+            side_effect=OperationFailedError("playbook rc=2"),
+        )
+
+        with pytest.raises(OperationFailedError, match="rc=2"):
+            _run_tools_upgrade(host)
 
     def test_update_entry_failure_propagates_as_provider_error(self, mocker):
-        from remo_cli.cli.shell import _run_provider_upgrade
+        from remo_cli.cli.shell import _run_tools_upgrade
         from remo_cli.core.errors import OperationFailedError
 
         host = KnownHost(type="aws", name="devbox", host="1.2.3.4", user="remo")
@@ -502,4 +531,4 @@ class TestRunProviderUpgrade:
         )
 
         with pytest.raises(OperationFailedError):
-            _run_provider_upgrade(host)
+            _run_tools_upgrade(host)

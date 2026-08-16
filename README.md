@@ -301,6 +301,13 @@ remo configure mybox --skip docker  # everything except Docker
 remo web push                       # authorize the web service on it
 ```
 
+Re-running it is how a configured host stays current — it refreshes
+`project-menu`, `remo-host`, `project-launch` and the rest of the toolchain, and
+applies system package updates. `remo shell` checks the version on connect and
+offers to run it for you when the host is behind, exactly as it does for
+provider hosts. A host you added but never configured is left alone: no marker,
+no prompt, straight into a login shell.
+
 #### Example: an OrbStack VM
 
 [`docs/examples/orbstack-cloud-init.yaml`](docs/examples/orbstack-cloud-init.yaml)
