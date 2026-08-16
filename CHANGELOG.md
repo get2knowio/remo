@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.3.5](https://github.com/get2knowio/remo/compare/v4.3.4...v4.3.5) (2026-08-16)
+
+
+### Bug Fixes
+
+* **cli:** check the tools version on added SSH hosts too ([#178](https://github.com/get2knowio/remo/issues/178)) ([#179](https://github.com/get2knowio/remo/issues/179)) ([1727b72](https://github.com/get2knowio/remo/commit/1727b724faef9b5b994640c41e80c3ebb550d240))
+
 ## [4.3.4](https://github.com/get2knowio/remo/compare/v4.3.3...v4.3.4) (2026-08-15)
 
 
