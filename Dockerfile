@@ -1,4 +1,4 @@
-FROM python:3.13-slim AS builder
+FROM python:3.14-slim AS builder
 
 WORKDIR /build
 
@@ -13,7 +13,7 @@ COPY src/ src/
 RUN pip wheel --no-deps --wheel-dir /build/wheels .
 
 # -------------------------------------------------------------------
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 LABEL org.opencontainers.image.source="https://github.com/get2knowio/remo"
 LABEL org.opencontainers.image.description="Remote development environment CLI"
