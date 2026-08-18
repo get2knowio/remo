@@ -28,6 +28,7 @@ import pytest
 from click.testing import CliRunner
 from fastapi.testclient import TestClient
 
+from remo_cli import __version__ as remo_version
 from remo_cli.cli.main import cli
 from remo_cli.web import app as app_module
 from remo_cli.web import check as check_module
@@ -123,6 +124,27 @@ class TestReadyConfigured:
 
         assert response.status_code == 200
         assert response.json()["status"] == "ready"
+
+
+class TestHealthVersion:
+    """`GET /health` reports the running build (browser-console diagnostics).
+
+    Liveness stays independent of configuration, so this holds in the
+    unconfigured state too -- which is precisely when an operator is most
+    likely to be pasting a diagnostics snapshot into a bug report.
+    """
+
+    def test_health_reports_the_package_version(self, state_dir, monkeypatch):
+        state_dir.unconfigured()
+        _patch_ssh_on_path(monkeypatch)
+
+        response = _app_and_client(state_dir).get("/api/v1/health")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "alive"
+        assert body["version"] == remo_version
+        assert body["version"]
 
 
 class TestReadyBroken:

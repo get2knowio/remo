@@ -22,9 +22,23 @@ export interface FitLoopOptions {
   onGridChange: (dims: TerminalDimensions) => void;
 }
 
+/** Why the most recent scheduled fit sent nothing, or null when it did send.
+ * "hidden" is the 0x0 case — a card kept mounted behind `display: none`. */
+export type FitSkipReason = "no-adapter" | "hidden" | "unchanged" | null;
+
+/** Read-only view of the loop's state for the diagnostics snapshot. */
+export interface FitLoopSnapshot {
+  lastSent: TerminalDimensions | null;
+  /** True while a fit is queued for the next animation frame. */
+  pending: boolean;
+  lastSkipReason: FitSkipReason;
+}
+
 export interface FitLoop {
   /** Request a fit. Coalesced to at most one per animation frame. */
   schedule(): void;
+  /** Read-only state, for diagnostics. Never triggers a fit. */
+  snapshot(): FitLoopSnapshot;
   /** Cancel any pending fit and forget the last-sent grid. */
   dispose(): void;
 }
@@ -32,6 +46,7 @@ export interface FitLoop {
 export function createFitLoop(options: FitLoopOptions): FitLoop {
   let raf: number | null = null;
   let lastSent: TerminalDimensions | null = null;
+  let lastSkipReason: FitSkipReason = null;
 
   return {
     schedule(): void {
@@ -47,6 +62,7 @@ export function createFitLoop(options: FitLoopOptions): FitLoop {
         const adapter = options.getAdapter();
         const container = options.getContainer();
         if (!adapter || !container) {
+          lastSkipReason = "no-adapter";
           return;
         }
         // A hidden pane collapses to 0x0; fitting then would shrink the remote
@@ -55,15 +71,22 @@ export function createFitLoop(options: FitLoopOptions): FitLoop {
         // TerminalConnection re-sends the last dims on `ready` after a
         // reconnect.
         if (container.clientWidth === 0 || container.clientHeight === 0) {
+          lastSkipReason = "hidden";
           return;
         }
         const dims = adapter.fit();
         if (lastSent && lastSent.cols === dims.cols && lastSent.rows === dims.rows) {
+          lastSkipReason = "unchanged";
           return; // grid unchanged — no need to resize the remote PTY
         }
+        lastSkipReason = null;
         lastSent = dims;
         options.onGridChange(dims);
       });
+    },
+
+    snapshot(): FitLoopSnapshot {
+      return { lastSent, pending: raf !== null, lastSkipReason };
     },
 
     dispose(): void {
@@ -72,6 +95,7 @@ export function createFitLoop(options: FitLoopOptions): FitLoop {
         raf = null;
       }
       lastSent = null;
+      lastSkipReason = null;
     },
   };
 }

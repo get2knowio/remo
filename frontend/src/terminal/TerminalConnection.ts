@@ -64,6 +64,34 @@ const PING_INTERVAL_MS = 4000;
  */
 const RESIZE_REASSERT_DELAYS_MS = [400, 1200, 3000];
 
+/**
+ * Read-only connection facts for the console's diagnostics snapshot
+ * (state/diagnostics.ts).
+ *
+ * REDACTION CONTRACT: the socket is reported by `readyState`/`bufferedAmount`
+ * ONLY. Its `url` carries the terminal id and its `protocol` carries the WS
+ * token (the auth token rides as a subprotocol value — see
+ * `openTerminalSocket`), so neither may ever appear here. `CloseEvent.reason`
+ * is server-authored text and is kept, truncated.
+ */
+export interface ConnectionDiagnostics {
+  state: TerminalConnectionState;
+  needsManualReconnect: boolean;
+  reconnectAttempts: number;
+  /** The last grid handed to `sendResize` — what the remote SHOULD be on,
+   * whether or not the frame actually reached the socket. */
+  lastSentGrid: { cols: number; rows: number };
+  lastClose: { code: number; reason: string; at: string } | null;
+  /** Control frames dropped because the socket was not OPEN. Non-zero after a
+   * normal startup race (the `ready` handler re-sends the size); a growing
+   * count means frames are being lost against a live-looking connection. */
+  droppedControlFrames: number;
+  socket: { readyState: number; bufferedAmount: number } | null;
+}
+
+/** Longest server-authored close reason retained in a snapshot. */
+const MAX_CLOSE_REASON_CHARS = 120;
+
 export interface TerminalConnectionCallbacks {
   onData?: (data: Uint8Array) => void;
   onReady?: () => void;
@@ -104,6 +132,11 @@ export class TerminalConnection {
   private pingSentAt: number | null = null;
   /** Pending re-asserts of the last-sent size (RESIZE_REASSERT_DELAYS_MS). */
   private resizeReassertTimers: Array<ReturnType<typeof setTimeout>> = [];
+  /** Last close code/reason, retained for diagnostics — the handler itself
+   * only branches on the code, so without this it is read and thrown away. */
+  private lastClose: { code: number; reason: string; at: string } | null = null;
+  /** Control frames sendControl dropped because the socket was not OPEN. */
+  private droppedControlFrames = 0;
 
   constructor(
     sessionTargetId: string,
@@ -216,8 +249,25 @@ export class TerminalConnection {
     }
   }
 
+  /** Read-only snapshot for the diagnostics blob. See ConnectionDiagnostics
+   * for what is deliberately absent (socket url/protocol carry the token). */
+  diagnostics(): ConnectionDiagnostics {
+    return {
+      state: this.state,
+      needsManualReconnect: this._needsManualReconnect,
+      reconnectAttempts: this.reconnectAttempts,
+      lastSentGrid: { cols: this.cols, rows: this.rows },
+      lastClose: this.lastClose,
+      droppedControlFrames: this.droppedControlFrames,
+      socket: this.socket
+        ? { readyState: this.socket.readyState, bufferedAmount: this.socket.bufferedAmount }
+        : null,
+    };
+  }
+
   private sendControl(message: Record<string, unknown>): void {
     if (this.socket?.readyState !== WebSocket.OPEN) {
+      this.droppedControlFrames += 1;
       return;
     }
     this.socket.send(JSON.stringify(message));
@@ -346,6 +396,14 @@ export class TerminalConnection {
     };
 
     socket.onclose = (event: CloseEvent) => {
+      // Retained before the branching below, which otherwise consumes the code
+      // and discards the reason — the two facts a "it just disconnected" report
+      // needs most.
+      this.lastClose = {
+        code: event.code,
+        reason: (event.reason ?? "").slice(0, MAX_CLOSE_REASON_CHARS),
+        at: new Date().toISOString(),
+      };
       this.socket = null;
       this.stopPinging();
       if (this.clientInitiatedClose || event.code === 1000) {

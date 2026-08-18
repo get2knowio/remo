@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import "./theme/tokens.css";
 import "./theme/fonts";
 import { AppRoot } from "./components/AppRoot";
+import { installRemoGlobal } from "./state/diagnostics";
 import { restoreUploadedFonts } from "./state/fonts";
 import { initSettings } from "./state/settings";
 
@@ -27,4 +28,8 @@ function mount(): void {
 // mount. The font restore is allowed to fail (allSettled) — a missing uploaded
 // font must never keep the console from starting.
 initSettings();
+// Publish `window.__remo.diagnostics()` BEFORE mounting: the devtools escape
+// hatch has to exist in exactly the cases where the shell never renders (an
+// unconfigured service, a failed health gate, a crashed tree).
+installRemoGlobal();
 void Promise.allSettled([restoreUploadedFonts()]).then(mount);

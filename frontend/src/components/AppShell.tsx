@@ -5,6 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState, type PointerEvent } from "react";
 import type { SessionTarget } from "../api/client";
+import { NARROW_BREAKPOINT } from "../lib/breakpoints";
 import { exitBrowserFullscreen } from "../lib/fullscreen";
 import { useDiscovery } from "../state/discovery";
 import { useHealth } from "../state/health";
@@ -20,8 +21,6 @@ import { ShortcutsModal } from "./ShortcutsModal";
 import { TopBar } from "./TopBar";
 import { WorkspacePane } from "./WorkspacePane";
 import "./AppShell.css";
-
-const NARROW_BREAKPOINT = 820;
 
 export function AppShell(): JSX.Element {
   const discovery = useDiscovery();

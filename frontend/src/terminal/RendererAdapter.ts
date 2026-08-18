@@ -59,6 +59,55 @@ export interface TerminalThemeColors {
   brightWhite: string;
 }
 
+/** The emulator's DEC/xterm mode state, as xterm.js's `IModes` reports it.
+ * Re-declared structurally here (this file imports nothing) — the field names
+ * and the `mouseTrackingMode` union match xterm.js's public typings.
+ *
+ * The load-bearing one for support questions is `mouseTrackingMode`: anything
+ * other than "none" means an application (Claude Code, vim, htop) has taken
+ * the mouse, which is why a plain drag stops selecting text. */
+export interface RendererModes {
+  applicationCursorKeysMode: boolean;
+  applicationKeypadMode: boolean;
+  bracketedPasteMode: boolean;
+  insertMode: boolean;
+  mouseTrackingMode: "none" | "x10" | "vt200" | "drag" | "any";
+  originMode: boolean;
+  reverseWraparoundMode: boolean;
+  sendFocusMode: boolean;
+  wraparoundMode: boolean;
+}
+
+/** A pixel box in viewport coordinates. `bottom` is kept deliberately: a grid
+ * that fits its container while the container itself hangs below the fold is a
+ * different bug from a grid sized for the wrong container, and only the
+ * absolute edges distinguish them. */
+export interface RendererRect {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  bottom: number;
+}
+
+/** Read-only renderer facts for the diagnostics snapshot (state/diagnostics.ts).
+ * Every field is observed, never computed by mutating the terminal. */
+export interface RendererDiagnostics {
+  /** "webgl" once the GPU addon is live, "dom" after a context loss or a
+   * failed context creation, "unopened" before `open()`. */
+  kind: "webgl" | "dom" | "unopened";
+  /** Addon names currently loaded, e.g. ["fit", "webgl", "web-links"]. */
+  addons: string[];
+  /** The grid the emulator is CURRENTLY on — read, never re-fitted. */
+  grid: TerminalDimensions;
+  /** What a fit would compute for the current container, WITHOUT applying it.
+   * `grid` !== `proposedGrid` means the emulator is sized for a different box
+   * than the one it now occupies. */
+  proposedGrid: TerminalDimensions | null;
+  containerPx: RendererRect | null;
+  modes: RendererModes;
+}
+
 /**
  * A Remo-owned adapter over a concrete browser terminal renderer.
  * Implementations translate this interface's calls into the underlying
@@ -131,6 +180,14 @@ export interface RendererAdapter {
    * secure context). Returns true if there was a selection that was copied.
    */
   copySelection(): Promise<boolean>;
+
+  /**
+   * Read-only snapshot of what this renderer is currently doing, for the
+   * console's diagnostics blob. MUST NOT mutate anything — in particular it
+   * reports what a fit WOULD compute rather than performing one, so asking a
+   * terminal about itself can never resize the remote PTY.
+   */
+  diagnostics(): RendererDiagnostics;
 
   /** Tears down the renderer and releases all resources/listeners. */
   dispose(): void;

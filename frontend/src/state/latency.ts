@@ -54,6 +54,12 @@ export function removeLatency(id: string): void {
   }
 }
 
+/** One terminal's own last round-trip sample, or null if it isn't reporting.
+ * The header only ever needs the median; per-pane diagnostics need this. */
+export function getLatencyFor(id: string): number | null {
+  return samples.get(id) ?? null;
+}
+
 /** Test/inspection accessor for the current aggregate. */
 export function getLatencySnapshot(): LatencySnapshot {
   return snapshot;

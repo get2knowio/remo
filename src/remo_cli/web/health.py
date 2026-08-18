@@ -28,6 +28,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from remo_cli import __version__
 from remo_cli.core.config import get_known_hosts_path_readonly
 from remo_cli.web.config import WebSettings
 from remo_cli.web.state import ConfigurationState, detect_state
@@ -37,6 +38,14 @@ router = APIRouter()
 
 class HealthResponse(BaseModel):
     status: str
+    #: The running service's package version, so a bug report can name the
+    #: build that produced it (the browser console reads this for its
+    #: diagnostics snapshot; the SPA ships inside the same wheel, so one
+    #: version covers both halves). Disclosing it on this unauthenticated LAN
+    #: surface is accepted for a home-lab tool: the endpoint already announces
+    #: that a remo-web is here, and the version is what makes a pasted
+    #: diagnostics blob actionable.
+    version: str
 
 
 class ReadinessResponse(BaseModel):
@@ -63,7 +72,7 @@ _BROKEN_DETAIL = (
 @router.get("/health", response_model=HealthResponse)
 async def health() -> dict:
     """Liveness probe: the process is up. Never checks configuration."""
-    return {"status": "alive"}
+    return {"status": "alive", "version": __version__}
 
 
 @router.get(

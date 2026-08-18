@@ -43,3 +43,31 @@ describe("XtermRenderer terminal options", () => {
     renderer.dispose();
   });
 });
+
+// Diagnostics, unopened only. jsdom has no layout engine and xterm refuses to
+// open into an unmeasurable element, so the opened path (webgl vs dom, a real
+// proposeDimensions) belongs to the browser geometry suite. What IS checkable
+// here is the contract the console depends on: a renderer that was never opened
+// still answers, and answers honestly, instead of throwing into the snapshot.
+describe("XtermRenderer diagnostics", () => {
+  it("reports an unopened renderer without touching the terminal", () => {
+    const renderer = new XtermRenderer();
+
+    const diag = renderer.diagnostics();
+
+    expect(diag.kind).toBe("unopened");
+    expect(diag.containerPx).toBeNull();
+    // proposeDimensions needs an attached element; null beats a guess.
+    expect(diag.proposedGrid).toBeNull();
+    expect(diag.grid).toEqual({
+      cols: terminalOf(renderer).cols,
+      rows: terminalOf(renderer).rows,
+    });
+    expect(diag.addons).toEqual(["fit"]);
+    // The field support questions actually turn on: anything but "none" means
+    // an application owns the mouse, which is why drag-to-select stops working.
+    expect(diag.modes.mouseTrackingMode).toBe("none");
+
+    renderer.dispose();
+  });
+});

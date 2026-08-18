@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     static readonly CLOSED = 3;
 
     readyState = 0;
+    bufferedAmount = 0;
     binaryType = "blob";
     onopen: ((e: Event) => void) | null = null;
     onmessage: ((e: MessageEvent) => void) | null = null;
@@ -32,9 +33,9 @@ const mocks = vi.hoisted(() => {
       this.onopen?.(new Event("open"));
       this.onmessage?.({ data: JSON.stringify({ v: 1, type: "ready" }) } as MessageEvent);
     }
-    drop(code = 1006): void {
+    drop(code = 1006, reason = ""): void {
       this.readyState = 3;
-      this.onclose?.({ code } as CloseEvent);
+      this.onclose?.({ code, reason } as CloseEvent);
     }
   }
 
@@ -276,5 +277,74 @@ describe("TerminalConnection resize re-assertion", () => {
     reconnected.ready();
 
     expect(resizeFrames(reconnected)[0]).toEqual({ cols: 140, rows: 60 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostics.
+//
+// Two facts the connection used to throw away: the close code/reason (read once
+// to decide whether to reconnect, then gone) and control frames dropped because
+// the socket wasn't OPEN (a silent early return). Both are what a "it just
+// disconnected" / "the remote never resized" report turns on.
+//
+// The redaction rule is pinned here too: the WS token rides as a subprotocol
+// value, so the socket's url/protocol must never reach a snapshot.
+// ---------------------------------------------------------------------------
+describe("TerminalConnection diagnostics", () => {
+  it("retains the close code and reason after an unexpected close", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    last().ready();
+
+    last().drop(1011, "remo-host exited");
+
+    const diag = conn.diagnostics();
+    expect(diag.lastClose).toMatchObject({ code: 1011, reason: "remo-host exited" });
+    expect(Date.parse(diag.lastClose!.at)).not.toBeNaN();
+    // The socket is gone, but the state machine is mid-recovery.
+    expect(diag.socket).toBeNull();
+    expect(diag.state).toBe("reconnecting");
+  });
+
+  it("truncates a long server-authored close reason", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    last().ready();
+
+    last().drop(1011, "x".repeat(400));
+
+    expect(conn.diagnostics().lastClose!.reason).toHaveLength(120);
+  });
+
+  it("counts control frames dropped before the socket is open, and still tracks the grid", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect(); // socket exists but is CONNECTING, not OPEN
+
+    conn.sendResize(140, 60);
+
+    const diag = conn.diagnostics();
+    expect(diag.droppedControlFrames).toBeGreaterThan(0);
+    // The frame never left, but the dims are recorded — which is what the
+    // `ready` handler re-sends.
+    expect(diag.lastSentGrid).toEqual({ cols: 140, rows: 60 });
+  });
+
+  it("reports a live socket by readyState only — never its url or protocol", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    last().ready();
+    // Plant what redaction must exclude on the socket the connection holds.
+    Object.assign(last(), {
+      url: "ws://host/api/v1/terminals/t1?sentinel=SUPERSECRET",
+      protocol: "remo-terminal.v1.token.SUPERSECRET",
+    });
+
+    const serialized = JSON.stringify(conn.diagnostics());
+
+    expect(serialized).not.toContain("SUPERSECRET");
+    expect(serialized).not.toContain("url");
+    expect(serialized).not.toContain("protocol");
+    expect(conn.diagnostics().socket).toEqual({ readyState: 1, bufferedAmount: 0 });
   });
 });
