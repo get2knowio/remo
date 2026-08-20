@@ -107,6 +107,20 @@ export const FONT_OPTIONS: FontOption[] = [
   { label: "Cascadia Code", css: "'Cascadia Code', monospace", tag: "Bring your own", bundled: false },
 ];
 
+/** The `type::name` join key used wherever a host must be matched across
+ * discovery instances and session targets. */
+export function hostKey(type: string, name: string): string {
+  return `${type}::${name}`;
+}
+
+/** What a favorite remembers about its target, so it can render (dimmed) even
+ * when the target is absent from the current discovery snapshot. */
+export interface FavoriteEntry {
+  project: string;
+  instanceType: string;
+  instanceName: string;
+}
+
 export const MIN_TERM_SIZE = 11;
 export const MAX_TERM_SIZE = 18;
 export const MIN_RAIL_WIDTH = 262;
@@ -148,6 +162,12 @@ export interface SettingsState {
   showTileChrome: boolean;
   railWidth: number;
   railCollapsed: boolean;
+  /** Rail host groups the user has collapsed, keyed by `instance_id`. New
+   * hosts default to expanded, so this is the collapsed set, not the open one. */
+  collapsedHosts: string[];
+  /** Favorited session targets, keyed by `SessionTarget.id`. The stored entry
+   * carries enough to render the favorite when the target is stale. */
+  favorites: Record<string, FavoriteEntry>;
   /** Family name of the currently-registered uploaded Nerd Font, if any. */
   nerdFontName: string | null;
   /** Focus-follows-mouse dwell in ms (how long the pointer rests before focus). */
@@ -174,6 +194,8 @@ const DEFAULTS: SettingsState = {
   masterSplit: DEFAULT_MASTER_SPLIT,
   railWidth: DEFAULT_RAIL_WIDTH,
   railCollapsed: false,
+  collapsedHosts: [],
+  favorites: {},
   nerdFontName: null,
   focusDwellMs: DEFAULT_FOCUS_DWELL_MS,
 };
@@ -201,6 +223,35 @@ function sanitizeOverrides(raw: unknown): Record<string, string> {
   for (const [id, themeId] of Object.entries(raw as Record<string, unknown>)) {
     if (isTerminalThemeId(themeId)) {
       out[id] = themeId;
+    }
+  }
+  return out;
+}
+
+function sanitizeCollapsedHosts(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((id): id is string => typeof id === "string");
+}
+
+/** Keep only entries whose value carries all three FavoriteEntry fields. */
+function sanitizeFavorites(raw: unknown): Record<string, FavoriteEntry> {
+  if (typeof raw !== "object" || raw === null) {
+    return {};
+  }
+  const out: Record<string, FavoriteEntry> = {};
+  for (const [id, entry] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const e = entry as Record<string, unknown>;
+    if (
+      typeof e.project === "string" &&
+      typeof e.instanceType === "string" &&
+      typeof e.instanceName === "string"
+    ) {
+      out[id] = { project: e.project, instanceType: e.instanceType, instanceName: e.instanceName };
     }
   }
   return out;
@@ -255,6 +306,8 @@ function loadPersisted(): SettingsState {
           ? clamp(Math.round(c.railWidth), MIN_RAIL_WIDTH, MAX_RAIL_WIDTH)
           : DEFAULTS.railWidth,
       railCollapsed: typeof c.railCollapsed === "boolean" ? c.railCollapsed : DEFAULTS.railCollapsed,
+      collapsedHosts: sanitizeCollapsedHosts(c.collapsedHosts),
+      favorites: sanitizeFavorites(c.favorites),
       nerdFontName: typeof c.nerdFontName === "string" ? c.nerdFontName : null,
       focusDwellMs:
         typeof c.focusDwellMs === "number"
@@ -417,6 +470,47 @@ export const settingsActions = {
   setRailWidth: (railWidth: number) =>
     setState({ railWidth: clamp(Math.round(railWidth), MIN_RAIL_WIDTH, MAX_RAIL_WIDTH) }),
   toggleRailCollapsed: () => setState({ railCollapsed: !state.railCollapsed }),
+  toggleHostCollapsed: (instanceId: string) =>
+    setState({
+      collapsedHosts: state.collapsedHosts.includes(instanceId)
+        ? state.collapsedHosts.filter((id) => id !== instanceId)
+        : [...state.collapsedHosts, instanceId],
+    }),
+  /** Drop collapse prefs for hosts no longer in the registry. Callers must
+   * only pass a successful, non-empty discovery result. */
+  pruneCollapsedHosts: (liveInstanceIds: readonly string[]) => {
+    const live = new Set(liveInstanceIds);
+    const next = state.collapsedHosts.filter((id) => live.has(id));
+    if (next.length === state.collapsedHosts.length) {
+      return; // nothing to drop — don't churn the store
+    }
+    setState({ collapsedHosts: next });
+  },
+  toggleFavorite: (targetId: string, entry: FavoriteEntry) => {
+    const next = { ...state.favorites };
+    if (next[targetId]) {
+      delete next[targetId];
+    } else {
+      next[targetId] = entry;
+    }
+    setState({ favorites: next });
+  },
+  /** Drop favorites whose project was truly removed: the parent host is
+   * reachable (in `okHostKeys`, built with hostKey()) AND the target id is
+   * gone. A missing/unreachable host never prunes — its favorites render
+   * stale instead. Callers must only pass a successful, non-empty discovery
+   * result. */
+  pruneFavorites: (liveTargetIds: readonly string[], okHostKeys: readonly string[]) => {
+    const live = new Set(liveTargetIds);
+    const ok = new Set(okHostKeys);
+    const entries = Object.entries(state.favorites).filter(
+      ([id, entry]) => live.has(id) || !ok.has(hostKey(entry.instanceType, entry.instanceName)),
+    );
+    if (entries.length === Object.keys(state.favorites).length) {
+      return; // nothing to drop — don't churn the store
+    }
+    setState({ favorites: Object.fromEntries(entries) });
+  },
   setNerdFontName: (nerdFontName: string | null) => setState({ nerdFontName }),
   setFocusDwell: (focusDwellMs: number) =>
     setState({

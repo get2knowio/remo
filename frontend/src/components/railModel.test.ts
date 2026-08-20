@@ -119,3 +119,189 @@ describe('"Active only" filter', () => {
     expect(rows[0].active).toBe(true);
   });
 });
+
+describe("host collapse", () => {
+  it("defaults to expanded when no prefs are supplied", () => {
+    const model = buildRailModel([instance()], [target()], NO_FILTERS);
+
+    expect(model.groups[0].collapsed).toBe(false);
+  });
+
+  it("reflects the stored collapse pref, keeping rows populated for the badge", () => {
+    const model = buildRailModel([instance()], [target()], NO_FILTERS, new Set(), {
+      collapsedHostIds: new Set(["inst-1"]),
+    });
+
+    expect(model.groups[0].collapsed).toBe(true);
+    // The component decides what to hide; the model keeps the rows so the
+    // collapsed count badge (and a later expand) need no rebuild.
+    expect(model.groups[0].rows).toHaveLength(1);
+  });
+
+  it("is forced open by an active search, without touching the stored pref", () => {
+    const stored = new Set(["inst-1"]);
+    const model = buildRailModel(
+      [instance()],
+      [target()],
+      { ...NO_FILTERS, search: "remo" },
+      new Set(),
+      { collapsedHostIds: stored },
+    );
+
+    expect(model.groups[0].collapsed).toBe(false);
+    expect(stored.has("inst-1")).toBe(true);
+  });
+
+  it("is NOT overridden by the provider or active-only filters", () => {
+    const providerOnly = buildRailModel(
+      [instance()],
+      [target({ zellij_state: "active" })],
+      { ...NO_FILTERS, providerFilter: "incus" },
+      new Set(),
+      { collapsedHostIds: new Set(["inst-1"]) },
+    );
+    const activeOnly = buildRailModel(
+      [instance()],
+      [target({ zellij_state: "active" })],
+      { ...NO_FILTERS, sessionOnly: true },
+      new Set(),
+      { collapsedHostIds: new Set(["inst-1"]) },
+    );
+
+    expect(providerOnly.groups[0].collapsed).toBe(true);
+    expect(activeOnly.groups[0].collapsed).toBe(true);
+  });
+});
+
+describe("favorites", () => {
+  const entry = { project: "remo", instanceType: "incus", instanceName: "lab/dev1" };
+
+  it("resolves a live favorite to its target, carrying the twin row's number", () => {
+    const model = buildRailModel([instance()], [target()], NO_FILTERS, new Set(), {
+      favorites: { "t-1": entry },
+    });
+
+    expect(model.favorites).toHaveLength(1);
+    expect(model.favorites[0].target).toEqual(model.groups[0].rows[0].target);
+    expect(model.favorites[0].num).toBe(model.groups[0].rows[0].num);
+    expect(model.favorites[0].num).toBe(1);
+    expect(model.groups[0].rows[0].favorited).toBe(true);
+  });
+
+  it("renders a favorite whose target is gone as stale, from the stored entry", () => {
+    const model = buildRailModel([instance()], [], NO_FILTERS, new Set(), {
+      favorites: { "t-1": entry },
+    });
+
+    expect(model.favorites).toHaveLength(1);
+    expect(model.favorites[0]).toMatchObject({
+      id: "t-1",
+      target: null,
+      num: null,
+      active: false,
+      project: "remo",
+      hostLabel: "lab/dev1",
+    });
+  });
+
+  it("keeps the target but gets no number on a non-ok host", () => {
+    const model = buildRailModel(
+      [instance({ status: "unreachable" })],
+      [target()],
+      NO_FILTERS,
+      new Set(),
+      { favorites: { "t-1": entry } },
+    );
+
+    expect(model.favorites[0].target).not.toBeNull();
+    expect(model.favorites[0].num).toBeNull();
+  });
+
+  it("honors all three rail filters, via the stored entry when stale", () => {
+    const favorites = { "t-1": entry };
+
+    const provider = buildRailModel([], [], { ...NO_FILTERS, providerFilter: "aws" }, new Set(), {
+      favorites,
+    });
+    expect(provider.favorites).toHaveLength(0);
+
+    const activeOnly = buildRailModel([], [], { ...NO_FILTERS, sessionOnly: true }, new Set(), {
+      favorites,
+    });
+    expect(activeOnly.favorites).toHaveLength(0);
+
+    const searchMiss = buildRailModel([], [], { ...NO_FILTERS, search: "zzz" }, new Set(), {
+      favorites,
+    });
+    expect(searchMiss.favorites).toHaveLength(0);
+
+    const searchHit = buildRailModel([], [], { ...NO_FILTERS, search: "remo" }, new Set(), {
+      favorites,
+    });
+    expect(searchHit.favorites).toHaveLength(1);
+  });
+
+  it("keeps a live favorite under 'active only' when this console holds its terminal", () => {
+    const model = buildRailModel(
+      [instance()],
+      [target()],
+      { ...NO_FILTERS, sessionOnly: true },
+      new Set(["t-1"]),
+      { favorites: { "t-1": entry } },
+    );
+
+    expect(model.favorites).toHaveLength(1);
+    expect(model.favorites[0].active).toBe(true);
+  });
+
+  it("sorts by project, then host label", () => {
+    const model = buildRailModel([], [], NO_FILTERS, new Set(), {
+      favorites: {
+        "t-3": { project: "beta", instanceType: "incus", instanceName: "b-host" },
+        "t-1": { project: "beta", instanceType: "incus", instanceName: "a-host" },
+        "t-2": { project: "alpha", instanceType: "incus", instanceName: "z-host" },
+      },
+    });
+
+    expect(model.favorites.map((f) => [f.project, f.hostLabel])).toEqual([
+      ["alpha", "z-host"],
+      ["beta", "a-host"],
+      ["beta", "b-host"],
+    ]);
+  });
+});
+
+describe("collapse and favorites never disturb numbering", () => {
+  it("leaves flatOpenable, availCount, and every row's num byte-identical", () => {
+    const instances = [
+      instance(),
+      instance({ instance_id: "inst-2", instance_name: "lab/dev2" }),
+    ];
+    const targets = [
+      target({ id: "t-1", project: "alpha" }),
+      target({ id: "t-2", project: "beta" }),
+      target({ id: "t-3", project: "gamma", instance_name: "lab/dev2" }),
+    ];
+
+    const plain = buildRailModel(instances, targets, NO_FILTERS);
+    const decorated = buildRailModel(instances, targets, NO_FILTERS, new Set(), {
+      collapsedHostIds: new Set(["inst-1", "inst-2"]),
+      favorites: {
+        "t-2": { project: "beta", instanceType: "incus", instanceName: "lab/dev1" },
+        "t-3": { project: "gamma", instanceType: "incus", instanceName: "lab/dev2" },
+      },
+    });
+
+    expect(decorated.flatOpenable).toEqual(plain.flatOpenable);
+    expect(decorated.availCount).toBe(plain.availCount);
+    expect(decorated.groups.map((g) => g.rows.map((r) => [r.target.id, r.num]))).toEqual(
+      plain.groups.map((g) => g.rows.map((r) => [r.target.id, r.num])),
+    );
+    // Favorites borrow their twin's number, so 'Open all' and 1–9 shortcuts
+    // are untouched by starring.
+    expect(decorated.favorites.map((f) => [f.id, f.num])).toEqual([
+      ["t-2", 2],
+      ["t-3", 3],
+    ]);
+  });
+});

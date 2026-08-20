@@ -173,6 +173,38 @@
   background: var(--bg-btn-hover);
 }
 
+.rail-inst-head--clickable {
+  cursor: pointer;
+  border-radius: 8px;
+}
+.rail-inst-head--clickable:hover {
+  background: var(--bg-row-hover);
+}
+.rail-inst-caret {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+.rail-inst-count {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  background: var(--bg-btn);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
 .rail-inst-error {
   margin: 2px 4px 6px;
   padding: 9px 10px;
@@ -262,6 +294,56 @@
   font-size: 12px;
   flex: none;
 }
+.rail-fav-star {
+  flex: none;
+  color: var(--warn);
+  font-size: 12px;
+}
+/* Star toggle: invisible until the row is hovered, the button is keyboard-
+ * focused, or the row is already favorited — so the rail stays quiet. */
+.rail-row-fav {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 12px;
+  opacity: 0;
+}
+.rail-row:hover .rail-row-fav,
+.rail-row-fav:focus-visible,
+.rail-row-fav--on {
+  opacity: 1;
+}
+.rail-row-fav:hover {
+  background: var(--bg-btn);
+}
+.rail-row-fav--on {
+  color: var(--warn);
+}
+.rail-row-host {
+  flex: none;
+  max-width: 34%;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A stale favorite: its host is unreachable/absent, so the row is inert —
+ * only the ★ removal button keeps working. */
+.rail-row--stale {
+  opacity: 0.55;
+  cursor: default;
+}
+.rail-row--stale:hover {
+  background: transparent;
+}
+
 .rail-row-add {
   flex: none;
   width: 20px;
@@ -365,6 +447,18 @@
     width: 32px;
     height: 32px;
     font-size: 13px;
+  }
+  /* No hover on touch: the star must always be visible, and finger-sized. */
+  .rail-row-fav {
+    opacity: 1;
+    width: 32px;
+    height: 32px;
+    font-size: 14px;
+  }
+  .rail-inst-caret {
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
   }
   .rail-toggle,
   .rail-openall {
