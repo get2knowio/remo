@@ -14,6 +14,7 @@ collision/update policy, optionally verifies reachability, and writes the entry.
 
 from __future__ import annotations
 
+import os
 import subprocess
 
 from remo_cli.core.config import (
@@ -428,6 +429,21 @@ def configure(
     ]
     if entry.ssh_identity:
         extra_vars.extend(["-e", f"remo_ssh_identity={entry.ssh_identity}"])
+    else:
+        # Deployment-level identity fallback (023): the web service's job
+        # runner exports $REMO_SSH_IDENTITY_FILE so an in-container configure
+        # authenticates with the service key when the entry stores no
+        # identity. Never stored in the registry (a container path would sync
+        # to workstations and, under IdentitiesOnly, guarantee auth failure).
+        env_identity = os.environ.get("REMO_SSH_IDENTITY_FILE")
+        if env_identity:
+            try:
+                _reject_unsafe_field("identity path", env_identity)
+            except ValueError as e:
+                raise PreconditionError(
+                    f"$REMO_SSH_IDENTITY_FILE has an unusable value: {e}."
+                ) from None
+            extra_vars.extend(["-e", f"remo_ssh_identity={env_identity}"])
     extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
     try:

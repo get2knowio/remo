@@ -572,6 +572,91 @@ def _persist_confirmed_host_keys(lines: list[str], known_hosts_path: Path) -> st
     return None
 
 
+def scan_host_keys(
+    hostname: str,
+    port: int = DEFAULT_SSH_PORT,
+    *,
+    timeout: float = 20.0,
+) -> tuple[list[str], str | None]:
+    """Run ``ssh-keyscan`` against *hostname*:*port* and filter the output.
+
+    Returns ``(scanned_lines, error_detail)``: on success the structurally
+    valid known_hosts lines and ``None``; on any failure (missing binary,
+    timeout, OS error, or no usable keys returned) an empty list and a
+    human-readable detail. Extracted from :func:`scan_and_verify_host_key`
+    (023) so the web registry-admin API can scan without the interactive
+    trust flow; the CLI behavior is unchanged — the composition is pinned by
+    the existing trust tests.
+    """
+    scan_cmd = ["ssh-keyscan", "-T", "5", "-t", _KEYSCAN_TYPES]
+    if port != DEFAULT_SSH_PORT:
+        scan_cmd.extend(["-p", str(port)])
+    scan_cmd.append(hostname)
+
+    try:
+        result = subprocess.run(
+            scan_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return [], "ssh-keyscan not found on this workstation"
+    except subprocess.TimeoutExpired:
+        return [], f"host key scan timed out after {timeout:.0f}s"
+    except OSError as e:
+        return [], f"host key scan failed: {e}"
+
+    scanned_lines = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip()
+        and not line.strip().startswith("#")
+        # only structurally valid known_hosts lines may reach the payload;
+        # anything else would bypass the match/mismatch verification below
+        and len(line.split()) >= 3
+    ]
+    scanned_pairs = _parse_known_hosts_pairs("\n".join(scanned_lines))
+    if not scanned_pairs:
+        stderr_lines = result.stderr.strip().splitlines()
+        detail = stderr_lines[-1].strip() if stderr_lines else "no host keys returned by ssh-keyscan"
+        return [], detail
+    return scanned_lines, None
+
+
+def classify_scanned_keys(
+    scanned_lines: list[str],
+    lookup_key: str,
+    known_hosts_path: Path,
+) -> tuple[str, str]:
+    """Classify *scanned_lines* against the trust store at *known_hosts_path*.
+
+    Returns ``(status, detail)`` with status one of ``"trusted"`` /
+    ``"mismatch"`` / ``"no_trust"``. A trust record that exists only for key
+    types the scan did not return is treated as no record (nothing
+    comparable). Extracted from :func:`scan_and_verify_host_key` (023).
+    """
+    scanned_pairs = _parse_known_hosts_pairs("\n".join(scanned_lines))
+    trusted_pairs = _lookup_trusted_keys(lookup_key, known_hosts_path)
+    if trusted_pairs is not None:
+        trusted_by_type: dict[str, set[str]] = {}
+        for key_type, key in trusted_pairs:
+            trusted_by_type.setdefault(key_type, set()).add(key)
+        overlapping = [(t, k) for t, k in scanned_pairs if t in trusted_by_type]
+        if overlapping:
+            for key_type, key in overlapping:
+                if key not in trusted_by_type[key_type]:
+                    return (
+                        "mismatch",
+                        f"scanned {key_type} host key does not match the trusted "
+                        f"entry in {known_hosts_path}",
+                    )
+            return ("trusted", "matches trusted known_hosts entry")
+        # A record exists but only for key types the scan didn't return —
+        # nothing comparable, so fall through to the no-trusted-record path.
+    return ("no_trust", f"no trusted host key for {lookup_key} in {known_hosts_path}")
+
+
 def scan_and_verify_host_key(
     hostname: str,
     *,
@@ -619,75 +704,20 @@ def scan_and_verify_host_key(
         confirm_fn = confirm
     lookup_key = known_hosts_lookup_key(hostname, port)
 
-    scan_cmd = ["ssh-keyscan", "-T", "5", "-t", _KEYSCAN_TYPES]
-    if port != DEFAULT_SSH_PORT:
-        scan_cmd.extend(["-p", str(port)])
-    scan_cmd.append(hostname)
+    scanned_lines, scan_error = scan_host_keys(hostname, port, timeout=scan_timeout)
+    if scan_error is not None:
+        return HostKeyScan("unreachable", detail=scan_error)
 
-    try:
-        result = subprocess.run(
-            scan_cmd,
-            capture_output=True,
-            text=True,
-            timeout=scan_timeout,
-        )
-    except FileNotFoundError:
-        return HostKeyScan(
-            "unreachable", detail="ssh-keyscan not found on this workstation"
-        )
-    except subprocess.TimeoutExpired:
-        return HostKeyScan(
-            "unreachable", detail=f"host key scan timed out after {scan_timeout:.0f}s"
-        )
-    except OSError as e:
-        return HostKeyScan("unreachable", detail=f"host key scan failed: {e}")
-
-    scanned_lines = [
-        line.strip()
-        for line in result.stdout.splitlines()
-        if line.strip()
-        and not line.strip().startswith("#")
-        # only structurally valid known_hosts lines may reach the payload;
-        # anything else would bypass the match/mismatch verification below
-        and len(line.split()) >= 3
-    ]
-    scanned_pairs = _parse_known_hosts_pairs("\n".join(scanned_lines))
-    if not scanned_pairs:
-        stderr_lines = result.stderr.strip().splitlines()
-        detail = stderr_lines[-1].strip() if stderr_lines else "no host keys returned by ssh-keyscan"
-        return HostKeyScan("unreachable", detail=detail)
-
-    trusted_pairs = _lookup_trusted_keys(lookup_key, known_hosts_path)
-    if trusted_pairs is not None:
-        trusted_by_type: dict[str, set[str]] = {}
-        for key_type, key in trusted_pairs:
-            trusted_by_type.setdefault(key_type, set()).add(key)
-        overlapping = [(t, k) for t, k in scanned_pairs if t in trusted_by_type]
-        if overlapping:
-            for key_type, key in overlapping:
-                if key not in trusted_by_type[key_type]:
-                    return HostKeyScan(
-                        "mismatch",
-                        detail=(
-                            f"scanned {key_type} host key does not match the trusted "
-                            f"entry in {known_hosts_path}"
-                        ),
-                    )
-            return HostKeyScan(
-                "trusted",
-                lines=scanned_lines,
-                detail="matches trusted known_hosts entry",
-            )
-        # A record exists but only for key types the scan didn't return —
-        # nothing comparable, so fall through to the no-trusted-record path.
+    status, detail = classify_scanned_keys(scanned_lines, lookup_key, known_hosts_path)
+    if status == "mismatch":
+        return HostKeyScan("mismatch", detail=detail)
+    if status == "trusted":
+        return HostKeyScan("trusted", lines=scanned_lines, detail=detail)
 
     if not interactive:
         return HostKeyScan(
             "no_trust",
-            detail=(
-                f"no trusted host key for {lookup_key} in {known_hosts_path} "
-                "(non-interactive run; fingerprint confirmation skipped)"
-            ),
+            detail=f"{detail} (non-interactive run; fingerprint confirmation skipped)",
         )
 
     print_warning(f"No trusted host key for {lookup_key} in {known_hosts_path}.")
