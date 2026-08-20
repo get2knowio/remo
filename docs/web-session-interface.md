@@ -30,6 +30,7 @@ second launcher; it reuses the same host-side scripts (`project-launch`) that th
 
 - [Architecture](#architecture)
 - [Browser console UI](#browser-console-ui)
+- [Host detail page and maintenance](#host-detail-page-and-maintenance)
 - [Security boundary](#security-boundary)
 - [Deployment modes: mounts vs adoption](#deployment-modes-mounts-vs-adoption)
 - [Docker Compose deployment](#docker-compose-deployment)
@@ -73,7 +74,9 @@ session-target IDs. Three protocol layers make this work, each documented in ful
   no port and never accepts an arbitrary shell command — only these explicit, validated verbs.
 - **REST API** ([`rest-api.md`](../specs/010-web-session-interface/contracts/rest-api.md)) — `GET
   /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/hosts`, `GET /api/v1/sessions`, `POST
-  /api/v1/discovery/refresh`, and `POST`/`GET`/`DELETE /api/v1/terminals`. Terminal creation returns
+  /api/v1/discovery/refresh`, and `POST`/`GET`/`DELETE /api/v1/terminals` — plus the per-host stats
+  route and the config-gated maintenance routes described under
+  [Host detail page and maintenance](#host-detail-page-and-maintenance). Terminal creation returns
   an opaque terminal ID plus a short-lived WebSocket token — never a hostname or command.
   `GET /hosts` and `GET /sessions` only **read** the service's discovery cache; `POST
   /discovery/refresh` is the only call that repopulates it, which is why the console posts it on a
@@ -86,7 +89,8 @@ session-target IDs. Three protocol layers make this work, each documented in ful
 
 Backend package: `src/remo_cli/web/` (`app.py` FastAPI factory, `config.py` settings, `discovery.py`,
 `ssh_master.py`, `terminal.py`, `terminal_registry.py`, `tokens.py`, `health.py`, `check.py`, plus
-`api/hosts.py` and `api/terminals.py`). Frontend: `frontend/` (Vite + React + TypeScript). Terminals
+`api/hosts.py`, `api/terminals.py`, and the config-gated `api/host_admin.py` — see
+[Host detail page and maintenance](#host-detail-page-and-maintenance)). Frontend: `frontend/` (Vite + React + TypeScript). Terminals
 render behind a Remo-owned adapter (`frontend/src/terminal/RendererAdapter.ts`), implemented by
 **xterm.js** (`XtermRenderer.ts`) — stable, battle-tested, and the console's only engine. An opt-in
 `ghostty-web` engine existed behind a **Settings → Terminal engine** switch and was removed: its VT
@@ -209,6 +213,99 @@ appears if the service becomes unreachable (terminals reattach automatically whe
 
 All fonts are self-hosted (bundled `@fontsource` assets), never fetched from a CDN, so the restrictive
 same-origin CSP (`default-src 'self'`) is satisfied.
+
+## Host detail page and maintenance
+
+Clicking a **host's name** in the session rail opens a full-screen host detail page for that machine
+(the chevron/header toggles the group's collapse; the name navigates): live host statistics, the
+projects on it, and — when the maintenance surface is enabled — project management actions and an
+SSH shell on the host itself.
+
+**Stats are always available; maintenance is opt-in.** The read-only stats endpoint ships enabled,
+at the same trust level as `GET /hosts`. Everything that mutates the host — clone, delete, rebuild,
+host shell — sits behind `REMO_WEB_HOST_ADMIN` and is **off by default**.
+
+### Live stats
+
+The page polls `GET /api/v1/hosts/{instance_id}/stats` while open — a live snapshot (uptime,
+1/5/15-minute load, CPU usage, memory/swap, per-mount disk usage, temperature sensors), never a
+stored time series. The numbers come from an additive `remo-host host stats --json` verb that reads
+`/proc` and `/sys` on the instance; the wire shape and field derivations are specified in the
+[remo-host protocol contract](../specs/010-web-session-interface/contracts/remo-host-protocol.md#remo-host-host-stats---json).
+The temperature card is hidden entirely when the host exposes no sensors (typical for VMs and
+containers). Multi-tab polling is cheap: a per-instance TTL cache (`REMO_WEB_HOST_STATS_TTL_S`,
+default `2.0` seconds) coalesces concurrent requests to at most one SSH round trip per TTL per host.
+
+Two operational notes:
+
+- **The stats endpoint shares `GET /hosts`' trust level.** It is deliberately ungated: anyone who
+  can reach the service can read a host's load, memory, and temperatures, exactly as they can
+  already list every instance and project. That is an accepted risk of the single-trusted-user
+  boundary below, not an oversight.
+- **Container guests report what their kernel shows them.** On an LXC guest without lxcfs,
+  `/proc/loadavg`, `/proc/meminfo`, etc. carry *host-wide* values — the stats are "as the guest
+  kernel reports", with no cgroup math applied.
+
+### The maintenance surface (`REMO_WEB_HOST_ADMIN`)
+
+Set `REMO_WEB_HOST_ADMIN=enabled` to turn on the mutating surface. The variable accepts exactly
+`enabled` or unset — any other value is a fail-fast startup error, like `REMO_WEB_MODE`
+(`REMO_WEB_HOST_STATS_TTL_S` fails fast the same way when set to a non-positive number). While
+unset (the default), the surface is **dormant**: every gated route answers a plain `404`,
+byte-identical to an unknown route — the same fail-closed precedent as the pairing-gated `/setup`
+surface, so a scanner cannot even learn the surface exists. When an operator-auth provider is
+configured (`REMO_WEB_OPERATOR_AUTH`, see
+[Reverse proxies, SSO, and the setup surface](#reverse-proxies-sso-and-the-setup-surface)), an
+unauthenticated request to a gated route gets the **same** `404` — never a distinguishable
+`401`/`403` that would reveal the surface exists.
+
+Enabling the surface **without** operator authentication is allowed but loud: the service logs a
+startup warning that the maintenance API is then gated by network reachability alone — the
+network-posture-only stance is never entered silently. `GET /api/v1/health` reports
+`features: {"host_admin": true|false}` so the console knows whether to render maintenance
+affordances at all.
+
+The gated routes (all under `/api/v1`, all answering the standard error envelope on failure):
+
+| Route | Does |
+|---|---|
+| `POST /hosts/{instance_id}/projects` | Clone a repository (`{repo, name?}` — `owner/repo` or a `https://github.com/...` URL) into the host's projects root. Returns `202` with a job reference. |
+| `DELETE /hosts/{instance_id}/projects/{project}` | Delete a project — synchronous on the host: the Zellij session is killed, the project's devcontainers are removed (images stay, as build cache), the directory is deleted. |
+| `POST /hosts/{instance_id}/projects/{project}/rebuild` | Rebuild the project's devcontainer (`{no_cache}` optional). Returns `202` with a job reference. |
+| `GET /hosts/{instance_id}/jobs/{job_id}` | Poll a detached job: `state` (`running`/`succeeded`/`failed`), exit code, timestamps, and a log tail the console renders while it polls (every 2s). |
+
+Clone and rebuild run as **detached jobs** on the instance (the `project-launch --detach`
+`nohup setsid` idiom): a devcontainer build can take minutes, so the HTTP call returns immediately
+with a job id and the browser polls — closing the tab does not kill the build. The job model,
+verbs, and exit codes are specified in the
+[remo-host protocol contract](../specs/010-web-session-interface/contracts/remo-host-protocol.md).
+
+**Host shell.** `POST /api/v1/terminals` accepts **exactly one** of `session_target_id` (a project
+session, unchanged) or `instance_id` (a plain interactive login shell on the host itself —
+`ssh -tt` with no remote command, so it needs no `remo-host` or Zellij on the instance); sending
+both or neither is a `400`. The host-shell variant is gated exactly like the routes above, but on a
+route that legitimately exists the dormant answer is **the same `unknown_target` `404` a stale
+session id gets** — gate-off, operator-auth-refused, and a genuinely unknown `instance_id` are
+indistinguishable by design. Terminal caps, tokens, and the WebSocket protocol are unchanged; the
+only wire addition is `kind: "session" | "host_shell"` on terminal objects, and a host shell's exit
+status is the *user's* shell exit, never re-interpreted as a project error (only ssh's own `255`
+maps to auth/network).
+
+An instance whose `remo-host` predates these verbs (it does not advertise them in
+`capabilities.operations[]`) answers `409 unsupported_host_tools`, with a remediation naming that
+host's exact configure/upgrade command; the console replaces the maintenance sections with the same
+update nudge. An unknown project or job id is a `404`; transport failures are `502`.
+
+**What to know before using it:**
+
+- **Delete and Rebuild kill the project's attached sessions.** Anyone attached to that project's
+  Zellij session — in a browser or via `remo shell` — is disconnected mid-keystroke. The confirm
+  dialogs say so; Delete additionally destroys any uncommitted/unpushed work in the project
+  directory.
+- **Private-repo clones need a prior `gh auth login` on the host.** The service pushes no GitHub
+  credentials: `remo-host` uses `gh repo clone` when `gh` is authenticated on the instance and
+  falls back to anonymous `git clone` otherwise, so cloning a private repository fails — visibly,
+  in the job log — unless the host was already authenticated.
 
 ## Security boundary
 
@@ -1014,6 +1111,8 @@ locally with zero configuration; a container overrides everything via env alone.
 | `REMO_WEB_OPERATOR_AUTH` | *(unset — minting disabled)* | Operator-authentication posture gating pairing-code minting (`POST /api/v1/pairing/mint`). `forward` requires a trusted proxy-injected identity header (`REMO_WEB_FORWARD_AUTH_HEADER`); `none` mints without operator auth (network-restricted — a loud, weaker posture for loopback/dev). While unset, minting is disabled and adoption is impossible (fail closed). |
 | `REMO_WEB_FORWARD_AUTH_HEADER` | *(unset)* | Name of the trusted identity header your forward-auth proxy injects (e.g. `X-Forwarded-User`, `Remote-User`). **Required** when `REMO_WEB_OPERATOR_AUTH=forward`; enabling forward auth without it is a fail-fast startup error. The proxy MUST set and strip this header. |
 | `REMO_WEB_PAIRING_TTL_S` | `900.0` | Sliding idle TTL (seconds) for a pairing session — it expires this long after the last successful setup call (default 15 min). |
+| `REMO_WEB_HOST_ADMIN` | *(unset — dormant)* | Gates the mutating host-maintenance surface (project clone/delete/rebuild, job polling, host-shell terminals). Unset: every gated route answers a `404` byte-identical to an unknown route. `enabled`: the surface is live (with a loud startup warning when no operator-auth provider is configured — network posture only). Any other value is a fail-fast startup error. See [Host detail page and maintenance](#host-detail-page-and-maintenance). |
+| `REMO_WEB_HOST_STATS_TTL_S` | `2.0` | TTL (seconds) for the per-instance stats mini-cache behind `GET /hosts/{id}/stats` — coalesces multi-tab polling to at most one SSH round trip per TTL per host. Must be a positive number; anything else is a fail-fast startup error. |
 | `REMO_WEB_API_TOKEN` | *(removed — ignored)* | **Removed in 012.** The static setup-API token is gone; a value set here is ignored (a one-line "now ignored" note is logged at startup). Setup access is authorized by ephemeral pairing codes. |
 
 `remo web serve --host`/`--port` are convenience overrides for local runs; every other setting is env-var-only.

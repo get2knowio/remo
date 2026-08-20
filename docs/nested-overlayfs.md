@@ -123,7 +123,10 @@ So `ssh host 'devcontainer up …'` — what `remo web` and `remo shell -c` actu
 do — would never see a shim installed there, while every interactive test of it
 passed. `/usr/local/bin` is on the default `PATH` from `/etc/environment` and
 precedes `/usr/bin`, so it covers interactive, login, auto-start and
-non-interactive invocations alike.
+non-interactive invocations alike. The web console's per-project **Rebuild**
+action is one of those non-interactive invocations — a devcontainer rebuild
+triggered from the browser runs `devcontainer up` over SSH and inherits the
+shim (and with it this whole fix) via that same `PATH`.
 
 The shim calls the real CLI by absolute path (`/usr/bin/devcontainer`).
 `command devcontainer` would resolve through `PATH`, find the shim again, and

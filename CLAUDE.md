@@ -103,7 +103,8 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── operator_auth.py        # Pluggable operator-authentication seam gating pairing-code minting (forward-auth header today; OIDC deferred)
 │   ├── pairing.py              # In-memory, single-live, TTL'd pairing-code session manager replacing the static setup API token
 │   └── api/
-│       ├── hosts.py            # GET /api/v1/hosts, /sessions, POST /discovery/refresh
+│       ├── hosts.py            # GET /api/v1/hosts, /sessions, /hosts/{id}/stats (ungated, TTL-coalesced), POST /discovery/refresh; shared remo-host call plumbing
+│       ├── host_admin.py       # Gated maintenance API (REMO_WEB_HOST_ADMIN, dormant-404 like /setup): project clone/delete/rebuild + job polling
 │       ├── setup.py            # Pairing-gated /api/v1/setup/{status,identity,registry,verify,end} (011-web-adopt; `end` added by #158)
 │       ├── terminals.py        # POST/GET/DELETE /api/v1/terminals, WS /api/v1/terminals/{id}
 │       └── pairing.py          # POST /api/v1/pairing/{mint,end} — operator-auth-gated pairing-code control plane, outside the dormant setup router
@@ -112,6 +113,8 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
     ├── snapshot.py         # Cross-provider snapshot model
     ├── capability.py       # RemoteCapability (remo-host capabilities)
     ├── session_target.py   # SessionTarget (opaque id, zellij/devcontainer state)
+    ├── host_stats.py       # HostStats/DiskUsage/TempReading (remo-host host stats snapshot; tolerant from_dict)
+    ├── host_job.py         # JobRef/JobState/JobStatus (detached clone/rebuild jobs)
     └── discovery.py        # DiscoverySnapshot + typed InstanceStatus
 
 frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
@@ -119,7 +122,14 @@ frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
 │   ├── api/client.ts        # REST + WS terminal client (remo-terminal.v1 subprotocol)
 │   ├── components/          # Dashboard, InstanceGroup, TargetCard, GridView, TabView, TerminalCard
 │   │                        #   + masterLayout.ts (pure pane geometry: uniform grid + master/stack tiling)
+│   │                        #   + HostDetailPage.tsx (full-screen host overlay: live stats strip, projects
+│   │                        #   table, host-admin-gated clone/rebuild/delete + capability nudge) with
+│   │                        #   HostShellPanel.tsx (TerminalConnection host_shell origin + renderer + fitLoop,
+│   │                        #   NOT a TerminalCard), JobProgressPanel.tsx (2s job poll, log tail, refresh on
+│   │                        #   terminal state), RebuildConfirmDialog.tsx / DeleteProjectDialog.tsx (consent ladder)
 │   ├── state/                # discovery.ts, workspace.ts (layout persisted to localStorage), settings.ts (display prefs: site light/dark mode, accent, fonts, terminal theme + per-target overrides)
+│   │                        #   + hostStats.ts (useHostStats: 5s poll, visibility pause/resume,
+│   │                        #   stops + surfaces the nudge on a 409 unsupported_host_tools)
 │   │                        #   + diagnostics.ts (read-only snapshot: pane registry + `window.__remo.diagnostics()`;
 │   │                        #   redaction contract — no buffer text, no ws_token, no socket url/protocol)
 │   ├── terminal/              # RendererAdapter (seam), XtermRenderer (the one engine), TerminalConnection, keymap

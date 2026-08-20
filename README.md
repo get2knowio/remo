@@ -549,6 +549,12 @@ non-root/read-only hardening in either case):
   that identity on every instance — your personal private key never leaves the workstation
   (`remo web push` re-syncs later changes).
 
+Clicking a host's name in the console opens its **host detail page**: live stats (load, CPU, memory,
+disks, temperatures) plus — opt-in via `REMO_WEB_HOST_ADMIN=enabled`, dormant otherwise — host
+maintenance from the browser: clone a GitHub repo as a new project, delete a project, rebuild a
+project's devcontainer, and open an SSH shell on the host itself. See
+[Host detail page and maintenance](docs/web-session-interface.md#host-detail-page-and-maintenance).
+
 Full architecture, security model, Compose walkthrough, adoption workflow, credentials/SSM setup,
 discovery states, terminal limits, troubleshooting, and upgrade notes:
 **[docs/web-session-interface.md](docs/web-session-interface.md)**.
