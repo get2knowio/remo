@@ -173,6 +173,21 @@ def known_host_to_entry(host: KnownHost) -> dict[str, Any]:
     return entry
 
 
+def canonical_entry(host: KnownHost) -> str:
+    """The canonical sort-keys JSON of *host*'s v2 hostEntry (023).
+
+    The ONE equality form shared by the push cache's ``instance_fingerprint``
+    (which hashes exactly this string), ``remo web status``'s drift, and
+    ``remo web sync``'s three-way merge — so all three agree by construction.
+    """
+    return json.dumps(known_host_to_entry(host), sort_keys=True)
+
+
+def canonical_entry_dict(entry: dict[str, Any]) -> str:
+    """:func:`canonical_entry` for an already-serialized hostEntry dict."""
+    return json.dumps(entry, sort_keys=True)
+
+
 def entry_to_known_host(entry: dict[str, Any]) -> KnownHost | None:
     """Parse a KNOWN-type hostEntry dict into a :class:`KnownHost`.
 
