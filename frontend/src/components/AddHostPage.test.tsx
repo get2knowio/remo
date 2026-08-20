@@ -55,6 +55,7 @@ function scanResult(status: string, overrides: Record<string, unknown> = {}) {
 }
 
 const onClose = vi.fn();
+const writeText = vi.fn();
 
 async function registerThrough(): Promise<void> {
   render(<AddHostPage onClose={onClose} />);
@@ -67,6 +68,10 @@ async function registerThrough(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   addHost.mockResolvedValue(ADDED);
+  writeText.mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+  // The legacy execCommand fallback must not silently "succeed" in jsdom.
+  document.execCommand = vi.fn().mockReturnValue(false);
 });
 
 describe("AddHostPage", () => {
@@ -163,6 +168,51 @@ describe("AddHostPage", () => {
         user: "paul",
         port: 2222,
       }),
+    );
+  });
+
+  it("rejects a malformed port before submitting — never a silent 22", async () => {
+    // parseInt would truncate "22x" to 22 and NaN would fall back to the
+    // server default, so the typo surfaced later as a bogus scan failure.
+    render(<AddHostPage onClose={onClose} />);
+    fireEvent.input(screen.getByTestId("add-host-name"), { target: { value: "mbp" } });
+    fireEvent.input(screen.getByTestId("add-host-target"), { target: { value: "10.0.0.9" } });
+    for (const bad of ["22x", "abc", "0", "70000", "22.5"]) {
+      fireEvent.input(screen.getByTestId("add-host-port"), { target: { value: bad } });
+      fireEvent.click(screen.getByTestId("add-host-submit"));
+      expect(await screen.findByTestId("add-host-error")).toHaveTextContent(
+        "Port must be a number between 1 and 65535",
+      );
+    }
+    expect(addHost).not.toHaveBeenCalled();
+    expect(screen.getByTestId("add-host-step").textContent).toContain("step 1");
+  });
+
+  it("confirms a successful copy of the authorize command", async () => {
+    scanHostKey.mockResolvedValue(scanResult("no_trust"));
+    await registerThrough();
+    await waitFor(() => screen.getByTestId("authorize-command"));
+
+    fireEvent.click(screen.getByTestId("authorize-command-button"));
+    await waitFor(() =>
+      expect(screen.getByTestId("authorize-command-button")).toHaveTextContent("Copied ✓"),
+    );
+    expect(writeText).toHaveBeenCalledWith(ADDED.authorize_command);
+  });
+
+  it("says so when the browser refuses the clipboard instead of silently no-opping", async () => {
+    // Plain-http origin: no async clipboard API, and the execCommand fallback
+    // refuses too — the button must tell the operator to copy by hand.
+    writeText.mockRejectedValue(new Error("NotAllowedError"));
+    scanHostKey.mockResolvedValue(scanResult("no_trust"));
+    await registerThrough();
+    await waitFor(() => screen.getByTestId("authorize-command"));
+
+    fireEvent.click(screen.getByTestId("authorize-command-button"));
+    await waitFor(() =>
+      expect(screen.getByTestId("authorize-command-button")).toHaveTextContent(
+        "Copy failed — select the text manually",
+      ),
     );
   });
 });

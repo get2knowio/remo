@@ -612,6 +612,33 @@ def _validate_safe_name(value: str, *, what: str) -> str:
     return value
 
 
+def _validate_existing_project(project: str) -> str:
+    """Validate the name of an EXISTING project (delete/rebuild targets).
+
+    Uses the shared :func:`~remo_cli.core.validation.validate_project_name`
+    contract — the same checks discovery/attach and the host-side bash
+    validator apply — so any project the console can list and attach to can
+    also be deleted and rebuilt (spaces and Unicode are legal there; the
+    stricter :data:`_SAFE_NAME_RE` charset stays for NEW names minted by
+    clone and for job ids). The argv is shlex-joined, so the wider charset
+    costs no shell safety. Two argv-level hazards stay rejected on top of
+    the shared checks: a leading ``-`` (reads as another remo-host option)
+    and ``.`` (aliases the projects root itself on a destructive verb).
+    """
+    from remo_cli.core.validation import validate_project_name
+
+    try:
+        validate_project_name(project)
+    except ValueError as e:
+        raise PreconditionError(f"Invalid project name: {e}") from e
+    if project.startswith("-") or project == ".":
+        raise PreconditionError(
+            f"Invalid project name {project!r}: it must not start with '-' "
+            "and must not be '.'."
+        )
+    return project
+
+
 # ---------------------------------------------------------------------------
 # Typed wrappers: host stats, project maintenance, job polling
 # ---------------------------------------------------------------------------
@@ -711,7 +738,7 @@ def delete_project(
     (an unknown project surfaces as :class:`RemoHostCommandError` with
     reason ``invalid_project``, exit 3).
     """
-    _validate_safe_name(project, what="project name")
+    _validate_existing_project(project)
     run_remo_host_json(
         ssh_argv_prefix,
         "projects delete",
@@ -737,7 +764,7 @@ def start_project_rebuild(
     (202-style), so the default :data:`DEFAULT_TIMEOUT` holds; poll with
     :func:`get_job_status`.
     """
-    _validate_safe_name(project, what="project name")
+    _validate_existing_project(project)
     payload = run_remo_host_json(
         ssh_argv_prefix,
         "projects rebuild",

@@ -1543,7 +1543,7 @@
     },
     "/api/v1/health": {
       "get": {
-        "description": "Liveness probe: the process is up. Never checks configuration.",
+        "description": "Liveness probe: the process is up.\n\nReads the mirror marker (and, when registry admin is enabled, the\nconfiguration state) from disk, so it is a sync ``def`` route: FastAPI\nruns it in the threadpool, keeping the file I/O off the event loop that\nis pumping every live terminal WebSocket \u2014 the console polls this route\nevery 10s per open tab.",
         "operationId": "health_api_v1_health_get",
         "responses": {
           "200": {

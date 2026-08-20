@@ -311,18 +311,27 @@ def _job_runner(request: Request) -> CliJobRunner:
     return runner
 
 
-def _record_web_change(request: Request) -> None:
-    """Bump the mirror marker under the shared write lock (023).
+def _write_lock(request: Request) -> threading.Lock:
+    """The app-wide lock making the v3 generation check atomic with the apply.
 
-    The same lock `PUT /setup/registry`'s v3 precondition holds, so a sync's
-    generation check can never interleave with a console-side bump.
+    The same lock `PUT /setup/registry`'s v3 precondition holds. Console
+    mutators hold it across the WHOLE mutation — the CLI subprocess /
+    trust-file write AND the marker bump — not just the bump: a sync PUT
+    interleaving between a console registry write and its generation bump
+    would pass the stale-generation precondition and wholesale-overwrite the
+    console's change (created in `create_app`; lazily here for bare test
+    apps).
     """
     lock = getattr(request.app.state, "registry_write_lock", None)
     if lock is None:
         lock = threading.Lock()
         request.app.state.registry_write_lock = lock
-    with lock:
-        record_change(get_settings(request), origin="web")
+    return lock
+
+
+def _record_web_change_locked(request: Request) -> None:
+    """Bump the mirror marker. Caller MUST hold :func:`_write_lock`."""
+    record_change(get_settings(request), origin="web")
 
 
 # ---------------------------------------------------------------------------
@@ -350,55 +359,71 @@ def add_host(request: Request, body: AddHostRequest, background_tasks: Backgroun
     except ServiceIdentityError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    argv = ["remo", "add", body.name, body.target]
+    argv = ["remo", "add", "--yes"]
     if body.user:
         argv += ["--user", body.user]
     if body.port:
         argv += ["--port", str(body.port)]
-    argv += ["--yes"]
-    # No --verify: reachability is the explicit verify step of the wizard,
-    # which keeps rc 1 unambiguous (= name conflict, never "unreachable").
-    rc, stderr_tail = _run_cli(argv, _CLI_TIMEOUT_S)
-    if rc == 2:
-        return error_envelope(
-            400,
-            "invalid_target",
-            stderr_tail or "The name or target was rejected.",
-            remediation="Correct the name/target and retry.",
-            retryable=False,
-        )
-    if rc == 1:
-        return error_envelope(
-            409,
-            "name_conflict",
-            stderr_tail or f"'{body.name}' conflicts with an existing entry.",
-            remediation="Pick a different name, or remove the existing entry first.",
-            retryable=False,
-        )
-    if rc != 0:
-        return error_envelope(
-            502,
-            "cli_failure",
-            stderr_tail or f"`remo add` failed with exit code {rc}.",
-            remediation="Check the service logs and retry.",
-            retryable=True,
-        )
+    # `--` terminates option parsing: a dash-leading name/target must reach
+    # the CLI's own validators (rc 2 -> 400) instead of being read as an
+    # option — `remo add --help ...` would "succeed" with rc 0.
+    argv += ["--", body.name, body.target]
+    # No --verify: reachability is the explicit verify step of the wizard.
+    with _write_lock(request):
+        # `remo add --yes` UPDATES an existing same-name ssh entry in place
+        # (rc 0) — the CLI's rc 1 only means a cross-type collision. The
+        # console's contract is add-only, so refuse the duplicate here.
+        for host in registry.read_registry(readonly=True).hosts:
+            if host.type == "ssh" and host.name == body.name:
+                return error_envelope(
+                    409,
+                    "name_conflict",
+                    f"'{body.name}' is already registered.",
+                    remediation="Pick a different name, or remove the "
+                    "existing entry first.",
+                    retryable=False,
+                )
+        rc, stderr_tail = _run_cli(argv, _CLI_TIMEOUT_S)
+        if rc == 2:
+            return error_envelope(
+                400,
+                "invalid_target",
+                stderr_tail or "The name or target was rejected.",
+                remediation="Correct the name/target and retry.",
+                retryable=False,
+            )
+        if rc == 1:
+            return error_envelope(
+                409,
+                "name_conflict",
+                stderr_tail or f"'{body.name}' conflicts with an existing entry.",
+                remediation="Pick a different name, or remove the existing entry first.",
+                retryable=False,
+            )
+        if rc != 0:
+            return error_envelope(
+                502,
+                "cli_failure",
+                stderr_tail or f"`remo add` failed with exit code {rc}.",
+                remediation="Check the service logs and retry.",
+                retryable=True,
+            )
 
-    entry = None
-    for host in registry.read_registry(readonly=True).hosts:
-        if host.type == "ssh" and host.name == body.name:
-            entry = host
-            break
-    if entry is None:  # pragma: no cover - add succeeded, so this is racing a remove
-        return error_envelope(
-            502,
-            "cli_failure",
-            "The added entry could not be read back from the registry.",
-            remediation="Retry the add.",
-            retryable=True,
-        )
+        entry = None
+        for host in registry.read_registry(readonly=True).hosts:
+            if host.type == "ssh" and host.name == body.name:
+                entry = host
+                break
+        if entry is None:  # pragma: no cover - add succeeded moments ago
+            return error_envelope(
+                502,
+                "cli_failure",
+                "The added entry could not be read back from the registry.",
+                remediation="Retry the add.",
+                retryable=True,
+            )
 
-    _record_web_change(request)
+        _record_web_change_locked(request)
     instance_id = derive_instance_id(entry)
     background_tasks.add_task(get_discovery_service(request).refresh, instance_id)
     return AddHostResponse(
@@ -430,23 +455,51 @@ def remove_host(request: Request, instance_id: str, background_tasks: Background
     if host.type != "ssh":
         return _provider_managed(host, "remove")
 
-    rc, stderr_tail = _run_cli(["remo", "remove", host.name, "--yes"], _CLI_TIMEOUT_S)
-    # rc 1 = not-found: someone else removed it between our read and the CLI
-    # run — the desired end state holds, so the removal is idempotent success.
-    if rc not in (0, 1):
-        return error_envelope(
-            502,
-            "cli_failure",
-            stderr_tail or f"`remo remove` failed with exit code {rc}.",
-            remediation="Check the service logs and retry.",
-            retryable=True,
+    with _write_lock(request):
+        rc, stderr_tail = _run_cli(
+            ["remo", "remove", "--yes", "--", host.name], _CLI_TIMEOUT_S
         )
+        if rc not in (0, 1):
+            return error_envelope(
+                502,
+                "cli_failure",
+                stderr_tail or f"`remo remove` failed with exit code {rc}.",
+                remediation="Check the service logs and retry.",
+                retryable=True,
+            )
+        if rc == 1:
+            # rc 1 is the CLI's GENERIC failure code: not-found shares it
+            # with a busy/corrupt registry. Idempotent success only if the
+            # entry is actually gone — otherwise a real failure would report
+            # removed:true while stripping the host's trust lines.
+            still_registered = any(
+                h.type == "ssh" and h.name == host.name
+                for h in registry.read_registry(readonly=True).hosts
+            )
+            if still_registered:
+                return error_envelope(
+                    502,
+                    "cli_failure",
+                    stderr_tail or "`remo remove` failed and the entry is "
+                    "still registered.",
+                    remediation="Check the service logs and retry.",
+                    retryable=True,
+                )
 
-    remove_instance_host_keys(
-        settings.service_known_hosts_path,
-        known_hosts_lookup_key(host.host, host.ssh_port),
-    )
-    _record_web_change(request)
+        # The trust slice is keyed by host:port, not by entry — two entries
+        # (different users, same machine) share it, and stripping the lines
+        # while a sibling entry survives would strand that entry unable to
+        # verify the host key.
+        lookup_key = known_hosts_lookup_key(host.host, host.ssh_port)
+        still_shared = any(
+            h.type == "ssh"
+            and h.name != host.name
+            and known_hosts_lookup_key(h.host, h.ssh_port) == lookup_key
+            for h in registry.read_registry(readonly=True).hosts
+        )
+        if not still_shared:
+            remove_instance_host_keys(settings.service_known_hosts_path, lookup_key)
+        _record_web_change_locked(request)
     # Full refresh: discovery prunes removed instances only on a full pass.
     background_tasks.add_task(get_discovery_service(request).refresh)
     return HostRemovedResponse(name=host.name)
@@ -526,7 +579,14 @@ def trust_key(request: Request, instance_id: str, body: TrustKeyRequest):
                 retryable=False,
             )
 
-    set_instance_host_keys(settings.service_known_hosts_path, lookup_key, body.lines)
+    with _write_lock(request):
+        # Under the shared lock: the trust file is part of the state a sync
+        # PUT rewrites wholesale, so an unlocked read-modify-write here could
+        # silently drop either side's lines. The generation bump makes an
+        # in-flight sync 409-and-re-merge (re-fetching these lines) instead
+        # of overwriting the operator's confirmation.
+        set_instance_host_keys(settings.service_known_hosts_path, lookup_key, body.lines)
+        _record_web_change_locked(request)
     return TrustKeyResponse()
 
 
@@ -654,11 +714,15 @@ def start_configure(request: Request, instance_id: str, body: ConfigureRequest |
 
     # -v deliberately: the filtered ansible renderer emits \r progress
     # control characters that garbage a log tail; verbose output is plain.
-    argv = ["remo", "configure", host.name, "--yes", "-v"]
+    argv = ["remo", "configure", "--yes", "-v"]
     for value in only:
         argv += ["--only", value]
     for value in skip:
         argv += ["--skip", value]
+    # `--` terminates option parsing: registry names can arrive dash-leading
+    # via PUT /setup/registry (which only bars control characters), and
+    # `remo configure --help ...` would rc-0 as a phantom success.
+    argv += ["--", host.name]
 
     try:
         record = _job_runner(request).start(

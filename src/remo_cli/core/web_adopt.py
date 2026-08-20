@@ -31,14 +31,15 @@ Push delta-cache design (non-secret optimization)
 
 The service has no registry-read endpoint, so "unchanged since the last push"
 is decided workstation-side by a **non-secret** cache
-(``~/.config/remo/web-service.json``, ``cache_version: 2``) mapping each
-service ``deployment_id`` to ``{instance name -> {fingerprint, host_keys}}`` —
-no URL and no code are ever stored. The ``fingerprint`` is a SHA256 over the
-canonical sorted-key JSON of the instance's v2 hostEntry (registry-file-v2.md)
-and ``host_keys`` are the verified known_hosts lines pushed for that instance.
-Any cache without ``cache_version: 2`` (including every pre-015 file, which had
-no version field at all) is treated as empty, forcing one full
-re-verification push after an upgrade (research R10).
+(``~/.config/remo/web-service.json``, ``cache_version: 4``) mapping each
+service ``deployment_id`` to ``{instance name -> {fingerprint, host_keys,
+connection tuple, entry}}`` — no URL and no code are ever stored. The
+``fingerprint`` is a SHA256 over the canonical sorted-key JSON of the
+instance's v2 hostEntry (registry-file-v2.md), ``host_keys`` are the verified
+known_hosts lines pushed for that instance, and ``entry`` is the full
+hostEntry — the merge base for ``remo web sync``. Any cache without
+``cache_version: 4`` (every pre-023 file) is treated as empty, forcing one
+full re-verification push after an upgrade (research R10).
 
 On ``remo web push``, a direct-access instance whose current fingerprint matches
 the cache for the service's ``deployment_id`` skips keyscan + authorize
@@ -1151,7 +1152,7 @@ def load_push_cache() -> PushCache:
 
     Files written by the 011 credential format (top-level ``url``/``token`` +
     name-keyed ``push_cache``) do not match the deployment-keyed shape and are
-    ignored. Files without ``cache_version: 3`` (any pre-017 format or a future
+    ignored. Files without ``cache_version: 4`` (any pre-023 format or a future
     incompatible one) are also treated as empty (research R7) — the next push
     simply retries in full and the next save overwrites the stale file — no
     secret is ever read.
@@ -1386,18 +1387,24 @@ def _cache_from_outcomes(
 ) -> dict[str, CachedInstance]:
     """Build the push delta cache from a completed run (module docstring design).
 
-    A direct-access instance is cached only when it ended ``adopted``,
-    ``unchanged`` or ``repaired`` — those are exactly the instances whose host
-    keys were verified and whose lines were included in the successful PUT; a
-    skipped/flagged direct instance gets no entry so the next push retries it in
-    full.
+    A direct-access instance is cached when it ended ``adopted``,
+    ``unchanged``, ``repaired`` or ``pulled`` — the instances whose host keys
+    were verified (or service-held) and whose entry the successful PUT/GET
+    round-tripped. A skipped (``unreachable``/``no_trust``) direct instance is
+    cached with EMPTY ``host_keys``: the entry WAS mirrored (correct merge
+    base for ``remo web sync``), and the push fast-path gates on non-empty
+    lines, so the instance is still retried in full next push. Only a
+    ``security_flagged`` instance gets no entry at all.
 
-    SSM instances are cached too (they end ``skipped_by_design``) even though
-    they carry no keyscan/authorize state: their registry entry IS mirrored on
-    every push, so caching their fingerprint lets ``remo web status`` track them
-    (otherwise every SSM instance reads as perpetually ``new``) and lets a later
-    removal be surfaced. Their ``host_keys`` stays empty, so they never take the
-    push fast-path (which is gated on ``is_direct_access``).
+    Non-direct (SSM) instances are cached too — whether ``skipped_by_design``
+    on a push or ``pulled`` by a sync — even though they carry no
+    keyscan/authorize state: their registry entry IS mirrored on every push,
+    so caching their fingerprint lets ``remo web status`` track them
+    (otherwise every SSM instance reads as perpetually ``new``), gives the
+    next sync a real merge base (a deployment-side deletion is then a
+    consented DELETE_LOCAL, not a silent PUSH_ADD resurrection), and lets a
+    later removal be surfaced. Their ``host_keys`` stays empty, so they never
+    take the push fast-path (which is gated on ``is_direct_access``).
     """
     cache: dict[str, CachedInstance] = {}
     verified = (OUTCOME_ADOPTED, OUTCOME_UNCHANGED, OUTCOME_REPAIRED, OUTCOME_PULLED)
@@ -1413,7 +1420,7 @@ def _cache_from_outcomes(
                 cached_keys = []
             elif o.outcome not in verified:
                 continue
-        elif o.outcome != OUTCOME_SKIPPED_BY_DESIGN:
+        elif o.outcome not in (OUTCOME_SKIPPED_BY_DESIGN, OUTCOME_PULLED):
             continue
         cache[o.host.name] = CachedInstance(
             fingerprint=instance_fingerprint(o.host),
@@ -2082,9 +2089,11 @@ def _push_flow(
                 )
 
     # Step 7: only after a successful PUT, rewrite the delta cache for this
-    # deployment (removed instances drop out; skipped/flagged instances get no
-    # entry so the next push retries them in full). Record the generation the
-    # service just returned so the next push can flap-detect (US5).
+    # deployment (removed instances drop out; a skipped instance keeps its
+    # entry but with EMPTY host_keys, so the fast-path never fires and the
+    # next push retries it in full; a flagged instance gets no entry). Record
+    # the generation the service just returned so the next push can
+    # flap-detect (US5).
     #
     # An instance the service still cannot authenticate to is dropped from the
     # cache as well (#122): caching it would make it eligible for the very

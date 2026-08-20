@@ -360,11 +360,18 @@ def resolve_conflicts(
         local_desc = "keep local" if action.local else "keep local (delete remotely)"
         remote_desc = "keep remote" if action.remote else "keep remote (delete locally)"
         while True:
-            answer = (
-                input_fn(f"  [l] {local_desc} / [r] {remote_desc} / [s] skip: ")
-                .strip()
-                .lower()
-            )
+            try:
+                answer = (
+                    input_fn(f"  [l] {local_desc} / [r] {remote_desc} / [s] skip: ")
+                    .strip()
+                    .lower()
+                )
+            except EOFError:
+                # Ctrl-D at the prompt is an abort, not a crash: leave the
+                # conflict unresolved so the caller takes the documented
+                # nothing-was-applied exit-3 path (core/output.confirm treats
+                # EOF the same way).
+                return False
             if answer in ("l", "local"):
                 action.resolution = RESOLUTION_LOCAL
                 break
@@ -690,8 +697,13 @@ def _sync_flow(
                 f"{cached_generation}). Changes will be merged."
             )
 
-        # Step 4: local registry + Step 5: plan.
-        local_hosts = registry.read_registry(readonly=True).hosts
+        # Step 4: local registry + Step 5: plan. RegistryError is not an
+        # AdoptError, so wrap it here (as the mutate path below does) to keep
+        # run_web_sync's never-raises contract for a corrupt/newer registry.
+        try:
+            local_hosts = registry.read_registry(readonly=True).hosts
+        except registry.RegistryError as e:
+            raise AdoptError(f"could not read the local registry: {e}") from e
         plan = build_sync_plan(base, local_hosts, remote.hosts, remote.generation)
         render_sync_plan(plan, deployment_id)
 
@@ -939,12 +951,16 @@ def _handle_pulled_hosts(
             continue
         identity = host.ssh_identity
         if identity and not Path(identity).expanduser().is_file():
+            # One plain f-string, no .format(): implicit literal concatenation
+            # would apply .format() to the WHOLE joined message, and the
+            # interpolated identity/name are untrusted remote values — a brace
+            # in either would crash the sync mid-apply.
             print_warning(
                 f"'{host.name}' was pulled with an SSH identity path that does "
                 f"not resolve on this workstation ({identity}). remo passes it "
-                "with IdentitiesOnly=yes, so `remo shell {0}` will fail until "
-                "the key exists here (or the entry is re-added without "
-                "--identity).".format(host.name)
+                f"with IdentitiesOnly=yes, so `remo shell {host.name}` will "
+                "fail until the key exists here (or the entry is re-added "
+                "without --identity)."
             )
         if not interactive or not is_direct_access(host):
             continue

@@ -514,32 +514,41 @@ def get_registry_route(request: Request) -> RegistryReadResponse | JSONResponse:
     if detect_state(settings) is ConfigurationState.MOUNT_CONFIGURED:
         return _mount_configured_response()
 
-    view = registry.read_registry(readonly=True)
-    entries = [registry.known_host_to_entry(h) for h in view.hosts]
+    # The whole read runs under the shared write lock so the response is a
+    # CONSISTENT snapshot: reading the entries before the marker without it
+    # could pair pre-mutation entries with a post-mutation generation, and a
+    # sync built on that GET would pass the v3 base_generation check while
+    # merging against stale state — the exact lost update the generation
+    # mechanism exists to prevent. (Reads are fast; writers hold this lock
+    # only for sub-second mutations.)
+    with _registry_write_lock(request):
+        view = registry.read_registry(readonly=True)
+        entries = [registry.known_host_to_entry(h) for h in view.hosts]
 
-    # Regroup the flat trust file: each line's hosts field is matched against
-    # every direct-access entry's lookup key (bare host for :22, [host]:port
-    # otherwise -- exactly what ssh-keyscan wrote). Unmatched lines omitted.
-    lookup_to_name = {
-        known_hosts_lookup_key(h.host, h.ssh_port): h.name
-        for h in view.hosts
-        if h.access_mode != "ssm"
-    }
-    host_keys: dict[str, list[str]] = {}
-    try:
-        trust_lines = settings.service_known_hosts_path.read_text().splitlines()
-    except OSError:
-        trust_lines = []
-    for line in trust_lines:
-        for lookup_key, name in lookup_to_name.items():
-            if _line_matches_lookup_key(line, lookup_key):
-                host_keys.setdefault(name, []).append(line)
-                break
+        # Regroup the flat trust file: each line's hosts field is matched
+        # against every direct-access entry's lookup key (bare host for :22,
+        # [host]:port otherwise -- exactly what ssh-keyscan wrote). Unmatched
+        # lines omitted.
+        lookup_to_name = {
+            known_hosts_lookup_key(h.host, h.ssh_port): h.name
+            for h in view.hosts
+            if h.access_mode != "ssm"
+        }
+        host_keys: dict[str, list[str]] = {}
+        try:
+            trust_lines = settings.service_known_hosts_path.read_text().splitlines()
+        except OSError:
+            trust_lines = []
+        for line in trust_lines:
+            for lookup_key, name in lookup_to_name.items():
+                if _line_matches_lookup_key(line, lookup_key):
+                    host_keys.setdefault(name, []).append(line)
+                    break
 
-    meta = read_mirror_meta(settings)
-    mirror_generation = 0
-    if meta is not None and isinstance(meta.get("generation"), int):
-        mirror_generation = meta["generation"]
+        meta = read_mirror_meta(settings)
+        mirror_generation = 0
+        if meta is not None and isinstance(meta.get("generation"), int):
+            mirror_generation = meta["generation"]
 
     return RegistryReadResponse(
         entry_version=2,

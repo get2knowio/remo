@@ -160,7 +160,7 @@ class TestAddHost:
         assert body["public_key"].startswith("ssh-ed25519")
         assert "authorized_keys" in body["authorize_command"]
         # argv: no --verify, always --yes.
-        assert calls == [["remo", "add", "mbp", "paul@10.0.0.9", "--yes"]]
+        assert calls == [["remo", "add", "--yes", "--", "mbp", "paul@10.0.0.9"]]
         # A web-origin generation bump was recorded.
         meta = json.loads((state_dir.web_identity_dir / "mirror-meta.json").read_text())
         assert meta["generation"] == 1
@@ -179,8 +179,26 @@ class TestAddHost:
                 json={"name": "mbp", "target": "10.0.0.9", "user": "paul", "port": 2222},
             )
         assert calls[0] == [
-            "remo", "add", "mbp", "10.0.0.9", "--user", "paul", "--port", "2222", "--yes",
+            "remo", "add", "--yes", "--user", "paul", "--port", "2222",
+            "--", "mbp", "10.0.0.9",
         ]
+
+    def test_duplicate_ssh_name_is_409_before_the_cli_runs(self, adopted, monkeypatch):
+        """`remo add --yes` UPDATES an existing same-name ssh entry in place
+        (rc 0), so without this pre-check a duplicate add would return 201
+        and silently repoint the existing host."""
+        monkeypatch.setattr(
+            ra_module, "_run_cli", lambda a, t: pytest.fail("CLI must not run")
+        )
+        with _make_client(adopted) as client:
+            resp = _request(
+                client,
+                "POST",
+                "/api/v1/registry/hosts",
+                json={"name": "mbp", "target": "other@10.9.9.9"},
+            )
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "name_conflict"
 
     def test_rc1_is_409_name_conflict(self, state_dir, monkeypatch):
         state_dir.write_keypair()
@@ -251,19 +269,41 @@ class TestRemoveHost:
             resp = _request(client, "DELETE", f"/api/v1/registry/hosts/{_SSH_ID}")
         assert resp.status_code == 200
         assert resp.json() == {"name": "mbp", "removed": True}
-        assert removed == [["remo", "remove", "mbp", "--yes"]]
+        assert removed == [["remo", "remove", "--yes", "--", "mbp"]]
         # Trust cleanup used the bare-host lookup key (port 22).
         assert cleanup[0][1] == "10.0.0.9"
         meta = json.loads((adopted.web_identity_dir / "mirror-meta.json").read_text())
         assert meta["last_change"]["origin"] == "web"
 
     def test_lost_race_rc1_is_idempotent_success(self, adopted, monkeypatch):
-        monkeypatch.setattr(ra_module, "_run_cli", lambda a, t: (1, "not found"))
+        def fake_run(argv, timeout):
+            # Simulate the race the rc-1 branch is FOR: another writer removed
+            # the entry between the route's read and the CLI run.
+            adopted.write_registry([])
+            return 1, "not found"
+
+        monkeypatch.setattr(ra_module, "_run_cli", fake_run)
         monkeypatch.setattr(ra_module, "remove_instance_host_keys", lambda p, k: None)
         with _make_client(adopted) as client:
             resp = _request(client, "DELETE", f"/api/v1/registry/hosts/{_SSH_ID}")
         assert resp.status_code == 200
         assert resp.json()["removed"] is True
+
+    def test_rc1_with_entry_still_registered_is_502(self, adopted, monkeypatch):
+        """rc 1 is the CLI's generic failure code (busy/corrupt registry share
+        it with not-found): reporting removed:true while the entry survives
+        would also strip the host's trust lines. Regression for the rc-1
+        conflation."""
+        monkeypatch.setattr(ra_module, "_run_cli", lambda a, t: (1, "registry is busy"))
+        monkeypatch.setattr(
+            ra_module,
+            "remove_instance_host_keys",
+            lambda p, k: pytest.fail("trust lines must not be removed on failure"),
+        )
+        with _make_client(adopted) as client:
+            resp = _request(client, "DELETE", f"/api/v1/registry/hosts/{_SSH_ID}")
+        assert resp.status_code == 502
+        assert resp.json()["error"]["code"] == "cli_failure"
 
     def test_provider_host_is_409_provider_managed(self, state_dir, monkeypatch):
         state_dir.write_keypair()
@@ -462,8 +502,8 @@ class TestConfigure:
             "project": "",
         }
         assert stub_runner.started[0]["argv"] == [
-            "remo", "configure", "mbp", "--yes", "-v",
-            "--only", "docker", "--skip", "zellij",
+            "remo", "configure", "--yes", "-v",
+            "--only", "docker", "--skip", "zellij", "--", "mbp",
         ]
 
     def test_duplicate_job_is_409_with_existing_id(self, adopted, stub_runner):
