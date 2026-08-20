@@ -298,7 +298,7 @@ you. For a provider-managed host use `remo <provider> upgrade NAME` instead —
 ```bash
 remo configure mybox                # first-time setup, or refresh the tools
 remo configure mybox --skip docker  # everything except Docker
-remo web push                       # authorize the web service on it
+remo web sync                       # authorize the web service on it / merge changes
 ```
 
 Re-running it is how a configured host stays current — it refreshes
@@ -545,15 +545,26 @@ non-root/read-only hardening in either case):
 - **Bind-mount mode**: mount your existing registry and SSH key read-only — the container runs with
   your identity, on the same box as your config.
 - **Adopted mode**: mount nothing. The container generates its own SSH identity in a writable state
-  volume, and a single `remo web adopt` from your workstation pushes your registry and authorizes
-  that identity on every instance — your personal private key never leaves the workstation
-  (`remo web push` re-syncs later changes).
+  volume, and a single `remo web push` from your workstation pushes your registry and authorizes
+  that identity on every instance — your personal private key never leaves the workstation.
+  `remo web sync` keeps both sides converged afterwards: a bi-directional three-way merge that
+  pushes local changes up, pulls console-made changes down, propagates deletions with consent in
+  both directions, and surfaces divergent edits as per-entry conflicts (`remo web push` remains as
+  the deprecated one-way force-overwrite).
 
 Clicking a host's name in the console opens its **host detail page**: live stats (load, CPU, memory,
 disks, temperatures) plus — opt-in via `REMO_WEB_HOST_ADMIN=enabled`, dormant otherwise — host
 maintenance from the browser: clone a GitHub repo as a new project, delete a project, rebuild a
 project's devcontainer, and open an SSH shell on the host itself. See
 [Host detail page and maintenance](docs/web-session-interface.md#host-detail-page-and-maintenance).
+
+With `REMO_WEB_REGISTRY_ADMIN=enabled` (dormant otherwise) the console can also **manage hosts
+end-to-end** — register any SSH-reachable machine with a guided add wizard (paste one authorize
+command on the host, confirm its key fingerprints in the browser, verify), run `remo configure` as
+a background job with a live log, and remove hosts from the registry — which makes remo usable with
+no workstation CLI at all. Changes made in the console flow back to workstations via
+`remo web sync`. See
+[Managing hosts from the console](docs/web-session-interface.md#managing-hosts-from-the-console).
 
 Full architecture, security model, Compose walkthrough, adoption workflow, credentials/SSM setup,
 discovery states, terminal limits, troubleshooting, and upgrade notes:
