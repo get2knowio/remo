@@ -139,7 +139,7 @@ def test_v2_payload_accepted_wire_entries_match_file_schema(tmp_path, monkeypatc
     assert doc["hosts"] == _v2_payload()["registry"]
 
 
-def test_v3_payload_rejected_mirror_intact_and_served(tmp_path, monkeypatch):
+def test_v4_payload_rejected_mirror_intact_and_served(tmp_path, monkeypatch):
     monkeypatch.setenv("REMO_HOME", str(tmp_path / "remo"))
     with _client(tmp_path) as client:
         # Establish a baseline mirror first.
@@ -148,21 +148,21 @@ def test_v3_payload_rejected_mirror_intact_and_served(tmp_path, monkeypatch):
         baseline = (tmp_path / "remo" / "registry.json").read_text()
 
         resp = client.put(
-            "/api/v1/setup/registry", json=_v1_payload(version=3), headers=_AUTH
+            "/api/v1/setup/registry", json=_v1_payload(version=4), headers=_AUTH
         )
         assert resp.status_code == 400
         assert resp.json() == {
             "error": {
                 "code": "unsupported_payload_version",
-                "supported": [1, 2],
-                "received": 3,
+                "supported": [1, 2, 3],
+                "received": 4,
             }
         }
         # Prior mirror unchanged and still served over GET /status.
         assert (tmp_path / "remo" / "registry.json").read_text() == baseline
         status = client.get("/api/v1/setup/status", headers=_AUTH).json()
     assert status["registry_instances"] == 1
-    assert status["payload_versions"] == [1, 2]
+    assert status["payload_versions"] == [1, 2, 3]
 
 
 # ---------------------------------------------------------------------------

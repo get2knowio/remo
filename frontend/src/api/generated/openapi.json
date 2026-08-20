@@ -265,6 +265,16 @@
           "features": {
             "$ref": "#/components/schemas/FeaturesOut"
           },
+          "registry_change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistryChangeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -561,6 +571,36 @@
         "title": "KnownProviderType",
         "type": "string"
       },
+      "LastChange": {
+        "description": "The mirror marker's `last_change` descriptor (023): which plane last\nmutated the service registry, and when. `workstation` is the untrusted\ndisplay label a push carried; None for web-origin changes.",
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "workstation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workstation"
+          }
+        },
+        "required": [
+          "at",
+          "origin"
+        ],
+        "title": "LastChange",
+        "type": "object"
+      },
       "LastPush": {
         "properties": {
           "at": {
@@ -727,6 +767,79 @@
         "title": "RegistryApplyResponse",
         "type": "object"
       },
+      "RegistryChangeOut": {
+        "description": "Last registry change (023): generation + when + which plane. Discloses\nno names/hosts/keys \u2014 just enough for the console's unsynced-changes badge\nand a workstation glancing at whether a sync is due.",
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "generation",
+          "at",
+          "origin"
+        ],
+        "title": "RegistryChangeOut",
+        "type": "object"
+      },
+      "RegistryReadResponse": {
+        "description": "`GET /setup/registry` (023): the service's registry as a sync source.\n\n`registry` carries known-type entries in the registry-file-v2.md hostEntry\nshape; unknown-type raw entries are omitted (opaque to sync \u2014 each side\npreserves its own verbatim). `host_keys` regroups the flat service trust\nfile by registered instance name (sound: every stored line is\nssh-keyscan-sourced, never hashed); unmatched lines are omitted.",
+        "properties": {
+          "entry_version": {
+            "default": 2,
+            "title": "Entry Version",
+            "type": "integer"
+          },
+          "host_keys": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Host Keys",
+            "type": "object"
+          },
+          "last_change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mirror_generation": {
+            "title": "Mirror Generation",
+            "type": "integer"
+          },
+          "registry": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Registry",
+            "type": "array"
+          }
+        },
+        "required": [
+          "registry",
+          "host_keys",
+          "mirror_generation"
+        ],
+        "title": "RegistryReadResponse",
+        "type": "object"
+      },
       "SessionTargetOut": {
         "properties": {
           "devcontainer_running": {
@@ -839,6 +952,16 @@
               }
             ],
             "title": "Deployment Id"
+          },
+          "last_change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "last_push": {
             "anyOf": [
@@ -1018,6 +1141,17 @@
       },
       "VerifyCheckOut": {
         "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
           "detail": {
             "title": "Detail",
             "type": "string"
@@ -1746,6 +1880,23 @@
       }
     },
     "/api/v1/setup/registry": {
+      "get": {
+        "description": "`GET /api/v1/setup/registry` (023) -- the sync source for `remo web sync`.\n\nKnown-type entries in hostEntry (v2) shape, plus the service trust file\nregrouped per instance name, plus the mirror generation the workstation\nmust echo back as `PUT` v3's `base_generation`. Advertising payload\nversion 3 on `/setup/status` is the capability signal for this route --\nthe CLI never probes it (an old service's 404 is indistinguishable from a\ndormant surface).",
+        "operationId": "get_registry_route_api_v1_setup_registry_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryReadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Registry Route"
+      },
       "put": {
         "description": "`PUT /api/v1/setup/registry` -- apply the adoption mirror atomically.\n\nAccepts payload v1 (legacy fields, mapped through the shared legacy->v2\nmapper) and v2 (registry-file-v2.md hostEntry shape); always stores v2\n(FR-020/FR-022). Validates the FULL payload before writing anything\n(FR-019); a mount-configured deployment is read-only via this API (409,\nFR-017); an empty registry requires the explicit ``allow_empty=true``\nopt-out (defense-in-depth for the CLI-side FR-016 guard); an unsupported\n``version`` is rejected with the prior mirror left completely intact\n(400 ``unsupported_payload_version``, FR-021).",
         "operationId": "put_registry_api_v1_setup_registry_put",
