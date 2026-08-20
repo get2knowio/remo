@@ -45,9 +45,25 @@ interface HealthState {
    * flag is actually observed (absent field, old service, failed fetch), so
    * the console never renders mutating affordances it can't back. */
   hostAdmin: boolean;
+  /** GET /health `features.registry_admin` (023) — whether the console may
+   * add/remove/configure hosts. Reported as EFFECTIVE availability (flag on
+   * AND not mount-configured); same false-until-observed default. */
+  registryAdmin: boolean;
+  /** GET /health `registry_change` (023) — the last registry change's
+   * generation/time/origin, or null. `origin === "web"` drives the
+   * unsynced-changes badge in Settings. Refreshed on every health poll (the
+   * one field here that is state, not config). */
+  registryChange: { generation: number; at: string; origin: string } | null;
 }
 
-let state: HealthState = { status: "loading", checks: {}, detail: null, hostAdmin: false };
+let state: HealthState = {
+  status: "loading",
+  checks: {},
+  detail: null,
+  hostAdmin: false,
+  registryAdmin: false,
+  registryChange: null,
+};
 
 const listeners = new Set<() => void>();
 
@@ -67,21 +83,19 @@ function getSnapshot(): HealthState {
   return state;
 }
 
-/** True once /health has answered — the flag is config, not liveness, so one
- * successful read per page life is enough (a config change means a service
- * restart, which reloads the console anyway). */
-let featuresResolved = false;
-
-async function resolveFeaturesOnce(): Promise<void> {
-  if (featuresResolved) {
-    return;
-  }
+async function resolveFeatures(): Promise<void> {
+  // Unlike the feature flags (config — stable for a page life), 023's
+  // `registry_change` is state, so /health is fetched on every poll tick;
+  // the flags just stop changing after the first successful read.
   try {
     const health = await getHealth();
-    featuresResolved = true;
-    setState({ hostAdmin: health.features?.host_admin === true });
+    setState({
+      hostAdmin: health.features?.host_admin === true,
+      registryAdmin: health.features?.registry_admin === true,
+      registryChange: health.registry_change ?? null,
+    });
   } catch {
-    // Leave the false default; the next poll tick retries.
+    // Leave the current values; the next poll tick retries.
   }
 }
 
@@ -92,7 +106,7 @@ async function pollOnce(): Promise<void> {
     return;
   }
   pollInFlight = true;
-  void resolveFeaturesOnce();
+  void resolveFeatures();
   try {
     const ready: ReadinessResponse = await getReady();
     // Any 200 status other than "unconfigured" (e.g. "ok") means configured.
@@ -151,6 +165,10 @@ export interface UseHealthResult {
   detail: string | null;
   /** features.host_admin from GET /health; false until observed true. */
   hostAdmin: boolean;
+  /** features.registry_admin from GET /health; false until observed true. */
+  registryAdmin: boolean;
+  /** registry_change from GET /health; null until observed. */
+  registryChange: { generation: number; at: string; origin: string } | null;
   /** Force an immediate re-poll (offline overlay "Retry connection"). */
   retry: () => Promise<void>;
 }
@@ -167,6 +185,8 @@ export function useHealth(intervalMs: number = DEFAULT_POLL_INTERVAL_MS): UseHea
     checks: snapshot.checks,
     detail: snapshot.detail,
     hostAdmin: snapshot.hostAdmin,
+    registryAdmin: snapshot.registryAdmin,
+    registryChange: snapshot.registryChange,
     retry,
   };
 }

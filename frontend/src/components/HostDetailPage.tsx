@@ -15,7 +15,10 @@ import {
   ApiError,
   cloneProject,
   deleteProject,
+  getRegistryJobStatus,
   rebuildProject,
+  removeHost,
+  startConfigure,
   type DiscoveryInstance,
   type JobAccepted,
   type SessionTarget,
@@ -24,11 +27,13 @@ import { useDiscovery } from "../state/discovery";
 import { useHealth } from "../state/health";
 import { useHostStats } from "../state/hostStats";
 import { hostKey } from "../state/settings";
+import { ConfigureConfirmDialog } from "./ConfigureConfirmDialog";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { HostShellPanel } from "./HostShellPanel";
 import { JobProgressPanel } from "./JobProgressPanel";
 import { providerMeta, statusMeta } from "./providerMeta";
 import { RebuildConfirmDialog } from "./RebuildConfirmDialog";
+import { RemoveHostDialog } from "./RemoveHostDialog";
 import "./HostDetailPage.css";
 
 interface HostDetailPageProps {
@@ -139,6 +144,13 @@ export function HostDetailPage({
   const [cloneName, setCloneName] = useState("");
   const [cloneBusy, setCloneBusy] = useState(false);
   const [cloneError, setCloneError] = useState<string | null>(null);
+  // Registry-admin (023): configure job + remove-host dialog state.
+  const [configureOpen, setConfigureOpen] = useState(false);
+  const [configureJob, setConfigureJob] = useState<JobAccepted | null>(null);
+  const [configureError, setConfigureError] = useState<string | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const instance = discovery.instances.find((i) => i.instance_id === instanceId);
 
@@ -174,6 +186,9 @@ export function HostDetailPage({
   const status = statusMeta(instance.status);
   const capability = instance.capability ?? null;
   const hostAdmin = health.hostAdmin;
+  // Registry admin (023): SSH-added hosts only — provider hosts are managed
+  // by their provider verbs on the workstation.
+  const registryAdmin = health.registryAdmin && instance.instance_type === "ssh";
   const ops = capability?.operations ?? [];
   const missingOps = MAINTENANCE_OPS.filter((op) => !ops.includes(op));
   // Actions need both the feature gate AND a host whose tools carry the verbs.
@@ -457,8 +472,31 @@ export function HostDetailPage({
                 <code>{instance.instance_name}</code>.
               </p>
               <code>{nudgeText}</code>
+              {registryAdmin && (
+                <div className="hd-nudge-actions">
+                  <button
+                    type="button"
+                    className="hd-btn hd-btn--primary"
+                    data-testid="configure-now"
+                    onClick={() => setConfigureOpen(true)}
+                  >
+                    Configure now
+                  </button>
+                </div>
+              )}
             </div>
           )}
+
+          {registryAdmin && configureJob && (
+            <JobProgressPanel
+              instanceId={instanceId}
+              job={configureJob}
+              fetchStatus={getRegistryJobStatus}
+              onFinished={refreshInstance}
+              onDismiss={() => setConfigureJob(null)}
+            />
+          )}
+          {configureError && <div className="hd-error">{configureError}</div>}
 
           {canMaintain && (
             <section data-testid="new-project-section">
@@ -525,6 +563,29 @@ export function HostDetailPage({
               ))}
             </section>
           )}
+          {registryAdmin && (
+            <section className="hd-danger" data-testid="remove-host-zone">
+              <div className="hd-heading hd-heading--danger">Registry</div>
+              <div className="hd-danger-row">
+                <span className="hd-danger-name">{instance.instance_name}</span>
+                <span className="hd-danger-note">
+                  Remove this host from the console registry. The machine itself is never
+                  touched.
+                </span>
+                <button
+                  type="button"
+                  className="hd-btn hd-btn--danger"
+                  data-testid="remove-host"
+                  onClick={() => {
+                    setRemoveError(null);
+                    setRemoveOpen(true);
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            </section>
+          )}
         </div>
       </div>
 
@@ -534,6 +595,50 @@ export function HostDetailPage({
           target={rebuildFor}
           onConfirm={(noCache) => void confirmRebuild(rebuildFor, noCache)}
           onCancel={() => setRebuildFor(null)}
+        />
+      )}
+      {configureOpen && (
+        <ConfigureConfirmDialog
+          hostName={instance.instance_name}
+          hostUser="the registered account"
+          onConfirm={() => {
+            setConfigureOpen(false);
+            setConfigureError(null);
+            void startConfigure(instanceId)
+              .then(setConfigureJob)
+              .catch((error) => {
+                setConfigureError(
+                  error instanceof ApiError
+                    ? error.remediation
+                      ? `${error.message} — ${error.remediation}`
+                      : error.message
+                    : "Could not start configure",
+                );
+              });
+          }}
+          onCancel={() => setConfigureOpen(false)}
+        />
+      )}
+      {removeOpen && (
+        <RemoveHostDialog
+          hostName={instance.instance_name}
+          busy={removeBusy}
+          error={removeError}
+          onConfirm={() => {
+            setRemoveBusy(true);
+            setRemoveError(null);
+            void removeHost(instanceId)
+              .then(() => {
+                setRemoveOpen(false);
+                onClose();
+                void discovery.refresh();
+              })
+              .catch((error) => {
+                setRemoveError(error instanceof ApiError ? error.message : "Remove failed");
+              })
+              .finally(() => setRemoveBusy(false));
+          }}
+          onCancel={() => setRemoveOpen(false)}
         />
       )}
       {deleteFor && (

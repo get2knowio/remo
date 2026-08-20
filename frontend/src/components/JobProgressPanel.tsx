@@ -15,6 +15,10 @@ const JOB_POLL_INTERVAL_MS = 2_000;
 interface JobProgressPanelProps {
   instanceId: string;
   job: JobAccepted;
+  /** Status poller override (023): registry-admin jobs live on the SERVICE
+   * (`GET /registry/jobs/{id}`), not the host — pass `getRegistryJobStatus`.
+   * Defaults to the host-job poller, leaving existing call sites unchanged. */
+  fetchStatus?: (instanceId: string, jobId: string) => Promise<JobStatus>;
   /** Called once, when the job reaches succeeded/failed — the caller should
    * `discovery.refresh(instanceId)` so the projects table catches up. */
   onFinished: () => void;
@@ -22,6 +26,15 @@ interface JobProgressPanelProps {
 }
 
 function stateLine(job: JobAccepted, status: JobStatus | null): string {
+  // Configure jobs (023) have no project — the host itself is the subject.
+  if (job.kind === "configure") {
+    if (status === null || status.state === "running") {
+      return "Configuring host…";
+    }
+    return status.state === "succeeded"
+      ? "Configure succeeded — host tools installed"
+      : `Configure failed${status.exit_code == null ? "" : ` (exit ${status.exit_code})`}`;
+  }
   const verb = job.kind === "rebuild" ? "Rebuilding" : "Cloning";
   if (status === null || status.state === "running") {
     return `${verb} ${job.project}…`;
@@ -38,6 +51,7 @@ function stateLine(job: JobAccepted, status: JobStatus | null): string {
 export function JobProgressPanel({
   instanceId,
   job,
+  fetchStatus = getJobStatus,
   onFinished,
   onDismiss,
 }: JobProgressPanelProps): JSX.Element {
@@ -59,7 +73,7 @@ export function JobProgressPanel({
       }
       inFlight = true;
       try {
-        const next = await getJobStatus(instanceId, job.job_id);
+        const next = await fetchStatus(instanceId, job.job_id);
         if (disposed) {
           return;
         }
@@ -85,7 +99,7 @@ export function JobProgressPanel({
       disposed = true;
       clearInterval(interval);
     };
-  }, [instanceId, job.job_id]);
+  }, [instanceId, job.job_id, fetchStatus]);
 
   // Auto-scroll: the log tail is append-mostly, and the newest line is the one
   // the operator is waiting on.

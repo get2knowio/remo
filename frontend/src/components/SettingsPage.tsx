@@ -21,6 +21,7 @@ import {
 } from "../state/settings";
 import { AUTO_TERMINAL_THEME, TERMINAL_THEMES } from "../theme/terminalThemes";
 import { DiagnosticsSection } from "./DiagnosticsSection";
+import { useHealth } from "../state/health";
 import { PairToSync } from "./PairToSync";
 import "./SettingsPage.css";
 
@@ -45,6 +46,7 @@ const GRID_MODES = [
 ];
 
 export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
+  const health = useHealth();
   const settings = useSettings();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [uploaded, setUploaded] = useState<string[]>([]);
@@ -392,13 +394,19 @@ export function SettingsPage({ onClose }: SettingsPageProps): JSX.Element {
             {uploadError && <p className="settings-upload-error">{uploadError}</p>}
           </section>
 
-          {/* Pair CLI to sync (post-adoption re-sync) */}
+          {/* Pair CLI to sync (post-adoption, bi-directional — 023) */}
           <section>
             <div className="settings-heading">Pair CLI to sync</div>
+            {health.registryChange?.origin === "web" && (
+              <div className="settings-unsynced" data-testid="unsynced-badge">
+                ⇅ Changes made in this console haven&rsquo;t been synced to a workstation yet —
+                mint a code and run <code>remo web sync &lt;url&gt;</code> to merge them.
+              </div>
+            )}
             <p className="settings-sub">
-              Mint a one-time code to run <code>remo web push &lt;url&gt;</code> from your
-              workstation and push registry / host-key updates to this service. The code is copied
-              to your clipboard — it is never shown.
+              Mint a one-time code to run <code>remo web sync &lt;url&gt;</code> from your
+              workstation and merge registry / host-key updates in both directions. The code is
+              copied to your clipboard — it is never shown.
             </p>
             <PairToSync />
           </section>
