@@ -294,6 +294,30 @@ async def test_find_target_and_get_targets(tmp_config_dir, monkeypatch):
         assert service.find_target(target.id) is target
 
 
+@pytest.mark.asyncio
+async def test_evict_drops_one_snapshot_and_its_targets(tmp_config_dir, monkeypatch):
+    # The registry-admin remove path prunes ONE instance without the SSH cost
+    # of a full refresh: its snapshot and flattened targets disappear, other
+    # instances' stay.
+    _write_registry(tmp_config_dir, [("incus", "host0"), ("incus", "host1")])
+    monkeypatch.setattr(discovery_module, "get_capabilities", lambda *a, **k: _capability())
+    monkeypatch.setattr(discovery_module, "list_sessions", lambda *a, **k: _entries("proj1"))
+
+    service = DiscoveryService(WebSettings(discovery_timeout_s=5.0))
+    await service.refresh()
+    snapshots = {s.instance_name: s for s in service.get_snapshot()}
+    assert set(snapshots) == {"host0", "host1"}
+
+    await service.evict(snapshots["host0"].instance_id)
+    assert {s.instance_name for s in service.get_snapshot()} == {"host1"}
+    for target in service.get_targets():
+        assert target.instance_name == "host1"
+
+    # Unknown id: a clean no-op.
+    await service.evict("not-a-real-id")
+    assert {s.instance_name for s in service.get_snapshot()} == {"host1"}
+
+
 # ---------------------------------------------------------------------------
 # `no_remo_host` remediation
 # ---------------------------------------------------------------------------

@@ -26,8 +26,15 @@ Equality is `registry.canonical_entry` — the exact string
 construction.
 
 Concurrency: the PUT carries payload v3's `base_generation` precondition; a
-409 `generation_conflict` re-GETs, re-merges against the SAME base (memoized
-resolutions — only new conflicts re-prompt) and retries, bounded at 3.
+409 `generation_conflict` re-GETs, re-merges and retries, bounded at 3. The
+re-merge base is the cache base ADVANCED by the attempt's own local apply
+(`_advance_base_after_local_apply`): a value this run just pulled is on disk
+locally, so the base must adopt it — otherwise a console deletion landing
+between attempts would classify the pulled entry as a local-only PUSH_ADD and
+silently resurrect it around the deletion consent gate. Conflict resolutions
+are memoized by (name, local content, remote content) — a repeat of the same
+conflict never re-prompts, but a conflict whose content changed between
+attempts does.
 
 Like `core/web_adopt.py` this module is stdlib + core/models only — it MUST
 stay importable without the `web` extra.
@@ -326,6 +333,19 @@ def render_sync_plan(plan: SyncPlan, deployment_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _conflict_memo_key(action: SyncAction) -> str:
+    """Memo key for a conflict pick: name AND both sides' canonical content.
+
+    Name-only memoization would re-apply a stale pick after a 409 re-merge
+    even when the conflicting content changed between attempts — the operator
+    would have consented to a diff they never saw. Content-keying re-prompts
+    exactly those, while a byte-identical repeat of the same conflict stays
+    silent."""
+    local = registry.canonical_entry(action.local) if action.local else ""
+    remote = registry.canonical_entry(action.remote) if action.remote else ""
+    return f"{action.name}\x1f{local}\x1f{remote}"
+
+
 def resolve_conflicts(
     plan: SyncPlan,
     *,
@@ -337,19 +357,21 @@ def resolve_conflicts(
     """Set each CONFLICT's resolution. Returns False when any stays unresolved
     (non-interactive, no --prefer-*) — the caller aborts with exit 3.
 
-    *memo* persists picks across 409 re-merges so only NEW conflicts re-prompt.
+    *memo* persists picks across 409 re-merges so only NEW conflicts (or ones
+    whose content changed — see `_conflict_memo_key`) re-prompt.
     """
     if input_fn is None:
         # Resolved at call time (not as a parameter default) so tests patching
         # builtins.input are honored.
         input_fn = input
     for action in plan.conflicts:
-        if action.name in memo:
-            action.resolution = memo[action.name]
+        memo_key = _conflict_memo_key(action)
+        if memo_key in memo:
+            action.resolution = memo[memo_key]
             continue
         if prefer in (RESOLUTION_LOCAL, RESOLUTION_REMOTE):
             action.resolution = prefer
-            memo[action.name] = prefer
+            memo[memo_key] = prefer
             continue
         if not interactive:
             return False
@@ -381,7 +403,7 @@ def resolve_conflicts(
             if answer in ("s", "skip"):
                 action.resolution = RESOLUTION_SKIP
                 break
-        memo[action.name] = action.resolution
+        memo[memo_key] = action.resolution
     return True
 
 
@@ -441,6 +463,107 @@ def gate_deletion_consent(
 # ---------------------------------------------------------------------------
 # Plan projection helpers (what each side ends up with)
 # ---------------------------------------------------------------------------
+
+
+def _advance_base_after_local_apply(
+    base: dict[str, dict[str, Any] | None], plan: SyncPlan
+) -> None:
+    """Fold the attempt's own local apply into the in-memory merge base.
+
+    After step 8, pull-direction values are on the local disk: if a 409 forces
+    a re-merge, the base must already contain them, or a console deletion
+    landing between attempts classifies the just-pulled entry as a local-only
+    PUSH_ADD and silently resurrects it around the deletion consent gate
+    (instead of the correct DELETE_LOCAL + consent). Base-less IN_SYNC entries
+    are adopted for the same reason. Push-direction and locally-kept conflict
+    values do NOT advance the base — the remote has not accepted them until a
+    PUT succeeds — and a skipped conflict keeps the old base by contract."""
+    for action in plan.actions:
+        kind = action.kind
+        if kind in (SyncActionKind.PULL_ADD, SyncActionKind.PULL_UPDATE):
+            if action.remote is not None:
+                base[action.name] = registry.known_host_to_entry(action.remote)
+        elif kind is SyncActionKind.CONFLICT and action.resolution == RESOLUTION_REMOTE:
+            if action.remote is not None:
+                base[action.name] = registry.known_host_to_entry(action.remote)
+            else:  # "keep remote" of a remote deletion = the entry is gone.
+                base.pop(action.name, None)
+        elif kind is SyncActionKind.IN_SYNC:
+            if action.local is not None:
+                base[action.name] = registry.known_host_to_entry(action.local)
+        elif kind in (SyncActionKind.DELETE_LOCAL, SyncActionKind.BOTH_DELETED):
+            base.pop(action.name, None)
+
+
+def _persist_pulled_bases(
+    deployment_id: str,
+    cached_instances: dict[str, CachedInstance],
+    cached_generation: int,
+    plan: SyncPlan,
+    remote_host_keys: dict[str, list[str]],
+    persisted: dict[str, CachedInstance | None],
+) -> None:
+    """Durable half of `_advance_base_after_local_apply` (best-effort).
+
+    The local apply is already on disk; if the run dies before its PUT (409
+    exhaustion, network failure, Ctrl-C at a later prompt) the NEXT run's
+    merge base must still show this run's pulls as synchronized — without
+    this, a deployment-side deletion of a just-pulled entry classifies as a
+    local-only PUSH_ADD one run later and is resurrected without consent.
+
+    Pull-direction entries are recorded exactly as a successful run's step-14
+    write-back would (entry + the service-held key lines); in-sync entries are
+    recorded with EMPTY host_keys so the push fast-path (gated on non-empty
+    lines) never skips a keyscan this workstation has not performed. Skipped
+    conflicts keep their old base by contract and push-direction entries are
+    untouched (the remote has not accepted them). The generation is NOT
+    advanced — no PUT happened. Step 14 supersedes all of this on success;
+    like every cache write, failure here is non-fatal.
+    """
+    if not deployment_id:
+        return
+    synthetic: list[InstanceOutcome] = []
+    keys: dict[str, list[str]] = {}
+    for action in plan.actions:
+        kind = action.kind
+        pulled = kind in (SyncActionKind.PULL_ADD, SyncActionKind.PULL_UPDATE) or (
+            kind is SyncActionKind.CONFLICT
+            and action.resolution == RESOLUTION_REMOTE
+            and action.remote is not None
+        )
+        if pulled and action.remote is not None:
+            synthetic.append(InstanceOutcome(action.remote, OUTCOME_PULLED, detail=""))
+            lines = remote_host_keys.get(action.name, [])
+            if lines:
+                keys[action.name] = list(lines)
+        elif kind is SyncActionKind.IN_SYNC and action.local is not None:
+            # A pull in an EARLIER attempt of this run re-plans as IN_SYNC (the
+            # base was advanced) — its accumulator entry, with the pulled key
+            # lines, must survive. An entry the run-start cache already holds
+            # at the same fingerprint keeps its (possibly verified) record.
+            if action.name in persisted:
+                continue
+            cached = cached_instances.get(action.name)
+            if cached is not None and cached.fingerprint == instance_fingerprint(action.local):
+                continue
+            synthetic.append(InstanceOutcome(action.local, OUTCOME_PULLED, detail=""))
+        elif kind in (SyncActionKind.DELETE_LOCAL, SyncActionKind.BOTH_DELETED) or (
+            kind is SyncActionKind.CONFLICT
+            and action.resolution == RESOLUTION_REMOTE
+            and action.remote is None
+        ):
+            persisted[action.name] = None
+    for name, instance in _cache_from_outcomes(synthetic, keys).items():
+        persisted[name] = instance
+    if not persisted:
+        return
+    merged = dict(cached_instances)
+    for name, maybe_instance in persisted.items():
+        if maybe_instance is None:
+            merged.pop(name, None)
+        else:
+            merged[name] = maybe_instance
+    _update_push_cache(deployment_id, merged, cached_generation)
 
 
 def _final_side(action: SyncAction) -> str | None:
@@ -671,9 +794,11 @@ def _sync_flow(
         name: cached.entry for name, cached in cached_instances.items()
     }
 
-    # Memoized across 409 re-merges: conflict picks + deletion consent.
+    # Memoized across 409 re-merges: conflict picks + deletion consent, plus
+    # the accumulated early-persisted merge bases (`_persist_pulled_bases`).
     resolution_memo: dict[str, str] = {}
     consent_memo: set[str] = set()
+    persisted_bases: dict[str, CachedInstance | None] = {}
 
     applied: dict[str, Any] | None = None
     final_plan: SyncPlan | None = None
@@ -759,6 +884,21 @@ def _sync_flow(
 
         # Step 8b (local-only trust/identity hygiene for pulled hosts).
         _handle_pulled_hosts(plan, remote.host_keys, interactive=interactive)
+
+        # The local apply is durable: advance the in-memory base so a 409
+        # re-merge sees pulled values as synchronized, not as local-only adds
+        # (which would resurrect a concurrent console deletion without
+        # consent) — and persist the same bases so a run that dies before its
+        # PUT leaves the NEXT run correct too.
+        _advance_base_after_local_apply(base, plan)
+        _persist_pulled_bases(
+            deployment_id,
+            cached_instances,
+            cached_generation,
+            plan,
+            remote.host_keys,
+            persisted_bases,
+        )
 
         # Step 9: per-instance processing — PUSH side only. PULL entries are
         # never keyscanned/authorized (the service already holds

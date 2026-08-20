@@ -56,6 +56,7 @@ from remo_cli.core.config import get_known_hosts_path
 from remo_cli.core.web_adopt import known_hosts_lookup_key
 from remo_cli.models.host import KnownHost
 from remo_cli.web import check as web_check
+from remo_cli.web.api.gating import dormant
 from remo_cli.web.config import WebSettings
 from remo_cli.web.mirror_meta import read_mirror_meta, record_change
 from remo_cli.web.state import (
@@ -85,11 +86,8 @@ def _get_settings(request: Request) -> WebSettings:
     return getattr(request.app.state, "settings", None) or WebSettings()
 
 
-def _dormant() -> HTTPException:
-    """The dormant response — byte-identical to FastAPI's default unknown-route
-    404 (FR-005/FR-006). A fresh instance per raise (never a shared singleton,
-    which would accumulate traceback/context state)."""
-    return HTTPException(status_code=404, detail="Not Found")
+# The dormant response (FR-005/FR-006) — the shared `web/api/gating.py` shape.
+_dormant = dormant
 
 
 async def require_pairing_code(request: Request) -> None:

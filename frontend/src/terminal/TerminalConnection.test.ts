@@ -145,6 +145,49 @@ describe("TerminalConnection", () => {
     expect(states).toEqual(["connecting", "ready"]);
   });
 
+  it("close() during attach supersedes it: no socket opens, the terminal is reaped", async () => {
+    // close() racing an in-flight createTerminal() must not let the resolving
+    // attach open a brand-new socket on a torn-down connection — and the
+    // server-side terminal that attach created (which will never be attached)
+    // is reaped immediately, not left for the idle sweep.
+    let resolveCreate!: (v: { terminal_id: string; ws_token: string }) => void;
+    mocks.createTerminal.mockImplementationOnce(
+      () =>
+        new Promise<{ terminal_id: string; ws_token: string }>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    conn = new TerminalConnection("s1", 80, 24);
+    const connecting = conn.connect();
+    const closing = conn.close();
+    resolveCreate({ terminal_id: "t-orphan", ws_token: "tok" });
+    await connecting;
+    await closing;
+    expect(mocks.openTerminalSocket).not.toHaveBeenCalled();
+    expect(mocks.closeTerminal).toHaveBeenCalledWith("t-orphan");
+    expect(conn.currentState).toBe("closed");
+  });
+
+  it("a superseded attach reaps its own orphaned terminal", async () => {
+    // Two racing attaches: the older one's terminal is never attached, so it
+    // is closed server-side; the newer one keeps its socket.
+    let resolveFirst!: (v: { terminal_id: string; ws_token: string }) => void;
+    mocks.createTerminal.mockImplementationOnce(
+      () =>
+        new Promise<{ terminal_id: string; ws_token: string }>((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    conn = new TerminalConnection("s1", 80, 24);
+    const first = conn.connect();
+    const second = conn.reconnect();
+    await second;
+    resolveFirst({ terminal_id: "t-stale", ws_token: "tok" });
+    await first;
+    expect(mocks.closeTerminal).toHaveBeenCalledWith("t-stale");
+    expect(mocks.openTerminalSocket).toHaveBeenCalledTimes(1);
+  });
+
   it("auto-reconnects after an unexpected close (fresh terminal each time)", async () => {
     conn = new TerminalConnection("s1", 80, 24);
     await conn.connect();

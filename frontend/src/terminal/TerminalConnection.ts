@@ -237,6 +237,11 @@ export class TerminalConnection {
   /** Client-initiated clean close (WS code 1000) plus server-side cleanup. */
   async close(): Promise<void> {
     this.clientInitiatedClose = true;
+    // Supersede any in-flight attach(): without this, an awaited
+    // createTerminal() resolving after close() would pass the gen check and
+    // open a brand-new socket on a connection the caller just tore down.
+    this.attachGen += 1;
+    this.attaching = false;
     this.removeWakeListeners();
     this.stopPinging();
     this.clearReconnectTimer();
@@ -372,9 +377,15 @@ export class TerminalConnection {
       return;
     }
 
-    // Superseded while awaiting the fresh terminal — don't open a second socket.
+    // Superseded while awaiting the fresh terminal — don't open a second
+    // socket. Whether the superseder was close() or a newer attach (which
+    // created its own terminal), THIS terminal will never be attached: reap
+    // it server-side now rather than waiting for the idle sweep.
     if (gen !== this.attachGen) {
       this.attaching = false;
+      void closeTerminalRequest(created.terminal_id).catch(() => {
+        // Best-effort — the server also reaps never-attached terminals.
+      });
       return;
     }
 

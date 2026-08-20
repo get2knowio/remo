@@ -270,8 +270,18 @@ def test_remo_host_sessions_list_empty_projects_dir(tmp_path: Path) -> None:
         "/etc/passwd",
         "foo\nbar",
         "does-not-exist",
+        ".hidden",
     ],
-    ids=["empty", "traversal", "dotdot", "nested-traversal", "absolute", "control-char", "nonexistent"],
+    ids=[
+        "empty",
+        "traversal",
+        "dotdot",
+        "nested-traversal",
+        "absolute",
+        "control-char",
+        "nonexistent",
+        "hidden",
+    ],
 )
 def test_remo_host_attach_rejects_bad_project_names(
     rendered_script: Path, tmp_path: Path, bad_name: str
@@ -716,8 +726,8 @@ def test_remo_host_clone_rejects_bad_repos(
 @pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
 @pytest.mark.parametrize(
     "bad_name",
-    ["../evil", "-evil", "evil name", "alpha"],
-    ids=["traversal", "leading-dash", "space", "already-exists"],
+    ["../evil", "-evil", "evil name", ".github", "alpha"],
+    ids=["traversal", "leading-dash", "space", "leading-dot", "already-exists"],
 )
 def test_remo_host_clone_rejects_bad_names(
     rendered_script: Path, tmp_path: Path, bad_name: str
@@ -756,6 +766,87 @@ def test_remo_host_clone_rejects_existing_default_name(
     )
     assert result.returncode == 3
     assert result.stdout == ""
+
+
+@pytest.mark.skipif(
+    BASH is None or SETSID is None, reason="bash/setsid not available in this sandbox"
+)
+def test_remo_host_clone_stages_inside_projects_root(
+    rendered_script: Path, tmp_path: Path
+) -> None:
+    # Staging must live INSIDE the projects root (same filesystem, so the
+    # final rename is atomic), never under ${TMPDIR}: a tmpfs /tmp can be too
+    # small for the repo and a cross-device mv degrades to a non-atomic copy
+    # that exposes a partial project. Point TMPDIR at a nonexistent path — a
+    # worker still staging there would die at mktemp.
+    shim_dir, _, _ = _clone_shims(tmp_path)
+    env = _jobs_env(tmp_path)
+    env["TMPDIR"] = str(tmp_path / "no-such-tmp")
+    result = _run_remo_host(
+        rendered_script,
+        tmp_path,
+        "projects",
+        "clone",
+        "--repo",
+        "acme/widget",
+        "--json",
+        env=env,
+        path_prepend=shim_dir,
+    )
+    assert result.returncode == 0, result.stderr
+    ref = json.loads(result.stdout)
+    _wait_for_job(tmp_path, ref["job_id"])
+
+    status = _run_remo_host(
+        rendered_script,
+        tmp_path,
+        "jobs",
+        "status",
+        "--job",
+        ref["job_id"],
+        "--json",
+        env=_jobs_env(tmp_path),
+    )
+    assert json.loads(status.stdout)["state"] == "succeeded"
+    projects = tmp_path / "projects"
+    assert (projects / "widget").is_dir()
+    # The hidden staging dir was cleaned up on exit.
+    assert not list(projects.glob(".remo-clone.*"))
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
+def test_remo_host_sessions_list_excludes_hidden_dirs(
+    rendered_script: Path, tmp_path: Path
+) -> None:
+    # A half-finished clone stages in a hidden dir inside the projects root;
+    # sessions list must never surface it (the "never visible" invariant).
+    (tmp_path / "projects" / ".remo-clone.abc123" / "repo").mkdir(parents=True)
+    result = _run_remo_host(rendered_script, tmp_path, "sessions", "list", "--json")
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert [p["name"] for p in payload["projects"]] == ["alpha", "beta"]
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
+def test_remo_host_delete_rejects_hidden_name_even_when_dir_exists(
+    rendered_script: Path, tmp_path: Path
+) -> None:
+    # Hidden dirs are the host's own staging area — never addressable as
+    # projects even though the directory exists on disk.
+    staging = tmp_path / "projects" / ".remo-clone.abc123"
+    staging.mkdir(parents=True)
+    result = _run_remo_host(
+        rendered_script,
+        tmp_path,
+        "projects",
+        "delete",
+        "--project",
+        ".remo-clone.abc123",
+        "--json",
+    )
+    assert result.returncode == 3
+    assert "hidden" in result.stderr
+    assert staging.is_dir()
 
 
 @pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")

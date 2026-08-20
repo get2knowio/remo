@@ -224,10 +224,37 @@ class TestResolution:
             calls.append(prompt)
             return "l"
 
-        memo = {"dev": RESOLUTION_REMOTE}
+        memo = {web_sync._conflict_memo_key(plan.conflicts[0]): RESOLUTION_REMOTE}
         assert resolve_conflicts(plan, prefer=None, interactive=True, memo=memo, input_fn=prompter)
         assert calls == []
         assert plan.conflicts[0].resolution == RESOLUTION_REMOTE
+
+    def test_memo_reprompts_when_conflict_content_changed(self):
+        # A pick memoized for one (local, remote) content pair must NOT be
+        # silently re-applied when a 409 re-merge presents the same NAME with
+        # different content — the operator never saw that diff.
+        memo: dict[str, str] = {}
+        first = _conflict_plan()
+        assert resolve_conflicts(
+            first, prefer=None, interactive=True, memo=memo, input_fn=lambda _p: "l"
+        )
+        assert first.conflicts[0].resolution == RESOLUTION_LOCAL
+
+        base = _host()
+        second = build_sync_plan(
+            {"dev": _entry(base)}, [_host(host="10.1.1.1")], [_host(host="10.9.9.9")], 4
+        )
+        calls = []
+
+        def prompter(prompt):
+            calls.append(prompt)
+            return "r"
+
+        assert resolve_conflicts(
+            second, prefer=None, interactive=True, memo=memo, input_fn=prompter
+        )
+        assert calls, "changed conflict content must re-prompt"
+        assert second.conflicts[0].resolution == RESOLUTION_REMOTE
 
     def test_skip_projects_remote_into_payload_but_not_locally(self):
         plan = _conflict_plan()
@@ -551,6 +578,65 @@ class TestDriver:
         assert rc == 0
         assert api_client.get_registry.call_count == 2
         assert api_client.put_registry.call_count == 2
+
+    def test_409_retry_does_not_resurrect_console_deletion_of_pulled_entry(
+        self, tmp_config_dir, api_client, process_instance
+    ):
+        # Attempt 1 pulls `webbox` (applied locally), PUT 409s; between
+        # attempts the console DELETES webbox. The re-merge must see the pull
+        # as synchronized (base advanced) and classify the deletion as
+        # DELETE_LOCAL — never as a local-only PUSH_ADD that resurrects it.
+        keeper = _host(name="keeper", host="10.0.0.1")
+        webbox = _host(name="webbox", host="10.0.0.2", type_="hetzner", user="remo")
+        replace_registry([keeper])
+        api_client.get_registry.side_effect = [
+            {
+                "registry": [_entry(keeper), _entry(webbox)],
+                "host_keys": {"webbox": [KEY_LINE_B]},
+                "mirror_generation": 4,
+            },
+            {
+                "registry": [_entry(keeper)],
+                "host_keys": {},
+                "mirror_generation": 5,
+            },
+        ]
+        api_client.put_registry.side_effect = [
+            GenerationConflictError("moved", current_generation=5, last_change=None),
+            {"registry_instances": 1, "host_key_instances": 1, "mirror_generation": 6},
+        ]
+
+        rc = run_web_sync(URL, CODE, assume_yes=True)
+        assert rc == 0
+        # The console's deletion won: webbox is gone locally too...
+        assert [h.name for h in core_registry.read_registry(readonly=True).hosts] == ["keeper"]
+        # ...and the second PUT did not resurrect it.
+        final_payload = api_client.put_registry.call_args_list[-1].args[0]
+        assert [e["name"] for e in final_payload["registry"]] == ["keeper"]
+
+    def test_failed_sync_persists_pulled_base_for_the_next_run(
+        self, tmp_config_dir, api_client, process_instance
+    ):
+        # Every PUT 409s -> exit 1 with the pull already applied locally. The
+        # push cache must still record the pulled entry as this deployment's
+        # merge base, or the NEXT run would classify a deployment-side
+        # deletion of it as PUSH_ADD and resurrect it.
+        webbox = _host(name="webbox", host="10.0.0.2", type_="hetzner", user="remo")
+        replace_registry([_host(name="keeper", host="10.0.0.1")])
+        api_client.get_registry.return_value = {
+            "registry": [_entry(webbox)],
+            "host_keys": {"webbox": [KEY_LINE_B]},
+            "mirror_generation": 4,
+        }
+        api_client.put_registry.side_effect = GenerationConflictError(
+            "moved", current_generation=9, last_change=None
+        )
+
+        rc = run_web_sync(URL, CODE, assume_yes=True)
+        assert rc == 1
+        cached = load_push_cache()[DEPLOYMENT_ID].instances
+        assert cached["webbox"].entry == _entry(webbox)
+        assert cached["webbox"].host_keys == [KEY_LINE_B]
 
     def test_409_bounded_at_three_attempts(self, tmp_config_dir, api_client, process_instance, capsys):
         replace_registry([_host()])

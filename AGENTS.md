@@ -110,6 +110,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── pairing.py              # In-memory, single-live, TTL'd pairing-code session manager replacing the static setup API token
 │   └── api/
 │       ├── hosts.py            # GET /api/v1/hosts, /sessions, /hosts/{id}/stats (ungated, TTL-coalesced), POST /discovery/refresh; shared remo-host call plumbing
+│       ├── gating.py           # Shared dormant-404 gate for flag-guarded admin routers (one 404 shape, one operator-auth check)
 │       ├── host_admin.py       # Gated maintenance API (REMO_WEB_HOST_ADMIN, dormant-404 like /setup): project clone/delete/rebuild + job polling
 │       ├── registry_admin.py   # Gated registry-admin API (REMO_WEB_REGISTRY_ADMIN, dormant-404): add/remove/configure SSH hosts via the embedded CLI + job polling (023)
 │       ├── setup.py            # Token-gated /api/v1/setup/{status,identity,registry,verify} (011-web-adopt)

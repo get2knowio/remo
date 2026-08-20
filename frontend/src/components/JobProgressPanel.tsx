@@ -71,6 +71,12 @@ export function JobProgressPanel({
       if (disposed || finishedRef.current || inFlight) {
         return;
       }
+      // Hidden tab: skip the tick (the hostStats precedent) — polling a log
+      // tail nobody can see is pure waste. The visibilitychange handler
+      // refetches the moment the operator returns.
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
       inFlight = true;
       try {
         const next = await fetchStatus(instanceId, job.job_id);
@@ -95,9 +101,20 @@ export function JobProgressPanel({
 
     void poll();
     const interval = setInterval(() => void poll(), JOB_POLL_INTERVAL_MS);
+    const onVisibility = (): void => {
+      if (document.visibilityState === "visible") {
+        void poll();
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
     return () => {
       disposed = true;
       clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
     };
   }, [instanceId, job.job_id, fetchStatus]);
 

@@ -53,6 +53,30 @@ describe("JobProgressPanel", () => {
     expect(onFinished).not.toHaveBeenCalled();
   });
 
+  it("pauses polling while the tab is hidden and refetches on return", async () => {
+    getJobStatus.mockResolvedValue(running("step 1"));
+    render(
+      <JobProgressPanel instanceId="i-1" job={JOB} onFinished={onFinished} onDismiss={onDismiss} />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const visibleCalls = getJobStatus.mock.calls.length;
+
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(getJobStatus).toHaveBeenCalledTimes(visibleCalls); // no wasted ticks
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(getJobStatus.mock.calls.length).toBeGreaterThan(visibleCalls); // immediate catch-up
+  });
+
   it("stops polling and refreshes discovery once on success", async () => {
     getJobStatus.mockResolvedValueOnce(running("step 1"));
     getJobStatus.mockResolvedValue({

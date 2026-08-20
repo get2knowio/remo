@@ -108,8 +108,9 @@ client defaults each to `false`/`0` (no git glyphs shown), so no version bump is
 ## `remo-host sessions attach --project <name>`
 
 Interactive (TTY required). Validates `<name>`:
-- reject empty, absolute paths, `..`/traversal, control chars, or names not present under `$PROJECTS_DIR`
-  (exit 3 with stderr diagnostic) — **before** any launch (FR-011).
+- reject empty, absolute paths, `..`/traversal, control chars, leading-dot (hidden) names, or names
+  not present under `$PROJECTS_DIR` (exit 3 with stderr diagnostic) — **before** any launch (FR-011).
+  Hidden names are reserved for the host's own clone-staging dirs and never enumerated.
 On success, `exec ~/.local/bin/project-launch --project "<name>"` so the resulting Zellij/devcontainer
 session is byte-for-byte the CLI's `remo shell -p <name>` path (SC-002). No JSON on this verb; it
 becomes an interactive terminal stream.
@@ -197,14 +198,18 @@ Registers a detached clone job and prints the job reference. `--repo` MUST be ei
 shorthand or an `https://github.com/OWNER/REPO(.git)` URL, each path segment matching
 `[A-Za-z0-9_.-]+` and **not** starting with `-` (option-injection defense, FR-014); `.`/`..`
 segments are rejected. Anything else — ssh URLs, other hosts, shell metacharacters — is exit 3.
-`--name` defaults to the repo basename minus `.git`; it must match the same safe charset, not start
-with `-`, and **must not already exist** under the projects root (exit 3).
+`--name` defaults to the repo basename minus `.git`; it must match the same safe charset, start
+with an alphanumeric or `_` (never `-` — option injection — nor `.` — hidden names are reserved for
+staging, so a repo named `.github` needs an explicit `--name`), and **must not already exist** under
+the projects root (exit 3).
 
 The job prefers `gh repo clone` when `gh` exists **and** `gh auth status` succeeds (private repos
 need a prior `gh auth login` on the host), falling back to anonymous `git clone -- <url>` (`--`
-guards argv even though the shape check already forbids option-lookalikes). It clones into a temp
-directory and `mv`s the result into the projects root, so a half-finished clone is never visible to
-`sessions list`.
+guards argv even though the shape check already forbids option-lookalikes). It clones into a hidden
+staging dir **inside the projects root** (`.remo-clone.XXXXXXXX` — same filesystem, so the final
+rename is atomic and never a cross-device copy that could expose a partial project or exhaust a
+tmpfs `/tmp`) and renames the result into place; hidden dirs are excluded from `sessions list`, so a
+half-finished clone is never visible.
 
 ## `remo-host projects delete --project NAME --json`
 

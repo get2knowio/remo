@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from enum import Enum
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -54,6 +55,14 @@ class FeaturesOut(BaseModel):
     registry_admin: bool = False
 
 
+class ChangeOrigin(str, Enum):
+    """Which plane last wrote the registry (contracts/mirror-meta.md): a
+    workstation push/sync, or the web console's registry-admin surface."""
+
+    PUSH = "push"
+    WEB = "web"
+
+
 class RegistryChangeOut(BaseModel):
     """Last registry change (023): generation + when + which plane. Discloses
     no names/hosts/keys — just enough for the console's unsynced-changes badge
@@ -61,7 +70,7 @@ class RegistryChangeOut(BaseModel):
 
     generation: int
     at: str
-    origin: str
+    origin: ChangeOrigin
 
 
 class HealthResponse(BaseModel):
@@ -116,11 +125,17 @@ def health(request: Request) -> HealthResponse:
     meta = read_mirror_meta(settings)
     if meta is not None and isinstance(meta.get("generation"), int):
         raw_change = meta.get("last_change")
-        if isinstance(raw_change, dict):
+        # `origin` is a closed enum on the wire; a marker written by some
+        # future/foreign version with an unknown origin simply doesn't drive
+        # the badge (liveness must never 500 over a state file).
+        if isinstance(raw_change, dict) and str(raw_change.get("origin", "")) in (
+            ChangeOrigin.PUSH,
+            ChangeOrigin.WEB,
+        ):
             registry_change = RegistryChangeOut(
                 generation=meta["generation"],
                 at=str(raw_change.get("at", "")),
-                origin=str(raw_change.get("origin", "")),
+                origin=ChangeOrigin(str(raw_change.get("origin", ""))),
             )
     return HealthResponse(
         status="alive",
