@@ -323,7 +323,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get Registry Route
+         * @description `GET /api/v1/setup/registry` (023) -- the sync source for `remo web sync`.
+         *
+         *     Known-type entries in hostEntry (v2) shape, plus the service trust file
+         *     regrouped per instance name, plus the mirror generation the workstation
+         *     must echo back as `PUT` v3's `base_generation`. Advertising payload
+         *     version 3 on `/setup/status` is the capability signal for this route --
+         *     the CLI never probes it (an old service's 404 is indistinguishable from a
+         *     dormant surface).
+         */
+        get: operations["get_registry_route_api_v1_setup_registry_get"];
         /**
          * Put Registry
          * @description `PUT /api/v1/setup/registry` -- apply the adoption mirror atomically.
@@ -579,6 +590,7 @@ export interface components {
         /** HealthResponse */
         HealthResponse: {
             features: components["schemas"]["FeaturesOut"];
+            registry_change?: components["schemas"]["RegistryChangeOut"] | null;
             /** Status */
             status: string;
             /** Version */
@@ -751,6 +763,20 @@ export interface components {
          * @enum {string}
          */
         KnownProviderType: "incus" | "hetzner" | "aws" | "proxmox";
+        /**
+         * LastChange
+         * @description The mirror marker's `last_change` descriptor (023): which plane last
+         *     mutated the service registry, and when. `workstation` is the untrusted
+         *     display label a push carried; None for web-origin changes.
+         */
+        LastChange: {
+            /** At */
+            at: string;
+            /** Origin */
+            origin: string;
+            /** Workstation */
+            workstation?: string | null;
+        };
         /** LastPush */
         LastPush: {
             /** At */
@@ -820,6 +846,48 @@ export interface components {
             /** Registry Instances */
             registry_instances: number;
         };
+        /**
+         * RegistryChangeOut
+         * @description Last registry change (023): generation + when + which plane. Discloses
+         *     no names/hosts/keys — just enough for the console's unsynced-changes badge
+         *     and a workstation glancing at whether a sync is due.
+         */
+        RegistryChangeOut: {
+            /** At */
+            at: string;
+            /** Generation */
+            generation: number;
+            /** Origin */
+            origin: string;
+        };
+        /**
+         * RegistryReadResponse
+         * @description `GET /setup/registry` (023): the service's registry as a sync source.
+         *
+         *     `registry` carries known-type entries in the registry-file-v2.md hostEntry
+         *     shape; unknown-type raw entries are omitted (opaque to sync — each side
+         *     preserves its own verbatim). `host_keys` regroups the flat service trust
+         *     file by registered instance name (sound: every stored line is
+         *     ssh-keyscan-sourced, never hashed); unmatched lines are omitted.
+         */
+        RegistryReadResponse: {
+            /**
+             * Entry Version
+             * @default 2
+             */
+            entry_version: number;
+            /** Host Keys */
+            host_keys: {
+                [key: string]: string[];
+            };
+            last_change?: components["schemas"]["LastChange"] | null;
+            /** Mirror Generation */
+            mirror_generation: number;
+            /** Registry */
+            registry: {
+                [key: string]: unknown;
+            }[];
+        };
         /** SessionTargetOut */
         SessionTargetOut: {
             devcontainer_running: components["schemas"]["DevcontainerRunning"];
@@ -874,6 +942,7 @@ export interface components {
         SetupStatusResponse: {
             /** Deployment Id */
             deployment_id: string | null;
+            last_change?: components["schemas"]["LastChange"] | null;
             last_push?: components["schemas"]["LastPush"] | null;
             /** Mirror Generation */
             mirror_generation?: number | null;
@@ -942,6 +1011,8 @@ export interface components {
         };
         /** VerifyCheckOut */
         VerifyCheckOut: {
+            /** Code */
+            code?: string | null;
             /** Detail */
             detail: string;
             /** Name */
@@ -1515,6 +1586,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IdentityResponse"];
+                };
+            };
+        };
+    };
+    get_registry_route_api_v1_setup_registry_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegistryReadResponse"];
                 };
             };
         };

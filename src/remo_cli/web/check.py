@@ -91,6 +91,10 @@ class CheckResult:
     passed: bool
     detail: str
     remediation: str | None = None
+    #: Machine-readable error code (the `web.discovery` classification) for
+    #: instance checks, so `POST /setup/verify` consumers can dispatch on it
+    #: instead of string-matching `detail` (023). None for config checks.
+    code: str | None = None
 
 
 def _is_ssm_host(host: KnownHost) -> bool:
@@ -297,7 +301,7 @@ def _instance_check(host: KnownHost, settings: WebSettings) -> CheckResult:
         return CheckResult(name, False, str(exc), _REMEDIATE_UPDATE_HOST_TOOLS)
     except SshTransportError as exc:
         _status, code, _retryable, remediation = _classify_ssh_transport(exc)
-        return CheckResult(name, False, code, remediation)
+        return CheckResult(name, False, code, remediation, code=code)
     except Exception:  # noqa: BLE001 - one instance's failure must never abort
         # the rest of the check run (mirrors discovery's host-failure
         # isolation), and the exception text is deliberately not surfaced

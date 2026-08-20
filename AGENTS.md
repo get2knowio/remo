@@ -97,6 +97,9 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── frames.py              # remo-terminal.v1 control-frame Pydantic models (resize/ping/ready/exit/error/pong) + InboundFrame/OutboundFrame discriminated unions
 │   ├── tokens.py              # Single-use, 30s-TTL WS terminal tokens
 │   ├── health.py              # GET /api/v1/health, /api/v1/ready
+│   ├── mirror_meta.py         # Mirror-identity marker accessor (read_mirror_meta/record_change): generation + last_push + last_change, shared by setup + registry-admin writers (023)
+│   ├── trust_store.py         # Service known_hosts helpers: line validation, atomic writes, per-instance set/remove slices (023)
+│   ├── jobs.py                # CliJobRunner — detached, restart-surviving `remo` CLI subprocess jobs under <REMO_HOME>/web-jobs (023)
 │   ├── check.py               # `remo web check` diagnostic
 │   ├── logging_config.py      # Secret/token/proxy-command redaction in logs
 │   ├── models.py               # Service-only entities: TerminalAttachment, WsToken, SshMaster

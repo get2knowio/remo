@@ -17,6 +17,7 @@ from ._pairing_support import ORIGIN, bearer, make_client, mint
 _SETUP_ROUTES = [
     ("GET", "/api/v1/setup/status"),
     ("GET", "/api/v1/setup/identity"),
+    ("GET", "/api/v1/setup/registry"),
     ("PUT", "/api/v1/setup/registry"),
     ("POST", "/api/v1/setup/verify"),
     ("POST", "/api/v1/setup/end"),

@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from remo_cli import __version__
 from remo_cli.core.config import get_known_hosts_path_readonly
 from remo_cli.web.config import WebSettings
+from remo_cli.web.mirror_meta import read_mirror_meta
 from remo_cli.web.state import ConfigurationState, detect_state
 
 router = APIRouter()
@@ -48,6 +49,16 @@ class FeaturesOut(BaseModel):
     host_admin: bool
 
 
+class RegistryChangeOut(BaseModel):
+    """Last registry change (023): generation + when + which plane. Discloses
+    no names/hosts/keys — just enough for the console's unsynced-changes badge
+    and a workstation glancing at whether a sync is due."""
+
+    generation: int
+    at: str
+    origin: str
+
+
 class HealthResponse(BaseModel):
     status: str
     #: The running service's package version, so a bug report can name the
@@ -60,6 +71,8 @@ class HealthResponse(BaseModel):
     version: str
     #: Feature toggles the console gates whole UI sections on.
     features: FeaturesOut
+    #: Last registry change, when a mirror marker exists (023); else null.
+    registry_change: RegistryChangeOut | None = None
 
 
 class ReadinessResponse(BaseModel):
@@ -87,10 +100,21 @@ _BROKEN_DETAIL = (
 async def health(request: Request) -> HealthResponse:
     """Liveness probe: the process is up. Never checks configuration."""
     settings: WebSettings = getattr(request.app.state, "settings", None) or WebSettings()
+    registry_change: RegistryChangeOut | None = None
+    meta = read_mirror_meta(settings)
+    if meta is not None and isinstance(meta.get("generation"), int):
+        raw_change = meta.get("last_change")
+        if isinstance(raw_change, dict):
+            registry_change = RegistryChangeOut(
+                generation=meta["generation"],
+                at=str(raw_change.get("at", "")),
+                origin=str(raw_change.get("origin", "")),
+            )
     return HealthResponse(
         status="alive",
         version=__version__,
         features=FeaturesOut(host_admin=settings.host_admin_enabled),
+        registry_change=registry_change,
     )
 
 

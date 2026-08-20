@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -203,6 +204,10 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     app.state.terminal_registry = TerminalRegistry(settings)
     app.state.pairing_manager = PairingSessionManager(ttl_s=settings.pairing_ttl_s)
     app.state.operator_auth_provider = operator_auth_provider
+    # Serializes registry mutations across the setup API (PUT v3's generation
+    # precondition must be atomic with its apply) and the registry-admin API
+    # (023). Sync routes run in the threadpool, so a threading.Lock is right.
+    app.state.registry_write_lock = threading.Lock()
 
     # --- Host allowlist (FR-048) -----------------------------------------
     # settings.allowed_hosts is never empty (WebSettings defaults to
