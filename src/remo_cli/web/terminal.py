@@ -38,6 +38,7 @@ import pty
 import signal
 import struct
 import termios
+from collections.abc import Callable
 from enum import Enum
 
 from remo_cli.core.remo_host_client import build_remo_host_shell_cmd
@@ -53,8 +54,10 @@ __all__ = [
     "TerminalSession",
     "apply_winsize",
     "build_attach_argv",
+    "build_host_shell_argv",
     "clamp_dimension",
     "classify_exit",
+    "classify_shell_exit",
 ]
 
 # ---------------------------------------------------------------------------
@@ -153,6 +156,23 @@ def classify_exit(returncode: int | None, recent_output: bytes) -> ErrorClass | 
     return ErrorClass.REMOTE_LAUNCH
 
 
+def classify_shell_exit(returncode: int | None, recent_output: bytes = b"") -> ErrorClass | None:
+    """Exit classification for a plain host shell (``kind=host_shell``).
+
+    Only ssh's own transport-failure code (255) is meaningful here, mapped to
+    the same ``auth``/``network`` split :func:`classify_exit` uses. Every
+    other code — 0, 130, even 3 — is the USER's shell exit status and must
+    surface as a plain ``ExitFrame``, never a project-flavored error: a user
+    typing ``exit 3`` in a login shell has not lost a project.
+    """
+    if returncode != 255:
+        return None
+    low = recent_output.lower()
+    if any(marker in low for marker in _AUTH_MARKERS):
+        return ErrorClass.AUTH
+    return ErrorClass.NETWORK
+
+
 def build_attach_argv(
     host: KnownHost,
     project: str,
@@ -212,6 +232,38 @@ def build_attach_argv(
     return [base[0], "-o", "BatchMode=yes", *base[1:], remote_cmd]
 
 
+def build_host_shell_argv(
+    host: KnownHost,
+    *,
+    control_dir: str | None = None,
+    settings: WebSettings | None = None,
+) -> list[str]:
+    """Build the ``ssh -tt <target>`` argv for a plain interactive login shell.
+
+    Exactly :func:`build_attach_argv` minus the remote command: with no argv
+    after the target, ``-tt`` gives the user their login shell on the host
+    itself (needing no ``remo-host``/zellij on the remote at all). Every SSH
+    option — BatchMode, ControlMaster multiplexing, the service identity /
+    known-hosts resolution, SSM ProxyCommand via the descriptor hook — is
+    identical to the session-attach path by construction, since both call
+    the same :func:`build_ssh_base_cmd` with the same arguments.
+    """
+    resolved_settings = settings if settings is not None else WebSettings()
+    base = build_ssh_base_cmd(
+        host,
+        tty=True,
+        multiplex=True,
+        control_dir=control_dir,
+        identity_file=resolved_settings.ssh_identity_for(host),
+        # The service must not inherit a WORKSTATION key path from the
+        # registry; ssh_identity_for() decides, and only when usable here.
+        use_registry_identity=False,
+        known_hosts_file=resolved_settings.ssh_known_hosts_file,
+    )
+    # base == ["ssh", *opts, "-tt", target]; keep BatchMode right after "ssh".
+    return [base[0], "-o", "BatchMode=yes", *base[1:]]
+
+
 class TerminalSession:
     """One PTY + ssh subprocess brokered for a single browser terminal.
 
@@ -233,8 +285,14 @@ class TerminalSession:
         output_low_water: int = _DEFAULT_LOW_WATER,
         stall_timeout_s: float = _DEFAULT_STALL_TIMEOUT_S,
         term_grace_s: float = _DEFAULT_TERM_GRACE_S,
+        exit_classifier: Callable[[int | None, bytes], ErrorClass | None] = classify_exit,
     ) -> None:
         self._argv = list(argv)
+        # How a child exit is mapped to an ErrorClass (or None -> plain
+        # ExitFrame). Defaults to the session-attach classifier so existing
+        # session terminals are byte-identical; host shells pass
+        # classify_shell_exit (plan §2.3).
+        self._exit_classifier = exit_classifier
         self._cols = clamp_dimension(cols)
         self._rows = clamp_dimension(rows)
         self._env = env
@@ -486,7 +544,7 @@ class TerminalSession:
 
     @property
     def error_class(self) -> ErrorClass | None:
-        return classify_exit(self._returncode, bytes(self._recent))
+        return self._exit_classifier(self._returncode, bytes(self._recent))
 
     async def wait(self) -> int:
         """Await child exit, caching and returning its return code."""

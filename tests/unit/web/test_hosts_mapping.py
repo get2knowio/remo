@@ -70,3 +70,50 @@ def test_target_out_git_defaults_when_unset() -> None:
     )
     out = _target_out(target)
     assert (out.git_tracked, out.git_dirty, out.git_ahead, out.git_behind) == (False, False, 0, 0)
+
+
+def test_instance_out_carries_capability_operations_and_tools() -> None:
+    """The wire CapabilityOut mirrors RemoteCapability's newer fields
+    (operations[], zellij, docker) instead of dropping them."""
+    from remo_cli.models.capability import RemoteCapability
+
+    snapshot = DiscoverySnapshot(
+        instance_id="abc123",
+        instance_type="incus",
+        instance_name="lab",
+        status=InstanceStatus.OK,
+        capability=RemoteCapability(
+            protocol_version=1,
+            host_tools_version="4.4.0",
+            projects_root="/home/remo/projects",
+            operations=["sessions.list", "host.stats"],
+            zellij=True,
+            docker=False,
+        ),
+    )
+    out = _instance_out(snapshot)
+    assert out.capability is not None
+    assert out.capability.operations == ["sessions.list", "host.stats"]
+    assert out.capability.zellij is True
+    assert out.capability.docker is False
+
+
+def test_instance_out_capability_defaults_for_old_hosts() -> None:
+    """A pre-change host payload (no operations/zellij/docker keys) maps to
+    the same safe defaults RemoteCapability itself carries."""
+    from remo_cli.models.capability import RemoteCapability
+
+    snapshot = DiscoverySnapshot(
+        instance_id="abc123",
+        instance_type="incus",
+        instance_name="lab",
+        status=InstanceStatus.OK,
+        capability=RemoteCapability.from_dict(
+            {"protocol_version": 1, "host_tools_version": "4.0.0", "projects_root": "/p"}
+        ),
+    )
+    out = _instance_out(snapshot)
+    assert out.capability is not None
+    assert out.capability.operations == []
+    assert out.capability.zellij is False
+    assert out.capability.docker is False

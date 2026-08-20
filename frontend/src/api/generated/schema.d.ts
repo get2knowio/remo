@@ -72,6 +72,111 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/hosts/{instance_id}/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Job Status Route
+         * @description Poll a detached job's status + log tail (console polls at 2s).
+         */
+        get: operations["get_job_status_route_api_v1_hosts__instance_id__jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosts/{instance_id}/projects": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Project
+         * @description Clone a repository into the host's ``projects_root`` (detached job).
+         */
+        post: operations["create_project_api_v1_hosts__instance_id__projects_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosts/{instance_id}/projects/{project}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Project Route
+         * @description Delete a project (synchronous on the host: session + containers + dir).
+         */
+        delete: operations["delete_project_route_api_v1_hosts__instance_id__projects__project__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosts/{instance_id}/projects/{project}/rebuild": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Rebuild Project
+         * @description Rebuild a project's devcontainer (detached job).
+         */
+        post: operations["rebuild_project_api_v1_hosts__instance_id__projects__project__rebuild_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosts/{instance_id}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Host Stats Route
+         * @description `GET /api/v1/hosts/{instance_id}/stats` -- live host statistics snapshot.
+         *
+         *     Ungated by design: the same trust level as `GET /hosts` (it discloses
+         *     load/mem/temps to anyone who can reach the service — a documented
+         *     accepted risk for this home-lab tool). Polling is coalesced by
+         *     :class:`HostStatsCache` to at most one SSH call per TTL per host.
+         */
+        get: operations["get_host_stats_route_api_v1_hosts__instance_id__stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/pairing/end": {
         parameters: {
             query?: never;
@@ -337,21 +442,45 @@ export interface components {
     schemas: {
         /** CapabilityOut */
         CapabilityOut: {
+            /**
+             * Docker
+             * @default false
+             */
+            docker: boolean;
             /** Host Tools Version */
             host_tools_version: string;
+            /**
+             * Operations
+             * @default []
+             */
+            operations: string[];
             /** Projects Root */
             projects_root: string;
             /** Protocol Version */
             protocol_version: number;
+            /**
+             * Zellij
+             * @default false
+             */
+            zellij: boolean;
+        };
+        /** CreateProjectRequest */
+        CreateProjectRequest: {
+            /** Name */
+            name?: string | null;
+            /** Repo */
+            repo: string;
         };
         /** CreateTerminalRequest */
         CreateTerminalRequest: {
             /** Cols */
             cols: number;
+            /** Instance Id */
+            instance_id?: string | null;
             /** Rows */
             rows: number;
             /** Session Target Id */
-            session_target_id: string;
+            session_target_id?: string | null;
         };
         /** CreateTerminalResponse */
         CreateTerminalResponse: {
@@ -385,6 +514,30 @@ export interface components {
          */
         DevcontainerRunning: "running" | "stopped" | "unknown";
         /**
+         * DiskUsageOut
+         * @description Wire mirror of `models.host_stats.DiskUsage` (the OpenAPI artifact is
+         *     the contract, so the shape is declared here rather than inferred).
+         */
+        DiskUsageOut: {
+            /**
+             * Avail Bytes
+             * @default 0
+             */
+            avail_bytes: number;
+            /** Mount */
+            mount: string;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+            /**
+             * Used Bytes
+             * @default 0
+             */
+            used_bytes: number;
+        };
+        /**
          * ErrorEnvelope
          * @description The `{"error": {...}}` wire envelope every failure response that
          *     actually returns it uses (`terminals.py`, `setup.py`, the `app.py`
@@ -405,6 +558,19 @@ export interface components {
             /** Retryable */
             retryable: boolean;
         };
+        /**
+         * FeaturesOut
+         * @description Optional service surfaces the console should (not) render UI for.
+         *
+         *     ``host_admin``: whether the gated host-maintenance API + host-shell
+         *     terminal path are enabled (``REMO_WEB_HOST_ADMIN=enabled``). Advertising
+         *     the flag here discloses only a config bit — the gated routes themselves
+         *     stay dormant-404 (and operator-auth-gated when configured) regardless.
+         */
+        FeaturesOut: {
+            /** Host Admin */
+            host_admin: boolean;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -412,10 +578,84 @@ export interface components {
         };
         /** HealthResponse */
         HealthResponse: {
+            features: components["schemas"]["FeaturesOut"];
             /** Status */
             status: string;
             /** Version */
             version: string;
+        };
+        /**
+         * HostStatsResponse
+         * @description Wire mirror of `models.host_stats.HostStats`: a live snapshot, no
+         *     time series. ``temps`` is empty on hosts without sensors (VMs/containers);
+         *     the console hides the card entirely then.
+         */
+        HostStatsResponse: {
+            /**
+             * Cpu Count
+             * @default 0
+             */
+            cpu_count: number;
+            /**
+             * Cpu Used Pct
+             * @default 0
+             */
+            cpu_used_pct: number;
+            /**
+             * Disks
+             * @default []
+             */
+            disks: components["schemas"]["DiskUsageOut"][];
+            /**
+             * Load 1
+             * @default 0
+             */
+            load_1: number;
+            /**
+             * Load 15
+             * @default 0
+             */
+            load_15: number;
+            /**
+             * Load 5
+             * @default 0
+             */
+            load_5: number;
+            /**
+             * Mem Available
+             * @default 0
+             */
+            mem_available: number;
+            /**
+             * Mem Total
+             * @default 0
+             */
+            mem_total: number;
+            /**
+             * Mem Used
+             * @default 0
+             */
+            mem_used: number;
+            /**
+             * Swap Total
+             * @default 0
+             */
+            swap_total: number;
+            /**
+             * Swap Used
+             * @default 0
+             */
+            swap_used: number;
+            /**
+             * Temps
+             * @default []
+             */
+            temps: components["schemas"]["TempReadingOut"][];
+            /**
+             * Uptime S
+             * @default 0
+             */
+            uptime_s: number;
         };
         /** HostsResponse */
         HostsResponse: {
@@ -455,6 +695,45 @@ export interface components {
          */
         InstanceStatus: "ok" | "unreachable" | "auth_failed" | "no_remo_host" | "incompatible_protocol" | "malformed" | "timeout";
         /**
+         * JobAcceptedResponse
+         * @description 202: the host detached a job; poll `GET /hosts/{id}/jobs/{job_id}`.
+         */
+        JobAcceptedResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Kind */
+            kind: string;
+            /** Project */
+            project: string;
+        };
+        /**
+         * JobState
+         * @description Lifecycle state of a detached ``remo-host`` job.
+         * @enum {string}
+         */
+        JobState: "running" | "succeeded" | "failed";
+        /** JobStatusResponse */
+        JobStatusResponse: {
+            /** Exit Code */
+            exit_code?: number | null;
+            /**
+             * Finished At
+             * @default
+             */
+            finished_at: string;
+            /**
+             * Log Tail
+             * @default
+             */
+            log_tail: string;
+            /**
+             * Started At
+             * @default
+             */
+            started_at: string;
+            state: components["schemas"]["JobState"];
+        };
+        /**
          * KnownProviderType
          * @description The built-in provider types (data-model.md §1).
          *
@@ -486,6 +765,16 @@ export interface components {
             /** Expires In */
             expires_in: number;
         };
+        /** ProjectDeletedResponse */
+        ProjectDeletedResponse: {
+            /**
+             * Deleted
+             * @default true
+             */
+            deleted: boolean;
+            /** Project */
+            project: string;
+        };
         /** ReadinessResponse */
         ReadinessResponse: {
             /** Checks */
@@ -496,6 +785,14 @@ export interface components {
             detail?: string | null;
             /** Status */
             status: string;
+        };
+        /** RebuildProjectRequest */
+        RebuildProjectRequest: {
+            /**
+             * No Cache
+             * @default false
+             */
+            no_cache: boolean;
         };
         /** RefreshRequest */
         RefreshRequest: {
@@ -589,10 +886,33 @@ export interface components {
             /** State */
             state: string;
         };
+        /**
+         * TempReadingOut
+         * @description Wire mirror of `models.host_stats.TempReading`.
+         */
+        TempReadingOut: {
+            /** Celsius */
+            celsius: number;
+            /** Label */
+            label: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * TerminalKind
+         * @description What a terminal attaches to (plan §2.3, host-shell terminal path).
+         *
+         *     ``session`` -- the classic ``remo-host sessions attach`` project session.
+         *     ``host_shell`` -- a plain interactive login shell on the host itself
+         *     (host-admin-gated; needs no host tools).
+         * @enum {string}
+         */
+        TerminalKind: "session" | "host_shell";
         /** TerminalOut */
         TerminalOut: {
             /** Created At */
             created_at: string;
+            kind: components["schemas"]["TerminalKind"];
             /** Last Activity At */
             last_activity_at: string;
             /** Session Target Id */
@@ -722,6 +1042,343 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HostsResponse"];
+                };
+            };
+        };
+    };
+    get_job_status_route_api_v1_hosts__instance_id__jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobStatusResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    create_project_api_v1_hosts__instance_id__projects_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateProjectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAcceptedResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    delete_project_route_api_v1_hosts__instance_id__projects__project__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProjectDeletedResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    rebuild_project_api_v1_hosts__instance_id__projects__project__rebuild_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+                project: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RebuildProjectRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobAcceptedResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_host_stats_route_api_v1_hosts__instance_id__stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostStatsResponse"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

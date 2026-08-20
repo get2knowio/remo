@@ -23,7 +23,7 @@ from remo_cli.models.session_target import DevcontainerRunning, ZellijState
 from remo_cli.web import discovery as discovery_module
 from remo_cli.web.config import WebSettings
 from remo_cli.models.host import KnownHost
-from remo_cli.web.discovery import DiscoveryService, _configure_remediation, _snapshot
+from remo_cli.web.discovery import DiscoveryService, _snapshot, configure_remediation
 
 pytestmark = pytest.mark.usefixtures("tmp_config_dir")
 
@@ -319,20 +319,20 @@ class TestConfigureRemediation:
         )
 
     def test_added_ssh_host_gets_the_provider_neutral_verb(self):
-        remediation = _configure_remediation(self._host("ssh", "mbp"))
+        remediation = configure_remediation(self._host("ssh", "mbp"))
         assert "remo configure mbp" in remediation
 
     def test_provider_host_keeps_its_own_upgrade_verb(self):
         # Routing a provider host through the generic play would configure it
         # with the wrong one (no SSM ProxyCommand, no cloud-key bootstrap).
-        remediation = _configure_remediation(self._host("hetzner", "web1"))
+        remediation = configure_remediation(self._host("hetzner", "web1"))
         assert "remo hetzner upgrade web1" in remediation
         assert "remo configure" not in remediation
 
     def test_host_scoped_name_is_shortened_for_the_cli(self):
         # incus/proxmox register as "node/container" but their CLI takes the
         # container part alone, so the full name would not be accepted.
-        remediation = _configure_remediation(self._host("incus", "node1/dev"))
+        remediation = configure_remediation(self._host("incus", "node1/dev"))
         assert "remo incus upgrade dev" in remediation
 
 

@@ -22,6 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from remo_cli.models.discovery import DiscoverySnapshot, InstanceStatus
 from remo_cli.models.host import KnownHost
 from remo_cli.models.session_target import (
     DevcontainerRunning,
@@ -32,6 +33,12 @@ from remo_cli.web import app as app_module
 from remo_cli.web.api import terminals as terminals_module
 from remo_cli.web.config import WebSettings
 from remo_cli.web.models import TerminalState
+from remo_cli.web.terminal import (
+    ErrorClass,
+    build_attach_argv,
+    build_host_shell_argv,
+    classify_shell_exit,
+)
 
 _ORIGIN = "http://testserver"
 _HEADERS = {"Origin": _ORIGIN}
@@ -52,12 +59,23 @@ def _settings(**overrides) -> WebSettings:
 
 
 class _StubDiscovery:
-    def __init__(self, target: SessionTarget, host: KnownHost) -> None:
+    def __init__(
+        self,
+        target: SessionTarget,
+        host: KnownHost,
+        snapshot: DiscoverySnapshot | None = None,
+    ) -> None:
         self._target = target
         self._host = host
+        self._snapshot = snapshot
 
     def find_target(self, target_id: str):
         return self._target if target_id == self._target.id else None
+
+    def find_instance(self, instance_id: str):
+        if self._snapshot is not None and instance_id == self._snapshot.instance_id:
+            return self._snapshot
+        return None
 
     def find_host(self, instance_type: str, instance_name: str):
         if instance_type == self._host.type and instance_name == self._host.name:
@@ -334,3 +352,187 @@ def test_ws_full_roundtrip_with_cat_standin(client):
     assert att is not None
     assert att.state == TerminalState.DISCONNECTED
     assert registry.get_session(terminal_id) is None
+
+
+# ---------------------------------------------------------------------------
+# Host-shell terminals (plan §2.3 chunk 6)
+# ---------------------------------------------------------------------------
+
+_INSTANCE_ID = "inst-1"
+
+
+def _instance_snapshot() -> DiscoverySnapshot:
+    return DiscoverySnapshot(
+        instance_id=_INSTANCE_ID,
+        instance_type="incus",
+        instance_name="dev",
+        status=InstanceStatus.OK,
+    )
+
+
+@pytest.fixture
+def shell_calls():
+    return []
+
+
+@pytest.fixture
+def host_shell_app(monkeypatch, target, known_host, shell_calls):
+    """App with the host-admin gate ON and both argv builders stubbed to
+    ``cat``; `shell_calls` records every build_host_shell_argv spawn."""
+    settings = _settings(host_admin="enabled")
+    application = app_module.create_app(settings)
+    application.state.discovery_service = _StubDiscovery(
+        target, known_host, snapshot=_instance_snapshot()
+    )
+    monkeypatch.setattr(
+        terminals_module,
+        "build_attach_argv",
+        lambda host, project, control_dir=None: ["cat"],
+    )
+
+    def fake_shell_argv(host, *, control_dir=None):
+        shell_calls.append(host)
+        return ["cat"]
+
+    monkeypatch.setattr(terminals_module, "build_host_shell_argv", fake_shell_argv)
+    return application
+
+
+@pytest.fixture
+def host_shell_client(host_shell_app):
+    with _new_client(host_shell_app) as test_client:
+        yield test_client
+
+
+def test_post_terminal_with_both_ids_is_400(client):
+    resp = client.post(
+        "/api/v1/terminals",
+        json={
+            "session_target_id": "target-abc",
+            "instance_id": _INSTANCE_ID,
+            "cols": 80,
+            "rows": 24,
+        },
+        headers=_HEADERS,
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_request"
+
+
+def test_post_terminal_with_neither_id_is_400(client):
+    resp = client.post(
+        "/api/v1/terminals", json={"cols": 80, "rows": 24}, headers=_HEADERS
+    )
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "invalid_request"
+
+
+def test_instance_id_with_gate_off_matches_bogus_target_byte_for_byte(client):
+    """Gate off -> the host-shell request is indistinguishable from a stale
+    session-target id (dormancy-equivalence on a route that exists)."""
+    bogus = client.post(
+        "/api/v1/terminals",
+        json={"session_target_id": "definitely-not-a-target", "cols": 80, "rows": 24},
+        headers=_HEADERS,
+    )
+    shell = client.post(
+        "/api/v1/terminals",
+        json={"instance_id": _INSTANCE_ID, "cols": 80, "rows": 24},
+        headers=_HEADERS,
+    )
+    assert bogus.status_code == 404
+    assert shell.status_code == bogus.status_code
+    assert shell.content == bogus.content
+    assert shell.json()["error"]["code"] == "unknown_target"
+
+
+def test_host_shell_unknown_instance_is_same_unknown_target_404(host_shell_client):
+    resp = host_shell_client.post(
+        "/api/v1/terminals",
+        json={"instance_id": "not-an-instance", "cols": 80, "rows": 24},
+        headers=_HEADERS,
+    )
+    assert resp.status_code == 404
+    assert resp.json()["error"]["code"] == "unknown_target"
+
+
+def test_kind_surfaced_in_terminal_listing(host_shell_client):
+    host_shell_client.post(
+        "/api/v1/terminals",
+        json={"session_target_id": "target-abc", "cols": 80, "rows": 24},
+        headers=_HEADERS,
+    )
+    host_shell_client.post(
+        "/api/v1/terminals",
+        json={"instance_id": _INSTANCE_ID, "cols": 80, "rows": 24},
+        headers=_HEADERS,
+    )
+    terms = host_shell_client.get("/api/v1/terminals").json()["terminals"]
+    kinds = sorted(t["kind"] for t in terms)
+    assert kinds == ["host_shell", "session"]
+    shell = next(t for t in terms if t["kind"] == "host_shell")
+    assert shell["session_target_id"] == _INSTANCE_ID
+
+
+def test_ws_host_shell_spawns_host_shell_argv(host_shell_client, shell_calls, known_host):
+    created = host_shell_client.post(
+        "/api/v1/terminals",
+        json={"instance_id": _INSTANCE_ID, "cols": 80, "rows": 24},
+        headers=_HEADERS,
+    ).json()
+    with host_shell_client.websocket_connect(
+        f"/api/v1/terminals/{created['terminal_id']}",
+        subprotocols=["remo-terminal.v1", created["ws_token"]],
+        headers=_ws_headers(),
+    ) as ws:
+        assert ws.receive_json()["type"] == "ready"
+        ws.send_bytes(b"whoami\n")
+        seen = b""
+        for _ in range(10):
+            seen += ws.receive_bytes()
+            if b"whoami" in seen:
+                break
+        assert b"whoami" in seen
+    # The host-shell builder (not the session-attach one) produced the argv.
+    assert shell_calls == [known_host]
+
+
+def test_build_host_shell_argv_is_attach_argv_minus_remote_command(
+    tmp_config_dir, known_host, tmp_path
+):
+    """The real builders: identical ssh options, no remo-host remote command.
+
+    build_attach_argv appends the shlex-quoted remote command as its final
+    argv element; the host-shell argv is exactly everything before it.
+    (tmp_config_dir isolates REMO_HOME so the ambient adoption state of the
+    machine running the suite cannot perturb identity resolution.)
+    """
+    control_dir = str(tmp_path / "ssh-ctrl")
+    attach = build_attach_argv(known_host, "my-proj", control_dir=control_dir)
+    shell = build_host_shell_argv(known_host, control_dir=control_dir)
+
+    assert shell == attach[:-1]
+    assert "remo-host" in attach[-1]
+    assert not any("remo-host" in part for part in shell)
+    assert shell[0] == "ssh"
+    assert "-tt" in shell
+    assert shell[-1] == "remo@127.0.0.1"  # the ssh target is the LAST element
+
+
+# ---------------------------------------------------------------------------
+# classify_shell_exit (plan §2.3: a user's own `exit 3` is not an error)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("code", [0, 3, 130])
+def test_classify_shell_exit_plain_codes_are_none(code):
+    assert classify_shell_exit(code, b"") is None
+    assert classify_shell_exit(code, b"permission denied") is None
+
+
+def test_classify_shell_exit_255_network():
+    assert classify_shell_exit(255, b"connection refused") is ErrorClass.NETWORK
+
+
+def test_classify_shell_exit_255_auth():
+    assert classify_shell_exit(255, b"Permission denied (publickey)".lower()) is ErrorClass.AUTH

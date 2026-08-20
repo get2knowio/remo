@@ -36,6 +36,18 @@ from remo_cli.web.state import ConfigurationState, detect_state
 router = APIRouter()
 
 
+class FeaturesOut(BaseModel):
+    """Optional service surfaces the console should (not) render UI for.
+
+    ``host_admin``: whether the gated host-maintenance API + host-shell
+    terminal path are enabled (``REMO_WEB_HOST_ADMIN=enabled``). Advertising
+    the flag here discloses only a config bit — the gated routes themselves
+    stay dormant-404 (and operator-auth-gated when configured) regardless.
+    """
+
+    host_admin: bool
+
+
 class HealthResponse(BaseModel):
     status: str
     #: The running service's package version, so a bug report can name the
@@ -46,6 +58,8 @@ class HealthResponse(BaseModel):
     #: that a remo-web is here, and the version is what makes a pasted
     #: diagnostics blob actionable.
     version: str
+    #: Feature toggles the console gates whole UI sections on.
+    features: FeaturesOut
 
 
 class ReadinessResponse(BaseModel):
@@ -70,9 +84,14 @@ _BROKEN_DETAIL = (
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health() -> dict:
+async def health(request: Request) -> HealthResponse:
     """Liveness probe: the process is up. Never checks configuration."""
-    return {"status": "alive", "version": __version__}
+    settings: WebSettings = getattr(request.app.state, "settings", None) or WebSettings()
+    return HealthResponse(
+        status="alive",
+        version=__version__,
+        features=FeaturesOut(host_admin=settings.host_admin_enabled),
+    )
 
 
 @router.get(

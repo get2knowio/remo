@@ -166,6 +166,23 @@ class WebSettings:
         default_factory=lambda: get_remo_home_readonly() / "web-identity"
     )
 
+    # -- Host maintenance surface (host-detail feature) ---------------------
+    #
+    # REMO_WEB_HOST_ADMIN gates the mutating host-maintenance API
+    # (`web/api/host_admin.py`: project clone/delete/rebuild, job polling)
+    # and the host-shell terminal path. "" (unset, the default) keeps the
+    # surface dormant: every gated route answers the same 404 an unknown
+    # route does (the `/setup` dormancy precedent). "enabled" turns it on;
+    # anything else is a fail-fast config error.
+    host_admin: str = field(default_factory=lambda: _env_str("HOST_ADMIN", "").strip())
+
+    # TTL for the ungated per-host stats mini-cache (seconds). Coalesces
+    # multi-tab polling of GET /hosts/{id}/stats to at most one SSH round
+    # trip per TTL per host. Must be > 0 (fail fast).
+    host_stats_ttl_s: float = field(
+        default_factory=lambda: _env_float("HOST_STATS_TTL_S", 2.0)
+    )
+
     # -- Explicit mode override (017-web-adopt-simplify, US6) ---------------
     #
     # REMO_WEB_MODE deterministically forces the configuration state to
@@ -180,6 +197,20 @@ class WebSettings:
                 f"REMO_WEB_MODE={self.mode_override!r} is not valid; expected one of "
                 f"{', '.join(_VALID_MODE_OVERRIDES)} (or leave it unset)."
             )
+        if self.host_admin not in ("", "enabled"):
+            raise WebConfigError(
+                f"REMO_WEB_HOST_ADMIN={self.host_admin!r} is not valid; expected "
+                "'enabled' or leave it unset."
+            )
+        if not self.host_stats_ttl_s > 0:
+            raise WebConfigError(
+                f"REMO_WEB_HOST_STATS_TTL_S={self.host_stats_ttl_s!r} is not valid; "
+                "expected a positive number of seconds."
+            )
+
+    @property
+    def host_admin_enabled(self) -> bool:
+        return self.host_admin == "enabled"
 
     # -- Service identity paths (research R1 layout) -----------------------
 
