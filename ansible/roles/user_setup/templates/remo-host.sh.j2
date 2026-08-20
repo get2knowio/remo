@@ -8,22 +8,37 @@
 #   remo-host capabilities --json
 #   remo-host sessions list --json
 #   remo-host sessions attach --project NAME
+#   remo-host host stats --json
+#   remo-host projects clone --repo OWNER/REPO|URL [--name NAME] --json
+#   remo-host projects delete --project NAME --json
+#   remo-host projects rebuild --project NAME [--no-cache] --json
+#   remo-host jobs status --job ID --json
 #
-# JSON commands (capabilities, sessions list) print ONLY the JSON payload to
-# stdout; all diagnostics go to stderr. `sessions attach` is interactive: it
-# validates NAME then execs project-launch, becoming the terminal stream.
+# JSON commands print ONLY the JSON payload to stdout; all diagnostics go
+# to stderr. `sessions attach` is interactive: it validates NAME then
+# execs project-launch, becoming the terminal stream. `projects clone` and
+# `projects rebuild` start a detached background job and print a job
+# reference; poll it with `jobs status`.
 #
 # Exit codes:
 #   0  success
-#   2  usage error (bad/missing flags, unrecognized subcommand)
-#   3  invalid/nonexistent/rejected project name
-#   4  unsupported subcommand (recognized shape, not yet implemented)
-#   5  internal error
+#   2  usage error (bad/missing flags, unrecognized top-level subcommand)
+#   3  invalid/nonexistent/rejected project, repo, or job id
+#   4  unsupported subcommand (recognized shape, not implemented here)
+#   5  internal error / operation failure
 
 set -e
 
 PROTOCOL_VERSION=1
 PROJECTS_DIR="{{ dev_workspace_dir }}"
+DEVCONTAINER_BIN="{{ devcontainer_cli_bin }}"
+
+# Test-environment overrides (contracts/remo-host-protocol.md "Environment"):
+# production hosts never set these, so the defaults are the real kernel
+# interfaces and the per-user state dir.
+PROC_ROOT="${REMO_HOST_PROC_ROOT:-/proc}"
+SYS_ROOT="${REMO_HOST_SYS_ROOT:-/sys}"
+JOBS_DIR="${REMO_HOST_JOBS_DIR:-$HOME/.local/state/remo/jobs}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -63,7 +78,7 @@ get_host_tools_version() {
 # capabilities --json
 # ---------------------------------------------------------------------------
 cmd_capabilities() {
-    local version zellij_bool docker_bool
+    local version zellij_bool docker_bool rebuild_op
     version="$(get_host_tools_version)"
     zellij_bool="false"
     docker_bool="false"
@@ -74,10 +89,19 @@ cmd_capabilities() {
         docker_bool="true"
     fi
 
-    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach"],"zellij":%s,"docker":%s}\n' \
+    # projects.rebuild needs `--remove-existing-container`, which only the
+    # reference devcontainer CLI supports (deacon lacks it) — advertise it
+    # only when this host was provisioned with that CLI.
+    rebuild_op=""
+    if [[ "$DEVCONTAINER_BIN" == "devcontainer" ]]; then
+        rebuild_op=',"projects.rebuild"'
+    fi
+
+    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach","host.stats","projects.clone","projects.delete"%s,"jobs.status"],"zellij":%s,"docker":%s}\n' \
         "$PROTOCOL_VERSION" \
         "$(json_escape "$version")" \
         "$(json_escape "$PROJECTS_DIR")" \
+        "$rebuild_op" \
         "$zellij_bool" \
         "$docker_bool"
 }
@@ -177,39 +201,41 @@ cmd_sessions_list() {
 # ---------------------------------------------------------------------------
 
 # Validate a project name before any launch (FR-011). Prints a diagnostic to
-# stderr and returns non-zero on the first violation found.
+# stderr and returns non-zero on the first violation found. The optional
+# second argument names the verb for diagnostics (default: sessions attach).
 validate_project_name() {
     local name="$1"
+    local ctx="${2:-sessions attach}"
 
     if [[ -z "$name" ]]; then
-        echo "remo-host: sessions attach: project name must not be empty" >&2
+        echo "remo-host: $ctx: project name must not be empty" >&2
         return 1
     fi
 
     if LC_ALL=C printf '%s' "$name" | grep -q '[[:cntrl:]]'; then
-        echo "remo-host: sessions attach: project name contains control characters: $name" >&2
+        echo "remo-host: $ctx: project name contains control characters: $name" >&2
         return 1
     fi
 
     if [[ "$name" == /* ]]; then
-        echo "remo-host: sessions attach: absolute paths are not allowed: $name" >&2
+        echo "remo-host: $ctx: absolute paths are not allowed: $name" >&2
         return 1
     fi
 
     case "$name" in
         .. | ../* | */.. | */../*)
-            echo "remo-host: sessions attach: path traversal is not allowed: $name" >&2
+            echo "remo-host: $ctx: path traversal is not allowed: $name" >&2
             return 1
             ;;
     esac
 
     if [[ "$name" == */* ]]; then
-        echo "remo-host: sessions attach: path separators are not allowed: $name" >&2
+        echo "remo-host: $ctx: path separators are not allowed: $name" >&2
         return 1
     fi
 
     if [[ ! -d "$PROJECTS_DIR/$name" ]]; then
-        echo "remo-host: sessions attach: project not found: $name" >&2
+        echo "remo-host: $ctx: project not found: $name" >&2
         return 1
     fi
 
@@ -245,6 +271,523 @@ cmd_sessions_attach() {
     validate_project_name "$name" || exit 3
 
     exec "$HOME/.local/bin/project-launch" --project "$name"
+}
+
+# ---------------------------------------------------------------------------
+# host stats --json
+#
+# Live snapshot, pure coreutils/awk (no jq): /proc for uptime/load/cpu/mem,
+# df for disks, /sys hwmon (thermal_zone fallback) for temperatures. Every
+# source is guarded so a missing interface (containers, unusual kernels)
+# degrades a field to its zero value instead of aborting under `set -e`.
+# ---------------------------------------------------------------------------
+
+# One /proc/stat aggregate sample: "<total> <idle>" (idle = idle + iowait).
+sample_cpu_totals() {
+    awk '/^cpu / {
+        total = 0
+        for (i = 2; i <= NF; i++) total += $i
+        print total, $5 + $6
+    }' "$PROC_ROOT/stat" 2>/dev/null
+}
+
+cmd_host_stats() {
+    local uptime_s=0
+    if [[ -r "$PROC_ROOT/uptime" ]]; then
+        uptime_s="$(awk '{printf "%d", $1}' "$PROC_ROOT/uptime")"
+    fi
+
+    local load_1=0 load_5=0 load_15=0
+    if [[ -r "$PROC_ROOT/loadavg" ]]; then
+        read -r load_1 load_5 load_15 _ < "$PROC_ROOT/loadavg" || true
+    fi
+
+    local cpu_count
+    cpu_count="$(nproc 2>/dev/null || echo 1)"
+
+    # Busy-CPU percentage from two /proc/stat samples 0.25s apart. A static
+    # or missing /proc/stat yields 0.0 rather than an error.
+    local cpu_used_pct="0.0" sample_1 sample_2
+    if [[ -r "$PROC_ROOT/stat" ]]; then
+        sample_1="$(sample_cpu_totals)"
+        sleep 0.25
+        sample_2="$(sample_cpu_totals)"
+        cpu_used_pct="$(awk -v a="$sample_1" -v b="$sample_2" 'BEGIN {
+            split(a, x, " "); split(b, y, " ")
+            dt = y[1] - x[1]
+            if (dt <= 0) { printf "0.0"; exit }
+            pct = (1 - (y[2] - x[2]) / dt) * 100
+            if (pct < 0) pct = 0
+            printf "%.1f", pct
+        }')"
+    fi
+
+    # /proc/meminfo reports kB; the payload is bytes.
+    local mem_total=0 mem_used=0 mem_available=0 swap_total=0 swap_used=0
+    if [[ -r "$PROC_ROOT/meminfo" ]]; then
+        read -r mem_total mem_available swap_total swap_used < <(awk '
+            /^MemTotal:/     { mt = $2 }
+            /^MemAvailable:/ { ma = $2 }
+            /^SwapTotal:/    { st = $2 }
+            /^SwapFree:/     { sf = $2 }
+            END { printf "%d %d %d %d", mt * 1024, ma * 1024, st * 1024, (st - sf) * 1024 }' \
+            "$PROC_ROOT/meminfo") || true
+        mem_used=$((mem_total - mem_available))
+    fi
+
+    # Filesystems backing the projects root and /, deduped by mount point
+    # (they are frequently the same filesystem).
+    local disks_json="" disk_entry seen_mounts=$'\n'
+    local fs_dev fs_size fs_used fs_avail fs_pct fs_mount
+    while read -r fs_dev fs_size fs_used fs_avail fs_pct fs_mount; do
+        [[ -z "$fs_mount" ]] && continue
+        [[ "$fs_size$fs_used$fs_avail" =~ ^[0-9]+$ ]] || continue
+        case "$seen_mounts" in
+            *$'\n'"$fs_mount"$'\n'*) continue ;;
+        esac
+        seen_mounts="$seen_mounts$fs_mount"$'\n'
+        disk_entry="$(printf '{"mount":"%s","size_bytes":%s,"used_bytes":%s,"avail_bytes":%s}' \
+            "$(json_escape "$fs_mount")" "$fs_size" "$fs_used" "$fs_avail")"
+        if [[ -n "$disks_json" ]]; then
+            disks_json="$disks_json,$disk_entry"
+        else
+            disks_json="$disk_entry"
+        fi
+    done < <(df -B1 -P "$PROJECTS_DIR" / 2>/dev/null | awk 'NR > 1')
+
+    # Temperatures: hwmon first (millidegrees C), thermal_zone fallback when
+    # no hwmon sensor produced a reading, [] when neither interface exists
+    # (typical VM/container — the client hides the card). Capped at 16.
+    local temps_json="" temp_entry temps_count=0
+    local hw_dir hw_name temp_file temp_raw temp_label label_file temp_c
+    for hw_dir in "$SYS_ROOT"/class/hwmon/*/; do
+        [[ -d "$hw_dir" ]] || continue
+        hw_name=""
+        if [[ -r "${hw_dir}name" ]]; then
+            hw_name="$(<"${hw_dir}name")"
+        fi
+        for temp_file in "$hw_dir"temp*_input; do
+            [[ -r "$temp_file" ]] || continue
+            if (( temps_count >= 16 )); then
+                break 2
+            fi
+            temp_raw="$(<"$temp_file")"
+            [[ "$temp_raw" =~ ^-?[0-9]+$ ]] || continue
+            temp_label=""
+            label_file="${temp_file%_input}_label"
+            if [[ -r "$label_file" ]]; then
+                temp_label="$(<"$label_file")"
+            fi
+            temp_c="$(awk -v v="$temp_raw" 'BEGIN { printf "%.1f", v / 1000 }')"
+            temp_entry="$(printf '{"name":"%s","label":"%s","temp_c":%s}' \
+                "$(json_escape "$hw_name")" "$(json_escape "$temp_label")" "$temp_c")"
+            if [[ -n "$temps_json" ]]; then
+                temps_json="$temps_json,$temp_entry"
+            else
+                temps_json="$temp_entry"
+            fi
+            temps_count=$((temps_count + 1))
+        done
+    done
+    if (( temps_count == 0 )); then
+        local tz_dir
+        for tz_dir in "$SYS_ROOT"/class/thermal/thermal_zone*/; do
+            [[ -r "${tz_dir}temp" ]] || continue
+            if (( temps_count >= 16 )); then
+                break
+            fi
+            temp_raw="$(<"${tz_dir}temp")"
+            [[ "$temp_raw" =~ ^-?[0-9]+$ ]] || continue
+            hw_name="$(basename "$tz_dir")"
+            if [[ -r "${tz_dir}type" ]]; then
+                hw_name="$(<"${tz_dir}type")"
+            fi
+            temp_c="$(awk -v v="$temp_raw" 'BEGIN { printf "%.1f", v / 1000 }')"
+            temp_entry="$(printf '{"name":"%s","label":"","temp_c":%s}' \
+                "$(json_escape "$hw_name")" "$temp_c")"
+            if [[ -n "$temps_json" ]]; then
+                temps_json="$temps_json,$temp_entry"
+            else
+                temps_json="$temp_entry"
+            fi
+            temps_count=$((temps_count + 1))
+        done
+    fi
+
+    printf '{"protocol_version":%d,"uptime_s":%s,"load_1":%s,"load_5":%s,"load_15":%s,"cpu_count":%s,"cpu_used_pct":%s,"mem_total":%s,"mem_used":%s,"mem_available":%s,"swap_total":%s,"swap_used":%s,"disks":[%s],"temps":[%s]}\n' \
+        "$PROTOCOL_VERSION" "$uptime_s" "$load_1" "$load_5" "$load_15" \
+        "$cpu_count" "$cpu_used_pct" \
+        "$mem_total" "$mem_used" "$mem_available" "$swap_total" "$swap_used" \
+        "$disks_json" "$temps_json"
+}
+
+# ---------------------------------------------------------------------------
+# Detached job machinery (shared by projects clone / projects rebuild)
+#
+# start_job KIND PROJECT CMD [ARGS...]:
+#   - writes $JOBS_DIR/<job_id>.json (kind, project, started_at, pid)
+#   - runs CMD detached via nohup+setsid (the project-launch --detach idiom),
+#     stdout+stderr appended to $JOBS_DIR/<job_id>.log
+#   - the wrapper writes the command's exit code to $JOBS_DIR/<job_id>.exit
+#     on completion
+#   - prints the job reference JSON to stdout and returns immediately
+# Job files older than 24h are pruned on each start.
+# ---------------------------------------------------------------------------
+
+prune_old_jobs() {
+    find "$JOBS_DIR" -maxdepth 1 -type f \
+        \( -name '*.json' -o -name '*.log' -o -name '*.exit' \) \
+        -mmin +1440 -delete 2>/dev/null || true
+}
+
+# Unique, shell-safe job id: <kind>-<timestamp>-<random hex>.
+new_job_id() {
+    printf '%s-%s-%04x%04x' "$1" "$(date +%Y%m%d%H%M%S)" "$RANDOM" "$RANDOM"
+}
+
+start_job() {
+    local kind="$1" project="$2"
+    shift 2
+
+    mkdir -p "$JOBS_DIR"
+    prune_old_jobs
+
+    local job_id started_at meta_file log_file exit_file pid
+    job_id="$(new_job_id "$kind")"
+    started_at="$(date -Iseconds)"
+    meta_file="$JOBS_DIR/$job_id.json"
+    log_file="$JOBS_DIR/$job_id.log"
+    exit_file="$JOBS_DIR/$job_id.exit"
+    : >"$log_file"
+
+    REMO_JOB_EXIT_FILE="$exit_file" nohup setsid bash -c \
+        '"$@"; rc=$?; printf "%s\n" "$rc" >"$REMO_JOB_EXIT_FILE"; exit "$rc"' \
+        remo-host-job "$@" >>"$log_file" 2>&1 </dev/null &
+    pid=$!
+
+    printf '{"job_id":"%s","kind":"%s","project":"%s","started_at":"%s","pid":%d}\n' \
+        "$(json_escape "$job_id")" "$(json_escape "$kind")" "$(json_escape "$project")" \
+        "$(json_escape "$started_at")" "$pid" >"$meta_file"
+
+    printf '{"protocol_version":%d,"job_id":"%s","kind":"%s","project":"%s"}\n' \
+        "$PROTOCOL_VERSION" \
+        "$(json_escape "$job_id")" "$(json_escape "$kind")" "$(json_escape "$project")"
+}
+
+# ---------------------------------------------------------------------------
+# jobs status --job ID --json
+# ---------------------------------------------------------------------------
+cmd_jobs_status() {
+    local job_id="" json_given=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --job)
+                job_id="$2"
+                shift 2
+                ;;
+            --json)
+                json_given=true
+                shift
+                ;;
+            *)
+                echo "remo-host: jobs status: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    if ! $json_given; then
+        echo "remo-host: jobs status: --json is required" >&2
+        exit 2
+    fi
+    if [[ -z "$job_id" ]]; then
+        echo "remo-host: jobs status: --job ID is required" >&2
+        exit 2
+    fi
+
+    # Ids are generated by new_job_id, so anything outside its charset is
+    # unknown by construction (and never used to build a path).
+    if ! [[ "$job_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+        echo "remo-host: jobs status: unknown job: $job_id" >&2
+        exit 3
+    fi
+
+    local meta_file="$JOBS_DIR/$job_id.json"
+    local log_file="$JOBS_DIR/$job_id.log"
+    local exit_file="$JOBS_DIR/$job_id.exit"
+
+    if [[ ! -f "$meta_file" ]]; then
+        echo "remo-host: jobs status: unknown job: $job_id" >&2
+        exit 3
+    fi
+
+    local pid started_at
+    pid="$(sed -n 's/.*"pid":[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$meta_file")"
+    started_at="$(sed -n 's/.*"started_at":[[:space:]]*"\([^"]*\)".*/\1/p' "$meta_file")"
+
+    local state exit_code="null" finished_at="null"
+    if [[ -f "$exit_file" ]]; then
+        exit_code="$(tr -cd '0-9' <"$exit_file")"
+        if [[ -z "$exit_code" ]]; then
+            exit_code="null"
+            state="failed"
+        elif [[ "$exit_code" == "0" ]]; then
+            state="succeeded"
+        else
+            state="failed"
+        fi
+        finished_at="\"$(json_escape "$(date -Iseconds -r "$exit_file")")\""
+    elif [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        state="running"
+    else
+        # Dead pid and no exit file: the job was interrupted (reboot, kill).
+        state="failed"
+    fi
+
+    # Last 8 KiB of the log; strip control characters json_escape does not
+    # cover (ANSI escapes etc.) so the payload stays valid JSON.
+    # The sentinel keeps $() from eating the log's trailing newline(s).
+    local log_tail=""
+    if [[ -f "$log_file" ]]; then
+        log_tail="$(tail -c 8192 "$log_file" 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177'; printf x)"
+        log_tail="${log_tail%x}"
+    fi
+
+    printf '{"protocol_version":%d,"job_id":"%s","state":"%s","exit_code":%s,"started_at":"%s","finished_at":%s,"log_tail":"%s"}\n' \
+        "$PROTOCOL_VERSION" "$(json_escape "$job_id")" "$state" "$exit_code" \
+        "$(json_escape "$started_at")" "$finished_at" "$(json_escape "$log_tail")"
+}
+
+# ---------------------------------------------------------------------------
+# projects clone --repo OWNER/REPO|URL [--name NAME] --json
+#
+# GitHub only, by strict shape (option-injection defense, FR-014): either
+# OWNER/REPO shorthand or an https://github.com/OWNER/REPO(.git) URL, each
+# segment starting with an alphanumeric/._ character (never `-`). Clones
+# into a temp dir and moves the result into the projects root so a
+# half-finished clone is never visible to `sessions list`. Detached job.
+# ---------------------------------------------------------------------------
+cmd_projects_clone() {
+    local repo="" name="" json_given=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --repo)
+                repo="$2"
+                shift 2
+                ;;
+            --name)
+                name="$2"
+                shift 2
+                ;;
+            --json)
+                json_given=true
+                shift
+                ;;
+            *)
+                echo "remo-host: projects clone: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    if ! $json_given; then
+        echo "remo-host: projects clone: --json is required" >&2
+        exit 2
+    fi
+    if [[ -z "$repo" ]]; then
+        echo "remo-host: projects clone: --repo OWNER/REPO is required" >&2
+        exit 2
+    fi
+
+    local segment='[A-Za-z0-9_.][A-Za-z0-9_.-]*'
+    local git_url=""
+    if [[ "$repo" =~ ^${segment}/${segment}$ ]]; then
+        git_url="https://github.com/$repo"
+    elif [[ "$repo" =~ ^https://github\.com/${segment}/${segment}(\.git)?/?$ ]]; then
+        git_url="$repo"
+    else
+        echo "remo-host: projects clone: repo must be OWNER/REPO or a https://github.com/OWNER/REPO URL: $repo" >&2
+        exit 3
+    fi
+
+    # Reject `.`/`..` path segments the charset would otherwise admit.
+    case "/$repo/" in
+        */./* | */../*)
+            echo "remo-host: projects clone: repo contains a dot path segment: $repo" >&2
+            exit 3
+            ;;
+    esac
+
+    if [[ -z "$name" ]]; then
+        name="${repo%/}"
+        name="${name%.git}"
+        name="${name##*/}"
+    fi
+
+    if ! [[ "$name" =~ ^[A-Za-z0-9_.][A-Za-z0-9_.-]*$ ]] || [[ "$name" == "." || "$name" == ".." ]]; then
+        echo "remo-host: projects clone: invalid project name: $name" >&2
+        exit 3
+    fi
+    if [[ -e "$PROJECTS_DIR/$name" ]]; then
+        echo "remo-host: projects clone: project already exists: $name" >&2
+        exit 3
+    fi
+
+    mkdir -p "$PROJECTS_DIR"
+
+    # gh honours the host's `gh auth login` (private repos); git is the
+    # anonymous fallback (public repos). `--` guards git's argv even though
+    # the shape check above already forbids option-lookalikes.
+    local worker='set -e
+repo="$1"; git_url="$2"; dest="$3"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/remo-clone.XXXXXXXX")"
+trap '\''rm -rf "$tmp"'\'' EXIT
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    gh repo clone "$repo" "$tmp/repo"
+else
+    git clone -- "$git_url" "$tmp/repo"
+fi
+mv -- "$tmp/repo" "$dest"'
+
+    start_job clone "$name" bash -c "$worker" remo-clone-worker \
+        "$repo" "$git_url" "$PROJECTS_DIR/$name"
+}
+
+# ---------------------------------------------------------------------------
+# projects delete --project NAME --json
+#
+# Synchronous. Kills the project's zellij session, force-removes its
+# devcontainer containers (images stay — they are cache), then removes the
+# directory.
+# ---------------------------------------------------------------------------
+cmd_projects_delete() {
+    local name="" json_given=false project_given=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)
+                name="$2"
+                project_given=true
+                shift 2
+                ;;
+            --json)
+                json_given=true
+                shift
+                ;;
+            *)
+                echo "remo-host: projects delete: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    if ! $json_given; then
+        echo "remo-host: projects delete: --json is required" >&2
+        exit 2
+    fi
+    if ! $project_given; then
+        echo "remo-host: projects delete: --project NAME is required" >&2
+        exit 2
+    fi
+
+    validate_project_name "$name" "projects delete" || exit 3
+
+    local dir="$PROJECTS_DIR/$name"
+
+    if has_zellij; then
+        zellij kill-session "$name" >/dev/null 2>&1 || true
+        zellij delete-session --force "$name" >/dev/null 2>&1 || true
+    fi
+
+    if has_docker; then
+        local container_ids
+        container_ids="$(docker ps -aq --filter "label=devcontainer.local_folder=$dir" 2>/dev/null || true)"
+        if [[ -n "$container_ids" ]]; then
+            # shellcheck disable=SC2086  # ids are newline-separated words
+            docker rm -f $container_ids >/dev/null 2>&1 || true
+        fi
+    fi
+
+    if ! rm -rf -- "$dir" 2>/dev/null || [[ -e "$dir" ]]; then
+        echo "remo-host: projects delete: failed to remove $dir" >&2
+        exit 5
+    fi
+
+    printf '{"protocol_version":%d,"deleted":"%s"}\n' \
+        "$PROTOCOL_VERSION" "$(json_escape "$name")"
+}
+
+# ---------------------------------------------------------------------------
+# projects rebuild --project NAME [--no-cache] --json
+#
+# Detached job: kill the project's zellij session, then rebuild its
+# devcontainer via `up --remove-existing-container`. Only supported with the
+# reference devcontainer CLI (deacon lacks --remove-existing-container).
+# ---------------------------------------------------------------------------
+cmd_projects_rebuild() {
+    if [[ "$DEVCONTAINER_BIN" != "devcontainer" ]]; then
+        echo "remo-host: unsupported subcommand: projects rebuild (requires the devcontainer CLI, this host uses $DEVCONTAINER_BIN)" >&2
+        exit 4
+    fi
+
+    local name="" json_given=false project_given=false no_cache=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project)
+                name="$2"
+                project_given=true
+                shift 2
+                ;;
+            --no-cache)
+                no_cache=true
+                shift
+                ;;
+            --json)
+                json_given=true
+                shift
+                ;;
+            *)
+                echo "remo-host: projects rebuild: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    if ! $json_given; then
+        echo "remo-host: projects rebuild: --json is required" >&2
+        exit 2
+    fi
+    if ! $project_given; then
+        echo "remo-host: projects rebuild: --project NAME is required" >&2
+        exit 2
+    fi
+
+    validate_project_name "$name" "projects rebuild" || exit 3
+
+    local dir="$PROJECTS_DIR/$name"
+    if [[ ! -d "$dir/.devcontainer" ]] && [[ ! -f "$dir/.devcontainer.json" ]]; then
+        echo "remo-host: projects rebuild: project has no devcontainer configuration: $name" >&2
+        exit 3
+    fi
+
+    local -a up_args=(up --workspace-folder "$dir" --remove-existing-container)
+    if $no_cache; then
+        up_args+=(--build-no-cache)
+    fi
+
+    local worker='set -e
+name="$1"; shift
+if command -v zellij >/dev/null 2>&1; then
+    zellij kill-session "$name" >/dev/null 2>&1 || true
+    zellij delete-session --force "$name" >/dev/null 2>&1 || true
+fi
+exec "$@"'
+
+    start_job rebuild "$name" bash -c "$worker" remo-rebuild-worker \
+        "$name" "$DEVCONTAINER_BIN" "${up_args[@]}"
 }
 
 # ---------------------------------------------------------------------------
@@ -284,12 +827,75 @@ case "${1:-}" in
                 ;;
         esac
         ;;
+    host)
+        shift
+        case "${1:-}" in
+            stats)
+                shift
+                if [[ "${1:-}" != "--json" ]]; then
+                    echo "remo-host: host stats: --json is required" >&2
+                    exit 2
+                fi
+                cmd_host_stats
+                ;;
+            "")
+                echo "remo-host: usage: remo-host host stats --json" >&2
+                exit 2
+                ;;
+            *)
+                echo "remo-host: unsupported subcommand: host $1" >&2
+                exit 4
+                ;;
+        esac
+        ;;
+    projects)
+        shift
+        case "${1:-}" in
+            clone)
+                shift
+                cmd_projects_clone "$@"
+                ;;
+            delete)
+                shift
+                cmd_projects_delete "$@"
+                ;;
+            rebuild)
+                shift
+                cmd_projects_rebuild "$@"
+                ;;
+            "")
+                echo "remo-host: usage: remo-host projects {clone|delete|rebuild} ..." >&2
+                exit 2
+                ;;
+            *)
+                echo "remo-host: unsupported subcommand: projects $1" >&2
+                exit 4
+                ;;
+        esac
+        ;;
+    jobs)
+        shift
+        case "${1:-}" in
+            status)
+                shift
+                cmd_jobs_status "$@"
+                ;;
+            "")
+                echo "remo-host: usage: remo-host jobs status --job ID --json" >&2
+                exit 2
+                ;;
+            *)
+                echo "remo-host: unsupported subcommand: jobs $1" >&2
+                exit 4
+                ;;
+        esac
+        ;;
     -h|--help)
-        sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     "")
-        echo "remo-host: usage: remo-host {capabilities|sessions} ..." >&2
+        echo "remo-host: usage: remo-host {capabilities|sessions|host|projects|jobs} ..." >&2
         exit 2
         ;;
     *)
