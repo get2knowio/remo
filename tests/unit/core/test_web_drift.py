@@ -177,7 +177,7 @@ class TestOutOfDateNotice:
         notice = out_of_date_notice()
         assert notice is not None
         assert "out of date" in notice
-        assert "remo web status" in notice and "remo web push" in notice
+        assert "remo web status" in notice and "remo web sync" in notice
 
     def test_none_when_cache_file_is_empty_junk(self, tmp_config_dir):
         # A file that parses to no valid deployments is treated as empty.
