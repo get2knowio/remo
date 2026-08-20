@@ -258,7 +258,7 @@ def test_stale_cache_version_forces_full_reverify_then_idempotent(tmp_config_dir
     loaded = web_adopt.load_push_cache()
     assert loaded == {}  # discarded wholesale -> first push re-verifies everything
 
-    # Saving now stamps cache_version: 3; a second load is idempotent.
+    # Saving now stamps cache_version: 4; a second load is idempotent.
     web_adopt.save_push_cache(
         {
             "dep-1": web_adopt.DeploymentCache(
@@ -273,7 +273,7 @@ def test_stale_cache_version_forces_full_reverify_then_idempotent(tmp_config_dir
         }
     )
     reloaded = json.loads(cache_path.read_text())
-    assert reloaded["cache_version"] == 3
+    assert reloaded["cache_version"] == 4
     assert web_adopt.load_push_cache()["dep-1"].instances[
         "dev"
     ].fingerprint == web_adopt.instance_fingerprint(_ssm_free_host())
