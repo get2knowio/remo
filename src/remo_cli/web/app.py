@@ -24,11 +24,13 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from remo_cli.web.api.host_admin import router as host_admin_router
+from remo_cli.web.api.registry_admin import router as registry_admin_router
 from remo_cli.web.api.hosts import router as hosts_router
 from remo_cli.web.api.pairing import router as pairing_router
 from remo_cli.web.api.setup import router as setup_router
 from remo_cli.web.api.terminals import router as terminals_router
 from remo_cli.web.config import WebSettings
+from remo_cli.web.jobs import CliJobRunner
 from remo_cli.web.discovery import DiscoveryService
 from remo_cli.web.health import router as health_router
 from remo_cli.web.logging_config import configure_logging
@@ -150,6 +152,17 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
             "REMO_WEB_OPERATOR_AUTH for anything reachable by others."
         )
 
+    # Registry-management surface (023): add/remove/configure hosts from the
+    # console. Same never-silently rule as host_admin — and a bigger blast
+    # radius (registry mutation + trust-store appends).
+    if settings.registry_admin_enabled and operator_auth_provider is None:
+        logger.warning(
+            "REMO_WEB_REGISTRY_ADMIN is enabled but operator authentication is "
+            "NOT configured: the registry-admin API (add/remove/configure "
+            "hosts) is gated by network reachability alone. Configure "
+            "REMO_WEB_OPERATOR_AUTH for anything reachable by others."
+        )
+
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Startup (011-web-adopt T030/FR-002, research R3): mint the service
@@ -208,6 +221,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     # precondition must be atomic with its apply) and the registry-admin API
     # (023). Sync routes run in the threadpool, so a threading.Lock is right.
     app.state.registry_write_lock = threading.Lock()
+    app.state.cli_job_runner = CliJobRunner(settings)
 
     # --- Host allowlist (FR-048) -----------------------------------------
     # settings.allowed_hosts is never empty (WebSettings defaults to
@@ -261,6 +275,7 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     # Mounted unconditionally: dormancy (404 when REMO_WEB_HOST_ADMIN is off,
     # or operator auth refuses) lives inside require_host_admin, like setup's.
     app.include_router(host_admin_router, prefix="/api/v1")
+    app.include_router(registry_admin_router, prefix="/api/v1")
     app.include_router(terminals_router, prefix="/api/v1")
     app.include_router(setup_router, prefix="/api/v1")
     app.include_router(pairing_router, prefix="/api/v1")

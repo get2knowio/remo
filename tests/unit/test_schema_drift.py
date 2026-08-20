@@ -834,6 +834,19 @@ CONSOLE_ENDPOINTS: tuple[_ConsoleEndpoint, ...] = (
         "/api/v1/hosts/{instance_id}/projects/{project}/rebuild", "post", "202", True
     ),
     _ConsoleEndpoint("/api/v1/hosts/{instance_id}/jobs/{job_id}", "get", "200", True),
+    # Registry admin (023): dormant-404 at runtime unless
+    # REMO_WEB_REGISTRY_ADMIN=enabled; the artifact still declares the routes.
+    _ConsoleEndpoint("/api/v1/registry/hosts", "post", "201", True),
+    _ConsoleEndpoint("/api/v1/registry/hosts/{instance_id}", "delete", "200", True),
+    _ConsoleEndpoint("/api/v1/registry/hosts/{instance_id}/scan-key", "post", "200", True),
+    _ConsoleEndpoint("/api/v1/registry/hosts/{instance_id}/trust-key", "post", "200", True),
+    _ConsoleEndpoint("/api/v1/registry/hosts/{instance_id}/verify", "post", "200", True),
+    _ConsoleEndpoint(
+        "/api/v1/registry/hosts/{instance_id}/authorize-command", "get", "200", True
+    ),
+    _ConsoleEndpoint("/api/v1/registry/hosts/{instance_id}/configure", "post", "202", True),
+    _ConsoleEndpoint("/api/v1/registry/jobs/{job_id}", "get", "200", True),
+    _ConsoleEndpoint("/api/v1/registry/hosts/{instance_id}/jobs", "get", "200", True),
 )
 
 

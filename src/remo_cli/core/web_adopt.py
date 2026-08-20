@@ -496,6 +496,15 @@ def _lookup_trusted_keys(lookup_key: str, known_hosts_file: Path) -> list[tuple[
     return pairs or None
 
 
+def render_fingerprint_list(lines: list[str]) -> list[str]:
+    """SHA256 fingerprints for scanned key lines, one per line (023).
+
+    The list form of :func:`_render_fingerprints` for API consumers (the web
+    registry-admin scan route); the CLI keeps the joined-text renderer.
+    """
+    return [line for line in _render_fingerprints(lines).splitlines() if line.strip()]
+
+
 def _render_fingerprints(lines: list[str]) -> str:
     """Render SHA256 fingerprints for scanned key lines via ``ssh-keygen -lf``."""
     fd, tmp_path = tempfile.mkstemp(prefix="remo-adopt-keys-", suffix=".pub")
