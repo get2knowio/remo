@@ -373,7 +373,7 @@ def test_fresh_boot_is_unconfigured_with_generated_identity(service: LiveService
         "deployment_id": state["deployment_id"],
         "public_key_available": True,
         "registry_instances": 0,
-        "payload_versions": [1, 2],
+        "payload_versions": [1, 2, 3],
     }
     assert not service.registry_path.exists()
 
@@ -606,17 +606,19 @@ def test_push_after_adopt_processes_only_the_new_instance(
     saved = json.loads(cache_path.read_text())
     # No secret is persisted (FR-019): no url, no token/code, no top-level id.
     assert set(saved) == {"cache_version", "push_cache"}
-    assert saved["cache_version"] == 3  # 017: cache format bumped 2 -> 3
+    assert saved["cache_version"] == 4  # 023: cache format bumped 3 -> 4 (entry field)
     dep = result.deployment_id
     # Delta cache is deployment-keyed; each deployment now nests
     # {mirror_generation, instances} (cache v3).
     assert set(saved["push_cache"]) == {dep}
     assert set(saved["push_cache"][dep]) == {"mirror_generation", "instances"}
     assert saved["push_cache"][dep]["mirror_generation"] == 1
-    # webbox (direct, adopted) AND ssmbox (SSM, skipped_by_design) are cached;
-    # ghost (direct, unreachable) is not. SSM instances are tracked so `remo web
-    # status` doesn't report them as perpetually new, but carry no host keys.
-    assert set(saved["push_cache"][dep]["instances"]) == {"webbox", "ssmbox"}
+    # webbox (direct, adopted), ssmbox (SSM, skipped_by_design) AND — since
+    # 023 — ghost (direct, unreachable) are all cached: ghost's entry was
+    # mirrored by the PUT, so it is a correct sync merge base, but it carries
+    # EMPTY host_keys so the push fast-path never skips it (retried in full).
+    assert set(saved["push_cache"][dep]["instances"]) == {"webbox", "ssmbox", "ghost"}
+    assert saved["push_cache"][dep]["instances"]["ghost"]["host_keys"] == []
     assert (
         saved["push_cache"][dep]["instances"]["webbox"]["host_keys"] == _CANNED_HOST_KEY_LINES
     )
@@ -694,7 +696,7 @@ def test_push_after_adopt_processes_only_the_new_instance(
     # would skip newbox too.
     resaved = json.loads(cache_path.read_text())
     resaved_instances = resaved["push_cache"][dep]["instances"]
-    assert set(resaved_instances) == {"webbox", "newbox", "ssmbox"}
+    assert set(resaved_instances) == {"webbox", "newbox", "ssmbox", "ghost"}
     assert resaved_instances["newbox"]["host_keys"] == _NEW_CANNED_HOST_KEY_LINES
     assert resaved_instances["webbox"] == saved["push_cache"][dep]["instances"]["webbox"]
     # Generation advanced to the value the second PUT returned.

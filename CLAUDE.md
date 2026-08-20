@@ -79,6 +79,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── remo_host_client.py  # Versioned remo-host protocol client (shared by CLI + web)
 │   ├── web_adopt.py       # Unified workstation push engine: run_push (adopt-or-resync), run_adopt alias, keyscan trust verify, authorized_keys authorize + best-effort revoke, verification-driven self-heal of `unchanged` instances that verify auth_failed (#122), --force, flap detection, push cache v3, --via tunnel (stdlib HTTP)
 │   ├── web_drift.py       # Offline registry-vs-push-cache diff + shared out-of-date nudge (stdlib + core/models only; no web extra)
+│   ├── web_sync.py        # `remo web sync` three-way merge engine + driver (base = push-cache v4 entries, PUT v3 base_generation, 409 re-merge retry; stdlib + core only) (023)
 │   ├── ansible_runner.py  # Ansible playbook subprocess; build_configure_extra_vars() (timezone+tools+version, replaces 8 inline copies) and run_resize_playbook() (raises OperationFailedError on nonzero rc)
 │   ├── snapshot.py        # Name generation/validation/table formatting; list_all_snapshots(type_name, lister) aggregates across a provider's registry slice (replaces 4 CLI-layer loops)
 │   ├── completion.py      # Shell-completion layout/detect/install/staleness ($SHELL-based;

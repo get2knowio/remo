@@ -371,6 +371,131 @@ def push(
 
 
 @web.command()
+@click.argument("url", required=False, default=None)
+@click.option(
+    "--token",
+    default=None,
+    help="Pairing code (falls back to REMO_API_TOKEN, then a hidden prompt).",
+)
+@click.option(
+    "--via",
+    "via_host",
+    default=None,
+    metavar="HOST",
+    help=(
+        "SSH host to tunnel through (see `remo web push --via`). Requires "
+        "127.0.0.1 in the service's REMO_WEB_ALLOWED_HOSTS."
+    ),
+)
+@click.option(
+    "--yes",
+    "assume_yes",
+    is_flag=True,
+    default=False,
+    help=(
+        "Non-interactive: skip fingerprint prompts and consent to deletions in "
+        "both directions. Conflicts still need --prefer-local/--prefer-remote."
+    ),
+)
+@click.option(
+    "--prefer-local",
+    "prefer_local",
+    is_flag=True,
+    default=False,
+    help="Resolve every conflict by keeping this workstation's version.",
+)
+@click.option(
+    "--prefer-remote",
+    "prefer_remote",
+    is_flag=True,
+    default=False,
+    help="Resolve every conflict by keeping the deployment's version.",
+)
+@click.option(
+    "--allow-empty",
+    is_flag=True,
+    default=False,
+    help="Sync even when the merged registry is empty (wipes both instance lists).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Render the merge plan and stop — nothing is written anywhere.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help=(
+        "Re-scan host keys and re-authorize the service key on every pushed "
+        "direct-access instance (bypass the unchanged fast-path)."
+    ),
+)
+def sync(
+    url: str | None,
+    token: str | None,
+    via_host: str | None,
+    assume_yes: bool,
+    prefer_local: bool,
+    prefer_remote: bool,
+    allow_empty: bool,
+    dry_run: bool,
+    force: bool,
+) -> None:
+    """Bi-directionally sync this workstation's registry with a deployment.
+
+    Computes an entry-level three-way merge (base = the last push/sync's
+    cache, local = this registry, remote = the deployment's) and converges
+    both sides: new local entries push up, console-added entries pull down,
+    deletions propagate (with consent) in both directions, and divergent
+    edits surface as conflicts you resolve per entry (keep local / keep
+    remote / skip) or wholesale via --prefer-local/--prefer-remote.
+
+    Concurrency-safe: the write carries the mirror generation the merge was
+    computed against; if the deployment changed in between, sync re-merges
+    and retries instead of overwriting. Use the deprecated `remo web push`
+    only when you deliberately want to force-overwrite the deployment.
+
+    URL resolution: argument, then $REMO_API_URL, then an interactive prompt.
+    Pairing code: --token, then $REMO_API_TOKEN, then a hidden prompt.
+
+    \b
+    Exit codes:
+      0  merged and applied (or --dry-run rendered the plan)
+      1  hard failure (unsupported service, connection, retries exhausted)
+      3  aborted: unresolved conflicts or declined deletion consent
+    """
+    # Deliberately imports only remo_cli.core.* — `remo web sync` must work
+    # without the `web` extra installed (stdlib HTTP only).
+    from remo_cli.core.output import print_error  # noqa: PLC0415
+    from remo_cli.core.web_sync import run_web_sync  # noqa: PLC0415
+
+    if prefer_local and prefer_remote:
+        print_error("--prefer-local and --prefer-remote are mutually exclusive.")
+        raise SystemExit(1)
+    prefer = "local" if prefer_local else ("remote" if prefer_remote else None)
+
+    resolved_url = url or os.environ.get("REMO_API_URL") or click.prompt("Service URL")
+    resolved_code = (
+        token or os.environ.get("REMO_API_TOKEN") or click.prompt("Pairing code", hide_input=True)
+    )
+
+    rc = run_web_sync(
+        resolved_url,
+        resolved_code,
+        via=via_host,
+        assume_yes=assume_yes,
+        prefer=prefer,
+        allow_empty=allow_empty,
+        dry_run=dry_run,
+        force=force,
+    )
+    if rc != 0:
+        raise SystemExit(rc)
+
+
+@web.command()
 @click.option(
     "--deployment",
     "deployment",
