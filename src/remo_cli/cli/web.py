@@ -342,8 +342,14 @@ def push(
     """
     # Deliberately imports only remo_cli.core.* — `remo web push` must work
     # without the `web` extra installed (stdlib HTTP only, research R9).
-    from remo_cli.core.output import print_error  # noqa: PLC0415
+    from remo_cli.core.output import print_error, print_warning  # noqa: PLC0415
     from remo_cli.core.web_adopt import AdoptError, run_push  # noqa: PLC0415
+
+    print_warning(
+        "`remo web push` is one-way: it force-overwrites the deployment's "
+        "registry, discarding any changes made in the web console. Use "
+        "`remo web sync` to merge both sides instead."
+    )
 
     resolved_url = url or os.environ.get("REMO_API_URL") or click.prompt("Service URL")
     resolved_code = (

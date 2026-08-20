@@ -24,6 +24,7 @@ import stat
 
 import pytest
 
+from remo_cli.core import registry as core_registry
 from remo_cli.core.web_adopt import (
     OUTCOME_ADOPTED,
     OUTCOME_SKIPPED_BY_DESIGN,
@@ -136,9 +137,9 @@ class TestPushCacheLifecycle:
     def test_path_under_remo_home(self, tmp_config_dir):
         assert push_cache_path() == tmp_config_dir / "web-service.json"
 
-    def test_version_is_three(self, tmp_config_dir):
+    def test_version_is_four(self, tmp_config_dir):
         save_push_cache({DEPLOYMENT_ID: DeploymentCache(mirror_generation=1)})
-        assert json.loads(push_cache_path().read_text())["cache_version"] == 3
+        assert json.loads(push_cache_path().read_text())["cache_version"] == 4
 
     def test_writes_0600(self, tmp_config_dir):
         path = save_push_cache({DEPLOYMENT_ID: DeploymentCache(mirror_generation=1)})
@@ -222,7 +223,7 @@ class TestPushCacheLifecycle:
         push_cache_path().write_text(
             json.dumps(
                 {
-                    "cache_version": 3,
+                    "cache_version": 4,
                     "push_cache": {
                         DEPLOYMENT_ID: {
                             "mirror_generation": 4,
@@ -434,7 +435,20 @@ class TestPushDelta:
         run_push(URL, CODE, interactive=False)
 
         loaded = load_push_cache()
-        assert set(loaded[DEPLOYMENT_ID].instances) == {unchanged.name, fresh.name}
+        # 023 refinement: the unreachable instance IS cached (its entry was
+        # mirrored by the PUT, so it is a correct merge base) but with EMPTY
+        # host_keys — the fast-path gates on non-empty lines, so it is still
+        # retried in full next push.
+        assert set(loaded[DEPLOYMENT_ID].instances) == {
+            unchanged.name, fresh.name, flaky.name,
+        }
+        assert loaded[DEPLOYMENT_ID].instances[flaky.name].host_keys == []
+        assert loaded[DEPLOYMENT_ID].instances[fresh.name].host_keys != []
+        # Cache v4: every cached instance carries its full hostEntry.
+        for name, host in ((fresh.name, fresh), (flaky.name, flaky)):
+            from remo_cli.core import registry as _registry
+
+            assert loaded[DEPLOYMENT_ID].instances[name].entry == _registry.known_host_to_entry(host)
 
     def test_failed_put_leaves_cache_untouched(self, mocker):
         host = _make_host()
@@ -670,20 +684,20 @@ class TestFlapDetection:
     def test_no_warning_when_server_has_no_generation(self, capsys):
         # First-ever push to a fresh service: no marker -> no warning.
         run_push(URL, CODE, interactive=False)
-        assert "last updated elsewhere" not in capsys.readouterr().out
+        assert "was changed" not in capsys.readouterr().out
 
     def test_no_warning_when_server_not_ahead(self, capsys):
         self._seed_generation(5)
         self._server_generation(5)
         run_push(URL, CODE, interactive=False)
-        assert "last updated elsewhere" not in capsys.readouterr().out
+        assert "was changed" not in capsys.readouterr().out
 
     def test_warns_when_server_ahead_and_proceeds_non_interactive(self, capsys):
         # Workstation B: no cache entry (cached_gen=0), server advanced to 3.
         self._server_generation(3, workstation="hostA/alice")
         run_push(URL, CODE, interactive=False)  # --yes semantics: warn + proceed
         out = capsys.readouterr().out
-        assert "last updated elsewhere" in out
+        assert "was changed" in out
         assert "hostA/alice" in out
         self.client.put_registry.assert_called_once()  # proceeded
 
@@ -691,7 +705,7 @@ class TestFlapDetection:
         self._seed_generation(2)
         self._server_generation(4)
         run_push(URL, CODE, interactive=False)
-        assert "last updated elsewhere" in capsys.readouterr().out
+        assert "was changed" in capsys.readouterr().out
 
     def test_interactive_abort_declines_the_push(self, mocker):
         self._server_generation(3)
@@ -757,3 +771,69 @@ class TestPushErrors:
         api_client.get_identity.side_effect = SetupNotFoundError("dormant", status=404)
         with pytest.raises(SetupNotFoundError):
             run_push(URL, CODE, interactive=False)
+
+
+class TestCacheV4:
+    """023: cache v4 adds the full hostEntry (`entry`) as the sync merge base."""
+
+    def test_entry_round_trips(self, tmp_config_dir):
+        host = _make_host()
+        entry = core_registry.known_host_to_entry(host)
+        cache = {
+            DEPLOYMENT_ID: DeploymentCache(
+                instances={
+                    host.name: CachedInstance(
+                        fingerprint=instance_fingerprint(host),
+                        host_keys=[KEY_LINE_NODE1],
+                        host=host.host,
+                        user=host.user,
+                        access="direct",
+                        type=host.type,
+                        entry=entry,
+                    )
+                },
+                mirror_generation=2,
+            )
+        }
+        save_push_cache(cache)
+        loaded = load_push_cache()
+        assert loaded[DEPLOYMENT_ID].instances[host.name].entry == entry
+
+    def test_v3_file_is_treated_as_empty(self, tmp_config_dir):
+        # A pre-023 cache (version 3) loads empty: the next sync is base-less
+        # and the next push re-verifies in full — degradation, never an error.
+        push_cache_path().write_text(
+            json.dumps(
+                {
+                    "cache_version": 3,
+                    "push_cache": {
+                        DEPLOYMENT_ID: {
+                            "mirror_generation": 4,
+                            "instances": {
+                                "good": {"fingerprint": "f" * 64, "host_keys": []}
+                            },
+                        }
+                    },
+                }
+            )
+        )
+        assert load_push_cache() == {}
+
+    def test_malformed_entry_degrades_to_none(self, tmp_config_dir):
+        push_cache_path().write_text(
+            json.dumps(
+                {
+                    "cache_version": 4,
+                    "push_cache": {
+                        DEPLOYMENT_ID: {
+                            "mirror_generation": 1,
+                            "instances": {
+                                "n": {"fingerprint": "f" * 64, "entry": ["not-a-dict"]}
+                            },
+                        }
+                    },
+                }
+            )
+        )
+        assert load_push_cache()[DEPLOYMENT_ID].instances["n"].entry is None
+

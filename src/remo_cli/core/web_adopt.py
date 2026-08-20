@@ -102,6 +102,11 @@ from remo_cli.models.host import KnownHost
 #: fields on the wire.
 PAYLOAD_VERSION = 2
 
+#: `remo web sync`'s payload version (023): v2 + a `base_generation`
+#: optimistic-concurrency precondition. Push deliberately stays on v2 — its
+#: unconditional apply IS the deprecated one-way force semantics.
+SYNC_PAYLOAD_VERSION = 3
+
 #: Default service port assumed by --via when the target URL names none.
 DEFAULT_SERVICE_PORT = 8080
 
@@ -127,6 +132,11 @@ OUTCOME_UNCHANGED = "unchanged"
 #: service-side verification pass then failed to authenticate to it, and the
 #: push re-ran keyscan/authorize for it. See `_repair_auth_failures`.
 OUTCOME_REPAIRED = "repaired"
+
+#: 023 sync: the entry came FROM the service. Never keyscanned/authorized by
+#: the workstation (the service already holds authorization; workstation
+#: reachability is not a sync precondition).
+OUTCOME_PULLED = "pulled"
 
 #: The `web.discovery` error code for an instance the service reaches but
 #: cannot authenticate to. Matched against the *detail* of a failed
@@ -177,6 +187,26 @@ class PayloadRejectedError(SetupApiError):
     def __init__(self, message: str, *, reason: str = "invalid_payload") -> None:
         super().__init__(message, status=422)
         self.reason = reason
+
+
+class GenerationConflictError(SetupApiError):
+    """PUT v3's `base_generation` no longer matches the service (023).
+
+    The mirror moved between this sync's GET and its PUT (another sync, or a
+    console-side change). Carries what the service reported so the driver can
+    re-GET, re-merge and retry.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        current_generation: int = 0,
+        last_change: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, status=409)
+        self.current_generation = current_generation
+        self.last_change = last_change
 
 
 class SetupConnectionError(SetupApiError):
@@ -234,6 +264,13 @@ class SetupApiClient:
 
     def get_identity(self) -> dict[str, Any]:
         return self._request("GET", "/api/v1/setup/identity")
+
+    def get_registry(self) -> dict[str, Any]:
+        """`GET /setup/registry` (023): the service's entries + host keys +
+        mirror generation. Only called after `/setup/status` advertised payload
+        version 3 — never probed (an old service's 404 is indistinguishable
+        from a dormant surface)."""
+        return self._request("GET", "/api/v1/setup/registry")
 
     def put_registry(self, payload: dict[str, Any], allow_empty: bool = False) -> dict[str, Any]:
         query = "?allow_empty=true" if allow_empty else ""
@@ -302,9 +339,11 @@ class SetupApiClient:
         status = error.code
         reason = ""
         detail = ""
+        parsed_body: dict[str, Any] = {}
         try:
             parsed = json.loads(error.read())
             if isinstance(parsed, dict):
+                parsed_body = parsed
                 reason = str(parsed.get("reason", "") or "")
                 detail = str(parsed.get("detail", "") or "")
         except (json.JSONDecodeError, OSError, ValueError):
@@ -330,6 +369,19 @@ class SetupApiClient:
                 status=404,
             )
         if status == 409:
+            if reason == "generation_conflict":
+                current = parsed_body.get("current_generation")
+                last_change = parsed_body.get("last_change")
+                return GenerationConflictError(
+                    "the deployment's registry changed while syncing "
+                    "(generation conflict)",
+                    current_generation=(
+                        current
+                        if isinstance(current, int) and not isinstance(current, bool)
+                        else 0
+                    ),
+                    last_change=last_change if isinstance(last_change, dict) else None,
+                )
             return MountConfiguredError(_MOUNT_CONFIGURED_MSG, status=409)
         if status == 422:
             if reason == "empty_registry":
@@ -375,6 +427,8 @@ def build_adoption_payload(
     host_keys: dict[str, list[str]] | None = None,
     *,
     allow_empty: bool = False,
+    version: int = PAYLOAD_VERSION,
+    base_generation: int | None = None,
 ) -> dict[str, Any]:
     """Build the full-mirror ``AdoptionPayload`` body (data-model.md).
 
@@ -392,11 +446,16 @@ def build_adoption_payload(
         for name, lines in (host_keys or {}).items()
         if name in direct_names and lines
     }
-    return {
-        "version": PAYLOAD_VERSION,
+    payload: dict[str, Any] = {
+        "version": version,
         "registry": [registry.known_host_to_entry(h) for h in hosts],
         "host_keys": filtered_keys,
     }
+    if base_generation is not None:
+        # v3's optimistic-concurrency precondition (023); push (v2) never
+        # sends one — its unconditional apply is the force semantics.
+        payload["base_generation"] = base_generation
+    return payload
 
 
 def _check_payload_version_supported(status: dict[str, Any]) -> None:
@@ -984,6 +1043,11 @@ class CachedInstance:
     type: str = ""
     port: int | None = None
     identity: str = ""
+    #: The full v2 hostEntry as last synced (cache v4, 023): `remo web sync`'s
+    #: three-way merge BASE. None (an older/malformed cache) degrades that
+    #: name to a base-less merge — identical entries adopt silently, divergent
+    #: ones surface as conflicts. Never trusted for anything but comparison.
+    entry: dict[str, Any] | None = None
 
 
 def instance_fingerprint(host: KnownHost) -> str:
@@ -1014,13 +1078,13 @@ class DeploymentCache:
 #: Push cache shape: deployment_id -> DeploymentCache.
 PushCache = dict[str, "DeploymentCache"]
 
-#: Push-cache file format version. Bumped 2 -> 3 (017-web-adopt-simplify): the
-#: per-deployment shape is now ``{mirror_generation, instances}`` and each
-#: instance entry carries the non-secret connection tuple. Any other/missing
-#: value is treated as an empty cache — a one-time full re-verification push
-#: after a format upgrade (FR-026 / research R7), since older entries lack the
-#: fields the v3 flow depends on.
-PUSH_CACHE_VERSION = 3
+#: Push-cache file format version. Bumped 3 -> 4 (023-web-registry-sync):
+#: each instance entry additionally stores the full v2 hostEntry (`entry`) —
+#: the merge base `remo web sync` diffs against. Any other/missing value is
+#: treated as an empty cache — a one-time full re-verification push (and a
+#: base-less first sync) after a format upgrade, never an error (FR-026 /
+#: research R7 lenient-load posture; the flat v3 tuple fields are unchanged).
+PUSH_CACHE_VERSION = 4
 
 
 def push_cache_path() -> Path:
@@ -1053,6 +1117,7 @@ def _parse_instances(raw: object) -> dict[str, CachedInstance]:
         type_ = entry.get("type")
         port = entry.get("port")
         identity = entry.get("identity")
+        raw_entry = entry.get("entry")
         instances[name] = CachedInstance(
             fingerprint=fingerprint,
             host_keys=list(host_keys),
@@ -1062,6 +1127,8 @@ def _parse_instances(raw: object) -> dict[str, CachedInstance]:
             type=type_ if isinstance(type_, str) else "",
             port=port if isinstance(port, int) and not isinstance(port, bool) else None,
             identity=identity if isinstance(identity, str) else "",
+            # Malformed -> None: that name merges base-less (safe degradation).
+            entry=raw_entry if isinstance(raw_entry, dict) else None,
         )
     return instances
 
@@ -1135,6 +1202,7 @@ def save_push_cache(cache: PushCache) -> Path:
                             "type": c.type,
                             "port": c.port,
                             "identity": c.identity,
+                            "entry": c.entry,
                         }
                         for name, c in deployment.instances.items()
                     },
@@ -1332,15 +1400,24 @@ def _cache_from_outcomes(
     push fast-path (which is gated on ``is_direct_access``).
     """
     cache: dict[str, CachedInstance] = {}
+    verified = (OUTCOME_ADOPTED, OUTCOME_UNCHANGED, OUTCOME_REPAIRED, OUTCOME_PULLED)
+    retriable = (OUTCOME_SKIPPED_UNREACHABLE, OUTCOME_SKIPPED_NO_TRUST)
     for o in outcomes:
+        cached_keys = list(host_keys.get(o.host.name, []))
         if is_direct_access(o.host):
-            if o.outcome not in (OUTCOME_ADOPTED, OUTCOME_UNCHANGED, OUTCOME_REPAIRED):
+            if o.outcome in retriable:
+                # 023 refinement: the entry WAS mirrored by the PUT even though
+                # its keys could not be verified — cache the fingerprint/entry
+                # (correct merge base) with EMPTY host_keys, which the push
+                # fast-path is gated on, so the instance is retried in full.
+                cached_keys = []
+            elif o.outcome not in verified:
                 continue
         elif o.outcome != OUTCOME_SKIPPED_BY_DESIGN:
             continue
         cache[o.host.name] = CachedInstance(
             fingerprint=instance_fingerprint(o.host),
-            host_keys=list(host_keys.get(o.host.name, [])),
+            host_keys=cached_keys,
             # Non-secret connection tuple retained so a later removal can be
             # reached for best-effort revocation (017 US3, data-model.md §1).
             host=o.host.host,
@@ -1355,6 +1432,8 @@ def _cache_from_outcomes(
             # ssh-type stored key path (empty for every other type); without it
             # revoking a custom-key host falls back to ambient keys and fails.
             identity=o.host.ssh_identity or "",
+            # The merge base for `remo web sync` (cache v4).
+            entry=registry.known_host_to_entry(o.host),
         )
     return cache
 
@@ -1502,10 +1581,18 @@ def _flap_warning(status: dict[str, Any], cached_generation: int) -> str | None:
         when = str(last_push.get("at") or "").strip()
     by = f" by {who}" if who else ""
     at = f" at {when}" if when else ""
+    last_change = status.get("last_change")
+    origin = ""
+    if isinstance(last_change, dict):
+        origin = str(last_change.get("origin") or "").strip()
+    changed_where = (
+        "in the web console" if origin == "web" else "by another workstation"
+    )
     return (
-        f"the web deployment's mirror was last updated elsewhere (generation "
-        f"{server_gen}, this workstation last saw {cached_generation}){by}{at}. "
-        "Pushing now overwrites that mirror with this workstation's registry."
+        f"the web deployment's registry was changed {changed_where} since this "
+        f"workstation's last push (generation {server_gen}, this workstation "
+        f"last saw {cached_generation}){by}{at}. Pushing now force-overwrites "
+        "those changes — use `remo web sync` to merge them instead."
     )
 
 
@@ -1559,7 +1646,11 @@ def auth_failed_labels(verify: dict[str, Any]) -> set[str]:
         name = str(result.get("name", ""))
         if not name.startswith("instance "):
             continue
-        if str(result.get("detail") or "").strip() == _VERIFY_AUTH_FAILED:
+        # 023+ services carry a machine-readable `code`; older ones put the
+        # discovery error code in `detail` — accept either.
+        code = str(result.get("code") or "").strip()
+        detail = str(result.get("detail") or "").strip()
+        if code == _VERIFY_AUTH_FAILED or (not code and detail == _VERIFY_AUTH_FAILED):
             labels.add(name.removeprefix("instance "))
     return labels
 

@@ -115,6 +115,15 @@ def select_deployment(cache: PushCache, selector: str | None) -> str:
     if selector:
         if selector in cache:
             return selector
+        # A service-URL selector (contracts/cli-web-status.md promises both
+        # forms). The cache stores no URL (invariant), so this only ever
+        # matches when a deployment id appears in the URL path/host — but a
+        # plain prefix match on the id also lets `remo web status dep123`
+        # work with a truncated id.
+        normalized = selector.rstrip("/")
+        matches = [i for i in ids if i and (i in normalized or i.startswith(selector))]
+        if len(matches) == 1:
+            return matches[0]
         raise DriftError(
             f"no cached deployment matches {selector!r}; known deployments: "
             f"{', '.join(ids)}"
@@ -178,7 +187,8 @@ def out_of_date_notice() -> str | None:
         return None
     return (
         "Your web deployment may now be out of date — run 'remo web status' to "
-        "see what changed, or 'remo web push' to re-sync."
+        "see what changed, or 'remo web sync <url>' to bring both sides back "
+        "in sync."
     )
 
 
