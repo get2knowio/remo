@@ -31,10 +31,12 @@ second launcher; it reuses the same host-side scripts (`project-launch`) that th
 - [Architecture](#architecture)
 - [Browser console UI](#browser-console-ui)
 - [Host detail page and maintenance](#host-detail-page-and-maintenance)
+- [Managing hosts from the console](#managing-hosts-from-the-console)
 - [Security boundary](#security-boundary)
 - [Deployment modes: mounts vs adoption](#deployment-modes-mounts-vs-adoption)
 - [Docker Compose deployment](#docker-compose-deployment)
 - [CLI-to-web adoption](#cli-to-web-adoption)
+- [Syncing with workstations (`remo web sync`)](#syncing-with-workstations-remo-web-sync)
 - [Credentials and SSM](#credentials-and-ssm)
 - [Discovery states](#discovery-states)
 - [Terminal limits](#terminal-limits)
@@ -306,6 +308,52 @@ update nudge. An unknown project or job id is a `404`; transport failures are `5
   credentials: `remo-host` uses `gh repo clone` when `gh` is authenticated on the instance and
   falls back to anonymous `git clone` otherwise, so cloning a private repository fails — visibly,
   in the job log — unless the host was already authenticated.
+
+## Managing hosts from the console
+
+Set `REMO_WEB_REGISTRY_ADMIN=enabled` to let the console **add, remove, and configure SSH hosts**
+(feature 023) — which makes remo usable with no workstation CLI at all. It is a separate flag from
+`REMO_WEB_HOST_ADMIN` because the blast radius is larger: registry mutation changes *which machines
+the service will SSH into* and appends to its trust store. The two flags compose; both follow the
+same dormancy rules (unset → every gated route answers a 404 byte-identical to an unknown route;
+operator-auth-refused requests get the same 404; a loud startup warning fires when enabled with no
+operator-auth provider).
+
+The service does not reimplement any of this: the Docker image ships the **full `remo` CLI**
+(wheel + ansible-core + the playbooks + openssh-client), so the registry-admin API shells out to
+`remo add` / `remo remove` / `remo configure` — short calls inline, the configure play as a
+**detached, restart-surviving job** (`web/jobs.py`: the child records its own exit code to a file,
+so a service restart mid-play neither kills the play nor loses its outcome; the console polls
+`GET /api/v1/registry/jobs/{id}` for the state + live log tail). Galaxy collections are baked into
+the image and the entrypoint seeds the `collections.lock` marker, so a console-triggered configure
+needs no outbound Galaxy access.
+
+**Trust bootstrap** for a brand-new host (the deploy-key pattern — the service's only credential is
+its own `web-identity/` keypair, which the new host has never seen):
+
+1. **Register** — the add wizard runs `remo add` and immediately shows a copy-paste one-liner that
+   installs the service's public key in the host's `~/.ssh/authorized_keys` (idempotent;
+   re-running replaces a stale entry). Run it over any access you already have to the machine.
+2. **Trust** — the service scans the host's SSH keys and the browser shows their SHA256
+   fingerprints for explicit confirmation ("the console will trust whoever holds these keys").
+   The client echoes back exactly the lines the operator saw — never "whatever the host answers
+   now" — and the server re-validates each line against this instance's `known_hosts` lookup key,
+   so the route can never be used to trust an arbitrary host. A scan that **mismatches** an
+   existing record is a hard stop (possible machine-in-the-middle).
+3. **Verify** — a bare `ssh … true` with the service key proves authorization before any host
+   tools exist; `auth_failed` loops with guidance until the one-liner has been run.
+4. **Configure** (optional) — the detached `remo configure` job installs remo-host, zellij,
+   Docker and the dev toolchain, streaming the ansible log into the console.
+
+**Removal** is registry-only and says so in the confirm dialog: the remote machine, its projects
+and its sessions are never touched; the host's lines are dropped from the service trust file
+(`ssh-keygen -R`), and workstations pick the removal up on their next `remo web sync`.
+
+Mount-configured deployments are read-only by definition: `features.registry_admin` reports
+`false` (the console renders no affordances) and every mutating route additionally answers
+`409 read_only_deployment`. Every console-side registry change bumps the mirror-meta generation
+with `origin: "web"`, which is what drives sync's merge and the Settings page's unsynced-changes
+badge.
 
 ## Security boundary
 
@@ -882,6 +930,49 @@ CLI traffic, covered by the setup surface's scoped Origin exemption (see
   provider-side is pushed to or stored by the service. The adoption payload is exactly the registry
   mirror (instance metadata) plus per-instance verified public host keys.
 
+## Syncing with workstations (`remo web sync`)
+
+Once the console can write the service registry, one-way `remo web push` is no longer enough: a
+push would silently overwrite console-made changes. **`remo web sync <url>` is the bi-directional
+replacement** (feature 023) — it converges the workstation and the deployment with an entry-level
+three-way merge:
+
+- **base** — the full entry each instance had at the last push/sync (push-cache v4,
+  `~/.config/remo/web-service.json`);
+- **local** — the workstation registry; **remote** — the deployment's, read via the new
+  pairing-gated `GET /api/v1/setup/registry`.
+
+New local entries push up; console-added entries pull down (they are **never** keyscanned or
+authorized by the workstation — the service already holds authorization, and their key lines are
+round-tripped back into the payload so the service trust file stays complete). Deletions propagate
+in **both** directions behind one consent prompt (`--yes` for non-interactive runs); a remote
+deletion best-effort revokes the service key on the machine. Divergent edits surface as per-entry
+conflicts with a field diff — resolve each with keep-local / keep-remote / skip, or wholesale via
+`--prefer-local` / `--prefer-remote` (a skipped conflict re-surfaces on the next sync). `--dry-run`
+renders the plan and writes nothing anywhere. Exit codes: `0` applied (or dry run), `1` hard
+failure, `3` aborted (unresolved conflicts, or consent declined/absent).
+
+Sync is concurrency-safe where push never was: its write uses payload **v3**, which carries the
+mirror generation the merge was computed against; if the deployment changed in between (another
+sync, or a console-side add), the service answers `409 generation_conflict` with the prior mirror
+fully intact, and the CLI re-reads, re-merges against the same base (your conflict picks are
+remembered — only *new* conflicts re-prompt) and retries, bounded at three attempts. A service
+advertising payload version `3` on `/setup/status` is the capability signal; against an older
+service, sync aborts cleanly before any mutation and names the upgrade (or one-way push) instead.
+
+Keys pulled for a console-added host are **not** silently written to your `~/.ssh/known_hosts` —
+the browser confirmation established trust *for the service*, not for this workstation. Sync
+offers the fingerprints interactively; declining is harmless (`remo shell` falls back to ssh's own
+first-connect prompt).
+
+**`remo web push` remains, deprecated, as the one-way force path**: still payload v2, still
+unconditional — exactly what you want when the deployment's registry should be overwritten
+wholesale. It now prints a deprecation notice, and its "mirror changed elsewhere" warning names
+whether the change came from the web console or another workstation. `remo web status` stays
+**offline-only** by design: reporting the *service's* side would require minting a pairing code in
+a browser where the console already shows that state — the sync plan (`remo web sync --dry-run`)
+is the authoritative two-sided view.
+
 ## Credentials and SSM
 
 `remo web` reaches instances exactly the way `remo shell` does — it reuses the same
@@ -1112,6 +1203,7 @@ locally with zero configuration; a container overrides everything via env alone.
 | `REMO_WEB_FORWARD_AUTH_HEADER` | *(unset)* | Name of the trusted identity header your forward-auth proxy injects (e.g. `X-Forwarded-User`, `Remote-User`). **Required** when `REMO_WEB_OPERATOR_AUTH=forward`; enabling forward auth without it is a fail-fast startup error. The proxy MUST set and strip this header. |
 | `REMO_WEB_PAIRING_TTL_S` | `900.0` | Sliding idle TTL (seconds) for a pairing session — it expires this long after the last successful setup call (default 15 min). |
 | `REMO_WEB_HOST_ADMIN` | *(unset — dormant)* | Gates the mutating host-maintenance surface (project clone/delete/rebuild, job polling, host-shell terminals). Unset: every gated route answers a `404` byte-identical to an unknown route. `enabled`: the surface is live (with a loud startup warning when no operator-auth provider is configured — network posture only). Any other value is a fail-fast startup error. See [Host detail page and maintenance](#host-detail-page-and-maintenance). |
+| `REMO_WEB_REGISTRY_ADMIN` | *(unset — dormant)* | Gates the registry-management surface (add/remove/configure hosts from the console via the embedded CLI, `/api/v1/registry/*`). Same dormant-404 posture as `REMO_WEB_HOST_ADMIN`, but a **separate** flag — registry mutation changes which machines the service will SSH into. `enabled`: live (loud startup warning without operator auth). Any other value is a fail-fast startup error. Mount-configured deployments report it unavailable regardless. See [Managing hosts from the console](#managing-hosts-from-the-console). |
 | `REMO_WEB_HOST_STATS_TTL_S` | `2.0` | TTL (seconds) for the per-instance stats mini-cache behind `GET /hosts/{id}/stats` — coalesces multi-tab polling to at most one SSH round trip per TTL per host. Must be a positive number; anything else is a fail-fast startup error. |
 | `REMO_WEB_API_TOKEN` | *(removed — ignored)* | **Removed in 012.** The static setup-API token is gone; a value set here is ignored (a one-line "now ignored" note is logged at startup). Setup access is authorized by ephemeral pairing codes. |
 
@@ -1120,7 +1212,7 @@ locally with zero configuration; a container overrides everything via env alone.
 ### Workstation-side environment variables
 
 Two variables configure the **CLI** (not the service — hence no `REMO_WEB_` prefix), read by
-`remo web push` (and the deprecated `remo web adopt` alias):
+`remo web sync` and `remo web push` (and the deprecated `remo web adopt` alias):
 
 | Variable | Used as |
 |---|---|

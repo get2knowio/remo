@@ -99,6 +99,20 @@ COPY --from=wheel-builder /build/wheels/*.whl /tmp/
 RUN pip install --no-cache-dir "$(ls /tmp/*.whl)[web]" && \
     rm /tmp/*.whl
 
+# Bake the Ansible Galaxy collections (023): the embedded CLI's configure
+# jobs need them, and lazy-installing from Galaxy at job time would make the
+# first console-triggered configure depend on outbound Galaxy access.
+# Installed to /usr/share/ansible/collections — on ansible's DEFAULT search
+# path, so any uid finds them (PUID/PGID overrides included). The lock file
+# mirrors core/ansible_runner._ensure_collections' marker (sha256 of
+# requirements.yml); the entrypoint seeds it into REMO_HOME so the runtime
+# install short-circuits.
+COPY ansible/requirements.yml /tmp/requirements.yml
+RUN ansible-galaxy collection install -r /tmp/requirements.yml \
+        -p /usr/share/ansible/collections && \
+    sha256sum /tmp/requirements.yml | cut -d' ' -f1 > /app/collections.lock && \
+    rm /tmp/requirements.yml
+
 # Built frontend assets, placed where REMO_WEB_FRONTEND_DIST_DIR (below)
 # points the running service at.
 COPY --from=frontend-builder --chown=remo:remo /app/frontend/dist ./frontend-dist
