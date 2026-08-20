@@ -58,6 +58,9 @@ vi.mock("../api/client", () => ({
     retryable = true;
     remediation = "";
   },
+  // Mirrors the real normalizer: bare string = session shorthand.
+  asTerminalOrigin: (origin: unknown) =>
+    typeof origin === "string" ? { kind: "session", sessionTargetId: origin } : origin,
   createTerminal: mocks.createTerminal,
   closeTerminal: mocks.closeTerminal,
   openTerminalSocket: mocks.openTerminalSocket,
@@ -85,6 +88,52 @@ afterEach(async () => {
 });
 
 const last = () => mocks.sockets[mocks.sockets.length - 1];
+
+describe("TerminalConnection origin union", () => {
+  it("treats a bare string as the session shorthand", async () => {
+    conn = new TerminalConnection("s1", 80, 24);
+    await conn.connect();
+    expect(mocks.createTerminal).toHaveBeenCalledWith(
+      { kind: "session", sessionTargetId: "s1" },
+      80,
+      24,
+    );
+  });
+
+  it("passes an explicit session origin through unchanged", async () => {
+    conn = new TerminalConnection({ kind: "session", sessionTargetId: "s2" }, 80, 24);
+    await conn.connect();
+    expect(mocks.createTerminal).toHaveBeenCalledWith(
+      { kind: "session", sessionTargetId: "s2" },
+      80,
+      24,
+    );
+  });
+
+  it("passes a host_shell origin (instance id, no session target)", async () => {
+    conn = new TerminalConnection({ kind: "host_shell", instanceId: "i-1" }, 120, 40);
+    await conn.connect();
+    expect(mocks.createTerminal).toHaveBeenCalledWith(
+      { kind: "host_shell", instanceId: "i-1" },
+      120,
+      40,
+    );
+  });
+
+  it("reconnects a host_shell terminal against the SAME origin", async () => {
+    conn = new TerminalConnection({ kind: "host_shell", instanceId: "i-1" }, 80, 24);
+    await conn.connect();
+    last().ready();
+    last().drop(1006);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(mocks.createTerminal).toHaveBeenCalledTimes(2);
+    expect(mocks.createTerminal).toHaveBeenLastCalledWith(
+      { kind: "host_shell", instanceId: "i-1" },
+      80,
+      24,
+    );
+  });
+});
 
 describe("TerminalConnection", () => {
   it("reaches 'ready' after the server's ready control frame", async () => {

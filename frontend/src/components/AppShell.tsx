@@ -14,6 +14,7 @@ import { hostKey, settingsActions, useSettings } from "../state/settings";
 import { useConsoleKeyboard } from "../state/useConsoleKeyboard";
 import { useWorkspace } from "../state/workspace";
 import { buildRailModel, type RailFilters } from "./railModel";
+import { HostDetailPage } from "./HostDetailPage";
 import { OfflineOverlay } from "./OfflineOverlay";
 import { SessionRail } from "./SessionRail";
 import { SettingsPage } from "./SettingsPage";
@@ -34,6 +35,7 @@ export function AppShell(): JSX.Element {
   const [sessionOnly, setSessionOnly] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [hostDetailId, setHostDetailId] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(
     typeof window !== "undefined" ? window.innerWidth < NARROW_BREAKPOINT : false,
   );
@@ -186,6 +188,12 @@ export function AppShell(): JSX.Element {
   );
 
   const onEscapeOverlay = useCallback((): boolean => {
+    // Host detail first: it opens on top of the dashboard, so Esc must close
+    // it before falling through to the settings/shortcuts overlays.
+    if (hostDetailId !== null) {
+      setHostDetailId(null);
+      return true;
+    }
     if (settingsOpen) {
       setSettingsOpen(false);
       return true;
@@ -195,7 +203,7 @@ export function AppShell(): JSX.Element {
       return true;
     }
     return false;
-  }, [settingsOpen, shortcutsOpen]);
+  }, [hostDetailId, settingsOpen, shortcutsOpen]);
 
   const onToggleShortcuts = useCallback(() => setShortcutsOpen((v) => !v), []);
 
@@ -290,6 +298,7 @@ export function AppShell(): JSX.Element {
             onOpenAllAvailable={() => workspace.openMany(railModel.flatOpenable)}
             onToggleHostCollapsed={settingsActions.toggleHostCollapsed}
             onToggleFavorite={settingsActions.toggleFavorite}
+            onOpenHostDetail={setHostDetailId}
           />
         </aside>
 
@@ -325,6 +334,16 @@ export function AppShell(): JSX.Element {
         </div>
       </div>
 
+      {hostDetailId !== null && (
+        <HostDetailPage
+          instanceId={hostDetailId}
+          onClose={() => setHostDetailId(null)}
+          onOpenTarget={(target) => {
+            workspace.selectOnly(target);
+            setHostDetailId(null);
+          }}
+        />
+      )}
       {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
       {health.status === "offline" && <OfflineOverlay onRetry={() => void health.retry()} />}

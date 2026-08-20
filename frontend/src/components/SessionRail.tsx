@@ -25,6 +25,7 @@ interface SessionRailProps {
   onOpenAllAvailable: () => void;
   onToggleHostCollapsed: (instanceId: string) => void;
   onToggleFavorite: (id: string, entry: FavoriteEntry) => void;
+  onOpenHostDetail: (instanceId: string) => void;
 }
 
 const SKELETON_WIDTHS = ["70%", "52%", "84%", "44%", "66%", "58%", "76%", "48%", "62%"];
@@ -47,6 +48,7 @@ export function SessionRail({
   onOpenAllAvailable,
   onToggleHostCollapsed,
   onToggleFavorite,
+  onOpenHostDetail,
 }: SessionRailProps): JSX.Element {
   const { attached, visible, focusedId } = workspace;
 
@@ -161,6 +163,7 @@ export function SessionRail({
                 onOpenAll={(ts) => workspace.openMany(ts)}
                 onToggleCollapsed={onToggleHostCollapsed}
                 onToggleFavorite={onToggleFavorite}
+                onOpenHostDetail={onOpenHostDetail}
               />
             ))}
           </>
@@ -195,6 +198,7 @@ interface RailInstanceProps {
   onOpenAll: (targets: SessionTarget[]) => void;
   onToggleCollapsed: (instanceId: string) => void;
   onToggleFavorite: (id: string, entry: FavoriteEntry) => void;
+  onOpenHostDetail: (instanceId: string) => void;
 }
 
 function RailInstance({
@@ -207,6 +211,7 @@ function RailInstance({
   onOpenAll,
   onToggleCollapsed,
   onToggleFavorite,
+  onOpenHostDetail,
 }: RailInstanceProps): JSX.Element {
   const { instance, meta, status, error } = group;
   const bodyId = `rail-inst-body-${instance.instance_id}`;
@@ -214,8 +219,9 @@ function RailInstance({
   return (
     <div className="rail-inst">
       {/* The whole header is a pointer convenience for the caret's toggle;
-          every other control in it stops propagation (the Part 1 contract:
-          chevron/header = collapse, name = detail later). */}
+          every other control in it stops propagation — including the host
+          NAME, which opens the host detail page (the Part 1 contract:
+          chevron/header = collapse, name = detail). */}
       <div
         className="rail-inst-head rail-inst-head--clickable"
         onClick={() => onToggleCollapsed(instance.instance_id)}
@@ -235,8 +241,18 @@ function RailInstance({
           {group.collapsed ? "›" : "⌄"}
         </button>
         <span className="rail-inst-dot" style={{ background: meta.color }} />
-        {/* Part 2 seam: becomes a button opening the host detail page. */}
-        <span className="rail-inst-name">{instance.instance_name}</span>
+        <button
+          type="button"
+          className="rail-inst-name rail-inst-name--link"
+          data-testid={`host-name-${instance.instance_id}`}
+          title="Host details"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenHostDetail(instance.instance_id);
+          }}
+        >
+          {instance.instance_name}
+        </button>
         {instance.region && <span className="rail-inst-region">{instance.region}</span>}
         <span className="rail-inst-spacer" />
         <span

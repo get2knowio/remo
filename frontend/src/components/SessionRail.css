@@ -137,6 +137,22 @@
   font-size: 12.5px;
   white-space: nowrap;
 }
+/* The host name as a real <button> opening the host detail page (chevron/
+ * header = collapse, name = detail). Inherits the span's look; the underline
+ * on hover is the "this is a link" cue. */
+.rail-inst-name--link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.rail-inst-name--link:hover,
+.rail-inst-name--link:focus-visible {
+  text-decoration: underline;
+  color: var(--accent-ink);
+}
 .rail-inst-region {
   font-family: var(--font-mono);
   font-size: 9.5px;

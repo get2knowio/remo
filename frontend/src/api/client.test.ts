@@ -180,3 +180,150 @@ describe("isAuthChallenge", () => {
     expect(client.isAuthChallenge(undefined)).toBe(false);
   });
 });
+
+describe("host stats + maintenance endpoints", () => {
+  it("getHostStats GETs the stats route and returns the snapshot", async () => {
+    stubLocation();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ cpu_count: 4, temps: [], disks: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await load();
+
+    const stats = await client.getHostStats("inst-1");
+    expect(stats.cpu_count).toBe(4);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/hosts/inst-1/stats",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("surfaces the 409 unsupported_host_tools envelope with its remediation", async () => {
+    stubLocation();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse(
+          {
+            error: {
+              code: "unsupported_host_tools",
+              message: "host tools predate stats",
+              retryable: false,
+              remediation: "Run: remo configure box",
+            },
+          },
+          409,
+        ),
+      ),
+    );
+    const client = await load();
+
+    await expect(client.getHostStats("inst-1")).rejects.toMatchObject({
+      code: "unsupported_host_tools",
+      remediation: "Run: remo configure box",
+    });
+  });
+
+  it("cloneProject POSTs {repo} and omits an absent name", async () => {
+    stubLocation();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ job_id: "j1", kind: "clone", project: "repo" }, 202));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await load();
+
+    const accepted = await client.cloneProject("inst-1", "owner/repo");
+    expect(accepted.job_id).toBe("j1");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/v1/hosts/inst-1/projects");
+    expect(JSON.parse(init.body as string)).toEqual({ repo: "owner/repo" });
+  });
+
+  it("cloneProject includes name when given", async () => {
+    stubLocation();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ job_id: "j1", kind: "clone", project: "other" }, 202));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await load();
+
+    await client.cloneProject("inst-1", "owner/repo", "other");
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ repo: "owner/repo", name: "other" });
+  });
+
+  it("deleteProject DELETEs the encoded project path", async () => {
+    stubLocation();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ deleted: true, project: "my app" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await load();
+
+    await client.deleteProject("inst-1", "my app");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/hosts/inst-1/projects/my%20app",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
+  it("rebuildProject POSTs {no_cache}", async () => {
+    stubLocation();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ job_id: "j2", kind: "rebuild", project: "app" }, 202));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await load();
+
+    await client.rebuildProject("inst-1", "app", true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/hosts/inst-1/projects/app/rebuild");
+    expect(JSON.parse(init.body as string)).toEqual({ no_cache: true });
+  });
+
+  it("getJobStatus GETs the job route", async () => {
+    stubLocation();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ state: "running", log_tail: "" }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await load();
+
+    const status = await client.getJobStatus("inst-1", "job-9");
+    expect(status.state).toBe("running");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/hosts/inst-1/jobs/job-9",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+});
+
+describe("createTerminal origin union", () => {
+  const created = { terminal_id: "t1", ws_token: "tok", ws_subprotocol: "remo-terminal.v1" };
+
+  it("a bare string is the session shorthand (body shape unchanged)", async () => {
+    stubLocation();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(created));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await load();
+
+    await client.createTerminal("target-1", 80, 24);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      session_target_id: "target-1",
+      cols: 80,
+      rows: 24,
+    });
+  });
+
+  it("a host_shell origin sends instance_id and NO session_target_id", async () => {
+    stubLocation();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(created));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = await load();
+
+    await client.createTerminal({ kind: "host_shell", instanceId: "inst-1" }, 120, 40);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ instance_id: "inst-1", cols: 120, rows: 40 });
+  });
+});

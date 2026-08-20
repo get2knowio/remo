@@ -38,6 +38,17 @@ export type SessionsResponse = components["schemas"]["SessionsResponse"];
 
 export type RefreshResponse = components["schemas"]["RefreshResponse"];
 
+// ---- Host stats + maintenance types (020-generated; plan §2.4) ----
+
+export type HostStats = components["schemas"]["HostStatsResponse"];
+export type DiskUsage = components["schemas"]["DiskUsageOut"];
+export type TempReading = components["schemas"]["TempReadingOut"];
+export type JobAccepted = components["schemas"]["JobAcceptedResponse"];
+export type JobStatus = components["schemas"]["JobStatusResponse"];
+export type JobState = components["schemas"]["JobState"];
+export type ProjectDeleted = components["schemas"]["ProjectDeletedResponse"];
+export type TerminalKind = components["schemas"]["TerminalKind"];
+
 // ---- Error handling ----
 
 /**
@@ -280,6 +291,75 @@ export async function refreshDiscovery(
   });
 }
 
+// ---- Host stats + maintenance (host detail page, plan §2.4) ----
+
+/**
+ * `GET /api/v1/hosts/{instance_id}/stats` — a live snapshot (no time series).
+ * Ungated (same trust level as GET /hosts). A host whose tools predate the
+ * stats verb answers with a 409 envelope, `code: "unsupported_host_tools"`,
+ * whose remediation names the exact upgrade/configure command — surface it.
+ */
+export async function getHostStats(instanceId: string): Promise<HostStats> {
+  return request<HostStats>(`/api/v1/hosts/${encodeURIComponent(instanceId)}/stats`, {
+    method: "GET",
+  });
+}
+
+/**
+ * `POST /api/v1/hosts/{instance_id}/projects` — clone a repo into the host's
+ * projects root. 202: the host detached a job; poll `getJobStatus`. Dormant-404
+ * when `REMO_WEB_HOST_ADMIN` is off (the console hides the affordance via
+ * `features.host_admin` instead of ever seeing that 404).
+ */
+export async function cloneProject(
+  instanceId: string,
+  repo: string,
+  name?: string,
+): Promise<JobAccepted> {
+  const body: { repo: string; name?: string } = { repo };
+  if (name) {
+    body.name = name;
+  }
+  return request<JobAccepted>(`/api/v1/hosts/${encodeURIComponent(instanceId)}/projects`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** `DELETE /api/v1/hosts/{instance_id}/projects/{project}` — synchronous. */
+export async function deleteProject(
+  instanceId: string,
+  project: string,
+): Promise<ProjectDeleted> {
+  return request<ProjectDeleted>(
+    `/api/v1/hosts/${encodeURIComponent(instanceId)}/projects/${encodeURIComponent(project)}`,
+    { method: "DELETE" },
+  );
+}
+
+/**
+ * `POST /api/v1/hosts/{instance_id}/projects/{project}/rebuild` — rebuild the
+ * project's devcontainer (`--remove-existing-container`). 202 + detached job.
+ */
+export async function rebuildProject(
+  instanceId: string,
+  project: string,
+  noCache = false,
+): Promise<JobAccepted> {
+  return request<JobAccepted>(
+    `/api/v1/hosts/${encodeURIComponent(instanceId)}/projects/${encodeURIComponent(project)}/rebuild`,
+    { method: "POST", body: JSON.stringify({ no_cache: noCache }) },
+  );
+}
+
+/** `GET /api/v1/hosts/{instance_id}/jobs/{job_id}` — poll a detached job. */
+export async function getJobStatus(instanceId: string, jobId: string): Promise<JobStatus> {
+  return request<JobStatus>(
+    `/api/v1/hosts/${encodeURIComponent(instanceId)}/jobs/${encodeURIComponent(jobId)}`,
+    { method: "GET" },
+  );
+}
+
 // ---- Health / readiness ----
 
 export type ReadinessCheck = string; // e.g. "ok" | "missing" | "unreadable" | ...
@@ -417,15 +497,40 @@ export type TerminalSummary = components["schemas"]["TerminalOut"];
 
 export type ListTerminalsResponse = components["schemas"]["TerminalsListResponse"];
 
-/** `POST /api/v1/terminals` — request a terminal for an opaque target id. */
+/**
+ * What a terminal attaches to (console-owned union; the wire request keeps its
+ * generated `CreateTerminalRequest` shape — exactly one of `session_target_id`
+ * / `instance_id`). A bare string everywhere this union is accepted is
+ * shorthand for `{kind: "session", sessionTargetId}`, which keeps every
+ * pre-existing session call site unchanged.
+ */
+export type TerminalOrigin =
+  | { kind: "session"; sessionTargetId: string }
+  | { kind: "host_shell"; instanceId: string };
+
+/** Normalize the bare-string session shorthand into a full TerminalOrigin. */
+export function asTerminalOrigin(origin: string | TerminalOrigin): TerminalOrigin {
+  return typeof origin === "string" ? { kind: "session", sessionTargetId: origin } : origin;
+}
+
+/**
+ * `POST /api/v1/terminals` — request a terminal for a session target (opaque
+ * id) or, host-admin-gated, a plain login shell on an instance. Gate off →
+ * the same `unknown_target` 404 a stale session id gets (dormancy-equivalent).
+ */
 export async function createTerminal(
-  sessionTargetId: string,
+  origin: string | TerminalOrigin,
   cols: number,
   rows: number,
 ): Promise<CreateTerminalResponse> {
+  const o = asTerminalOrigin(origin);
+  const body =
+    o.kind === "host_shell"
+      ? { instance_id: o.instanceId, cols, rows }
+      : { session_target_id: o.sessionTargetId, cols, rows };
   return request<CreateTerminalResponse>("/api/v1/terminals", {
     method: "POST",
-    body: JSON.stringify({ session_target_id: sessionTargetId, cols, rows }),
+    body: JSON.stringify(body),
   });
 }
 
