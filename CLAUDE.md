@@ -108,6 +108,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   └── api/
 │       ├── hosts.py            # GET /api/v1/hosts, /sessions, /hosts/{id}/stats (ungated, TTL-coalesced), POST /discovery/refresh; shared remo-host call plumbing
 │       ├── host_admin.py       # Gated maintenance API (REMO_WEB_HOST_ADMIN, dormant-404 like /setup): project clone/delete/rebuild + job polling
+│       ├── registry_admin.py   # Gated registry-admin API (REMO_WEB_REGISTRY_ADMIN, dormant-404): add/remove/configure SSH hosts via the embedded CLI + job polling (023)
 │       ├── setup.py            # Pairing-gated /api/v1/setup/{status,identity,registry,verify,end} (011-web-adopt; `end` added by #158)
 │       ├── terminals.py        # POST/GET/DELETE /api/v1/terminals, WS /api/v1/terminals/{id}
 │       └── pairing.py          # POST /api/v1/pairing/{mint,end} — operator-auth-gated pairing-code control plane, outside the dormant setup router

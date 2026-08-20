@@ -237,6 +237,189 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registry/hosts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add Host
+         * @description Register an SSH host via the embedded `remo add` (sync, sub-second).
+         */
+        post: operations["add_host_api_v1_registry_hosts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/hosts/{instance_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Host
+         * @description Deregister a host (local registry only — the machine is never touched).
+         */
+        delete: operations["remove_host_api_v1_registry_hosts__instance_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/hosts/{instance_id}/authorize-command": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Authorize Command
+         * @description The paste-one-liner again, for come-back-later screens.
+         */
+        get: operations["authorize_command_api_v1_registry_hosts__instance_id__authorize_command_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/hosts/{instance_id}/configure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Configure
+         * @description Run the embedded `remo configure NAME` as a detached job (minutes).
+         */
+        post: operations["start_configure_api_v1_registry_hosts__instance_id__configure_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/hosts/{instance_id}/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Registry Jobs
+         * @description This instance's jobs, newest-first (re-attach after reload/restart).
+         */
+        get: operations["list_registry_jobs_api_v1_registry_hosts__instance_id__jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/hosts/{instance_id}/scan-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan Key
+         * @description Scan the host's SSH keys and classify them against the service trust
+         *     file. Host keys are public — returning them (with fingerprints) is the
+         *     point: the browser shows them for the operator's confirmation.
+         */
+        post: operations["scan_key_api_v1_registry_hosts__instance_id__scan_key_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/hosts/{instance_id}/trust-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trust Key
+         * @description Record the operator-confirmed key lines in the service trust file.
+         */
+        post: operations["trust_key_api_v1_registry_hosts__instance_id__trust_key_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/hosts/{instance_id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Host
+         * @description Prove the service can SSH-authenticate to the host (before remo-host
+         *     exists there — this is a bare `true`, not a capability probe).
+         */
+        post: operations["verify_host_api_v1_registry_hosts__instance_id__verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registry/jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Registry Job
+         * @description Poll a registry-admin job (wire-identical to host_admin's job status).
+         */
+        get: operations["get_registry_job_api_v1_registry_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sessions": {
         parameters: {
             query?: never;
@@ -451,6 +634,46 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AddHostRequest
+         * @description Deliberately NO identity field: the service always authenticates with
+         *     its own key (a container path stored in the entry would sync to
+         *     workstations and, under IdentitiesOnly, guarantee auth failure there).
+         */
+        AddHostRequest: {
+            /** Name */
+            name: string;
+            /** Port */
+            port?: number | null;
+            /** Target */
+            target: string;
+            /** User */
+            user?: string | null;
+        };
+        /** AddHostResponse */
+        AddHostResponse: {
+            /** Authorize Command */
+            authorize_command: string;
+            /** Host */
+            host: string;
+            /** Instance Id */
+            instance_id: string;
+            /** Name */
+            name: string;
+            /** Port */
+            port: number;
+            /** Public Key */
+            public_key: string;
+            /** User */
+            user: string;
+        };
+        /** AuthorizeCommandResponse */
+        AuthorizeCommandResponse: {
+            /** Authorize Command */
+            authorize_command: string;
+            /** Public Key */
+            public_key: string;
+        };
         /** CapabilityOut */
         CapabilityOut: {
             /**
@@ -474,6 +697,13 @@ export interface components {
              * @default false
              */
             zellij: boolean;
+        };
+        /** ConfigureRequest */
+        ConfigureRequest: {
+            /** Only */
+            only?: string[];
+            /** Skip */
+            skip?: string[];
         };
         /** CreateProjectRequest */
         CreateProjectRequest: {
@@ -581,6 +811,11 @@ export interface components {
         FeaturesOut: {
             /** Host Admin */
             host_admin: boolean;
+            /**
+             * Registry Admin
+             * @default false
+             */
+            registry_admin: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -595,6 +830,16 @@ export interface components {
             status: string;
             /** Version */
             version: string;
+        };
+        /** HostRemovedResponse */
+        HostRemovedResponse: {
+            /** Name */
+            name: string;
+            /**
+             * Removed
+             * @default true
+             */
+            removed: boolean;
         };
         /**
          * HostStatsResponse
@@ -706,17 +951,10 @@ export interface components {
          * @enum {string}
          */
         InstanceStatus: "ok" | "unreachable" | "auth_failed" | "no_remo_host" | "incompatible_protocol" | "malformed" | "timeout";
-        /**
-         * JobAcceptedResponse
-         * @description 202: the host detached a job; poll `GET /hosts/{id}/jobs/{job_id}`.
-         */
-        JobAcceptedResponse: {
-            /** Job Id */
-            job_id: string;
-            /** Kind */
-            kind: string;
-            /** Project */
-            project: string;
+        /** JobListResponse */
+        JobListResponse: {
+            /** Jobs */
+            jobs: components["schemas"]["JobSummary"][];
         };
         /**
          * JobState
@@ -724,26 +962,24 @@ export interface components {
          * @enum {string}
          */
         JobState: "running" | "succeeded" | "failed";
-        /** JobStatusResponse */
-        JobStatusResponse: {
-            /** Exit Code */
-            exit_code?: number | null;
+        /** JobSummary */
+        JobSummary: {
             /**
              * Finished At
              * @default
              */
             finished_at: string;
-            /**
-             * Log Tail
-             * @default
-             */
-            log_tail: string;
+            /** Job Id */
+            job_id: string;
+            /** Kind */
+            kind: string;
             /**
              * Started At
              * @default
              */
             started_at: string;
-            state: components["schemas"]["JobState"];
+            /** State */
+            state: string;
         };
         /**
          * KnownProviderType
@@ -888,6 +1124,17 @@ export interface components {
                 [key: string]: unknown;
             }[];
         };
+        /** ScanKeyResponse */
+        ScanKeyResponse: {
+            /** Detail */
+            detail: string;
+            /** Fingerprints */
+            fingerprints?: string[];
+            /** Lines */
+            lines?: string[];
+            /** Status */
+            status: string;
+        };
         /** SessionTargetOut */
         SessionTargetOut: {
             devcontainer_running: components["schemas"]["DevcontainerRunning"];
@@ -996,6 +1243,19 @@ export interface components {
             /** Terminals */
             terminals: components["schemas"]["TerminalOut"][];
         };
+        /** TrustKeyRequest */
+        TrustKeyRequest: {
+            /** Lines */
+            lines: string[];
+        };
+        /** TrustKeyResponse */
+        TrustKeyResponse: {
+            /**
+             * Trusted
+             * @default true
+             */
+            trusted: boolean;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -1022,6 +1282,13 @@ export interface components {
             /** Remediation */
             remediation?: string | null;
         };
+        /** VerifyHostResponse */
+        VerifyHostResponse: {
+            /** Detail */
+            detail: string;
+            /** Status */
+            status: string;
+        };
         /** VerifyResponse */
         VerifyResponse: {
             /** All Passed */
@@ -1035,6 +1302,80 @@ export interface components {
          * @enum {string}
          */
         ZellijState: "active" | "exited" | "absent";
+        /**
+         * JobAcceptedResponse
+         * @description 202: the host detached a job; poll `GET /hosts/{id}/jobs/{job_id}`.
+         */
+        remo_cli__web__api__host_admin__JobAcceptedResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Kind */
+            kind: string;
+            /** Project */
+            project: string;
+        };
+        /** JobStatusResponse */
+        remo_cli__web__api__host_admin__JobStatusResponse: {
+            /** Exit Code */
+            exit_code?: number | null;
+            /**
+             * Finished At
+             * @default
+             */
+            finished_at: string;
+            /**
+             * Log Tail
+             * @default
+             */
+            log_tail: string;
+            /**
+             * Started At
+             * @default
+             */
+            started_at: string;
+            state: components["schemas"]["JobState"];
+        };
+        /**
+         * JobAcceptedResponse
+         * @description 202, wire-compatible with host_admin's JobAcceptedResponse so the
+         *     console reuses one type; `project` is always empty for registry jobs.
+         */
+        remo_cli__web__api__registry_admin__JobAcceptedResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Project
+             * @default
+             */
+            project: string;
+        };
+        /**
+         * JobStatusResponse
+         * @description Wire-identical to host_admin's JobStatusResponse (console reuse).
+         */
+        remo_cli__web__api__registry_admin__JobStatusResponse: {
+            /** Exit Code */
+            exit_code?: number | null;
+            /**
+             * Finished At
+             * @default
+             */
+            finished_at: string;
+            /**
+             * Log Tail
+             * @default
+             */
+            log_tail: string;
+            /**
+             * Started At
+             * @default
+             */
+            started_at: string;
+            /** State */
+            state: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -1135,7 +1476,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobStatusResponse"];
+                    "application/json": components["schemas"]["remo_cli__web__api__host_admin__JobStatusResponse"];
                 };
             };
             /** @description Bad Request */
@@ -1206,7 +1547,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobAcceptedResponse"];
+                    "application/json": components["schemas"]["remo_cli__web__api__host_admin__JobAcceptedResponse"];
                 };
             };
             /** @description Bad Request */
@@ -1346,7 +1687,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["JobAcceptedResponse"];
+                    "application/json": components["schemas"]["remo_cli__web__api__host_admin__JobAcceptedResponse"];
                 };
             };
             /** @description Bad Request */
@@ -1526,6 +1867,619 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReadinessResponse"];
+                };
+            };
+        };
+    };
+    add_host_api_v1_registry_hosts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddHostRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddHostResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    remove_host_api_v1_registry_hosts__instance_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostRemovedResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    authorize_command_api_v1_registry_hosts__instance_id__authorize_command_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorizeCommandResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    start_configure_api_v1_registry_hosts__instance_id__configure_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConfigureRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["remo_cli__web__api__registry_admin__JobAcceptedResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    list_registry_jobs_api_v1_registry_hosts__instance_id__jobs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["JobListResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    scan_key_api_v1_registry_hosts__instance_id__scan_key_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScanKeyResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    trust_key_api_v1_registry_hosts__instance_id__trust_key_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrustKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrustKeyResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    verify_host_api_v1_registry_hosts__instance_id__verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["VerifyHostResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+        };
+    };
+    get_registry_job_api_v1_registry_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["remo_cli__web__api__registry_admin__JobStatusResponse"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorEnvelope"];
                 };
             };
         };

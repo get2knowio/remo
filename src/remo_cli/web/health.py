@@ -47,6 +47,11 @@ class FeaturesOut(BaseModel):
     """
 
     host_admin: bool
+    #: EFFECTIVE availability of the registry-admin surface (023): the flag is
+    #: on AND the deployment is not mount-configured (whose registry is a
+    #: read-only mirror — every mutating route would 409, so the console
+    #: should not render the affordances at all).
+    registry_admin: bool = False
 
 
 class RegistryChangeOut(BaseModel):
@@ -113,7 +118,13 @@ async def health(request: Request) -> HealthResponse:
     return HealthResponse(
         status="alive",
         version=__version__,
-        features=FeaturesOut(host_admin=settings.host_admin_enabled),
+        features=FeaturesOut(
+            host_admin=settings.host_admin_enabled,
+            registry_admin=(
+                settings.registry_admin_enabled
+                and detect_state(settings) is not ConfigurationState.MOUNT_CONFIGURED
+            ),
+        ),
         registry_change=registry_change,
     )
 
