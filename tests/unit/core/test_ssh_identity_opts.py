@@ -427,3 +427,62 @@ class TestUseRegistryIdentity:
         _bo, build_ssh_base_cmd = self._build()
         cmd = build_ssh_base_cmd(self._added_host(), use_registry_identity=False)
         assert not any(a.startswith("IdentityFile=") for a in cmd)
+
+
+class TestIdentityEnvFallback:
+    """$REMO_SSH_IDENTITY_FILE (023): the web service's CLI job runner exports
+    the service key path so `remo` subprocesses authenticate as the service.
+
+    Precedence: explicit identity_file arg > registry ssh_identity > env >
+    ambient (nothing emitted). The env value gets the same IdentityFile +
+    IdentitiesOnly=yes pairing as every other source.
+    """
+
+    @staticmethod
+    def _build():
+        from remo_cli.core.ssh import build_ssh_opts
+
+        return build_ssh_opts
+
+    def _plain_host(self):
+        return KnownHost(type="hetzner", name="web1", host="1.2.3.4", user="remo")
+
+    def _added_host_with_identity(self):
+        return KnownHost(
+            type="ssh",
+            name="box",
+            host="10.0.0.5",
+            user="remo",
+            instance_id="22",
+            access_mode="direct",
+            region="/home/me/.ssh/id_ed25519",
+        )
+
+    def test_env_fills_in_when_nothing_else_is_set(self, monkeypatch):
+        monkeypatch.setenv("REMO_SSH_IDENTITY_FILE", "/svc/web-identity/id_ed25519")
+        opts, _ = self._build()(self._plain_host())
+        assert "IdentityFile=/svc/web-identity/id_ed25519" in opts
+        assert "IdentitiesOnly=yes" in opts
+
+    def test_registry_identity_beats_env(self, monkeypatch):
+        monkeypatch.setenv("REMO_SSH_IDENTITY_FILE", "/svc/web-identity/id_ed25519")
+        opts, _ = self._build()(self._added_host_with_identity())
+        assert "IdentityFile=/home/me/.ssh/id_ed25519" in opts
+        assert "IdentityFile=/svc/web-identity/id_ed25519" not in opts
+
+    def test_explicit_arg_beats_env(self, monkeypatch):
+        monkeypatch.setenv("REMO_SSH_IDENTITY_FILE", "/svc/web-identity/id_ed25519")
+        opts, _ = self._build()(self._plain_host(), identity_file="/explicit/key")
+        assert "IdentityFile=/explicit/key" in opts
+        assert "IdentityFile=/svc/web-identity/id_ed25519" not in opts
+
+    def test_unset_env_emits_nothing(self, monkeypatch):
+        monkeypatch.delenv("REMO_SSH_IDENTITY_FILE", raising=False)
+        opts, _ = self._build()(self._plain_host())
+        assert not any(o.startswith("IdentityFile=") for o in opts)
+        assert "IdentitiesOnly=yes" not in opts
+
+    def test_empty_env_value_is_treated_as_unset(self, monkeypatch):
+        monkeypatch.setenv("REMO_SSH_IDENTITY_FILE", "")
+        opts, _ = self._build()(self._plain_host())
+        assert not any(o.startswith("IdentityFile=") for o in opts)

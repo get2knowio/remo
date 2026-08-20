@@ -224,3 +224,47 @@ class TestPlaybookOutcome:
 
         assert build.call_args.args == ((), ("docker",))
         assert "configure_docker=false" in run_playbook.call_args.args[1]
+
+
+class TestIdentityEnvFallback:
+    """$REMO_SSH_IDENTITY_FILE (023): when the entry stores no identity, the
+    web service's job runner supplies the service key via the environment."""
+
+    def test_env_identity_used_when_entry_has_none(self, run_playbook, monkeypatch):
+        monkeypatch.setenv("REMO_SSH_IDENTITY_FILE", "/svc/web-identity/id_ed25519")
+        _register(identity="")
+
+        providers_added.configure(name="mbp", assume_yes=True)
+
+        extra_vars = run_playbook.call_args.args[1]
+        assert "remo_ssh_identity=/svc/web-identity/id_ed25519" in extra_vars
+
+    def test_stored_identity_beats_env(self, run_playbook, monkeypatch):
+        monkeypatch.setenv("REMO_SSH_IDENTITY_FILE", "/svc/web-identity/id_ed25519")
+        _register(identity="~/.ssh/mbp_ed25519")
+
+        providers_added.configure(name="mbp", assume_yes=True)
+
+        extra_vars = run_playbook.call_args.args[1]
+        assert "remo_ssh_identity=~/.ssh/mbp_ed25519" in extra_vars
+        assert not any("/svc/web-identity" in v for v in extra_vars)
+
+    def test_unset_env_emits_no_identity_var(self, run_playbook, monkeypatch):
+        monkeypatch.delenv("REMO_SSH_IDENTITY_FILE", raising=False)
+        _register(identity="")
+
+        providers_added.configure(name="mbp", assume_yes=True)
+
+        extra_vars = run_playbook.call_args.args[1]
+        assert not any("remo_ssh_identity" in v for v in extra_vars)
+
+    def test_unsafe_env_identity_is_rejected(self, run_playbook, monkeypatch):
+        # Env value rides into an extra-var Ansible templates on the control
+        # node, so it gets the same Jinja/shell-metacharacter screen as
+        # registry fields.
+        monkeypatch.setenv("REMO_SSH_IDENTITY_FILE", "/tmp/{{ evil }}")
+        _register(identity="")
+
+        with pytest.raises(PreconditionError, match="REMO_SSH_IDENTITY_FILE"):
+            providers_added.configure(name="mbp", assume_yes=True)
+        run_playbook.assert_not_called()

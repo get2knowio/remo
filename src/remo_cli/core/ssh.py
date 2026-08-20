@@ -165,6 +165,13 @@ def build_ssh_opts(
     effective_identity = identity_file
     if effective_identity is None and use_registry_identity:
         effective_identity = host.ssh_identity
+    if effective_identity is None:
+        # Deployment-level fallback (023): the web service's CLI job runner
+        # exports $REMO_SSH_IDENTITY_FILE so `remo` subprocesses authenticate
+        # with the service identity when the entry stores none. Unset in every
+        # workstation shell, so ordinary CLI argv is byte-identical. Mirrors
+        # the $REMO_SSH_CONTROL_DIR precedent in resolve_ssh_control_dir().
+        effective_identity = os.environ.get("REMO_SSH_IDENTITY_FILE") or None
     if effective_identity is not None:
         ssh_opts += [
             "-o", f"IdentityFile={effective_identity}",
