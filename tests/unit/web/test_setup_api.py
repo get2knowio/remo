@@ -691,12 +691,12 @@ class TestMirrorMarker:
     def test_marker_write_failure_does_not_fail_the_put(self, state_dir, monkeypatch):
         # A marker write failure after a successful registry apply is advisory:
         # logged, swallowed, PUT still succeeds; mirror_generation omitted.
-        from remo_cli.web.api import setup as setup_module
+        from remo_cli.web import mirror_meta as mirror_meta_module
 
-        def boom(settings, generation, workstation):
+        def boom(path, doc):
             raise OSError("read-only marker volume")
 
-        monkeypatch.setattr(setup_module, "_write_mirror_meta", boom)
+        monkeypatch.setattr(mirror_meta_module, "_write_doc", boom)
 
         state_dir.write_keypair()
         state_dir.write_state_json()
@@ -738,3 +738,23 @@ class TestMirrorMarker:
             "last_push",
         }
         assert set(body["last_push"]) == {"at", "workstation"}
+
+
+def test_put_registry_stamps_last_change_with_push_origin(state_dir):
+    """023: every setup-API PUT records last_change (origin=push) alongside the
+    legacy generation + last_push fields, which stay shaped exactly as before."""
+    state_dir.write_keypair()
+    state_dir.write_state_json()
+    with _client(state_dir) as client:
+        resp = client.put(
+            "/api/v1/setup/registry",
+            json=_payload(workstation="wk1"),
+            headers=_AUTH,
+        )
+        assert resp.status_code == 200
+    doc = json.loads(_mirror_meta_path(state_dir).read_text())
+    assert doc["generation"] == 1
+    assert set(doc["last_push"]) == {"at", "workstation"}
+    assert doc["last_push"]["workstation"] == "wk1"
+    assert doc["last_change"]["origin"] == "push"
+    assert doc["last_change"]["workstation"] == "wk1"

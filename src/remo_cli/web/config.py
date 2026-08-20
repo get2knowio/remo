@@ -231,6 +231,15 @@ class WebSettings:
         return self.web_identity_dir / "state.json"
 
     @property
+    def web_jobs_dir(self) -> Path:
+        """On-disk state for in-service CLI jobs (`web/jobs.py`, 023).
+
+        Sibling of ``web-identity/`` on the writable state volume; created
+        lazily (0700) by the runner's first spawn.
+        """
+        return self.web_identity_dir.parent / "web-jobs"
+
+    @property
     def mirror_meta_path(self) -> Path:
         """Service-side mirror-identity marker (017-web-adopt-simplify, US5).
 
