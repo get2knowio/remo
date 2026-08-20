@@ -41,7 +41,13 @@ export interface paths {
         };
         /**
          * Health
-         * @description Liveness probe: the process is up. Never checks configuration.
+         * @description Liveness probe: the process is up.
+         *
+         *     Reads the mirror marker (and, when registry admin is enabled, the
+         *     configuration state) from disk, so it is a sync ``def`` route: FastAPI
+         *     runs it in the threadpool, keeping the file I/O off the event loop that
+         *     is pumping every live terminal WebSocket — the console polls this route
+         *     every 10s per open tab.
          */
         get: operations["health_api_v1_health_get"];
         put?: never;

@@ -364,19 +364,22 @@ cmd_host_stats() {
         [[ -d "$hw_dir" ]] || continue
         hw_name=""
         if [[ -r "${hw_dir}name" ]]; then
-            hw_name="$(<"${hw_dir}name")"
+            # cat||true, not $(<...): a sysfs read can fail at read() time
+            # (EIO/EINVAL) even after [[ -r ]], and on bash <= 5.1 a failing
+            # $(<...) assignment aborts the whole payload under set -e.
+            hw_name="$(cat -- "${hw_dir}name" 2>/dev/null || true)"
         fi
         for temp_file in "$hw_dir"temp*_input; do
             [[ -r "$temp_file" ]] || continue
             if (( temps_count >= 16 )); then
                 break 2
             fi
-            temp_raw="$(<"$temp_file")"
+            temp_raw="$(cat -- "$temp_file" 2>/dev/null || true)"
             [[ "$temp_raw" =~ ^-?[0-9]+$ ]] || continue
             temp_label=""
             label_file="${temp_file%_input}_label"
             if [[ -r "$label_file" ]]; then
-                temp_label="$(<"$label_file")"
+                temp_label="$(cat -- "$label_file" 2>/dev/null || true)"
             fi
             temp_c="$(awk -v v="$temp_raw" 'BEGIN { printf "%.1f", v / 1000 }')"
             temp_entry="$(printf '{"name":"%s","label":"%s","temp_c":%s}' \
@@ -396,11 +399,11 @@ cmd_host_stats() {
             if (( temps_count >= 16 )); then
                 break
             fi
-            temp_raw="$(<"${tz_dir}temp")"
+            temp_raw="$(cat -- "${tz_dir}temp" 2>/dev/null || true)"
             [[ "$temp_raw" =~ ^-?[0-9]+$ ]] || continue
             hw_name="$(basename "$tz_dir")"
             if [[ -r "${tz_dir}type" ]]; then
-                hw_name="$(<"${tz_dir}type")"
+                hw_name="$(cat -- "${tz_dir}type" 2>/dev/null || true)"
             fi
             temp_c="$(awk -v v="$temp_raw" 'BEGIN { printf "%.1f", v / 1000 }')"
             temp_entry="$(printf '{"name":"%s","label":"","temp_c":%s}' \
@@ -460,8 +463,12 @@ start_job() {
     exit_file="$JOBS_DIR/$job_id.exit"
     : >"$log_file"
 
+    # The exit code lands via tmp-then-rename so the exit file appears
+    # ATOMICALLY: a plain `> file` redirection creates/truncates before the
+    # printf writes, and a status poll in that window would read an empty
+    # file and misreport a succeeded job as failed.
     REMO_JOB_EXIT_FILE="$exit_file" nohup setsid bash -c \
-        '"$@"; rc=$?; printf "%s\n" "$rc" >"$REMO_JOB_EXIT_FILE"; exit "$rc"' \
+        '"$@"; rc=$?; printf "%s\n" "$rc" >"$REMO_JOB_EXIT_FILE.tmp" && mv -f "$REMO_JOB_EXIT_FILE.tmp" "$REMO_JOB_EXIT_FILE"; exit "$rc"' \
         remo-host-job "$@" >>"$log_file" 2>&1 </dev/null &
     pid=$!
 
@@ -527,12 +534,12 @@ cmd_jobs_status() {
     started_at="$(sed -n 's/.*"started_at":[[:space:]]*"\([^"]*\)".*/\1/p' "$meta_file")"
 
     local state exit_code="null" finished_at="null"
-    if [[ -f "$exit_file" ]]; then
+    # An existing-but-empty exit file cannot mean "finished" (the worker
+    # renames it into place fully written) — fall through to the pid check
+    # rather than misreporting the job failed.
+    if [[ -f "$exit_file" && -n "$(tr -cd '0-9' <"$exit_file")" ]]; then
         exit_code="$(tr -cd '0-9' <"$exit_file")"
-        if [[ -z "$exit_code" ]]; then
-            exit_code="null"
-            state="failed"
-        elif [[ "$exit_code" == "0" ]]; then
+        if [[ "$exit_code" == "0" ]]; then
             state="succeeded"
         else
             state="failed"
@@ -546,11 +553,15 @@ cmd_jobs_status() {
     fi
 
     # Last 8 KiB of the log; strip control characters json_escape does not
-    # cover (ANSI escapes etc.) so the payload stays valid JSON.
+    # cover (ANSI escapes etc.) so the payload stays valid JSON. The byte
+    # window can open mid-multibyte UTF-8 character — and the Python client
+    # decodes the payload STRICTLY, so one stray continuation byte would fail
+    # every poll of a finished job forever; iconv -c drops invalid sequences
+    # (it ships with glibc; degrade to the raw bytes if it is absent).
     # The sentinel keeps $() from eating the log's trailing newline(s).
     local log_tail=""
     if [[ -f "$log_file" ]]; then
-        log_tail="$(tail -c 8192 "$log_file" 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177'; printf x)"
+        log_tail="$(tail -c 8192 "$log_file" 2>/dev/null | tr -d '\000-\010\013\014\016-\037\177' | { iconv -f UTF-8 -t UTF-8 -c 2>/dev/null || cat; }; printf x)"
         log_tail="${log_tail%x}"
     fi
 

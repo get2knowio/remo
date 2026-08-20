@@ -44,19 +44,26 @@ interface HostDetailPageProps {
   onOpenTarget: (target: SessionTarget) => void;
 }
 
-/** The remo-host operations the maintenance surface needs (contract §ops). */
-const MAINTENANCE_OPS = ["projects.clone", "projects.delete", "projects.rebuild", "jobs.status"];
+/** The remo-host operations the maintenance surface needs (contract §ops).
+ * `projects.rebuild` is deliberately NOT here: remo-host omits it on hosts
+ * without the reference devcontainer CLI, and clone/delete/jobs still work
+ * there — rebuild is gated separately via `canRebuild`. */
+const MAINTENANCE_OPS = ["projects.clone", "projects.delete", "jobs.status"];
 
 /**
  * The command that brings a host's tools up to date. Console-owned mapping:
  * an added (`type="ssh"`) host is configured via `remo configure`, a provider
  * host via its `upgrade` verb (the five configure plays are not
- * interchangeable — 022).
+ * interchangeable — 022). Host-scoped providers register `host/container`
+ * names, but their upgrade verbs take the SHORT container name — mirror the
+ * backend's configure_remediation, or the printed command dead-ends.
  */
 function upgradeCommand(instance: DiscoveryInstance): string {
-  return instance.instance_type === "ssh"
-    ? `remo configure ${instance.instance_name}`
-    : `remo ${instance.instance_type} upgrade ${instance.instance_name}`;
+  if (instance.instance_type === "ssh") {
+    return `remo configure ${instance.instance_name}`;
+  }
+  const shortName = instance.instance_name.split("/").pop() || instance.instance_name;
+  return `remo ${instance.instance_type} upgrade ${shortName}`;
 }
 
 function formatBytes(n: number): string {
@@ -137,6 +144,7 @@ export function HostDetailPage({
   const [shellOpen, setShellOpen] = useState(false);
   const [job, setJob] = useState<JobAccepted | null>(null);
   const [rebuildFor, setRebuildFor] = useState<SessionTarget | null>(null);
+  const [rebuildError, setRebuildError] = useState<string | null>(null);
   const [deleteFor, setDeleteFor] = useState<SessionTarget | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -193,13 +201,23 @@ export function HostDetailPage({
   const missingOps = MAINTENANCE_OPS.filter((op) => !ops.includes(op));
   // Actions need both the feature gate AND a host whose tools carry the verbs.
   const canMaintain = hostAdmin && missingOps.length === 0;
+  // Rebuild additionally needs the reference devcontainer CLI on the host;
+  // remo-host omits `projects.rebuild` without it, and clone/delete/jobs are
+  // unaffected — so its absence hides only the Rebuild button, never the
+  // maintenance surface or the nudge.
+  const canRebuild = canMaintain && ops.includes("projects.rebuild");
   // The nudge replaces the action sections: gate on, host reachable, verbs
   // missing — i.e. an upgrade would actually fix it. A stats 409 is the same
   // condition observed the other way; its envelope's remediation is preferred
-  // because the server words the exact command for this host type.
-  const showNudge = hostAdmin && !canMaintain && instance.status === "ok";
+  // because the server words the exact command for this host type. It ALSO
+  // renders for a registry-admin ssh host still reporting `no_remo_host` —
+  // the freshly added host the Configure-now flow exists for.
+  const showNudge =
+    (hostAdmin && !canMaintain && instance.status === "ok") ||
+    (registryAdmin && instance.status === "no_remo_host");
   const nudgeText =
     unsupported?.remediation ||
+    instance.error?.remediation ||
     `This host's tools predate project maintenance. Run: ${upgradeCommand(instance)}`;
 
   const refreshInstance = (): void => {
@@ -231,11 +249,18 @@ export function HostDetailPage({
 
   const confirmRebuild = async (target: SessionTarget, noCache: boolean): Promise<void> => {
     setRebuildFor(null);
+    setRebuildError(null);
     try {
       const accepted = await rebuildProject(instanceId, target.project, noCache);
       setJob(accepted);
     } catch (error) {
-      setCloneError(error instanceof ApiError ? error.message : "Rebuild failed");
+      if (error instanceof ApiError) {
+        setRebuildError(
+          error.remediation ? `${error.message} — ${error.remediation}` : error.message,
+        );
+      } else {
+        setRebuildError(error instanceof Error ? error.message : "Rebuild failed");
+      }
     }
   };
 
@@ -436,12 +461,15 @@ export function HostDetailPage({
                         >
                           Open
                         </button>
-                        {canMaintain && t.has_devcontainer && (
+                        {canRebuild && t.has_devcontainer && (
                           <button
                             type="button"
                             className="hd-btn"
                             data-testid={`rebuild-project-${t.id}`}
-                            onClick={() => setRebuildFor(t)}
+                            onClick={() => {
+                              setRebuildError(null);
+                              setRebuildFor(t);
+                            }}
                           >
                             Rebuild
                           </button>
@@ -451,6 +479,11 @@ export function HostDetailPage({
                   ))}
                 </tbody>
               </table>
+            )}
+            {rebuildError && (
+              <div className="hd-error" data-testid="rebuild-error">
+                {rebuildError}
+              </div>
             )}
           </section>
 

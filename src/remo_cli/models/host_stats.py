@@ -79,8 +79,19 @@ class TempReading:
         return cls(
             name=str(data.get("name", "")),
             label=str(data.get("label", "")),
-            celsius=_as_float(data.get("celsius")),
+            celsius=_as_float(_raw_celsius(data)),
         )
+
+
+def _raw_celsius(data: dict) -> object:
+    """The temperature value from a ``temps[]`` entry.
+
+    The wire key is ``temp_c`` (remo-host protocol contract; what
+    remo-host.sh.j2 emits). ``celsius`` — this model's field name, and the
+    key the service re-serializes under — is accepted as a fallback so a
+    round-tripped payload parses too.
+    """
+    return data.get("temp_c", data.get("celsius"))
 
 
 @dataclass
@@ -113,9 +124,9 @@ class HostStats:
         Unknown extra keys are ignored (additive-compatible per R2);
         missing or garbage fields degrade to safe defaults. List entries
         that are not JSON objects are skipped; a disk entry without a
-        usable ``mount`` and a temp entry without a numeric ``celsius``
-        are skipped too (a phantom 0-degree reading would mislead more
-        than an absent one).
+        usable ``mount`` and a temp entry without a numeric ``temp_c``
+        (the wire key; ``celsius`` accepted as a fallback) are skipped too
+        (a phantom 0-degree reading would mislead more than an absent one).
         """
         raw_disks = data.get("disks")
         disks: list[DiskUsage] = []
@@ -133,7 +144,7 @@ class HostStats:
             for raw in raw_temps:
                 if not isinstance(raw, dict):
                     continue
-                celsius = raw.get("celsius")
+                celsius = _raw_celsius(raw)
                 if isinstance(celsius, bool) or not isinstance(celsius, (int, float, str)):
                     continue
                 if isinstance(celsius, str):

@@ -1100,6 +1100,23 @@ class TestHostStatsParsing:
         assert stats.disks == [DiskUsage(mount="/", size_bytes=100, used_bytes=0, avail_bytes=0)]
         assert stats.temps == [TempReading(name="hwmon1", label="ok", celsius=55.5)]
 
+    def test_temps_parse_the_wire_key_temp_c(self):
+        """The host emits ``temp_c`` (remo-host protocol contract), not the
+        model's ``celsius`` field name — regression for the key mismatch that
+        made every real host's temps parse to []."""
+        stats = HostStats.from_dict(
+            {
+                "temps": [
+                    {"name": "k10temp", "label": "Tctl", "temp_c": 45.5},
+                    {"name": "cpu-thermal", "label": "", "temp_c": 42},
+                ]
+            }
+        )
+        assert stats.temps == [
+            TempReading(name="k10temp", label="Tctl", celsius=45.5),
+            TempReading(name="cpu-thermal", label="", celsius=42.0),
+        ]
+
     def test_unknown_extra_fields_are_tolerated(self, mocker):
         payload = {**STATS_JSON, "future_field": {"nested": True}}
         mocker.patch(
@@ -1254,7 +1271,7 @@ class TestPreValidation:
 
     @pytest.mark.parametrize(
         "project",
-        ["", "-rf", "--project", ".", "..", "my project", "a/b", "; rm -rf /", "$(whoami)"],
+        ["", "-rf", "--project", ".", "..", "a/b", "; rm -rf /", "a\nb"],
     )
     def test_invalid_project_rejected_for_delete_and_rebuild(self, mocker, project):
         mock_run = mocker.patch("remo_cli.core.remo_host_client.subprocess.run")
@@ -1263,6 +1280,19 @@ class TestPreValidation:
         with pytest.raises(PreconditionError):
             start_project_rebuild(SSH_PREFIX, project)
         mock_run.assert_not_called()
+
+    @pytest.mark.parametrize("project", ["my project", "café", "$(whoami)"])
+    def test_listable_project_names_accepted_for_delete_and_rebuild(self, mocker, project):
+        """Delete/rebuild targets use the SHARED project-name contract
+        (core/validation.validate_project_name — the checks discovery/attach
+        and the host-side bash validator apply), so any project the console
+        can list is also deletable/rebuildable; the argv is shlex-joined, so
+        spaces/Unicode/metacharacters cost no shell safety. Regression for
+        the stricter charset that 400-rejected real project directories."""
+        mock_run = mocker.patch("remo_cli.core.remo_host_client.subprocess.run")
+        mock_run.return_value = _completed(0, stdout=json.dumps({"protocol_version": 1}).encode())
+        delete_project(SSH_PREFIX, project)
+        assert mock_run.called
 
     @pytest.mark.parametrize(
         "job_id",

@@ -32,6 +32,7 @@ import {
   type ScanKeyResponse,
   type VerifyHostResponse,
 } from "../api/client";
+import { copyText } from "../lib/clipboard";
 import { useDiscovery } from "../state/discovery";
 import { JobProgressPanel } from "./JobProgressPanel";
 import "./HostDetailPage.css";
@@ -51,7 +52,10 @@ function errorText(error: unknown, fallback: string): string {
 }
 
 function CopyBlock({ text, testid }: { text: string; testid: string }): JSX.Element {
-  const [copied, setCopied] = useState(false);
+  // copyText returns false rather than throwing: this console commonly runs
+  // over plain http on a LAN, where the async clipboard API is unavailable —
+  // the button must say so instead of silently doing nothing.
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   return (
     <div className="ah-copy" data-testid={testid}>
       <pre className="ah-copy-text">{text}</pre>
@@ -60,13 +64,17 @@ function CopyBlock({ text, testid }: { text: string; testid: string }): JSX.Elem
         className="hd-btn"
         data-testid={`${testid}-button`}
         onClick={() => {
-          void navigator.clipboard?.writeText(text).then(() => {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
+          void copyText(text).then((ok) => {
+            setCopyState(ok ? "copied" : "failed");
+            setTimeout(() => setCopyState("idle"), 2000);
           });
         }}
       >
-        {copied ? "Copied ✓" : "Copy"}
+        {copyState === "copied"
+          ? "Copied ✓"
+          : copyState === "failed"
+            ? "Copy failed — select the text manually"
+            : "Copy"}
       </button>
     </div>
   );
@@ -93,15 +101,27 @@ export function AddHostPage({ onClose }: AddHostPageProps): JSX.Element {
     if (busy || !name.trim() || !target.trim()) {
       return;
     }
+    // Validate the port BEFORE submitting: parseInt would truncate "22x" to 22
+    // and NaN would silently fall back to the server default, so a typo'd port
+    // surfaces later as a bogus reachability failure at the scan step.
+    const trimmedPort = port.trim();
+    let portNumber: number | null = null;
+    if (trimmedPort) {
+      const n = Number(trimmedPort);
+      if (!Number.isInteger(n) || n < 1 || n > 65535) {
+        setError("Port must be a number between 1 and 65535");
+        return;
+      }
+      portNumber = n;
+    }
     setBusy(true);
     setError(null);
     try {
-      const portNumber = port.trim() ? Number.parseInt(port.trim(), 10) : undefined;
       const response = await addHost({
         name: name.trim(),
         target: target.trim(),
         user: user.trim() || null,
-        port: Number.isNaN(portNumber ?? 0) ? null : (portNumber ?? null),
+        port: portNumber,
       });
       setAdded(response);
       setStep("trust");
