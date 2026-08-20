@@ -91,7 +91,7 @@ export function PairToSync(): JSX.Element {
         className="pairsync-btn"
         onClick={open ? close : openAndMint}
         data-testid="pair-to-sync"
-        title="Mint a pairing code to run `remo web push` from your workstation"
+        title="Mint a pairing code to run `remo web sync` from your workstation"
       >
         {open ? "Cancel" : "Mint pairing code"}
       </button>
@@ -99,7 +99,7 @@ export function PairToSync(): JSX.Element {
       {open && (
         <div className="pairsync-popover" role="dialog" aria-label="Pair CLI to sync">
           <p className="pairsync-body">
-            Run <code>remo web push &lt;url&gt;</code> on your workstation and paste this code when
+            Run <code>remo web sync &lt;url&gt;</code> on your workstation and paste this code when
             prompted. The code is never shown — it goes straight to your clipboard.
             {copyState === "copied" && " It is on your clipboard now."}
             {copyState === "failed" &&

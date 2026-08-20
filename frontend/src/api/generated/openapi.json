@@ -633,6 +633,30 @@
         "title": "InstanceStatus",
         "type": "string"
       },
+      "JobAcceptedResponse": {
+        "description": "202: the host detached a job; poll `GET /hosts/{id}/jobs/{job_id}`.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "project"
+        ],
+        "title": "JobAcceptedResponse",
+        "type": "object"
+      },
       "JobListResponse": {
         "properties": {
           "jobs": {
@@ -658,6 +682,44 @@
         ],
         "title": "JobState",
         "type": "string"
+      },
+      "JobStatusResponse": {
+        "properties": {
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "finished_at": {
+            "default": "",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "log_tail": {
+            "default": "",
+            "title": "Log Tail",
+            "type": "string"
+          },
+          "started_at": {
+            "default": "",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "JobStatusResponse",
+        "type": "object"
       },
       "JobSummary": {
         "properties": {
@@ -1423,132 +1485,6 @@
         ],
         "title": "ZellijState",
         "type": "string"
-      },
-      "remo_cli__web__api__host_admin__JobAcceptedResponse": {
-        "description": "202: the host detached a job; poll `GET /hosts/{id}/jobs/{job_id}`.",
-        "properties": {
-          "job_id": {
-            "title": "Job Id",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "project": {
-            "title": "Project",
-            "type": "string"
-          }
-        },
-        "required": [
-          "job_id",
-          "kind",
-          "project"
-        ],
-        "title": "JobAcceptedResponse",
-        "type": "object"
-      },
-      "remo_cli__web__api__host_admin__JobStatusResponse": {
-        "properties": {
-          "exit_code": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exit Code"
-          },
-          "finished_at": {
-            "default": "",
-            "title": "Finished At",
-            "type": "string"
-          },
-          "log_tail": {
-            "default": "",
-            "title": "Log Tail",
-            "type": "string"
-          },
-          "started_at": {
-            "default": "",
-            "title": "Started At",
-            "type": "string"
-          },
-          "state": {
-            "$ref": "#/components/schemas/JobState"
-          }
-        },
-        "required": [
-          "state"
-        ],
-        "title": "JobStatusResponse",
-        "type": "object"
-      },
-      "remo_cli__web__api__registry_admin__JobAcceptedResponse": {
-        "description": "202, wire-compatible with host_admin's JobAcceptedResponse so the\nconsole reuses one type; `project` is always empty for registry jobs.",
-        "properties": {
-          "job_id": {
-            "title": "Job Id",
-            "type": "string"
-          },
-          "kind": {
-            "title": "Kind",
-            "type": "string"
-          },
-          "project": {
-            "default": "",
-            "title": "Project",
-            "type": "string"
-          }
-        },
-        "required": [
-          "job_id",
-          "kind"
-        ],
-        "title": "JobAcceptedResponse",
-        "type": "object"
-      },
-      "remo_cli__web__api__registry_admin__JobStatusResponse": {
-        "description": "Wire-identical to host_admin's JobStatusResponse (console reuse).",
-        "properties": {
-          "exit_code": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Exit Code"
-          },
-          "finished_at": {
-            "default": "",
-            "title": "Finished At",
-            "type": "string"
-          },
-          "log_tail": {
-            "default": "",
-            "title": "Log Tail",
-            "type": "string"
-          },
-          "started_at": {
-            "default": "",
-            "title": "Started At",
-            "type": "string"
-          },
-          "state": {
-            "title": "State",
-            "type": "string"
-          }
-        },
-        "required": [
-          "state"
-        ],
-        "title": "JobStatusResponse",
-        "type": "object"
       }
     }
   },
@@ -1672,7 +1608,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/remo_cli__web__api__host_admin__JobStatusResponse"
+                  "$ref": "#/components/schemas/JobStatusResponse"
                 }
               }
             },
@@ -1762,7 +1698,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/remo_cli__web__api__host_admin__JobAcceptedResponse"
+                  "$ref": "#/components/schemas/JobAcceptedResponse"
                 }
               }
             },
@@ -1957,7 +1893,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/remo_cli__web__api__host_admin__JobAcceptedResponse"
+                  "$ref": "#/components/schemas/JobAcceptedResponse"
                 }
               }
             },
@@ -2433,7 +2369,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/remo_cli__web__api__registry_admin__JobAcceptedResponse"
+                  "$ref": "#/components/schemas/JobAcceptedResponse"
                 }
               }
             },
@@ -2843,7 +2779,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/remo_cli__web__api__registry_admin__JobStatusResponse"
+                  "$ref": "#/components/schemas/JobStatusResponse"
                 }
               }
             },

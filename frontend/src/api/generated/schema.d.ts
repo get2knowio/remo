@@ -951,6 +951,18 @@ export interface components {
          * @enum {string}
          */
         InstanceStatus: "ok" | "unreachable" | "auth_failed" | "no_remo_host" | "incompatible_protocol" | "malformed" | "timeout";
+        /**
+         * JobAcceptedResponse
+         * @description 202: the host detached a job; poll `GET /hosts/{id}/jobs/{job_id}`.
+         */
+        JobAcceptedResponse: {
+            /** Job Id */
+            job_id: string;
+            /** Kind */
+            kind: string;
+            /** Project */
+            project: string;
+        };
         /** JobListResponse */
         JobListResponse: {
             /** Jobs */
@@ -962,6 +974,27 @@ export interface components {
          * @enum {string}
          */
         JobState: "running" | "succeeded" | "failed";
+        /** JobStatusResponse */
+        JobStatusResponse: {
+            /** Exit Code */
+            exit_code?: number | null;
+            /**
+             * Finished At
+             * @default
+             */
+            finished_at: string;
+            /**
+             * Log Tail
+             * @default
+             */
+            log_tail: string;
+            /**
+             * Started At
+             * @default
+             */
+            started_at: string;
+            state: components["schemas"]["JobState"];
+        };
         /** JobSummary */
         JobSummary: {
             /**
@@ -1302,80 +1335,6 @@ export interface components {
          * @enum {string}
          */
         ZellijState: "active" | "exited" | "absent";
-        /**
-         * JobAcceptedResponse
-         * @description 202: the host detached a job; poll `GET /hosts/{id}/jobs/{job_id}`.
-         */
-        remo_cli__web__api__host_admin__JobAcceptedResponse: {
-            /** Job Id */
-            job_id: string;
-            /** Kind */
-            kind: string;
-            /** Project */
-            project: string;
-        };
-        /** JobStatusResponse */
-        remo_cli__web__api__host_admin__JobStatusResponse: {
-            /** Exit Code */
-            exit_code?: number | null;
-            /**
-             * Finished At
-             * @default
-             */
-            finished_at: string;
-            /**
-             * Log Tail
-             * @default
-             */
-            log_tail: string;
-            /**
-             * Started At
-             * @default
-             */
-            started_at: string;
-            state: components["schemas"]["JobState"];
-        };
-        /**
-         * JobAcceptedResponse
-         * @description 202, wire-compatible with host_admin's JobAcceptedResponse so the
-         *     console reuses one type; `project` is always empty for registry jobs.
-         */
-        remo_cli__web__api__registry_admin__JobAcceptedResponse: {
-            /** Job Id */
-            job_id: string;
-            /** Kind */
-            kind: string;
-            /**
-             * Project
-             * @default
-             */
-            project: string;
-        };
-        /**
-         * JobStatusResponse
-         * @description Wire-identical to host_admin's JobStatusResponse (console reuse).
-         */
-        remo_cli__web__api__registry_admin__JobStatusResponse: {
-            /** Exit Code */
-            exit_code?: number | null;
-            /**
-             * Finished At
-             * @default
-             */
-            finished_at: string;
-            /**
-             * Log Tail
-             * @default
-             */
-            log_tail: string;
-            /**
-             * Started At
-             * @default
-             */
-            started_at: string;
-            /** State */
-            state: string;
-        };
     };
     responses: never;
     parameters: never;
@@ -1476,7 +1435,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["remo_cli__web__api__host_admin__JobStatusResponse"];
+                    "application/json": components["schemas"]["JobStatusResponse"];
                 };
             };
             /** @description Bad Request */
@@ -1547,7 +1506,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["remo_cli__web__api__host_admin__JobAcceptedResponse"];
+                    "application/json": components["schemas"]["JobAcceptedResponse"];
                 };
             };
             /** @description Bad Request */
@@ -1687,7 +1646,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["remo_cli__web__api__host_admin__JobAcceptedResponse"];
+                    "application/json": components["schemas"]["JobAcceptedResponse"];
                 };
             };
             /** @description Bad Request */
@@ -2095,7 +2054,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["remo_cli__web__api__registry_admin__JobAcceptedResponse"];
+                    "application/json": components["schemas"]["JobAcceptedResponse"];
                 };
             };
             /** @description Bad Request */
@@ -2434,7 +2393,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["remo_cli__web__api__registry_admin__JobStatusResponse"];
+                    "application/json": components["schemas"]["JobStatusResponse"];
                 };
             };
             /** @description Bad Request */

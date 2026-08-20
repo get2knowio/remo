@@ -48,6 +48,8 @@ from remo_cli.core.web_adopt import (
     scan_host_keys,
 )
 from remo_cli.models.host import KnownHost
+from remo_cli.models.host_job import JobState
+from remo_cli.web.api.host_admin import JobAcceptedResponse, JobStatusResponse
 from remo_cli.web.api.hosts import (
     ErrorEnvelope,
     error_envelope,
@@ -178,23 +180,11 @@ class ConfigureRequest(BaseModel):
     skip: list[str] = Field(default_factory=list)
 
 
-class JobAcceptedResponse(BaseModel):
-    """202, wire-compatible with host_admin's JobAcceptedResponse so the
-    console reuses one type; `project` is always empty for registry jobs."""
-
-    job_id: str
-    kind: str
-    project: str = ""
-
-
-class JobStatusResponse(BaseModel):
-    """Wire-identical to host_admin's JobStatusResponse (console reuse)."""
-
-    state: str
-    exit_code: int | None = None
-    started_at: str = ""
-    finished_at: str = ""
-    log_tail: str = ""
+# Job responses REUSE host_admin's models (JobAcceptedResponse /
+# JobStatusResponse, imported above) rather than redefining wire-identical
+# copies: two same-named pydantic models would make FastAPI mangle BOTH
+# schema names in the OpenAPI artifact (module-path prefixes), breaking the
+# console's generated-type imports. `project` is always "" for registry jobs.
 
 
 class JobSummary(BaseModel):
@@ -686,7 +676,7 @@ def start_configure(request: Request, instance_id: str, body: ConfigureRequest |
             remediation=f"Poll GET /api/v1/registry/jobs/{exc.job_id} instead.",
             retryable=False,
         )
-    return JobAcceptedResponse(job_id=record["job_id"], kind=record["kind"])
+    return JobAcceptedResponse(job_id=record["job_id"], kind=record["kind"], project="")
 
 
 @router.get(
@@ -705,8 +695,12 @@ def get_registry_job(request: Request, job_id: str):
             remediation="Re-list the instance's jobs and use a current id.",
             retryable=False,
         )
+    try:
+        state = JobState(str(record.get("state", "")))
+    except ValueError:
+        state = JobState.FAILED
     return JobStatusResponse(
-        state=str(record.get("state", "")),
+        state=state,
         exit_code=record.get("exit_code"),
         started_at=str(record.get("started_at", "")),
         finished_at=str(record.get("finished_at", "")),

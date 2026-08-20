@@ -1,0 +1,89 @@
+/* Add-host wizard (023). Leans on HostDetailPage.css primitives (hd-btn,
+ * hd-input, hd-nudge, hd-error, topbar/scroll shell); only wizard-specific
+ * bits live here. */
+
+.ah-inner {
+  max-width: 640px;
+}
+
+.ah-steps {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ah-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 420px;
+}
+.ah-row {
+  display: flex;
+  gap: 12px;
+}
+.ah-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.ah-field--port {
+  max-width: 110px;
+}
+.ah-optional {
+  font-weight: 400;
+  color: var(--text-faint);
+}
+
+.ah-copy {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ah-copy-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-term);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--ok);
+}
+
+.ah-fingerprints {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--bg-term);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.ah-mismatch {
+  border-color: var(--danger-border);
+  background: var(--danger-surface);
+}
+.ah-detail {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ah-done-actions {
+  display: flex;
+  gap: 10px;
+}

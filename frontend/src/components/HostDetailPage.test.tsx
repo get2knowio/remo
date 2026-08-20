@@ -91,6 +91,7 @@ interface Setup {
   instances?: DiscoveryInstance[];
   targets?: SessionTarget[];
   hostAdmin?: boolean;
+  registryAdmin?: boolean;
   hookResult?: {
     stats: HostStats | null;
     stale: boolean;
@@ -106,6 +107,7 @@ function mount({
   instances = [instance()],
   targets = [target("alpha")],
   hostAdmin = true,
+  registryAdmin = false,
   hookResult = { stats: stats(), stale: false, unsupported: null },
 }: Setup = {}): void {
   useDiscovery.mockReturnValue({
@@ -120,6 +122,8 @@ function mount({
     checks: {},
     detail: null,
     hostAdmin,
+    registryAdmin,
+    registryChange: null,
     retry: vi.fn(),
   });
   useHostStats.mockReturnValue({ ...hookResult, refetch: vi.fn() });
@@ -229,5 +233,43 @@ describe("HostDetailPage", () => {
     mount();
     fireEvent.click(screen.getByTestId("host-detail-refresh"));
     expect(refresh).toHaveBeenCalledWith("i-1");
+  });
+});
+
+describe("HostDetailPage registry admin (023)", () => {
+  const sshInstance = (overrides: Partial<DiscoveryInstance> = {}): DiscoveryInstance =>
+    instance({ instance_type: "ssh", region: "", ...overrides });
+
+  it("hides remove/configure affordances when registry_admin is off", () => {
+    mount({ instances: [sshInstance()], registryAdmin: false });
+    expect(screen.queryByTestId("remove-host-zone")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("configure-now")).not.toBeInTheDocument();
+  });
+
+  it("hides them for provider-managed hosts even when the flag is on", () => {
+    mount({ registryAdmin: true }); // default instance is incus
+    expect(screen.queryByTestId("remove-host-zone")).not.toBeInTheDocument();
+  });
+
+  it("renders the remove-host zone for an ssh host and gates it on typing the name", () => {
+    mount({ instances: [sshInstance()], registryAdmin: true });
+    fireEvent.click(screen.getByTestId("remove-host"));
+    const confirmButton = screen.getByTestId("remove-host-confirm");
+    expect(confirmButton).toBeDisabled();
+    fireEvent.input(screen.getByTestId("remove-host-input"), { target: { value: "box" } });
+    expect(confirmButton).not.toBeDisabled();
+  });
+
+  it("offers Configure now in the capability nudge for an ssh host", () => {
+    // Tools predate maintenance: no capability at all, host ok.
+    mount({
+      instances: [sshInstance({ capability: null })],
+      registryAdmin: true,
+    });
+    expect(screen.getByTestId("capability-nudge")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("configure-now"));
+    expect(screen.getByTestId("configure-dialog")).toBeInTheDocument();
+    // The consequence copy names the provisioning pass, not a toggle.
+    expect(screen.getByTestId("configure-dialog").textContent).toContain("passwordless sudo");
   });
 });

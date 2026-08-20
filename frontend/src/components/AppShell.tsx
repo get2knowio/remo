@@ -14,6 +14,7 @@ import { hostKey, settingsActions, useSettings } from "../state/settings";
 import { useConsoleKeyboard } from "../state/useConsoleKeyboard";
 import { useWorkspace } from "../state/workspace";
 import { buildRailModel, type RailFilters } from "./railModel";
+import { AddHostPage } from "./AddHostPage";
 import { HostDetailPage } from "./HostDetailPage";
 import { OfflineOverlay } from "./OfflineOverlay";
 import { SessionRail } from "./SessionRail";
@@ -34,6 +35,7 @@ export function AppShell(): JSX.Element {
   const [providerFilter, setProviderFilter] = useState<string | null>(null);
   const [sessionOnly, setSessionOnly] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [addHostOpen, setAddHostOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [hostDetailId, setHostDetailId] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(
@@ -188,8 +190,12 @@ export function AppShell(): JSX.Element {
   );
 
   const onEscapeOverlay = useCallback((): boolean => {
-    // Host detail first: it opens on top of the dashboard, so Esc must close
-    // it before falling through to the settings/shortcuts overlays.
+    // Add-host wizard first (it can sit on top of everything), then host
+    // detail, then the settings/shortcuts overlays.
+    if (addHostOpen) {
+      setAddHostOpen(false);
+      return true;
+    }
     if (hostDetailId !== null) {
       setHostDetailId(null);
       return true;
@@ -203,7 +209,7 @@ export function AppShell(): JSX.Element {
       return true;
     }
     return false;
-  }, [hostDetailId, settingsOpen, shortcutsOpen]);
+  }, [addHostOpen, hostDetailId, settingsOpen, shortcutsOpen]);
 
   const onToggleShortcuts = useCallback(() => setShortcutsOpen((v) => !v), []);
 
@@ -299,6 +305,8 @@ export function AppShell(): JSX.Element {
             onToggleHostCollapsed={settingsActions.toggleHostCollapsed}
             onToggleFavorite={settingsActions.toggleFavorite}
             onOpenHostDetail={setHostDetailId}
+            registryAdmin={health.registryAdmin}
+            onAddHost={() => setAddHostOpen(true)}
           />
         </aside>
 
@@ -344,6 +352,7 @@ export function AppShell(): JSX.Element {
           }}
         />
       )}
+      {addHostOpen && <AddHostPage onClose={() => setAddHostOpen(false)} />}
       {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
       {health.status === "offline" && <OfflineOverlay onRetry={() => void health.retry()} />}

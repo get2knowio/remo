@@ -539,3 +539,8 @@
   justify-content: flex-end;
   gap: 8px;
 }
+
+/* Registry-admin (023): the configure CTA inside the capability nudge. */
+.hd-nudge-actions {
+  margin-top: 10px;
+}

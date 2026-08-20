@@ -50,20 +50,28 @@ const workspace = {
   closeTerm: vi.fn(),
 } as unknown as UseWorkspaceResult;
 
-function mountRail(): {
+function mountRail(
+  options: { registryAdmin?: boolean; noRegistry?: boolean; onAddHost?: () => void } = {},
+): {
   onOpenHostDetail: ReturnType<typeof vi.fn>;
   onToggleHostCollapsed: ReturnType<typeof vi.fn>;
 } {
   const onOpenHostDetail = vi.fn();
   const onToggleHostCollapsed = vi.fn();
-  const model = buildRailModel([instance()], [target()], NO_FILTERS, new Set());
+  const noRegistry = options.noRegistry ?? false;
+  const model = buildRailModel(
+    noRegistry ? [] : [instance()],
+    noRegistry ? [] : [target()],
+    NO_FILTERS,
+    new Set(),
+  );
   render(
     <SessionRail
       model={model}
       filters={NO_FILTERS}
       providers={["incus"]}
       isLoading={false}
-      noRegistry={false}
+      noRegistry={noRegistry}
       noCredentials={false}
       workspace={workspace}
       onSearch={vi.fn()}
@@ -73,6 +81,8 @@ function mountRail(): {
       onToggleHostCollapsed={onToggleHostCollapsed}
       onToggleFavorite={vi.fn()}
       onOpenHostDetail={onOpenHostDetail}
+      registryAdmin={options.registryAdmin ?? false}
+      onAddHost={options.onAddHost ?? vi.fn()}
     />,
   );
   return { onOpenHostDetail, onToggleHostCollapsed };
@@ -103,5 +113,32 @@ describe("SessionRail host-name click", () => {
     // The header is the name button's parent .rail-inst-head.
     fireEvent.click(name.closest(".rail-inst-head")!);
     expect(onToggleHostCollapsed).toHaveBeenCalledWith("inst-1");
+  });
+});
+
+describe("registry-admin affordances (023)", () => {
+  it("hides the add-host button when the flag is off", () => {
+    mountRail({ registryAdmin: false });
+    expect(screen.queryByTestId("rail-add-host")).not.toBeInTheDocument();
+  });
+
+  it("shows the header add-host button when the flag is on", () => {
+    const onAddHost = vi.fn();
+    mountRail({ registryAdmin: true, onAddHost });
+    fireEvent.click(screen.getByTestId("rail-add-host"));
+    expect(onAddHost).toHaveBeenCalledTimes(1);
+  });
+
+  it("empty registry becomes an add-host CTA when the flag is on", () => {
+    const onAddHost = vi.fn();
+    mountRail({ registryAdmin: true, noRegistry: true, onAddHost });
+    fireEvent.click(screen.getByTestId("empty-add-host-button"));
+    expect(onAddHost).toHaveBeenCalledTimes(1);
+  });
+
+  it("empty registry keeps the CLI copy when the flag is off", () => {
+    mountRail({ registryAdmin: false, noRegistry: true });
+    expect(screen.queryByTestId("empty-add-host")).not.toBeInTheDocument();
+    expect(screen.getByText("Empty registry")).toBeInTheDocument();
   });
 });
