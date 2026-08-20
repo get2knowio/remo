@@ -187,7 +187,7 @@ cmd_sessions_list() {
             else
                 projects_json="$projects_json,$entry"
             fi
-        done < <(find "$PROJECTS_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort)
+        done < <(find "$PROJECTS_DIR" -maxdepth 1 -mindepth 1 -type d ! -name '.*' 2>/dev/null | sort)
     fi
 
     printf '{"protocol_version":%d,"projects_root":"%s","projects":[%s]}\n' \
@@ -231,6 +231,13 @@ validate_project_name() {
 
     if [[ "$name" == */* ]]; then
         echo "remo-host: $ctx: path separators are not allowed: $name" >&2
+        return 1
+    fi
+
+    # Hidden names are reserved for the host's own staging dirs (clone stages
+    # in "$PROJECTS_DIR/.remo-clone.*") and are excluded from `sessions list`.
+    if [[ "$name" == .* ]]; then
+        echo "remo-host: $ctx: hidden project names (leading '.') are not allowed: $name" >&2
         return 1
     fi
 
@@ -576,8 +583,13 @@ cmd_jobs_status() {
 # GitHub only, by strict shape (option-injection defense, FR-014): either
 # OWNER/REPO shorthand or an https://github.com/OWNER/REPO(.git) URL, each
 # segment starting with an alphanumeric/._ character (never `-`). Clones
-# into a temp dir and moves the result into the projects root so a
-# half-finished clone is never visible to `sessions list`. Detached job.
+# into a HIDDEN staging dir inside the projects root itself and renames the
+# result into place, so a half-finished clone is never visible to
+# `sessions list` (hidden dirs are excluded from enumeration and rejected
+# as project names). Staging under ${TMPDIR} was wrong twice over: when
+# /tmp is a different filesystem the final `mv` degrades to a non-atomic
+# copy that exposes a partial project mid-copy, and a tmpfs /tmp can be
+# too small for the repo outright. Detached job.
 # ---------------------------------------------------------------------------
 cmd_projects_clone() {
     local repo="" name="" json_given=false
@@ -637,8 +649,10 @@ cmd_projects_clone() {
         name="${name##*/}"
     fi
 
-    if ! [[ "$name" =~ ^[A-Za-z0-9_.][A-Za-z0-9_.-]*$ ]] || [[ "$name" == "." || "$name" == ".." ]]; then
-        echo "remo-host: projects clone: invalid project name: $name" >&2
+    # No leading dot: hidden names are reserved for the clone staging dirs
+    # and invisible to `sessions list` (a repo named `.github` needs --name).
+    if ! [[ "$name" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]; then
+        echo "remo-host: projects clone: invalid project name (must start with an alphanumeric or '_'): $name" >&2
         exit 3
     fi
     if [[ -e "$PROJECTS_DIR/$name" ]]; then
@@ -652,8 +666,8 @@ cmd_projects_clone() {
     # anonymous fallback (public repos). `--` guards git's argv even though
     # the shape check above already forbids option-lookalikes.
     local worker='set -e
-repo="$1"; git_url="$2"; dest="$3"
-tmp="$(mktemp -d "${TMPDIR:-/tmp}/remo-clone.XXXXXXXX")"
+repo="$1"; git_url="$2"; dest="$3"; projects_dir="$4"
+tmp="$(mktemp -d "$projects_dir/.remo-clone.XXXXXXXX")"
 trap '\''rm -rf "$tmp"'\'' EXIT
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     gh repo clone "$repo" "$tmp/repo"
@@ -663,7 +677,7 @@ fi
 mv -- "$tmp/repo" "$dest"'
 
     start_job clone "$name" bash -c "$worker" remo-clone-worker \
-        "$repo" "$git_url" "$PROJECTS_DIR/$name"
+        "$repo" "$git_url" "$PROJECTS_DIR/$name" "$PROJECTS_DIR"
 }
 
 # ---------------------------------------------------------------------------

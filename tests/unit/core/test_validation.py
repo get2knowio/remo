@@ -268,9 +268,10 @@ class TestValidateProjectName:
 
     Rules mirror `ansible/roles/user_setup/templates/remo-host.sh.j2`'s
     bash `validate_project_name()` exactly: reject empty names, control
-    characters, absolute paths, `..` traversal, and embedded path
-    separators. Spaces, Unicode, punctuation, and leading dashes are all
-    otherwise ALLOWED -- this validator must not over-reject them.
+    characters, absolute paths, `..` traversal, embedded path separators,
+    and leading dots (hidden names are reserved for the host's clone-staging
+    dirs). Spaces, Unicode, punctuation, and leading dashes are all otherwise
+    ALLOWED -- this validator must not over-reject them.
     """
 
     @pytest.mark.parametrize(
@@ -286,8 +287,6 @@ class TestValidateProjectName:
             "name'with\"quotes",  # punctuation allowed (shlex.quote handles it)
             "name;rm -rf .",  # shell metacharacters allowed here -- shlex.quote
             "a",
-            "...three-dots-but-not-traversal",
-            "..hidden",  # starts with .. but is not exactly ".."/"../*"
             "trailing..",  # ends with .. but not "/.."
         ],
     )
@@ -337,6 +336,21 @@ class TestValidateProjectName:
     )
     def test_path_traversal_rejected(self, name):
         with pytest.raises(ValueError, match="traversal"):
+            validate_project_name(name)
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            ".hidden",
+            ".remo-clone.abc123",
+            "...three-dots-but-not-traversal",
+            "..hidden",
+        ],
+    )
+    def test_hidden_names_rejected(self, name):
+        # Hidden names are reserved for the host's clone-staging dirs and are
+        # invisible to `sessions list` — a project could never be reached.
+        with pytest.raises(ValueError, match="hidden project names"):
             validate_project_name(name)
 
     @pytest.mark.parametrize(

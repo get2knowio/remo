@@ -704,6 +704,13 @@ export interface components {
              */
             zellij: boolean;
         };
+        /**
+         * ChangeOrigin
+         * @description Which plane last wrote the registry (contracts/mirror-meta.md): a
+         *     workstation push/sync, or the web console's registry-admin surface.
+         * @enum {string}
+         */
+        ChangeOrigin: "push" | "web";
         /** ConfigureRequest */
         ConfigureRequest: {
             /** Only */
@@ -1017,8 +1024,7 @@ export interface components {
              * @default
              */
             started_at: string;
-            /** State */
-            state: string;
+            state: components["schemas"]["JobState"];
         };
         /**
          * KnownProviderType
@@ -1132,8 +1138,7 @@ export interface components {
             at: string;
             /** Generation */
             generation: number;
-            /** Origin */
-            origin: string;
+            origin: components["schemas"]["ChangeOrigin"];
         };
         /**
          * RegistryReadResponse
@@ -1171,9 +1176,13 @@ export interface components {
             fingerprints?: string[];
             /** Lines */
             lines?: string[];
-            /** Status */
-            status: string;
+            status: components["schemas"]["ScanKeyStatus"];
         };
+        /**
+         * ScanKeyStatus
+         * @enum {string}
+         */
+        ScanKeyStatus: "trusted" | "mismatch" | "no_trust" | "unreachable";
         /** SessionTargetOut */
         SessionTargetOut: {
             devcontainer_running: components["schemas"]["DevcontainerRunning"];
@@ -1325,9 +1334,13 @@ export interface components {
         VerifyHostResponse: {
             /** Detail */
             detail: string;
-            /** Status */
-            status: string;
+            status: components["schemas"]["VerifyHostStatus"];
         };
+        /**
+         * VerifyHostStatus
+         * @enum {string}
+         */
+        VerifyHostStatus: "ok" | "auth_failed" | "host_key_untrusted" | "unreachable";
         /** VerifyResponse */
         VerifyResponse: {
             /** All Passed */

@@ -33,6 +33,7 @@ import logging
 import re
 import subprocess
 import threading
+from enum import Enum
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -49,6 +50,7 @@ from remo_cli.core.web_adopt import (
 )
 from remo_cli.models.host import KnownHost
 from remo_cli.models.host_job import JobState
+from remo_cli.web.api.gating import require_admin_flag
 from remo_cli.web.api.host_admin import JobAcceptedResponse, JobStatusResponse
 from remo_cli.web.api.hosts import (
     ErrorEnvelope,
@@ -83,36 +85,13 @@ _SCAN_TIMEOUT_S = 15.0
 _VERIFY_TIMEOUT_S = 20.0
 
 
-def _dormant() -> HTTPException:
-    """The dormant response — byte-identical to FastAPI's default unknown-route
-    404 (the `web/api/setup.py` precedent). A fresh instance per raise (never a
-    shared singleton, which would accumulate traceback/context state)."""
-    return HTTPException(status_code=404, detail="Not Found")
-
-
-async def require_registry_admin(request: Request) -> None:
-    """Registry-admin gate shared by every route on this router.
-
-    Dormant ``404`` unless ``REMO_WEB_REGISTRY_ADMIN=enabled``. When an
-    operator-auth provider is configured, a request the provider refuses gets
-    the SAME 404 — never a distinguishable 401/403 that would reveal the
-    surface exists.
-    """
-    settings = get_settings(request)
-    if not settings.registry_admin_enabled:
-        raise _dormant()
-
-    provider = getattr(request.app.state, "operator_auth_provider", None)
-    if provider is not None and provider.authenticate(request) is None:
-        client = request.client.host if request.client else "unknown"
-        logger.warning(
-            "registry-admin request without operator authentication from %s: %s %s",
-            client,
-            request.method,
-            request.url.path,
-        )
-        raise _dormant()
-
+# Dormant 404 unless REMO_WEB_REGISTRY_ADMIN=enabled (and operator auth, when
+# configured, accepts the request) — the shared `web/api/gating.py` gate.
+require_registry_admin = require_admin_flag(
+    lambda settings: settings.registry_admin_enabled,
+    surface="registry-admin",
+    logger=logger,
+)
 
 router = APIRouter(prefix="/registry", dependencies=[Depends(require_registry_admin)])
 
@@ -148,8 +127,15 @@ class HostRemovedResponse(BaseModel):
     removed: bool = True
 
 
+class ScanKeyStatus(str, Enum):
+    TRUSTED = "trusted"
+    MISMATCH = "mismatch"
+    NO_TRUST = "no_trust"
+    UNREACHABLE = "unreachable"
+
+
 class ScanKeyResponse(BaseModel):
-    status: str  # trusted | mismatch | no_trust | unreachable
+    status: ScanKeyStatus
     detail: str
     fingerprints: list[str] = Field(default_factory=list)
     lines: list[str] = Field(default_factory=list)
@@ -165,8 +151,15 @@ class TrustKeyResponse(BaseModel):
     trusted: bool = True
 
 
+class VerifyHostStatus(str, Enum):
+    OK = "ok"
+    AUTH_FAILED = "auth_failed"
+    HOST_KEY_UNTRUSTED = "host_key_untrusted"
+    UNREACHABLE = "unreachable"
+
+
 class VerifyHostResponse(BaseModel):
-    status: str  # ok | auth_failed | host_key_untrusted | unreachable
+    status: VerifyHostStatus
     detail: str
 
 
@@ -190,7 +183,7 @@ class ConfigureRequest(BaseModel):
 class JobSummary(BaseModel):
     job_id: str
     kind: str
-    state: str
+    state: JobState
     started_at: str = ""
     finished_at: str = ""
 
@@ -500,8 +493,9 @@ def remove_host(request: Request, instance_id: str, background_tasks: Background
         if not still_shared:
             remove_instance_host_keys(settings.service_known_hosts_path, lookup_key)
         _record_web_change_locked(request)
-    # Full refresh: discovery prunes removed instances only on a full pass.
-    background_tasks.add_task(get_discovery_service(request).refresh)
+    # Targeted evict: the removed host disappears from the console at once
+    # without re-discovering every other instance over SSH.
+    background_tasks.add_task(get_discovery_service(request).evict, instance_id)
     return HostRemovedResponse(name=host.name)
 
 
@@ -526,14 +520,14 @@ def scan_key(request: Request, instance_id: str):
 
     lines, scan_error = scan_host_keys(host.host, host.ssh_port, timeout=_SCAN_TIMEOUT_S)
     if scan_error is not None:
-        return ScanKeyResponse(status="unreachable", detail=scan_error)
+        return ScanKeyResponse(status=ScanKeyStatus.UNREACHABLE, detail=scan_error)
 
     lookup_key = known_hosts_lookup_key(host.host, host.ssh_port)
     status, detail = classify_scanned_keys(
         lines, lookup_key, settings.service_known_hosts_path
     )
     return ScanKeyResponse(
-        status=status,
+        status=ScanKeyStatus(status),
         detail=detail,
         fingerprints=render_fingerprint_list(lines),
         lines=lines,
@@ -616,18 +610,18 @@ def verify_host(request: Request, instance_id: str, background_tasks: Background
     if returncode == 0:
         # The rail can flip this instance out of `unreachable` right away.
         background_tasks.add_task(get_discovery_service(request).refresh, instance_id)
-        return VerifyHostResponse(status="ok", detail="service key accepted")
+        return VerifyHostResponse(status=VerifyHostStatus.OK, detail="service key accepted")
 
     tail = stderr.splitlines()[-1] if stderr else f"ssh exited {returncode}"
     if "Host key verification failed" in stderr:
-        return VerifyHostResponse(status="host_key_untrusted", detail=tail)
+        return VerifyHostResponse(status=VerifyHostStatus.HOST_KEY_UNTRUSTED, detail=tail)
     if "Permission denied" in stderr:
         return VerifyHostResponse(
-            status="auth_failed",
+            status=VerifyHostStatus.AUTH_FAILED,
             detail="the service key was not accepted — run the authorize "
             "command on the host, then retry",
         )
-    return VerifyHostResponse(status="unreachable", detail=tail)
+    return VerifyHostResponse(status=VerifyHostStatus.UNREACHABLE, detail=tail)
 
 
 @router.get(
@@ -780,15 +774,21 @@ def get_registry_job(request: Request, job_id: str):
 def list_registry_jobs(request: Request, instance_id: str):
     """This instance's jobs, newest-first (re-attach after reload/restart)."""
     jobs = _job_runner(request).list_jobs(instance_id)
-    return JobListResponse(
-        jobs=[
+    summaries = []
+    for record in jobs:
+        try:
+            state = JobState(str(record.get("state", "")))
+        except ValueError:
+            # A job file from some future version: report it failed rather
+            # than 500 the whole listing over one row.
+            state = JobState.FAILED
+        summaries.append(
             JobSummary(
                 job_id=str(record.get("job_id", "")),
                 kind=str(record.get("kind", "")),
-                state=str(record.get("state", "")),
+                state=state,
                 started_at=str(record.get("started_at", "")),
                 finished_at=str(record.get("finished_at", "")),
             )
-            for record in jobs
-        ]
-    )
+        )
+    return JobListResponse(jobs=summaries)

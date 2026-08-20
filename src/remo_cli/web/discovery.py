@@ -495,6 +495,18 @@ class DiscoveryService:
             self._last_refreshed_at = _now_iso()
             self._last_refresh_monotonic = time.monotonic()
 
+    async def evict(self, instance_id: str) -> None:
+        """Drop one instance's snapshot (a targeted prune; no I/O).
+
+        A registry removal should disappear from the console immediately
+        without re-discovering every OTHER host over SSH, which is what the
+        full-refresh prune costs. No-op for an unknown id; a later full
+        refresh stays authoritative either way.
+        """
+        async with self._lock:
+            if self._snapshots.pop(instance_id, None) is not None:
+                self._rebuild_target_index()
+
     def _rebuild_target_index(self) -> None:
         """Recompute the flattened target-by-id index from current snapshots.
 

@@ -51,8 +51,19 @@ without `--yes` → **exit 3, nothing applied anywhere**.
   PUT so the wholesale trust-file write stays complete. Pulled keys are
   offered — never silently written — to `~/.ssh/known_hosts`; a pulled
   `identity_file` is kept verbatim with a warning when it doesn't resolve.
-- `409 generation_conflict` → re-GET, re-merge against the same base with
-  memoized resolutions, retry ≤ 3, then exit 1 naming the last change.
+- `409 generation_conflict` → re-GET, re-merge, retry ≤ 3, then exit 1 naming
+  the last change. The re-merge base is advanced by the attempt's own local
+  apply: values this run pulled (and base-less in-sync adoptions) are already
+  synchronized, so a deployment-side deletion landing between attempts is a
+  consented `DELETE_LOCAL` — never a `PUSH_ADD` resurrection. Conflict
+  resolutions are memoized by (name, local content, remote content): an
+  identical conflict never re-prompts, one whose content changed between
+  attempts does.
+- Pulled (and newly base-less-adopted) entries are persisted to the push
+  cache immediately after the local apply, best-effort, without advancing the
+  cached generation — a run that dies before its PUT still leaves the next
+  run a correct merge base. A successful PUT's step-14 write-back supersedes
+  this.
 - Cache v4 write-back after a successful PUT; verify + auth-failure self-heal
   + `POST /setup/end` reuse the push machinery.
 

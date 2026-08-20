@@ -49,9 +49,13 @@ _GATED_ROUTES = [
 class _NoopDiscovery:
     def __init__(self) -> None:
         self.refresh_calls: list[str | None] = []
+        self.evict_calls: list[str] = []
 
     async def refresh(self, instance_id: str | None = None, *, force: bool = True) -> None:
         self.refresh_calls.append(instance_id)
+
+    async def evict(self, instance_id: str) -> None:
+        self.evict_calls.append(instance_id)
 
 
 def _make_client(
@@ -274,6 +278,11 @@ class TestRemoveHost:
         assert cleanup[0][1] == "10.0.0.9"
         meta = json.loads((adopted.web_identity_dir / "mirror-meta.json").read_text())
         assert meta["last_change"]["origin"] == "web"
+        # A targeted evict — never a full refresh, which would re-discover
+        # every OTHER instance over SSH just to prune one snapshot.
+        discovery = client.app.state.discovery_service
+        assert discovery.evict_calls == [_SSH_ID]
+        assert None not in discovery.refresh_calls[1:]  # [0] is the lifespan's
 
     def test_lost_race_rc1_is_idempotent_success(self, adopted, monkeypatch):
         def fake_run(argv, timeout):

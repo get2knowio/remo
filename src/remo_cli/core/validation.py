@@ -80,8 +80,9 @@ def validate_project_name(name: str) -> None:
     ``ansible/roles/user_setup/templates/remo-host.sh.j2`` (contracts/
     remo-host-protocol.md, FR-011) so both surfaces reject exactly the same
     inputs before ever constructing a remote command (US5 scenario 3):
-    empty names, control characters, absolute paths, ``..`` traversal, and
-    embedded path separators. Spaces, Unicode, punctuation, and leading
+    empty names, control characters, absolute paths, ``..`` traversal,
+    embedded path separators, and leading dots (hidden names are reserved for
+    the host's clone-staging dirs). Spaces, Unicode, punctuation, and leading
     dashes are all otherwise permitted.
 
     This is a syntactic pre-check only — it does NOT verify the project
@@ -108,6 +109,12 @@ def validate_project_name(name: str) -> None:
 
     if "/" in name:
         raise ValueError(f"path separators are not allowed: {name}")
+
+    # Mirrors the remote check: hidden names are reserved for the host's own
+    # staging dirs (clone stages in "$PROJECTS_DIR/.remo-clone.*") and are
+    # excluded from `sessions list` enumeration.
+    if name.startswith("."):
+        raise ValueError(f"hidden project names (leading '.') are not allowed: {name}")
 
 
 def validate_tool_name(tool: str, flag: str = "--tools") -> None:

@@ -144,6 +144,15 @@
         "title": "CapabilityOut",
         "type": "object"
       },
+      "ChangeOrigin": {
+        "description": "Which plane last wrote the registry (contracts/mirror-meta.md): a\nworkstation push/sync, or the web console's registry-admin surface.",
+        "enum": [
+          "push",
+          "web"
+        ],
+        "title": "ChangeOrigin",
+        "type": "string"
+      },
       "ConfigureRequest": {
         "properties": {
           "only": {
@@ -742,8 +751,7 @@
             "type": "string"
           },
           "state": {
-            "title": "State",
-            "type": "string"
+            "$ref": "#/components/schemas/JobState"
           }
         },
         "required": [
@@ -973,8 +981,7 @@
             "type": "integer"
           },
           "origin": {
-            "title": "Origin",
-            "type": "string"
+            "$ref": "#/components/schemas/ChangeOrigin"
           }
         },
         "required": [
@@ -1055,8 +1062,7 @@
             "type": "array"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/ScanKeyStatus"
           }
         },
         "required": [
@@ -1065,6 +1071,16 @@
         ],
         "title": "ScanKeyResponse",
         "type": "object"
+      },
+      "ScanKeyStatus": {
+        "enum": [
+          "trusted",
+          "mismatch",
+          "no_trust",
+          "unreachable"
+        ],
+        "title": "ScanKeyStatus",
+        "type": "string"
       },
       "SessionTargetOut": {
         "properties": {
@@ -1444,8 +1460,7 @@
             "type": "string"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/VerifyHostStatus"
           }
         },
         "required": [
@@ -1454,6 +1469,16 @@
         ],
         "title": "VerifyHostResponse",
         "type": "object"
+      },
+      "VerifyHostStatus": {
+        "enum": [
+          "ok",
+          "auth_failed",
+          "host_key_untrusted",
+          "unreachable"
+        ],
+        "title": "VerifyHostStatus",
+        "type": "string"
       },
       "VerifyResponse": {
         "properties": {
