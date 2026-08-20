@@ -43,13 +43,7 @@ T011/T012/T013), all inheriting the router-level token dependency:
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
-import tempfile
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -61,12 +55,19 @@ from remo_cli.core.config import get_known_hosts_path
 from remo_cli.models.host import KnownHost
 from remo_cli.web import check as web_check
 from remo_cli.web.config import WebSettings
+from remo_cli.web.mirror_meta import read_mirror_meta, record_change
 from remo_cli.web.state import (
     ConfigurationState,
     ServiceIdentityError,
     detect_state,
     ensure_service_identity,
     load_service_identity,
+)
+from remo_cli.web.trust_store import (
+    known_hosts_line_error as _known_hosts_line_error,
+)
+from remo_cli.web.trust_store import (
+    write_lines_atomically as _write_lines_atomically,
 )
 
 logger = logging.getLogger("remo_cli.web.setup")
@@ -220,72 +221,6 @@ class SetupEndResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _write_lines_atomically(path: Path, lines: list[str]) -> None:
-    """Write *lines* to *path* atomically via a same-directory temp file + rename.
-
-    Used only for the service's own SSH ``known_hosts`` trust file (not the
-    remo registry, which goes through :mod:`core.registry`'s own atomic writer).
-    """
-    dir_ = path.parent
-    dir_.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".known_hosts_tmp_")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            for line in lines:
-                fh.write(line + "\n")
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _read_mirror_meta(settings: WebSettings) -> dict[str, Any] | None:
-    """Read the mirror-identity marker (`web-identity/mirror-meta.json`).
-
-    Returns the parsed document, or ``None`` when the file is absent, unreadable,
-    or corrupt (data-model.md §3: a missing/unreadable marker is a safe default).
-    """
-    try:
-        raw = settings.mirror_meta_path.read_text()
-    except OSError:
-        return None
-    try:
-        doc = json.loads(raw)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(doc, dict):
-        return None
-    return doc
-
-
-def _write_mirror_meta(settings: WebSettings, generation: int, workstation: str) -> None:
-    """Write the mirror-identity marker atomically (temp-file + `os.replace`).
-
-    Mirrors :func:`_write_lines_atomically`'s idiom. The *workstation* label is
-    untrusted display text (stored verbatim, never acted on).
-    """
-    doc = {
-        "generation": generation,
-        "last_push": {
-            "at": datetime.now(UTC).isoformat(),
-            "workstation": workstation,
-        },
-    }
-    path = settings.mirror_meta_path
-    dir_ = path.parent
-    dir_.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".mirror_meta_tmp_")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            json.dump(doc, fh)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
 def _mount_configured_response() -> JSONResponse:
     return JSONResponse(status_code=409, content={"reason": "mount_configured"})
 
@@ -332,35 +267,6 @@ def _unsupported_payload_version(version: Any) -> JSONResponse:
             }
         },
     )
-
-
-#: Plausible OpenSSH key-type token, e.g. ssh-ed25519, ecdsa-sha2-nistp256,
-#: sk-ssh-ed25519@openssh.com, ssh-rsa-cert-v01@openssh.com.
-_HOST_KEY_TYPE_RE = re.compile(r"^(sk-)?(ssh|ecdsa)-[a-z0-9-]+(@[a-z0-9.-]+)?$")
-_BASE64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
-_KNOWN_HOSTS_MARKERS = ("@cert-authority", "@revoked")
-
-
-def _known_hosts_line_error(line: str) -> str | None:
-    """Basic structural validation of one `known_hosts` line; None when OK."""
-    stripped = line.strip()
-    if not stripped:
-        return "empty line"
-    if stripped.startswith("#"):
-        return "comment line"
-    fields = stripped.split()
-    if fields[0].startswith("@"):
-        if fields[0] not in _KNOWN_HOSTS_MARKERS:
-            return f"unknown marker {fields[0]!r}"
-        fields = fields[1:]
-    if len(fields) < 3:
-        return "fewer than 3 fields (expected: hosts, key type, base64 key)"
-    key_type, key_material = fields[1], fields[2]
-    if not _HOST_KEY_TYPE_RE.match(key_type):
-        return f"implausible key type {key_type!r}"
-    if len(key_material) < 16 or not _BASE64_RE.match(key_material):
-        return "key material is not plausible base64"
-    return None
 
 
 def _map_v1_entries(entries: list[RegistryEntryV1In]) -> tuple[list[KnownHost], str | None]:
@@ -449,18 +355,9 @@ def _apply_payload(
     get_known_hosts_path().unlink(missing_ok=True)
 
     # The mirror-identity marker is the strictly-final, advisory step: it runs
-    # only after a successful registry write, and its own failure is swallowed.
-    existing = _read_mirror_meta(settings)
-    current_generation = 0
-    if existing is not None and isinstance(existing.get("generation"), int):
-        current_generation = existing["generation"]
-    new_generation = current_generation + 1
-    try:
-        _write_mirror_meta(settings, new_generation, workstation)
-    except OSError as exc:
-        logger.warning("mirror-meta write failed (registry apply succeeded): %s", exc)
-        return None
-    return new_generation
+    # only after a successful registry write, and its own failure is swallowed
+    # (inside record_change).
+    return record_change(settings, origin="push", workstation=workstation)
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +379,7 @@ def get_status(request: Request) -> SetupStatusResponse:
 
     mirror_generation: int | None = None
     last_push: LastPush | None = None
-    meta = _read_mirror_meta(settings)
+    meta = read_mirror_meta(settings)
     if meta is not None and isinstance(meta.get("generation"), int):
         mirror_generation = meta["generation"]
         raw_last = meta.get("last_push")
