@@ -47,6 +47,15 @@ export type JobAccepted = components["schemas"]["JobAcceptedResponse"];
 export type JobStatus = components["schemas"]["JobStatusResponse"];
 export type JobState = components["schemas"]["JobState"];
 export type ProjectDeleted = components["schemas"]["ProjectDeletedResponse"];
+export type AddHostRequest = components["schemas"]["AddHostRequest"];
+export type AddHostResponse = components["schemas"]["AddHostResponse"];
+export type HostRemoved = components["schemas"]["HostRemovedResponse"];
+export type ScanKeyResponse = components["schemas"]["ScanKeyResponse"];
+export type TrustKeyResponse = components["schemas"]["TrustKeyResponse"];
+export type VerifyHostResponse = components["schemas"]["VerifyHostResponse"];
+export type AuthorizeCommandResponse = components["schemas"]["AuthorizeCommandResponse"];
+export type RegistryJobList = components["schemas"]["JobListResponse"];
+export type RegistryJobSummary = components["schemas"]["JobSummary"];
 export type TerminalKind = components["schemas"]["TerminalKind"];
 
 // ---- Error handling ----
@@ -360,6 +369,94 @@ export async function getJobStatus(instanceId: string, jobId: string): Promise<J
   );
 }
 
+// ---- Registry admin (023): manage hosts from the console ----
+//
+// Every route below is dormant-404 unless `REMO_WEB_REGISTRY_ADMIN=enabled`;
+// the console gates its affordances on `features.registry_admin` instead of
+// ever seeing that 404.
+
+/** `POST /api/v1/registry/hosts` — register an SSH host via the embedded
+ * `remo add`. 201 carries the authorize one-liner (deploy-key pattern). */
+export async function addHost(body: AddHostRequest): Promise<AddHostResponse> {
+  return request<AddHostResponse>("/api/v1/registry/hosts", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** `DELETE /api/v1/registry/hosts/{id}` — deregister (registry only; the
+ * remote machine is never touched). */
+export async function removeHost(instanceId: string): Promise<HostRemoved> {
+  return request<HostRemoved>(`/api/v1/registry/hosts/${encodeURIComponent(instanceId)}`, {
+    method: "DELETE",
+  });
+}
+
+/** `POST …/scan-key` — scan + classify the host's SSH keys. */
+export async function scanHostKey(instanceId: string): Promise<ScanKeyResponse> {
+  return request<ScanKeyResponse>(
+    `/api/v1/registry/hosts/${encodeURIComponent(instanceId)}/scan-key`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+/** `POST …/trust-key` — record exactly the lines the operator confirmed. */
+export async function trustHostKey(
+  instanceId: string,
+  lines: string[],
+): Promise<TrustKeyResponse> {
+  return request<TrustKeyResponse>(
+    `/api/v1/registry/hosts/${encodeURIComponent(instanceId)}/trust-key`,
+    { method: "POST", body: JSON.stringify({ lines }) },
+  );
+}
+
+/** `POST …/verify` — can the service actually SSH-authenticate? */
+export async function verifyHost(instanceId: string): Promise<VerifyHostResponse> {
+  return request<VerifyHostResponse>(
+    `/api/v1/registry/hosts/${encodeURIComponent(instanceId)}/verify`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+/** `GET …/authorize-command` — the paste one-liner again (come-back-later). */
+export async function getAuthorizeCommand(
+  instanceId: string,
+): Promise<AuthorizeCommandResponse> {
+  return request<AuthorizeCommandResponse>(
+    `/api/v1/registry/hosts/${encodeURIComponent(instanceId)}/authorize-command`,
+    { method: "GET" },
+  );
+}
+
+/** `POST …/configure` — run `remo configure NAME` as a detached job (202). */
+export async function startConfigure(instanceId: string): Promise<JobAccepted> {
+  return request<JobAccepted>(
+    `/api/v1/registry/hosts/${encodeURIComponent(instanceId)}/configure`,
+    { method: "POST", body: JSON.stringify({}) },
+  );
+}
+
+/** `GET /api/v1/registry/jobs/{job_id}` — poll a registry-admin job.
+ * Wire-identical to `getJobStatus`, but the job lives on the SERVICE, not the
+ * host, so there is no instance in the path. */
+export async function getRegistryJobStatus(
+  _instanceId: string,
+  jobId: string,
+): Promise<JobStatus> {
+  return request<JobStatus>(`/api/v1/registry/jobs/${encodeURIComponent(jobId)}`, {
+    method: "GET",
+  });
+}
+
+/** `GET …/jobs` — this instance's registry-admin jobs, newest-first. */
+export async function listRegistryJobs(instanceId: string): Promise<RegistryJobList> {
+  return request<RegistryJobList>(
+    `/api/v1/registry/hosts/${encodeURIComponent(instanceId)}/jobs`,
+    { method: "GET" },
+  );
+}
+
 // ---- Health / readiness ----
 
 export type ReadinessCheck = string; // e.g. "ok" | "missing" | "unreadable" | ...
@@ -423,7 +520,7 @@ export async function getReady(): Promise<ReadinessResponse> {
 //
 // The awaiting-adoption page (and the dashboard re-sync affordance) mints an
 // ephemeral pairing code on open, which the operator copies to the clipboard
-// and pastes into `remo web adopt` / `remo web push`. The code is returned only
+// and pastes into `remo web sync` (or the deprecated push/adopt). The code is returned only
 // by mintPairingCode() at runtime — never embedded in the bundle (FR-016) — and
 // the caller MUST hold it out of the DOM (copy-only, never displayed).
 

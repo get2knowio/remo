@@ -53,6 +53,30 @@ describe("JobProgressPanel", () => {
     expect(onFinished).not.toHaveBeenCalled();
   });
 
+  it("pauses polling while the tab is hidden and refetches on return", async () => {
+    getJobStatus.mockResolvedValue(running("step 1"));
+    render(
+      <JobProgressPanel instanceId="i-1" job={JOB} onFinished={onFinished} onDismiss={onDismiss} />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const visibleCalls = getJobStatus.mock.calls.length;
+
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(getJobStatus).toHaveBeenCalledTimes(visibleCalls); // no wasted ticks
+
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(getJobStatus.mock.calls.length).toBeGreaterThan(visibleCalls); // immediate catch-up
+  });
+
   it("stops polling and refreshes discovery once on success", async () => {
     getJobStatus.mockResolvedValueOnce(running("step 1"));
     getJobStatus.mockResolvedValue({
@@ -120,5 +144,48 @@ describe("JobProgressPanel", () => {
     expect(screen.getByTestId("job-log").textContent).toContain("step 1");
     expect(screen.getByText(/status poll failed/)).toBeInTheDocument();
     expect(onFinished).not.toHaveBeenCalled();
+  });
+});
+
+describe("JobProgressPanel registry-admin (023)", () => {
+  it("uses a custom fetchStatus and configure wording", async () => {
+    const fetchStatus = vi.fn().mockResolvedValue(
+      { state: "running", exit_code: null, started_at: "", finished_at: "", log_tail: "PLAY [all]" },
+    );
+    render(
+      <JobProgressPanel
+        instanceId="i-1"
+        job={{ job_id: "configure-abc", kind: "configure", project: "" }}
+        fetchStatus={fetchStatus}
+        onFinished={onFinished}
+        onDismiss={onDismiss}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(fetchStatus).toHaveBeenCalledWith("i-1", "configure-abc");
+    expect(getJobStatus).not.toHaveBeenCalled();
+    expect(screen.getByTestId("job-state-line").textContent).toContain("Configuring host…");
+    expect(screen.getByTestId("job-log").textContent).toContain("PLAY [all]");
+  });
+
+  it("words configure success and failure without a project", async () => {
+    const fetchStatus = vi.fn().mockResolvedValue(
+      { state: "failed", exit_code: 2, started_at: "", finished_at: "t", log_tail: "boom" },
+    );
+    render(
+      <JobProgressPanel
+        instanceId="i-1"
+        job={{ job_id: "configure-x", kind: "configure", project: "" }}
+        fetchStatus={fetchStatus}
+        onFinished={onFinished}
+        onDismiss={onDismiss}
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByTestId("job-state-line").textContent).toContain("Configure failed (exit 2)");
   });
 });

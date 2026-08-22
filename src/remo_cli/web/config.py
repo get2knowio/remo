@@ -176,6 +176,16 @@ class WebSettings:
     # anything else is a fail-fast config error.
     host_admin: str = field(default_factory=lambda: _env_str("HOST_ADMIN", "").strip())
 
+    # -- Registry management surface (023) ----------------------------------
+    #
+    # REMO_WEB_REGISTRY_ADMIN gates the mutating registry-admin API
+    # (`web/api/registry_admin.py`: add/remove/configure hosts from the
+    # console via the embedded CLI). A NEW flag, not HOST_ADMIN reuse:
+    # registry mutation changes which machines the service will SSH into and
+    # appends to its trust store — a bigger blast radius than project
+    # maintenance. Same dormant-404 posture; the two flags compose.
+    registry_admin: str = field(default_factory=lambda: _env_str("REGISTRY_ADMIN", "").strip())
+
     # TTL for the ungated per-host stats mini-cache (seconds). Coalesces
     # multi-tab polling of GET /hosts/{id}/stats to at most one SSH round
     # trip per TTL per host. Must be > 0 (fail fast).
@@ -202,6 +212,11 @@ class WebSettings:
                 f"REMO_WEB_HOST_ADMIN={self.host_admin!r} is not valid; expected "
                 "'enabled' or leave it unset."
             )
+        if self.registry_admin not in ("", "enabled"):
+            raise WebConfigError(
+                f"REMO_WEB_REGISTRY_ADMIN={self.registry_admin!r} is not valid; "
+                "expected 'enabled' or leave it unset."
+            )
         if not self.host_stats_ttl_s > 0:
             raise WebConfigError(
                 f"REMO_WEB_HOST_STATS_TTL_S={self.host_stats_ttl_s!r} is not valid; "
@@ -211,6 +226,10 @@ class WebSettings:
     @property
     def host_admin_enabled(self) -> bool:
         return self.host_admin == "enabled"
+
+    @property
+    def registry_admin_enabled(self) -> bool:
+        return self.registry_admin == "enabled"
 
     # -- Service identity paths (research R1 layout) -----------------------
 
@@ -229,6 +248,15 @@ class WebSettings:
     @property
     def service_state_path(self) -> Path:
         return self.web_identity_dir / "state.json"
+
+    @property
+    def web_jobs_dir(self) -> Path:
+        """On-disk state for in-service CLI jobs (`web/jobs.py`, 023).
+
+        Sibling of ``web-identity/`` on the writable state volume; created
+        lazily (0700) by the runner's first spawn.
+        """
+        return self.web_identity_dir.parent / "web-jobs"
 
     @property
     def mirror_meta_path(self) -> Path:

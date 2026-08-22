@@ -26,6 +26,9 @@ interface SessionRailProps {
   onToggleHostCollapsed: (instanceId: string) => void;
   onToggleFavorite: (id: string, entry: FavoriteEntry) => void;
   onOpenHostDetail: (instanceId: string) => void;
+  /** features.registry_admin (023): render the add-host affordances. */
+  registryAdmin: boolean;
+  onAddHost: () => void;
 }
 
 const SKELETON_WIDTHS = ["70%", "52%", "84%", "44%", "66%", "58%", "76%", "48%", "62%"];
@@ -49,6 +52,8 @@ export function SessionRail({
   onToggleHostCollapsed,
   onToggleFavorite,
   onOpenHostDetail,
+  registryAdmin,
+  onAddHost,
 }: SessionRailProps): JSX.Element {
   const { attached, visible, focusedId } = workspace;
 
@@ -105,18 +110,49 @@ export function SessionRail({
             ⊞ Open all · {model.availCount}
           </button>
         </div>
+
+        {registryAdmin && (
+          <button
+            type="button"
+            className="rail-addhost"
+            data-testid="rail-add-host"
+            title="Register a new SSH host with this console"
+            onClick={onAddHost}
+          >
+            ＋ Add host
+          </button>
+        )}
       </div>
 
       <div className="rail-scroll">
         {isLoading ? (
           <RailSkeleton />
         ) : noRegistry ? (
-          <RailNotice
-            icon="◍"
-            title="Empty registry"
-            body="No instances registered. Add one with the CLI, then refresh."
-            code="$ remo <provider> create"
-          />
+          registryAdmin ? (
+            <div className="rail-notice" data-testid="empty-add-host">
+              <div className="rail-notice-icon">◍</div>
+              <div className="rail-notice-title">No hosts yet</div>
+              <p className="rail-notice-body">
+                Register any SSH-reachable machine and this console can configure it and run
+                sessions on it — no workstation CLI needed.
+              </p>
+              <button
+                type="button"
+                className="rail-openall rail-notice-add"
+                data-testid="empty-add-host-button"
+                onClick={onAddHost}
+              >
+                ＋ Add a host
+              </button>
+            </div>
+          ) : (
+            <RailNotice
+              icon="◍"
+              title="Empty registry"
+              body="No instances registered. Add one with the CLI, then refresh."
+              code="$ remo <provider> create"
+            />
+          )
         ) : noCredentials ? (
           <RailNotice
             icon="🔑"

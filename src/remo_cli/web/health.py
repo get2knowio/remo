@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from enum import Enum
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -31,6 +32,7 @@ from pydantic import BaseModel
 from remo_cli import __version__
 from remo_cli.core.config import get_known_hosts_path_readonly
 from remo_cli.web.config import WebSettings
+from remo_cli.web.mirror_meta import read_mirror_meta
 from remo_cli.web.state import ConfigurationState, detect_state
 
 router = APIRouter()
@@ -46,6 +48,29 @@ class FeaturesOut(BaseModel):
     """
 
     host_admin: bool
+    #: EFFECTIVE availability of the registry-admin surface (023): the flag is
+    #: on AND the deployment is not mount-configured (whose registry is a
+    #: read-only mirror — every mutating route would 409, so the console
+    #: should not render the affordances at all).
+    registry_admin: bool = False
+
+
+class ChangeOrigin(str, Enum):
+    """Which plane last wrote the registry (contracts/mirror-meta.md): a
+    workstation push/sync, or the web console's registry-admin surface."""
+
+    PUSH = "push"
+    WEB = "web"
+
+
+class RegistryChangeOut(BaseModel):
+    """Last registry change (023): generation + when + which plane. Discloses
+    no names/hosts/keys — just enough for the console's unsynced-changes badge
+    and a workstation glancing at whether a sync is due."""
+
+    generation: int
+    at: str
+    origin: ChangeOrigin
 
 
 class HealthResponse(BaseModel):
@@ -60,6 +85,8 @@ class HealthResponse(BaseModel):
     version: str
     #: Feature toggles the console gates whole UI sections on.
     features: FeaturesOut
+    #: Last registry change, when a mirror marker exists (023); else null.
+    registry_change: RegistryChangeOut | None = None
 
 
 class ReadinessResponse(BaseModel):
@@ -84,13 +111,43 @@ _BROKEN_DETAIL = (
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health(request: Request) -> HealthResponse:
-    """Liveness probe: the process is up. Never checks configuration."""
+def health(request: Request) -> HealthResponse:
+    """Liveness probe: the process is up.
+
+    Reads the mirror marker (and, when registry admin is enabled, the
+    configuration state) from disk, so it is a sync ``def`` route: FastAPI
+    runs it in the threadpool, keeping the file I/O off the event loop that
+    is pumping every live terminal WebSocket — the console polls this route
+    every 10s per open tab.
+    """
     settings: WebSettings = getattr(request.app.state, "settings", None) or WebSettings()
+    registry_change: RegistryChangeOut | None = None
+    meta = read_mirror_meta(settings)
+    if meta is not None and isinstance(meta.get("generation"), int):
+        raw_change = meta.get("last_change")
+        # `origin` is a closed enum on the wire; a marker written by some
+        # future/foreign version with an unknown origin simply doesn't drive
+        # the badge (liveness must never 500 over a state file).
+        if isinstance(raw_change, dict) and str(raw_change.get("origin", "")) in (
+            ChangeOrigin.PUSH,
+            ChangeOrigin.WEB,
+        ):
+            registry_change = RegistryChangeOut(
+                generation=meta["generation"],
+                at=str(raw_change.get("at", "")),
+                origin=ChangeOrigin(str(raw_change.get("origin", ""))),
+            )
     return HealthResponse(
         status="alive",
         version=__version__,
-        features=FeaturesOut(host_admin=settings.host_admin_enabled),
+        features=FeaturesOut(
+            host_admin=settings.host_admin_enabled,
+            registry_admin=(
+                settings.registry_admin_enabled
+                and detect_state(settings) is not ConfigurationState.MOUNT_CONFIGURED
+            ),
+        ),
+        registry_change=registry_change,
     )
 
 

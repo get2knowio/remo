@@ -43,13 +43,8 @@ T011/T012/T013), all inheriting the router-level token dependency:
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import re
-import tempfile
-from datetime import UTC, datetime
-from pathlib import Path
+import threading
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -58,9 +53,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from remo_cli.core import registry
 from remo_cli.core.config import get_known_hosts_path
+from remo_cli.core.web_adopt import known_hosts_lookup_key
 from remo_cli.models.host import KnownHost
 from remo_cli.web import check as web_check
+from remo_cli.web.api.gating import dormant
 from remo_cli.web.config import WebSettings
+from remo_cli.web.mirror_meta import read_mirror_meta, record_change
 from remo_cli.web.state import (
     ConfigurationState,
     ServiceIdentityError,
@@ -68,10 +66,19 @@ from remo_cli.web.state import (
     ensure_service_identity,
     load_service_identity,
 )
+from remo_cli.web.trust_store import (
+    known_hosts_line_error as _known_hosts_line_error,
+)
+from remo_cli.web.trust_store import (
+    line_matches_lookup_key as _line_matches_lookup_key,
+)
+from remo_cli.web.trust_store import (
+    write_lines_atomically as _write_lines_atomically,
+)
 
 logger = logging.getLogger("remo_cli.web.setup")
 
-SUPPORTED_PAYLOAD_VERSIONS: list[int] = [1, 2]
+SUPPORTED_PAYLOAD_VERSIONS: list[int] = [1, 2, 3]
 
 
 def _get_settings(request: Request) -> WebSettings:
@@ -79,11 +86,8 @@ def _get_settings(request: Request) -> WebSettings:
     return getattr(request.app.state, "settings", None) or WebSettings()
 
 
-def _dormant() -> HTTPException:
-    """The dormant response — byte-identical to FastAPI's default unknown-route
-    404 (FR-005/FR-006). A fresh instance per raise (never a shared singleton,
-    which would accumulate traceback/context state)."""
-    return HTTPException(status_code=404, detail="Not Found")
+# The dormant response (FR-005/FR-006) — the shared `web/api/gating.py` shape.
+_dormant = dormant
 
 
 async def require_pairing_code(request: Request) -> None:
@@ -127,6 +131,16 @@ class LastPush(BaseModel):
     workstation: str
 
 
+class LastChange(BaseModel):
+    """The mirror marker's `last_change` descriptor (023): which plane last
+    mutated the service registry, and when. `workstation` is the untrusted
+    display label a push carried; None for web-origin changes."""
+
+    at: str
+    origin: str
+    workstation: str | None = None
+
+
 class SetupStatusResponse(BaseModel):
     state: str
     deployment_id: str | None
@@ -136,6 +150,8 @@ class SetupStatusResponse(BaseModel):
     #: Mirror-identity marker (017); omitted when no mirror has ever been applied.
     mirror_generation: int | None = None
     last_push: LastPush | None = None
+    #: Which plane last changed the registry (023); omitted pre-023 markers.
+    last_change: LastChange | None = None
 
 
 class IdentityResponse(BaseModel):
@@ -188,6 +204,35 @@ class AdoptionPayloadV2In(BaseModel):
     host_keys: dict[str, list[str]] = Field(default_factory=dict)
 
 
+class AdoptionPayloadV3In(AdoptionPayloadV2In):
+    """v3 `PUT /registry` body (023, `remo web sync`): v2 + an optimistic-
+    concurrency precondition. `base_generation` is the mirror generation the
+    workstation's merge was computed against; a mismatch is a 409
+    `generation_conflict` with the prior mirror left fully intact.
+
+    v1/v2 stay accepted unconditionally — that IS the deprecated
+    `remo web push` force path (supersedes specs/017 research.md R4 for v3
+    only)."""
+
+    base_generation: int = Field(ge=0)
+
+
+class RegistryReadResponse(BaseModel):
+    """`GET /setup/registry` (023): the service's registry as a sync source.
+
+    `registry` carries known-type entries in the registry-file-v2.md hostEntry
+    shape; unknown-type raw entries are omitted (opaque to sync — each side
+    preserves its own verbatim). `host_keys` regroups the flat service trust
+    file by registered instance name (sound: every stored line is
+    ssh-keyscan-sourced, never hashed); unmatched lines are omitted."""
+
+    entry_version: int = 2
+    registry: list[dict[str, Any]]
+    host_keys: dict[str, list[str]]
+    mirror_generation: int
+    last_change: LastChange | None = None
+
+
 class RegistryApplyResponse(BaseModel):
     applied: bool
     registry_instances: int
@@ -202,6 +247,9 @@ class VerifyCheckOut(BaseModel):
     passed: bool
     detail: str
     remediation: str | None = None
+    #: Machine-readable error code for instance checks (023); the CLI prefers
+    #: this over string-matching `detail`, falling back for older services.
+    code: str | None = None
 
 
 class VerifyResponse(BaseModel):
@@ -220,70 +268,33 @@ class SetupEndResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _write_lines_atomically(path: Path, lines: list[str]) -> None:
-    """Write *lines* to *path* atomically via a same-directory temp file + rename.
-
-    Used only for the service's own SSH ``known_hosts`` trust file (not the
-    remo registry, which goes through :mod:`core.registry`'s own atomic writer).
-    """
-    dir_ = path.parent
-    dir_.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".known_hosts_tmp_")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            for line in lines:
-                fh.write(line + "\n")
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
-
-
-def _read_mirror_meta(settings: WebSettings) -> dict[str, Any] | None:
-    """Read the mirror-identity marker (`web-identity/mirror-meta.json`).
-
-    Returns the parsed document, or ``None`` when the file is absent, unreadable,
-    or corrupt (data-model.md §3: a missing/unreadable marker is a safe default).
-    """
-    try:
-        raw = settings.mirror_meta_path.read_text()
-    except OSError:
+def _last_change_from_meta(meta: dict[str, Any] | None) -> LastChange | None:
+    """Parse the marker's `last_change` (023); None for pre-023/absent markers."""
+    if meta is None:
         return None
-    try:
-        doc = json.loads(raw)
-    except (ValueError, TypeError):
+    raw = meta.get("last_change")
+    if not isinstance(raw, dict):
         return None
-    if not isinstance(doc, dict):
-        return None
-    return doc
+    workstation = raw.get("workstation")
+    return LastChange(
+        at=str(raw.get("at", "")),
+        origin=str(raw.get("origin", "")),
+        workstation=str(workstation) if isinstance(workstation, str) else None,
+    )
 
 
-def _write_mirror_meta(settings: WebSettings, generation: int, workstation: str) -> None:
-    """Write the mirror-identity marker atomically (temp-file + `os.replace`).
+def _registry_write_lock(request: Request) -> threading.Lock:
+    """The app-wide lock making the v3 generation check atomic with the apply.
 
-    Mirrors :func:`_write_lines_atomically`'s idiom. The *workstation* label is
-    untrusted display text (stored verbatim, never acted on).
+    Setup routes are sync (threadpool), so a plain `threading.Lock` is the
+    right primitive. Shared with the registry-admin mutators via `app.state`
+    (created in `create_app`; lazily here for bare test apps).
     """
-    doc = {
-        "generation": generation,
-        "last_push": {
-            "at": datetime.now(UTC).isoformat(),
-            "workstation": workstation,
-        },
-    }
-    path = settings.mirror_meta_path
-    dir_ = path.parent
-    dir_.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".mirror_meta_tmp_")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            json.dump(doc, fh)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    lock = getattr(request.app.state, "registry_write_lock", None)
+    if lock is None:
+        lock = threading.Lock()
+        request.app.state.registry_write_lock = lock
+    return lock
 
 
 def _mount_configured_response() -> JSONResponse:
@@ -332,35 +343,6 @@ def _unsupported_payload_version(version: Any) -> JSONResponse:
             }
         },
     )
-
-
-#: Plausible OpenSSH key-type token, e.g. ssh-ed25519, ecdsa-sha2-nistp256,
-#: sk-ssh-ed25519@openssh.com, ssh-rsa-cert-v01@openssh.com.
-_HOST_KEY_TYPE_RE = re.compile(r"^(sk-)?(ssh|ecdsa)-[a-z0-9-]+(@[a-z0-9.-]+)?$")
-_BASE64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
-_KNOWN_HOSTS_MARKERS = ("@cert-authority", "@revoked")
-
-
-def _known_hosts_line_error(line: str) -> str | None:
-    """Basic structural validation of one `known_hosts` line; None when OK."""
-    stripped = line.strip()
-    if not stripped:
-        return "empty line"
-    if stripped.startswith("#"):
-        return "comment line"
-    fields = stripped.split()
-    if fields[0].startswith("@"):
-        if fields[0] not in _KNOWN_HOSTS_MARKERS:
-            return f"unknown marker {fields[0]!r}"
-        fields = fields[1:]
-    if len(fields) < 3:
-        return "fewer than 3 fields (expected: hosts, key type, base64 key)"
-    key_type, key_material = fields[1], fields[2]
-    if not _HOST_KEY_TYPE_RE.match(key_type):
-        return f"implausible key type {key_type!r}"
-    if len(key_material) < 16 or not _BASE64_RE.match(key_material):
-        return "key material is not plausible base64"
-    return None
 
 
 def _map_v1_entries(entries: list[RegistryEntryV1In]) -> tuple[list[KnownHost], str | None]:
@@ -449,18 +431,9 @@ def _apply_payload(
     get_known_hosts_path().unlink(missing_ok=True)
 
     # The mirror-identity marker is the strictly-final, advisory step: it runs
-    # only after a successful registry write, and its own failure is swallowed.
-    existing = _read_mirror_meta(settings)
-    current_generation = 0
-    if existing is not None and isinstance(existing.get("generation"), int):
-        current_generation = existing["generation"]
-    new_generation = current_generation + 1
-    try:
-        _write_mirror_meta(settings, new_generation, workstation)
-    except OSError as exc:
-        logger.warning("mirror-meta write failed (registry apply succeeded): %s", exc)
-        return None
-    return new_generation
+    # only after a successful registry write, and its own failure is swallowed
+    # (inside record_change).
+    return record_change(settings, origin="push", workstation=workstation)
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +455,7 @@ def get_status(request: Request) -> SetupStatusResponse:
 
     mirror_generation: int | None = None
     last_push: LastPush | None = None
-    meta = _read_mirror_meta(settings)
+    meta = read_mirror_meta(settings)
     if meta is not None and isinstance(meta.get("generation"), int):
         mirror_generation = meta["generation"]
         raw_last = meta.get("last_push")
@@ -500,6 +473,7 @@ def get_status(request: Request) -> SetupStatusResponse:
         payload_versions=list(SUPPORTED_PAYLOAD_VERSIONS),
         mirror_generation=mirror_generation,
         last_push=last_push,
+        last_change=_last_change_from_meta(meta),
     )
 
 
@@ -519,6 +493,68 @@ def get_identity(request: Request) -> IdentityResponse | JSONResponse:
     except ServiceIdentityError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return IdentityResponse(deployment_id=identity.deployment_id, public_key=identity.public_key)
+
+
+@router.get(
+    "/registry", response_model=RegistryReadResponse, response_model_exclude_none=True
+)
+def get_registry_route(request: Request) -> RegistryReadResponse | JSONResponse:
+    """`GET /api/v1/setup/registry` (023) -- the sync source for `remo web sync`.
+
+    Known-type entries in hostEntry (v2) shape, plus the service trust file
+    regrouped per instance name, plus the mirror generation the workstation
+    must echo back as `PUT` v3's `base_generation`. Advertising payload
+    version 3 on `/setup/status` is the capability signal for this route --
+    the CLI never probes it (an old service's 404 is indistinguishable from a
+    dormant surface).
+    """
+    settings = _get_settings(request)
+    if detect_state(settings) is ConfigurationState.MOUNT_CONFIGURED:
+        return _mount_configured_response()
+
+    # The whole read runs under the shared write lock so the response is a
+    # CONSISTENT snapshot: reading the entries before the marker without it
+    # could pair pre-mutation entries with a post-mutation generation, and a
+    # sync built on that GET would pass the v3 base_generation check while
+    # merging against stale state — the exact lost update the generation
+    # mechanism exists to prevent. (Reads are fast; writers hold this lock
+    # only for sub-second mutations.)
+    with _registry_write_lock(request):
+        view = registry.read_registry(readonly=True)
+        entries = [registry.known_host_to_entry(h) for h in view.hosts]
+
+        # Regroup the flat trust file: each line's hosts field is matched
+        # against every direct-access entry's lookup key (bare host for :22,
+        # [host]:port otherwise -- exactly what ssh-keyscan wrote). Unmatched
+        # lines omitted.
+        lookup_to_name = {
+            known_hosts_lookup_key(h.host, h.ssh_port): h.name
+            for h in view.hosts
+            if h.access_mode != "ssm"
+        }
+        host_keys: dict[str, list[str]] = {}
+        try:
+            trust_lines = settings.service_known_hosts_path.read_text().splitlines()
+        except OSError:
+            trust_lines = []
+        for line in trust_lines:
+            for lookup_key, name in lookup_to_name.items():
+                if _line_matches_lookup_key(line, lookup_key):
+                    host_keys.setdefault(name, []).append(line)
+                    break
+
+        meta = read_mirror_meta(settings)
+        mirror_generation = 0
+        if meta is not None and isinstance(meta.get("generation"), int):
+            mirror_generation = meta["generation"]
+
+    return RegistryReadResponse(
+        entry_version=2,
+        registry=entries,
+        host_keys=host_keys,
+        mirror_generation=mirror_generation,
+        last_change=_last_change_from_meta(meta),
+    )
 
 
 @router.put(
@@ -546,15 +582,21 @@ def put_registry(
     if version not in SUPPORTED_PAYLOAD_VERSIONS:
         return _unsupported_payload_version(version)
 
+    base_generation: int | None = None
     try:
         if version == 1:
             payload_v1 = AdoptionPayloadV1In.model_validate(body)
             hosts, error = _map_v1_entries(payload_v1.registry)
             host_keys = payload_v1.host_keys
-        else:
+        elif version == 2:
             payload_v2 = AdoptionPayloadV2In.model_validate(body)
             hosts, error = _map_v2_entries(payload_v2.registry)
             host_keys = payload_v2.host_keys
+        else:
+            payload_v3 = AdoptionPayloadV3In.model_validate(body)
+            hosts, error = _map_v2_entries(payload_v3.registry)
+            host_keys = payload_v3.host_keys
+            base_generation = payload_v3.base_generation
     except ValidationError as exc:
         detail = "; ".join(
             f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}"
@@ -582,15 +624,37 @@ def put_registry(
     raw_workstation = body.get("workstation")
     workstation = raw_workstation if isinstance(raw_workstation, str) else "unknown"
 
-    try:
-        mirror_generation = _apply_payload(hosts, host_keys, settings, workstation)
-    except (OSError, registry.RegistryError) as exc:
-        # OSError: a filesystem write failed. RegistryError: a lock timeout
-        # (RegistryBusyError) or an unreadable/newer-version registry.json on
-        # the service volume -- either way a clean 500, never an uncaught
-        # traceback (the hosts themselves were already validated above).
-        logger.error("registry apply failed: %s", exc)
-        raise HTTPException(status_code=500, detail="failed to apply registry") from exc
+    # v3's generation check must be atomic with the apply (two concurrent
+    # syncs, or a sync racing a console-side change). v1/v2 take the lock too
+    # so an unconditional force-push serializes with a checked sync instead of
+    # interleaving with it.
+    with _registry_write_lock(request):
+        if base_generation is not None:
+            meta = read_mirror_meta(settings)
+            current_generation = 0
+            if meta is not None and isinstance(meta.get("generation"), int):
+                current_generation = meta["generation"]
+            if base_generation != current_generation:
+                conflict_change = _last_change_from_meta(meta)
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "reason": "generation_conflict",
+                        "current_generation": current_generation,
+                        "last_change": (
+                            conflict_change.model_dump() if conflict_change else None
+                        ),
+                    },
+                )
+        try:
+            mirror_generation = _apply_payload(hosts, host_keys, settings, workstation)
+        except (OSError, registry.RegistryError) as exc:
+            # OSError: a filesystem write failed. RegistryError: a lock timeout
+            # (RegistryBusyError) or an unreadable/newer-version registry.json on
+            # the service volume -- either way a clean 500, never an uncaught
+            # traceback (the hosts themselves were already validated above).
+            logger.error("registry apply failed: %s", exc)
+            raise HTTPException(status_code=500, detail="failed to apply registry") from exc
 
     logger.info(
         "adoption mirror applied (payload v%d): %d registry entries, %d instances with host keys",
@@ -632,6 +696,7 @@ def post_verify(request: Request) -> VerifyResponse:
                 passed=result.passed,
                 detail=result.detail,
                 remediation=result.remediation,
+                code=result.code,
             )
             for result in results
         ],

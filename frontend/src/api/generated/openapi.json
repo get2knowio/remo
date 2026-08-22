@@ -1,6 +1,108 @@
 {
   "components": {
     "schemas": {
+      "AddHostRequest": {
+        "description": "Deliberately NO identity field: the service always authenticates with\nits own key (a container path stored in the entry would sync to\nworkstations and, under IdentitiesOnly, guarantee auth failure there).",
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User"
+          }
+        },
+        "required": [
+          "name",
+          "target"
+        ],
+        "title": "AddHostRequest",
+        "type": "object"
+      },
+      "AddHostResponse": {
+        "properties": {
+          "authorize_command": {
+            "title": "Authorize Command",
+            "type": "string"
+          },
+          "host": {
+            "title": "Host",
+            "type": "string"
+          },
+          "instance_id": {
+            "title": "Instance Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "port": {
+            "title": "Port",
+            "type": "integer"
+          },
+          "public_key": {
+            "title": "Public Key",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "instance_id",
+          "name",
+          "host",
+          "user",
+          "port",
+          "public_key",
+          "authorize_command"
+        ],
+        "title": "AddHostResponse",
+        "type": "object"
+      },
+      "AuthorizeCommandResponse": {
+        "properties": {
+          "authorize_command": {
+            "title": "Authorize Command",
+            "type": "string"
+          },
+          "public_key": {
+            "title": "Public Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "public_key",
+          "authorize_command"
+        ],
+        "title": "AuthorizeCommandResponse",
+        "type": "object"
+      },
       "CapabilityOut": {
         "properties": {
           "docker": {
@@ -40,6 +142,35 @@
           "projects_root"
         ],
         "title": "CapabilityOut",
+        "type": "object"
+      },
+      "ChangeOrigin": {
+        "description": "Which plane last wrote the registry (contracts/mirror-meta.md): a\nworkstation push/sync, or the web console's registry-admin surface.",
+        "enum": [
+          "push",
+          "web"
+        ],
+        "title": "ChangeOrigin",
+        "type": "string"
+      },
+      "ConfigureRequest": {
+        "properties": {
+          "only": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Only",
+            "type": "array"
+          },
+          "skip": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Skip",
+            "type": "array"
+          }
+        },
+        "title": "ConfigureRequest",
         "type": "object"
       },
       "CreateProjectRequest": {
@@ -239,6 +370,11 @@
           "host_admin": {
             "title": "Host Admin",
             "type": "boolean"
+          },
+          "registry_admin": {
+            "default": false,
+            "title": "Registry Admin",
+            "type": "boolean"
           }
         },
         "required": [
@@ -265,6 +401,16 @@
           "features": {
             "$ref": "#/components/schemas/FeaturesOut"
           },
+          "registry_change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegistryChangeOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -280,6 +426,24 @@
           "features"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HostRemovedResponse": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "removed": {
+            "default": true,
+            "title": "Removed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "HostRemovedResponse",
         "type": "object"
       },
       "HostStatsResponse": {
@@ -502,6 +666,22 @@
         "title": "JobAcceptedResponse",
         "type": "object"
       },
+      "JobListResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/JobSummary"
+            },
+            "title": "Jobs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs"
+        ],
+        "title": "JobListResponse",
+        "type": "object"
+      },
       "JobState": {
         "description": "Lifecycle state of a detached ``remo-host`` job.",
         "enum": [
@@ -550,6 +730,38 @@
         "title": "JobStatusResponse",
         "type": "object"
       },
+      "JobSummary": {
+        "properties": {
+          "finished_at": {
+            "default": "",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "started_at": {
+            "default": "",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "state"
+        ],
+        "title": "JobSummary",
+        "type": "object"
+      },
       "KnownProviderType": {
         "description": "The built-in provider types (data-model.md \u00a71).\n\nFixed by the built-in set, not derived from `core.provider_registry.\nall_descriptors()` at import time (FR-004a/SC-011): a third-party\nprovider install must never perturb the exported OpenAPI artifact.\n`tests/unit/test_schema_drift.py` (T-8) asserts this enum's members\nequal the built-in descriptor names, so a first-party provider addition\nfails loudly instead of silently drifting from reality.\n\nEvery field this annotates stays typed `KnownProviderType | str`\n(FR-014, SC-009): the wire value is unconstrained (any provider type\nname is valid data); this enum only makes the *known* vocabulary a\nreferenceable OpenAPI component for the console to enumerate.",
         "enum": [
@@ -560,6 +772,36 @@
         ],
         "title": "KnownProviderType",
         "type": "string"
+      },
+      "LastChange": {
+        "description": "The mirror marker's `last_change` descriptor (023): which plane last\nmutated the service registry, and when. `workstation` is the untrusted\ndisplay label a push carried; None for web-origin changes.",
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
+          "workstation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workstation"
+          }
+        },
+        "required": [
+          "at",
+          "origin"
+        ],
+        "title": "LastChange",
+        "type": "object"
       },
       "LastPush": {
         "properties": {
@@ -727,6 +969,119 @@
         "title": "RegistryApplyResponse",
         "type": "object"
       },
+      "RegistryChangeOut": {
+        "description": "Last registry change (023): generation + when + which plane. Discloses\nno names/hosts/keys \u2014 just enough for the console's unsynced-changes badge\nand a workstation glancing at whether a sync is due.",
+        "properties": {
+          "at": {
+            "title": "At",
+            "type": "string"
+          },
+          "generation": {
+            "title": "Generation",
+            "type": "integer"
+          },
+          "origin": {
+            "$ref": "#/components/schemas/ChangeOrigin"
+          }
+        },
+        "required": [
+          "generation",
+          "at",
+          "origin"
+        ],
+        "title": "RegistryChangeOut",
+        "type": "object"
+      },
+      "RegistryReadResponse": {
+        "description": "`GET /setup/registry` (023): the service's registry as a sync source.\n\n`registry` carries known-type entries in the registry-file-v2.md hostEntry\nshape; unknown-type raw entries are omitted (opaque to sync \u2014 each side\npreserves its own verbatim). `host_keys` regroups the flat service trust\nfile by registered instance name (sound: every stored line is\nssh-keyscan-sourced, never hashed); unmatched lines are omitted.",
+        "properties": {
+          "entry_version": {
+            "default": 2,
+            "title": "Entry Version",
+            "type": "integer"
+          },
+          "host_keys": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Host Keys",
+            "type": "object"
+          },
+          "last_change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mirror_generation": {
+            "title": "Mirror Generation",
+            "type": "integer"
+          },
+          "registry": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Registry",
+            "type": "array"
+          }
+        },
+        "required": [
+          "registry",
+          "host_keys",
+          "mirror_generation"
+        ],
+        "title": "RegistryReadResponse",
+        "type": "object"
+      },
+      "ScanKeyResponse": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "fingerprints": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Fingerprints",
+            "type": "array"
+          },
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Lines",
+            "type": "array"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ScanKeyStatus"
+          }
+        },
+        "required": [
+          "status",
+          "detail"
+        ],
+        "title": "ScanKeyResponse",
+        "type": "object"
+      },
+      "ScanKeyStatus": {
+        "enum": [
+          "trusted",
+          "mismatch",
+          "no_trust",
+          "unreachable"
+        ],
+        "title": "ScanKeyStatus",
+        "type": "string"
+      },
       "SessionTargetOut": {
         "properties": {
           "devcontainer_running": {
@@ -839,6 +1194,16 @@
               }
             ],
             "title": "Deployment Id"
+          },
+          "last_change": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LastChange"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "last_push": {
             "anyOf": [
@@ -976,6 +1341,33 @@
         "title": "TerminalsListResponse",
         "type": "object"
       },
+      "TrustKeyRequest": {
+        "properties": {
+          "lines": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Lines",
+            "type": "array"
+          }
+        },
+        "required": [
+          "lines"
+        ],
+        "title": "TrustKeyRequest",
+        "type": "object"
+      },
+      "TrustKeyResponse": {
+        "properties": {
+          "trusted": {
+            "default": true,
+            "title": "Trusted",
+            "type": "boolean"
+          }
+        },
+        "title": "TrustKeyResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -1018,6 +1410,17 @@
       },
       "VerifyCheckOut": {
         "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
           "detail": {
             "title": "Detail",
             "type": "string"
@@ -1049,6 +1452,33 @@
         ],
         "title": "VerifyCheckOut",
         "type": "object"
+      },
+      "VerifyHostResponse": {
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/VerifyHostStatus"
+          }
+        },
+        "required": [
+          "status",
+          "detail"
+        ],
+        "title": "VerifyHostResponse",
+        "type": "object"
+      },
+      "VerifyHostStatus": {
+        "enum": [
+          "ok",
+          "auth_failed",
+          "host_key_untrusted",
+          "unreachable"
+        ],
+        "title": "VerifyHostStatus",
+        "type": "string"
       },
       "VerifyResponse": {
         "properties": {
@@ -1138,7 +1568,7 @@
     },
     "/api/v1/health": {
       "get": {
-        "description": "Liveness probe: the process is up. Never checks configuration.",
+        "description": "Liveness probe: the process is up.\n\nReads the mirror marker (and, when registry admin is enabled, the\nconfiguration state) from disk, so it is a sync ``def`` route: FastAPI\nruns it in the threadpool, keeping the file I/O off the event loop that\nis pumping every live terminal WebSocket \u2014 the console polls this route\nevery 10s per open tab.",
         "operationId": "health_api_v1_health_get",
         "responses": {
           "200": {
@@ -1688,6 +2118,752 @@
         "summary": "Ready"
       }
     },
+    "/api/v1/registry/hosts": {
+      "post": {
+        "description": "Register an SSH host via the embedded `remo add` (sync, sub-second).",
+        "operationId": "add_host_api_v1_registry_hosts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddHostRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddHostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Add Host"
+      }
+    },
+    "/api/v1/registry/hosts/{instance_id}": {
+      "delete": {
+        "description": "Deregister a host (local registry only \u2014 the machine is never touched).",
+        "operationId": "remove_host_api_v1_registry_hosts__instance_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostRemovedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Remove Host"
+      }
+    },
+    "/api/v1/registry/hosts/{instance_id}/authorize-command": {
+      "get": {
+        "description": "The paste-one-liner again, for come-back-later screens.",
+        "operationId": "authorize_command_api_v1_registry_hosts__instance_id__authorize_command_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorizeCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Authorize Command"
+      }
+    },
+    "/api/v1/registry/hosts/{instance_id}/configure": {
+      "post": {
+        "description": "Run the embedded `remo configure NAME` as a detached job (minutes).",
+        "operationId": "start_configure_api_v1_registry_hosts__instance_id__configure_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ConfigureRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Start Configure"
+      }
+    },
+    "/api/v1/registry/hosts/{instance_id}/jobs": {
+      "get": {
+        "description": "This instance's jobs, newest-first (re-attach after reload/restart).",
+        "operationId": "list_registry_jobs_api_v1_registry_hosts__instance_id__jobs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "List Registry Jobs"
+      }
+    },
+    "/api/v1/registry/hosts/{instance_id}/scan-key": {
+      "post": {
+        "description": "Scan the host's SSH keys and classify them against the service trust\nfile. Host keys are public \u2014 returning them (with fingerprints) is the\npoint: the browser shows them for the operator's confirmation.",
+        "operationId": "scan_key_api_v1_registry_hosts__instance_id__scan_key_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanKeyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Scan Key"
+      }
+    },
+    "/api/v1/registry/hosts/{instance_id}/trust-key": {
+      "post": {
+        "description": "Record the operator-confirmed key lines in the service trust file.",
+        "operationId": "trust_key_api_v1_registry_hosts__instance_id__trust_key_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrustKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrustKeyResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Trust Key"
+      }
+    },
+    "/api/v1/registry/hosts/{instance_id}/verify": {
+      "post": {
+        "description": "Prove the service can SSH-authenticate to the host (before remo-host\nexists there \u2014 this is a bare `true`, not a capability probe).",
+        "operationId": "verify_host_api_v1_registry_hosts__instance_id__verify_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyHostResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Verify Host"
+      }
+    },
+    "/api/v1/registry/jobs/{job_id}": {
+      "get": {
+        "description": "Poll a registry-admin job (wire-identical to host_admin's job status).",
+        "operationId": "get_registry_job_api_v1_registry_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Get Registry Job"
+      }
+    },
     "/api/v1/sessions": {
       "get": {
         "description": "`GET /api/v1/sessions` -- flattened `SessionTarget[]` across `ok` instances.",
@@ -1746,6 +2922,23 @@
       }
     },
     "/api/v1/setup/registry": {
+      "get": {
+        "description": "`GET /api/v1/setup/registry` (023) -- the sync source for `remo web sync`.\n\nKnown-type entries in hostEntry (v2) shape, plus the service trust file\nregrouped per instance name, plus the mirror generation the workstation\nmust echo back as `PUT` v3's `base_generation`. Advertising payload\nversion 3 on `/setup/status` is the capability signal for this route --\nthe CLI never probes it (an old service's 404 is indistinguishable from a\ndormant surface).",
+        "operationId": "get_registry_route_api_v1_setup_registry_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryReadResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Registry Route"
+      },
       "put": {
         "description": "`PUT /api/v1/setup/registry` -- apply the adoption mirror atomically.\n\nAccepts payload v1 (legacy fields, mapped through the shared legacy->v2\nmapper) and v2 (registry-file-v2.md hostEntry shape); always stores v2\n(FR-020/FR-022). Validates the FULL payload before writing anything\n(FR-019); a mount-configured deployment is read-only via this API (409,\nFR-017); an empty registry requires the explicit ``allow_empty=true``\nopt-out (defense-in-depth for the CLI-side FR-016 guard); an unsupported\n``version`` is rejected with the prior mirror left completely intact\n(400 ``unsupported_payload_version``, FR-021).",
         "operationId": "put_registry_api_v1_setup_registry_put",

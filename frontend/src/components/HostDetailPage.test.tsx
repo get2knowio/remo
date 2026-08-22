@@ -8,23 +8,31 @@
 // hook's own contract and are covered in state/hostStats.test.ts — here the
 // hook is mocked so each gating state can be pinned directly.
 
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiscoveryInstance, HostStats, SessionTarget, TypedError } from "../api/client";
 
 const useDiscovery = vi.fn();
 const useHealth = vi.fn();
 const useHostStats = vi.fn();
+const rebuildProject = vi.fn();
 
 vi.mock("../state/discovery", () => ({ useDiscovery: () => useDiscovery() }));
 vi.mock("../state/health", () => ({ useHealth: () => useHealth() }));
 vi.mock("../state/hostStats", () => ({ useHostStats: () => useHostStats() }));
+// ApiError (and the rest of the client) stays real so error rendering is
+// exercised; only the rebuild call is stubbed.
+vi.mock("../api/client", async () => {
+  const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
+  return { ...actual, rebuildProject: (...a: unknown[]) => rebuildProject(...a) };
+});
 // The shell panel drags in the real renderer stack; its own behavior is not
 // under test here.
 vi.mock("./HostShellPanel", () => ({
   HostShellPanel: () => <div data-testid="host-shell-panel" />,
 }));
 
+import { ApiError } from "../api/client";
 import { HostDetailPage } from "./HostDetailPage";
 
 const ALL_OPS = ["host.stats", "projects.clone", "projects.delete", "projects.rebuild", "jobs.status"];
@@ -91,6 +99,7 @@ interface Setup {
   instances?: DiscoveryInstance[];
   targets?: SessionTarget[];
   hostAdmin?: boolean;
+  registryAdmin?: boolean;
   hookResult?: {
     stats: HostStats | null;
     stale: boolean;
@@ -106,6 +115,7 @@ function mount({
   instances = [instance()],
   targets = [target("alpha")],
   hostAdmin = true,
+  registryAdmin = false,
   hookResult = { stats: stats(), stale: false, unsupported: null },
 }: Setup = {}): void {
   useDiscovery.mockReturnValue({
@@ -120,6 +130,8 @@ function mount({
     checks: {},
     detail: null,
     hostAdmin,
+    registryAdmin,
+    registryChange: null,
     retry: vi.fn(),
   });
   useHostStats.mockReturnValue({ ...hookResult, refetch: vi.fn() });
@@ -160,6 +172,56 @@ describe("HostDetailPage", () => {
     inst.capability = { ...inst.capability!, operations: [] };
     mount({ instances: [inst], targets: [target("alpha", { instance_type: "ssh" })] });
     expect(screen.getByTestId("capability-nudge").textContent).toContain("remo configure box");
+  });
+
+  it("names the SHORT container name in a host-scoped provider's upgrade command", () => {
+    // Incus/Proxmox register `host/container` names, but the upgrade verb
+    // takes the container name alone — `remo incus upgrade host/container`
+    // dead-ends on the CLI.
+    const inst = instance({ instance_name: "orion/box" });
+    inst.capability = { ...inst.capability!, operations: ["host.stats"] };
+    mount({ instances: [inst], targets: [] });
+    const nudge = screen.getByTestId("capability-nudge");
+    expect(nudge.textContent).toContain("remo incus upgrade box");
+    expect(nudge.textContent).not.toContain("upgrade orion/box");
+  });
+
+  it("keeps clone/delete when only projects.rebuild is missing (no rebuild button, no nudge)", () => {
+    // remo-host deliberately omits projects.rebuild without the reference
+    // devcontainer CLI; clone/delete/jobs still work, so the maintenance
+    // surface must stay and the nudge must not fire.
+    const inst = instance();
+    inst.capability = {
+      ...inst.capability!,
+      operations: ["host.stats", "projects.clone", "projects.delete", "jobs.status"],
+    };
+    mount({ instances: [inst] });
+    expect(screen.getByTestId("new-project-section")).toBeInTheDocument();
+    expect(screen.getByTestId("danger-zone")).toBeInTheDocument();
+    expect(screen.queryByTestId("rebuild-project-t-alpha")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("capability-nudge")).not.toBeInTheDocument();
+  });
+
+  it("renders a rebuild failure near the projects table with its remediation", async () => {
+    rebuildProject.mockRejectedValue(
+      new ApiError({
+        code: "operation_failed",
+        message: "rebuild failed on host",
+        retryable: false,
+        remediation: "check devcontainer.json",
+      }),
+    );
+    mount();
+    fireEvent.click(screen.getByTestId("rebuild-project-t-alpha"));
+    fireEvent.click(screen.getByTestId("rebuild-confirm"));
+    await waitFor(() =>
+      expect(screen.getByTestId("rebuild-error").textContent).toBe(
+        "rebuild failed on host — check devcontainer.json",
+      ),
+    );
+    // Opening the dialog again clears the stale error.
+    fireEvent.click(screen.getByTestId("rebuild-project-t-alpha"));
+    expect(screen.queryByTestId("rebuild-error")).not.toBeInTheDocument();
   });
 
   it("hides ALL mutating affordances when features.host_admin is false", () => {
@@ -229,5 +291,78 @@ describe("HostDetailPage", () => {
     mount();
     fireEvent.click(screen.getByTestId("host-detail-refresh"));
     expect(refresh).toHaveBeenCalledWith("i-1");
+  });
+});
+
+describe("HostDetailPage registry admin (023)", () => {
+  const sshInstance = (overrides: Partial<DiscoveryInstance> = {}): DiscoveryInstance =>
+    instance({ instance_type: "ssh", region: "", ...overrides });
+
+  it("hides remove/configure affordances when registry_admin is off", () => {
+    mount({ instances: [sshInstance()], registryAdmin: false });
+    expect(screen.queryByTestId("remove-host-zone")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("configure-now")).not.toBeInTheDocument();
+  });
+
+  it("hides them for provider-managed hosts even when the flag is on", () => {
+    mount({ registryAdmin: true }); // default instance is incus
+    expect(screen.queryByTestId("remove-host-zone")).not.toBeInTheDocument();
+  });
+
+  it("renders the remove-host zone for an ssh host and gates it on typing the name", () => {
+    mount({ instances: [sshInstance()], registryAdmin: true });
+    fireEvent.click(screen.getByTestId("remove-host"));
+    const confirmButton = screen.getByTestId("remove-host-confirm");
+    expect(confirmButton).toBeDisabled();
+    fireEvent.input(screen.getByTestId("remove-host-input"), { target: { value: "box" } });
+    expect(confirmButton).not.toBeDisabled();
+  });
+
+  it("offers Configure now in the capability nudge for an ssh host", () => {
+    // Tools predate maintenance: no capability at all, host ok.
+    mount({
+      instances: [sshInstance({ capability: null })],
+      registryAdmin: true,
+    });
+    expect(screen.getByTestId("capability-nudge")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("configure-now"));
+    expect(screen.getByTestId("configure-dialog")).toBeInTheDocument();
+    // The consequence copy names the provisioning pass, not a toggle.
+    expect(screen.getByTestId("configure-dialog").textContent).toContain("passwordless sudo");
+  });
+
+  it("offers Configure now for a freshly added host (status no_remo_host)", () => {
+    // The exact host the flow exists for reports `no_remo_host`, not "ok" —
+    // and a registry-admin-only deployment has host_admin off. Both must
+    // still reach configure, with the server's remediation preferred.
+    mount({
+      instances: [
+        sshInstance({
+          status: "no_remo_host",
+          capability: null,
+          error: {
+            code: "no_remo_host",
+            message: "remo-host is not installed",
+            retryable: false,
+            remediation: "Configure the host: remo configure box",
+          },
+        }),
+      ],
+      hostAdmin: false,
+      registryAdmin: true,
+    });
+    const nudge = screen.getByTestId("capability-nudge");
+    expect(nudge.textContent).toContain("Configure the host: remo configure box");
+    fireEvent.click(screen.getByTestId("configure-now"));
+    expect(screen.getByTestId("configure-dialog")).toBeInTheDocument();
+  });
+
+  it("shows no nudge for a no_remo_host host when registry_admin is off", () => {
+    mount({
+      instances: [sshInstance({ status: "no_remo_host", capability: null })],
+      hostAdmin: false,
+      registryAdmin: false,
+    });
+    expect(screen.queryByTestId("capability-nudge")).not.toBeInTheDocument();
   });
 });

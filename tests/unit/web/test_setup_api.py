@@ -149,7 +149,7 @@ def test_status_unconfigured_without_identity(state_dir):
         "state": "unconfigured",
         "public_key_available": False,
         "registry_instances": 0,
-        "payload_versions": [1, 2],
+        "payload_versions": [1, 2, 3],
     }
 
 
@@ -164,7 +164,7 @@ def test_status_unconfigured_with_identity(state_dir):
         "deployment_id": "dep12345",
         "public_key_available": True,
         "registry_instances": 0,
-        "payload_versions": [1, 2],
+        "payload_versions": [1, 2, 3],
     }
 
 
@@ -178,7 +178,7 @@ def test_status_adopted(state_dir):
         "deployment_id": "dep12345",
         "public_key_available": True,
         "registry_instances": 1,
-        "payload_versions": [1, 2],
+        "payload_versions": [1, 2, 3],
     }
 
 
@@ -195,7 +195,7 @@ def test_status_mount_configured_has_null_identity(state_dir, layout):
         "state": "mount_configured",
         "public_key_available": False,
         "registry_instances": 1,
-        "payload_versions": [1, 2],
+        "payload_versions": [1, 2, 3],
     }
 
 
@@ -402,7 +402,7 @@ def test_put_registry_invalid_payload_writes_nothing(state_dir, body, detail_fra
 @pytest.mark.parametrize(
     ("body", "received"),
     [
-        pytest.param(_payload(version=3), 3, id="version-3-not-yet-supported"),
+        pytest.param(_payload(version=4), 4, id="version-4-not-supported"),
         pytest.param({"registry": "nope"}, None, id="missing-version-field"),
     ],
 )
@@ -416,7 +416,7 @@ def test_put_registry_unsupported_version_writes_nothing(state_dir, body, receiv
     assert resp.json() == {
         "error": {
             "code": "unsupported_payload_version",
-            "supported": [1, 2],
+            "supported": [1, 2, 3],
             "received": received,
         }
     }
@@ -545,12 +545,14 @@ def test_verify_wraps_check_results(state_dir, monkeypatch):
                 "passed": True,
                 "detail": "readable (1 instances)",
                 "remediation": None,
+                "code": None,
             },
             {
                 "name": "instance incus/dev",
                 "passed": False,
                 "detail": "unreachable",
                 "remediation": "Check instance is running / reachable.",
+                "code": None,
             },
         ],
         "all_passed": False,
@@ -691,12 +693,12 @@ class TestMirrorMarker:
     def test_marker_write_failure_does_not_fail_the_put(self, state_dir, monkeypatch):
         # A marker write failure after a successful registry apply is advisory:
         # logged, swallowed, PUT still succeeds; mirror_generation omitted.
-        from remo_cli.web.api import setup as setup_module
+        from remo_cli.web import mirror_meta as mirror_meta_module
 
-        def boom(settings, generation, workstation):
+        def boom(path, doc):
             raise OSError("read-only marker volume")
 
-        monkeypatch.setattr(setup_module, "_write_mirror_meta", boom)
+        monkeypatch.setattr(mirror_meta_module, "_write_doc", boom)
 
         state_dir.write_keypair()
         state_dir.write_state_json()
@@ -736,5 +738,168 @@ class TestMirrorMarker:
             "payload_versions",
             "mirror_generation",
             "last_push",
+            "last_change",
         }
         assert set(body["last_push"]) == {"at", "workstation"}
+
+
+def test_put_registry_stamps_last_change_with_push_origin(state_dir):
+    """023: every setup-API PUT records last_change (origin=push) alongside the
+    legacy generation + last_push fields, which stay shaped exactly as before."""
+    state_dir.write_keypair()
+    state_dir.write_state_json()
+    with _client(state_dir) as client:
+        resp = client.put(
+            "/api/v1/setup/registry",
+            json=_payload(workstation="wk1"),
+            headers=_AUTH,
+        )
+        assert resp.status_code == 200
+    doc = json.loads(_mirror_meta_path(state_dir).read_text())
+    assert doc["generation"] == 1
+    assert set(doc["last_push"]) == {"at", "workstation"}
+    assert doc["last_push"]["workstation"] == "wk1"
+    assert doc["last_change"]["origin"] == "push"
+    assert doc["last_change"]["workstation"] == "wk1"
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/setup/registry + PUT v3 precondition (023)
+# ---------------------------------------------------------------------------
+
+_V2_ENTRY_DEV = {
+    "type": "incus",
+    "name": "dev",
+    "host": "10.0.0.5",
+    "user": "remo",
+    "access": "direct",
+}
+
+
+def _v3_payload(base_generation: int, **overrides: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "version": 3,
+        "base_generation": base_generation,
+        "registry": [_V2_ENTRY_DEV],
+        "host_keys": {"dev": [_VALID_KEY_LINE]},
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestGetRegistry:
+    def test_returns_entries_host_keys_and_generation(self, state_dir):
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            put = client.put("/api/v1/setup/registry", json=_payload(), headers=_AUTH)
+            assert put.status_code == 200
+            resp = client.get("/api/v1/setup/registry", headers=_AUTH)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["entry_version"] == 2
+        assert body["registry"] == _EXPECTED_V2_HOSTS
+        # The flat trust file is regrouped by instance name; the SSM entry
+        # ("cloud") has no keys and is absent.
+        assert body["host_keys"] == {"dev": [_VALID_KEY_LINE]}
+        assert body["mirror_generation"] == 1
+        assert body["last_change"]["origin"] == "push"
+
+    def test_empty_registry_is_200_with_empty_lists(self, state_dir):
+        state_dir.unconfigured()
+        client = _client(state_dir)
+        resp = client.get("/api/v1/setup/registry", headers=_AUTH)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["registry"] == []
+        assert body["host_keys"] == {}
+        assert body["mirror_generation"] == 0
+        assert "last_change" not in body
+
+    def test_mount_configured_is_409(self, state_dir):
+        state_dir.mount_configured()
+        with _client(state_dir) as client:
+            resp = client.get("/api/v1/setup/registry", headers=_AUTH)
+        assert resp.status_code == 409
+        assert resp.json() == {"reason": "mount_configured"}
+
+    def test_bracketed_port_lines_group_under_the_ssh_entry(self, state_dir):
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        state_dir.write_registry(["ssh:mbp:10.0.0.9:paul:2222:direct"])
+        port_line = "[10.0.0.9]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyMbp0000000"
+        bare_line = "10.0.0.9 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeKeyOther000000"
+        kh = state_dir.web_identity_dir / "known_hosts"
+        kh.write_text(f"{port_line}\n{bare_line}\n")
+        with _client(state_dir) as client:
+            resp = client.get("/api/v1/setup/registry", headers=_AUTH)
+        assert resp.status_code == 200
+        # Only the [host]:2222 form matches an entry on port 2222; the bare
+        # line belongs to no registered instance and is omitted.
+        assert resp.json()["host_keys"] == {"mbp": [port_line]}
+
+
+class TestPutV3Precondition:
+    def test_matching_base_generation_applies_and_bumps(self, state_dir):
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            resp = client.put(
+                "/api/v1/setup/registry", json=_v3_payload(0), headers=_AUTH
+            )
+            assert resp.status_code == 200
+            assert resp.json()["mirror_generation"] == 1
+            # last_change records a push-origin change.
+            status = client.get("/api/v1/setup/status", headers=_AUTH).json()
+        assert status["last_change"]["origin"] == "push"
+
+    def test_stale_base_generation_is_409_mirror_intact(self, state_dir):
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            first = client.put(
+                "/api/v1/setup/registry", json=_v3_payload(0), headers=_AUTH
+            )
+            assert first.status_code == 200
+            baseline = state_dir.v2_registry_path.read_text()
+
+            stale = client.put(
+                "/api/v1/setup/registry",
+                json=_v3_payload(0, registry=[dict(_V2_ENTRY_DEV, name="dev2")], host_keys={}),
+                headers=_AUTH,
+            )
+        assert stale.status_code == 409
+        body = stale.json()
+        assert body["reason"] == "generation_conflict"
+        assert body["current_generation"] == 1
+        assert body["last_change"]["origin"] == "push"
+        assert state_dir.v2_registry_path.read_text() == baseline
+
+    def test_missing_base_generation_is_422(self, state_dir):
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        with _client(state_dir) as client:
+            payload = _v3_payload(0)
+            del payload["base_generation"]
+            resp = client.put("/api/v1/setup/registry", json=payload, headers=_AUTH)
+        assert resp.status_code == 422
+        assert resp.json()["reason"] == "invalid_payload"
+        assert "base_generation" in resp.json()["detail"]
+        _assert_nothing_written(state_dir)
+
+    def test_v2_stays_unconditional_after_a_web_change(self, state_dir):
+        """The deprecated `remo web push` force path: v2 never checks the
+        generation, even when the console (origin=web) changed it."""
+        from remo_cli.web.mirror_meta import record_change
+
+        state_dir.write_keypair()
+        state_dir.write_state_json()
+        settings = state_dir.settings()
+        record_change(settings, origin="web")
+        record_change(settings, origin="web")
+
+        v2 = {"version": 2, "registry": [_V2_ENTRY_DEV], "host_keys": {}}
+        with _client(state_dir) as client:
+            resp = client.put("/api/v1/setup/registry", json=v2, headers=_AUTH)
+        assert resp.status_code == 200
+        assert resp.json()["mirror_generation"] == 3

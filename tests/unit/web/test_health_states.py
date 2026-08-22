@@ -147,7 +147,7 @@ class TestHealthVersion:
         assert body["version"]
         # Host-admin is off by default; the console gates its maintenance
         # affordances on this flag (plan §2.3).
-        assert body["features"] == {"host_admin": False}
+        assert body["features"] == {"host_admin": False, "registry_admin": False}
 
     def test_health_features_advertises_host_admin_when_enabled(
         self, state_dir, monkeypatch
@@ -163,7 +163,7 @@ class TestHealthVersion:
         response = TestClient(application, base_url=_ORIGIN).get("/api/v1/health")
 
         assert response.status_code == 200
-        assert response.json()["features"] == {"host_admin": True}
+        assert response.json()["features"] == {"host_admin": True, "registry_admin": False}
 
 
 class TestReadyBroken:

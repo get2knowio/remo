@@ -84,5 +84,25 @@ fi
 
 # Unprivileged: either dropped from root above, or started with an explicit
 # non-root `user:` (healing skipped, by design).
+
+# Seed the Galaxy-collections marker (023): the image bakes the collections
+# at /usr/share/ansible/collections and records requirements.yml's sha256 at
+# /app/collections.lock; copying it into REMO_HOME makes the embedded CLI's
+# configure jobs short-circuit the runtime `ansible-galaxy install` (no
+# outbound Galaxy needed). Best-effort: if seeding fails, the runtime install
+# still runs as a fallback — inside a job subprocess its failure is a failed
+# job with a log, never a service crash.
+# The marker is service-owned state, not operator data, so it is re-seeded
+# whenever the baked copy differs: seeding only-when-absent would leave a
+# stale hash on the persistent volume after an image upgrade whose
+# requirements.yml changed, sending the first configure job to Galaxy over
+# the network even though the baked collections already satisfy it.
+if [ -f /app/collections.lock ]; then
+    if [ ! -f "$CONFIG_DIR/collections.lock" ] || \
+       [ "$(cat /app/collections.lock 2>/dev/null)" != "$(cat "$CONFIG_DIR/collections.lock" 2>/dev/null)" ]; then
+        cp /app/collections.lock "$CONFIG_DIR/collections.lock" 2>/dev/null || true
+    fi
+fi
+
 remo web check --skip-instance-checks
 exec remo web serve

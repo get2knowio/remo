@@ -4,8 +4,8 @@ Project clone / delete / rebuild plus detached-job polling, driven through
 the ``remo-host`` additive verbs (``projects clone|delete|rebuild``,
 ``jobs status``). The surface is **off by default** and dormant when off:
 every route on this router answers the same ``404 {"detail": "Not Found"}``
-an unknown route does (the ``/setup`` pairing-dormancy precedent,
-`web/api/setup.py`'s ``_dormant``), so a scanner cannot even learn the
+an unknown route does (the ``/setup`` pairing-dormancy precedent, via the
+shared `web/api/gating.py` gate), so a scanner cannot even learn the
 surface exists. When an operator-auth provider is configured
 (`web/operator_auth.py`), an unauthenticated request gets the SAME 404.
 
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -50,41 +50,17 @@ from remo_cli.web.api.hosts import (
     unknown_instance_error,
     unsupported_host_tools_error,
 )
+from remo_cli.web.api.gating import require_admin_flag
 from remo_cli.web.discovery import build_service_ssh_prefix
 
 logger = logging.getLogger("remo_cli.web.host_admin")
 
 
-def _dormant() -> HTTPException:
-    """The dormant response — byte-identical to FastAPI's default unknown-route
-    404 (the `web/api/setup.py` precedent). A fresh instance per raise (never a
-    shared singleton, which would accumulate traceback/context state)."""
-    return HTTPException(status_code=404, detail="Not Found")
-
-
-async def require_host_admin(request: Request) -> None:
-    """Host-admin gate shared by every route on this router.
-
-    Dormant ``404`` unless ``REMO_WEB_HOST_ADMIN=enabled``. When an
-    operator-auth provider is configured, a request the provider refuses
-    gets the SAME 404 — never a distinguishable 401/403 that would reveal
-    the surface exists.
-    """
-    settings = get_settings(request)
-    if not settings.host_admin_enabled:
-        raise _dormant()
-
-    provider = getattr(request.app.state, "operator_auth_provider", None)
-    if provider is not None and provider.authenticate(request) is None:
-        client = request.client.host if request.client else "unknown"
-        logger.warning(
-            "host-admin request without operator authentication from %s: %s %s",
-            client,
-            request.method,
-            request.url.path,
-        )
-        raise _dormant()
-
+# Dormant 404 unless REMO_WEB_HOST_ADMIN=enabled (and operator auth, when
+# configured, accepts the request) — the shared `web/api/gating.py` gate.
+require_host_admin = require_admin_flag(
+    lambda settings: settings.host_admin_enabled, surface="host-admin", logger=logger
+)
 
 router = APIRouter(dependencies=[Depends(require_host_admin)])
 

@@ -31,14 +31,15 @@ Push delta-cache design (non-secret optimization)
 
 The service has no registry-read endpoint, so "unchanged since the last push"
 is decided workstation-side by a **non-secret** cache
-(``~/.config/remo/web-service.json``, ``cache_version: 2``) mapping each
-service ``deployment_id`` to ``{instance name -> {fingerprint, host_keys}}`` —
-no URL and no code are ever stored. The ``fingerprint`` is a SHA256 over the
-canonical sorted-key JSON of the instance's v2 hostEntry (registry-file-v2.md)
-and ``host_keys`` are the verified known_hosts lines pushed for that instance.
-Any cache without ``cache_version: 2`` (including every pre-015 file, which had
-no version field at all) is treated as empty, forcing one full
-re-verification push after an upgrade (research R10).
+(``~/.config/remo/web-service.json``, ``cache_version: 4``) mapping each
+service ``deployment_id`` to ``{instance name -> {fingerprint, host_keys,
+connection tuple, entry}}`` — no URL and no code are ever stored. The
+``fingerprint`` is a SHA256 over the canonical sorted-key JSON of the
+instance's v2 hostEntry (registry-file-v2.md), ``host_keys`` are the verified
+known_hosts lines pushed for that instance, and ``entry`` is the full
+hostEntry — the merge base for ``remo web sync``. Any cache without
+``cache_version: 4`` (every pre-023 file) is treated as empty, forcing one
+full re-verification push after an upgrade (research R10).
 
 On ``remo web push``, a direct-access instance whose current fingerprint matches
 the cache for the service's ``deployment_id`` skips keyscan + authorize
@@ -102,6 +103,11 @@ from remo_cli.models.host import KnownHost
 #: fields on the wire.
 PAYLOAD_VERSION = 2
 
+#: `remo web sync`'s payload version (023): v2 + a `base_generation`
+#: optimistic-concurrency precondition. Push deliberately stays on v2 — its
+#: unconditional apply IS the deprecated one-way force semantics.
+SYNC_PAYLOAD_VERSION = 3
+
 #: Default service port assumed by --via when the target URL names none.
 DEFAULT_SERVICE_PORT = 8080
 
@@ -127,6 +133,11 @@ OUTCOME_UNCHANGED = "unchanged"
 #: service-side verification pass then failed to authenticate to it, and the
 #: push re-ran keyscan/authorize for it. See `_repair_auth_failures`.
 OUTCOME_REPAIRED = "repaired"
+
+#: 023 sync: the entry came FROM the service. Never keyscanned/authorized by
+#: the workstation (the service already holds authorization; workstation
+#: reachability is not a sync precondition).
+OUTCOME_PULLED = "pulled"
 
 #: The `web.discovery` error code for an instance the service reaches but
 #: cannot authenticate to. Matched against the *detail* of a failed
@@ -177,6 +188,26 @@ class PayloadRejectedError(SetupApiError):
     def __init__(self, message: str, *, reason: str = "invalid_payload") -> None:
         super().__init__(message, status=422)
         self.reason = reason
+
+
+class GenerationConflictError(SetupApiError):
+    """PUT v3's `base_generation` no longer matches the service (023).
+
+    The mirror moved between this sync's GET and its PUT (another sync, or a
+    console-side change). Carries what the service reported so the driver can
+    re-GET, re-merge and retry.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        current_generation: int = 0,
+        last_change: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, status=409)
+        self.current_generation = current_generation
+        self.last_change = last_change
 
 
 class SetupConnectionError(SetupApiError):
@@ -234,6 +265,13 @@ class SetupApiClient:
 
     def get_identity(self) -> dict[str, Any]:
         return self._request("GET", "/api/v1/setup/identity")
+
+    def get_registry(self) -> dict[str, Any]:
+        """`GET /setup/registry` (023): the service's entries + host keys +
+        mirror generation. Only called after `/setup/status` advertised payload
+        version 3 — never probed (an old service's 404 is indistinguishable
+        from a dormant surface)."""
+        return self._request("GET", "/api/v1/setup/registry")
 
     def put_registry(self, payload: dict[str, Any], allow_empty: bool = False) -> dict[str, Any]:
         query = "?allow_empty=true" if allow_empty else ""
@@ -302,9 +340,11 @@ class SetupApiClient:
         status = error.code
         reason = ""
         detail = ""
+        parsed_body: dict[str, Any] = {}
         try:
             parsed = json.loads(error.read())
             if isinstance(parsed, dict):
+                parsed_body = parsed
                 reason = str(parsed.get("reason", "") or "")
                 detail = str(parsed.get("detail", "") or "")
         except (json.JSONDecodeError, OSError, ValueError):
@@ -330,6 +370,19 @@ class SetupApiClient:
                 status=404,
             )
         if status == 409:
+            if reason == "generation_conflict":
+                current = parsed_body.get("current_generation")
+                last_change = parsed_body.get("last_change")
+                return GenerationConflictError(
+                    "the deployment's registry changed while syncing "
+                    "(generation conflict)",
+                    current_generation=(
+                        current
+                        if isinstance(current, int) and not isinstance(current, bool)
+                        else 0
+                    ),
+                    last_change=last_change if isinstance(last_change, dict) else None,
+                )
             return MountConfiguredError(_MOUNT_CONFIGURED_MSG, status=409)
         if status == 422:
             if reason == "empty_registry":
@@ -375,6 +428,8 @@ def build_adoption_payload(
     host_keys: dict[str, list[str]] | None = None,
     *,
     allow_empty: bool = False,
+    version: int = PAYLOAD_VERSION,
+    base_generation: int | None = None,
 ) -> dict[str, Any]:
     """Build the full-mirror ``AdoptionPayload`` body (data-model.md).
 
@@ -392,11 +447,16 @@ def build_adoption_payload(
         for name, lines in (host_keys or {}).items()
         if name in direct_names and lines
     }
-    return {
-        "version": PAYLOAD_VERSION,
+    payload: dict[str, Any] = {
+        "version": version,
         "registry": [registry.known_host_to_entry(h) for h in hosts],
         "host_keys": filtered_keys,
     }
+    if base_generation is not None:
+        # v3's optimistic-concurrency precondition (023); push (v2) never
+        # sends one — its unconditional apply is the force semantics.
+        payload["base_generation"] = base_generation
+    return payload
 
 
 def _check_payload_version_supported(status: dict[str, Any]) -> None:
@@ -496,6 +556,15 @@ def _lookup_trusted_keys(lookup_key: str, known_hosts_file: Path) -> list[tuple[
     return pairs or None
 
 
+def render_fingerprint_list(lines: list[str]) -> list[str]:
+    """SHA256 fingerprints for scanned key lines, one per line (023).
+
+    The list form of :func:`_render_fingerprints` for API consumers (the web
+    registry-admin scan route); the CLI keeps the joined-text renderer.
+    """
+    return [line for line in _render_fingerprints(lines).splitlines() if line.strip()]
+
+
 def _render_fingerprints(lines: list[str]) -> str:
     """Render SHA256 fingerprints for scanned key lines via ``ssh-keygen -lf``."""
     fd, tmp_path = tempfile.mkstemp(prefix="remo-adopt-keys-", suffix=".pub")
@@ -572,6 +641,91 @@ def _persist_confirmed_host_keys(lines: list[str], known_hosts_path: Path) -> st
     return None
 
 
+def scan_host_keys(
+    hostname: str,
+    port: int = DEFAULT_SSH_PORT,
+    *,
+    timeout: float = 20.0,
+) -> tuple[list[str], str | None]:
+    """Run ``ssh-keyscan`` against *hostname*:*port* and filter the output.
+
+    Returns ``(scanned_lines, error_detail)``: on success the structurally
+    valid known_hosts lines and ``None``; on any failure (missing binary,
+    timeout, OS error, or no usable keys returned) an empty list and a
+    human-readable detail. Extracted from :func:`scan_and_verify_host_key`
+    (023) so the web registry-admin API can scan without the interactive
+    trust flow; the CLI behavior is unchanged — the composition is pinned by
+    the existing trust tests.
+    """
+    scan_cmd = ["ssh-keyscan", "-T", "5", "-t", _KEYSCAN_TYPES]
+    if port != DEFAULT_SSH_PORT:
+        scan_cmd.extend(["-p", str(port)])
+    scan_cmd.append(hostname)
+
+    try:
+        result = subprocess.run(
+            scan_cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return [], "ssh-keyscan not found on this workstation"
+    except subprocess.TimeoutExpired:
+        return [], f"host key scan timed out after {timeout:.0f}s"
+    except OSError as e:
+        return [], f"host key scan failed: {e}"
+
+    scanned_lines = [
+        line.strip()
+        for line in result.stdout.splitlines()
+        if line.strip()
+        and not line.strip().startswith("#")
+        # only structurally valid known_hosts lines may reach the payload;
+        # anything else would bypass the match/mismatch verification below
+        and len(line.split()) >= 3
+    ]
+    scanned_pairs = _parse_known_hosts_pairs("\n".join(scanned_lines))
+    if not scanned_pairs:
+        stderr_lines = result.stderr.strip().splitlines()
+        detail = stderr_lines[-1].strip() if stderr_lines else "no host keys returned by ssh-keyscan"
+        return [], detail
+    return scanned_lines, None
+
+
+def classify_scanned_keys(
+    scanned_lines: list[str],
+    lookup_key: str,
+    known_hosts_path: Path,
+) -> tuple[str, str]:
+    """Classify *scanned_lines* against the trust store at *known_hosts_path*.
+
+    Returns ``(status, detail)`` with status one of ``"trusted"`` /
+    ``"mismatch"`` / ``"no_trust"``. A trust record that exists only for key
+    types the scan did not return is treated as no record (nothing
+    comparable). Extracted from :func:`scan_and_verify_host_key` (023).
+    """
+    scanned_pairs = _parse_known_hosts_pairs("\n".join(scanned_lines))
+    trusted_pairs = _lookup_trusted_keys(lookup_key, known_hosts_path)
+    if trusted_pairs is not None:
+        trusted_by_type: dict[str, set[str]] = {}
+        for key_type, key in trusted_pairs:
+            trusted_by_type.setdefault(key_type, set()).add(key)
+        overlapping = [(t, k) for t, k in scanned_pairs if t in trusted_by_type]
+        if overlapping:
+            for key_type, key in overlapping:
+                if key not in trusted_by_type[key_type]:
+                    return (
+                        "mismatch",
+                        f"scanned {key_type} host key does not match the trusted "
+                        f"entry in {known_hosts_path}",
+                    )
+            return ("trusted", "matches trusted known_hosts entry")
+        # A record exists but only for key types the scan didn't return —
+        # nothing comparable, so fall through to the no-trusted-record path.
+    return ("no_trust", f"no trusted host key for {lookup_key} in {known_hosts_path}")
+
+
 def scan_and_verify_host_key(
     hostname: str,
     *,
@@ -619,75 +773,20 @@ def scan_and_verify_host_key(
         confirm_fn = confirm
     lookup_key = known_hosts_lookup_key(hostname, port)
 
-    scan_cmd = ["ssh-keyscan", "-T", "5", "-t", _KEYSCAN_TYPES]
-    if port != DEFAULT_SSH_PORT:
-        scan_cmd.extend(["-p", str(port)])
-    scan_cmd.append(hostname)
+    scanned_lines, scan_error = scan_host_keys(hostname, port, timeout=scan_timeout)
+    if scan_error is not None:
+        return HostKeyScan("unreachable", detail=scan_error)
 
-    try:
-        result = subprocess.run(
-            scan_cmd,
-            capture_output=True,
-            text=True,
-            timeout=scan_timeout,
-        )
-    except FileNotFoundError:
-        return HostKeyScan(
-            "unreachable", detail="ssh-keyscan not found on this workstation"
-        )
-    except subprocess.TimeoutExpired:
-        return HostKeyScan(
-            "unreachable", detail=f"host key scan timed out after {scan_timeout:.0f}s"
-        )
-    except OSError as e:
-        return HostKeyScan("unreachable", detail=f"host key scan failed: {e}")
-
-    scanned_lines = [
-        line.strip()
-        for line in result.stdout.splitlines()
-        if line.strip()
-        and not line.strip().startswith("#")
-        # only structurally valid known_hosts lines may reach the payload;
-        # anything else would bypass the match/mismatch verification below
-        and len(line.split()) >= 3
-    ]
-    scanned_pairs = _parse_known_hosts_pairs("\n".join(scanned_lines))
-    if not scanned_pairs:
-        stderr_lines = result.stderr.strip().splitlines()
-        detail = stderr_lines[-1].strip() if stderr_lines else "no host keys returned by ssh-keyscan"
-        return HostKeyScan("unreachable", detail=detail)
-
-    trusted_pairs = _lookup_trusted_keys(lookup_key, known_hosts_path)
-    if trusted_pairs is not None:
-        trusted_by_type: dict[str, set[str]] = {}
-        for key_type, key in trusted_pairs:
-            trusted_by_type.setdefault(key_type, set()).add(key)
-        overlapping = [(t, k) for t, k in scanned_pairs if t in trusted_by_type]
-        if overlapping:
-            for key_type, key in overlapping:
-                if key not in trusted_by_type[key_type]:
-                    return HostKeyScan(
-                        "mismatch",
-                        detail=(
-                            f"scanned {key_type} host key does not match the trusted "
-                            f"entry in {known_hosts_path}"
-                        ),
-                    )
-            return HostKeyScan(
-                "trusted",
-                lines=scanned_lines,
-                detail="matches trusted known_hosts entry",
-            )
-        # A record exists but only for key types the scan didn't return —
-        # nothing comparable, so fall through to the no-trusted-record path.
+    status, detail = classify_scanned_keys(scanned_lines, lookup_key, known_hosts_path)
+    if status == "mismatch":
+        return HostKeyScan("mismatch", detail=detail)
+    if status == "trusted":
+        return HostKeyScan("trusted", lines=scanned_lines, detail=detail)
 
     if not interactive:
         return HostKeyScan(
             "no_trust",
-            detail=(
-                f"no trusted host key for {lookup_key} in {known_hosts_path} "
-                "(non-interactive run; fingerprint confirmation skipped)"
-            ),
+            detail=f"{detail} (non-interactive run; fingerprint confirmation skipped)",
         )
 
     print_warning(f"No trusted host key for {lookup_key} in {known_hosts_path}.")
@@ -945,6 +1044,11 @@ class CachedInstance:
     type: str = ""
     port: int | None = None
     identity: str = ""
+    #: The full v2 hostEntry as last synced (cache v4, 023): `remo web sync`'s
+    #: three-way merge BASE. None (an older/malformed cache) degrades that
+    #: name to a base-less merge — identical entries adopt silently, divergent
+    #: ones surface as conflicts. Never trusted for anything but comparison.
+    entry: dict[str, Any] | None = None
 
 
 def instance_fingerprint(host: KnownHost) -> str:
@@ -975,13 +1079,13 @@ class DeploymentCache:
 #: Push cache shape: deployment_id -> DeploymentCache.
 PushCache = dict[str, "DeploymentCache"]
 
-#: Push-cache file format version. Bumped 2 -> 3 (017-web-adopt-simplify): the
-#: per-deployment shape is now ``{mirror_generation, instances}`` and each
-#: instance entry carries the non-secret connection tuple. Any other/missing
-#: value is treated as an empty cache — a one-time full re-verification push
-#: after a format upgrade (FR-026 / research R7), since older entries lack the
-#: fields the v3 flow depends on.
-PUSH_CACHE_VERSION = 3
+#: Push-cache file format version. Bumped 3 -> 4 (023-web-registry-sync):
+#: each instance entry additionally stores the full v2 hostEntry (`entry`) —
+#: the merge base `remo web sync` diffs against. Any other/missing value is
+#: treated as an empty cache — a one-time full re-verification push (and a
+#: base-less first sync) after a format upgrade, never an error (FR-026 /
+#: research R7 lenient-load posture; the flat v3 tuple fields are unchanged).
+PUSH_CACHE_VERSION = 4
 
 
 def push_cache_path() -> Path:
@@ -1014,6 +1118,7 @@ def _parse_instances(raw: object) -> dict[str, CachedInstance]:
         type_ = entry.get("type")
         port = entry.get("port")
         identity = entry.get("identity")
+        raw_entry = entry.get("entry")
         instances[name] = CachedInstance(
             fingerprint=fingerprint,
             host_keys=list(host_keys),
@@ -1023,6 +1128,8 @@ def _parse_instances(raw: object) -> dict[str, CachedInstance]:
             type=type_ if isinstance(type_, str) else "",
             port=port if isinstance(port, int) and not isinstance(port, bool) else None,
             identity=identity if isinstance(identity, str) else "",
+            # Malformed -> None: that name merges base-less (safe degradation).
+            entry=raw_entry if isinstance(raw_entry, dict) else None,
         )
     return instances
 
@@ -1045,7 +1152,7 @@ def load_push_cache() -> PushCache:
 
     Files written by the 011 credential format (top-level ``url``/``token`` +
     name-keyed ``push_cache``) do not match the deployment-keyed shape and are
-    ignored. Files without ``cache_version: 3`` (any pre-017 format or a future
+    ignored. Files without ``cache_version: 4`` (any pre-023 format or a future
     incompatible one) are also treated as empty (research R7) — the next push
     simply retries in full and the next save overwrites the stale file — no
     secret is ever read.
@@ -1096,6 +1203,7 @@ def save_push_cache(cache: PushCache) -> Path:
                             "type": c.type,
                             "port": c.port,
                             "identity": c.identity,
+                            "entry": c.entry,
                         }
                         for name, c in deployment.instances.items()
                     },
@@ -1279,29 +1387,44 @@ def _cache_from_outcomes(
 ) -> dict[str, CachedInstance]:
     """Build the push delta cache from a completed run (module docstring design).
 
-    A direct-access instance is cached only when it ended ``adopted``,
-    ``unchanged`` or ``repaired`` — those are exactly the instances whose host
-    keys were verified and whose lines were included in the successful PUT; a
-    skipped/flagged direct instance gets no entry so the next push retries it in
-    full.
+    A direct-access instance is cached when it ended ``adopted``,
+    ``unchanged``, ``repaired`` or ``pulled`` — the instances whose host keys
+    were verified (or service-held) and whose entry the successful PUT/GET
+    round-tripped. A skipped (``unreachable``/``no_trust``) direct instance is
+    cached with EMPTY ``host_keys``: the entry WAS mirrored (correct merge
+    base for ``remo web sync``), and the push fast-path gates on non-empty
+    lines, so the instance is still retried in full next push. Only a
+    ``security_flagged`` instance gets no entry at all.
 
-    SSM instances are cached too (they end ``skipped_by_design``) even though
-    they carry no keyscan/authorize state: their registry entry IS mirrored on
-    every push, so caching their fingerprint lets ``remo web status`` track them
-    (otherwise every SSM instance reads as perpetually ``new``) and lets a later
-    removal be surfaced. Their ``host_keys`` stays empty, so they never take the
-    push fast-path (which is gated on ``is_direct_access``).
+    Non-direct (SSM) instances are cached too — whether ``skipped_by_design``
+    on a push or ``pulled`` by a sync — even though they carry no
+    keyscan/authorize state: their registry entry IS mirrored on every push,
+    so caching their fingerprint lets ``remo web status`` track them
+    (otherwise every SSM instance reads as perpetually ``new``), gives the
+    next sync a real merge base (a deployment-side deletion is then a
+    consented DELETE_LOCAL, not a silent PUSH_ADD resurrection), and lets a
+    later removal be surfaced. Their ``host_keys`` stays empty, so they never
+    take the push fast-path (which is gated on ``is_direct_access``).
     """
     cache: dict[str, CachedInstance] = {}
+    verified = (OUTCOME_ADOPTED, OUTCOME_UNCHANGED, OUTCOME_REPAIRED, OUTCOME_PULLED)
+    retriable = (OUTCOME_SKIPPED_UNREACHABLE, OUTCOME_SKIPPED_NO_TRUST)
     for o in outcomes:
+        cached_keys = list(host_keys.get(o.host.name, []))
         if is_direct_access(o.host):
-            if o.outcome not in (OUTCOME_ADOPTED, OUTCOME_UNCHANGED, OUTCOME_REPAIRED):
+            if o.outcome in retriable:
+                # 023 refinement: the entry WAS mirrored by the PUT even though
+                # its keys could not be verified — cache the fingerprint/entry
+                # (correct merge base) with EMPTY host_keys, which the push
+                # fast-path is gated on, so the instance is retried in full.
+                cached_keys = []
+            elif o.outcome not in verified:
                 continue
-        elif o.outcome != OUTCOME_SKIPPED_BY_DESIGN:
+        elif o.outcome not in (OUTCOME_SKIPPED_BY_DESIGN, OUTCOME_PULLED):
             continue
         cache[o.host.name] = CachedInstance(
             fingerprint=instance_fingerprint(o.host),
-            host_keys=list(host_keys.get(o.host.name, [])),
+            host_keys=cached_keys,
             # Non-secret connection tuple retained so a later removal can be
             # reached for best-effort revocation (017 US3, data-model.md §1).
             host=o.host.host,
@@ -1316,6 +1439,8 @@ def _cache_from_outcomes(
             # ssh-type stored key path (empty for every other type); without it
             # revoking a custom-key host falls back to ambient keys and fails.
             identity=o.host.ssh_identity or "",
+            # The merge base for `remo web sync` (cache v4).
+            entry=registry.known_host_to_entry(o.host),
         )
     return cache
 
@@ -1463,10 +1588,18 @@ def _flap_warning(status: dict[str, Any], cached_generation: int) -> str | None:
         when = str(last_push.get("at") or "").strip()
     by = f" by {who}" if who else ""
     at = f" at {when}" if when else ""
+    last_change = status.get("last_change")
+    origin = ""
+    if isinstance(last_change, dict):
+        origin = str(last_change.get("origin") or "").strip()
+    changed_where = (
+        "in the web console" if origin == "web" else "by another workstation"
+    )
     return (
-        f"the web deployment's mirror was last updated elsewhere (generation "
-        f"{server_gen}, this workstation last saw {cached_generation}){by}{at}. "
-        "Pushing now overwrites that mirror with this workstation's registry."
+        f"the web deployment's registry was changed {changed_where} since this "
+        f"workstation's last push (generation {server_gen}, this workstation "
+        f"last saw {cached_generation}){by}{at}. Pushing now force-overwrites "
+        "those changes — use `remo web sync` to merge them instead."
     )
 
 
@@ -1520,7 +1653,11 @@ def auth_failed_labels(verify: dict[str, Any]) -> set[str]:
         name = str(result.get("name", ""))
         if not name.startswith("instance "):
             continue
-        if str(result.get("detail") or "").strip() == _VERIFY_AUTH_FAILED:
+        # 023+ services carry a machine-readable `code`; older ones put the
+        # discovery error code in `detail` — accept either.
+        code = str(result.get("code") or "").strip()
+        detail = str(result.get("detail") or "").strip()
+        if code == _VERIFY_AUTH_FAILED or (not code and detail == _VERIFY_AUTH_FAILED):
             labels.add(name.removeprefix("instance "))
     return labels
 
@@ -1952,9 +2089,11 @@ def _push_flow(
                 )
 
     # Step 7: only after a successful PUT, rewrite the delta cache for this
-    # deployment (removed instances drop out; skipped/flagged instances get no
-    # entry so the next push retries them in full). Record the generation the
-    # service just returned so the next push can flap-detect (US5).
+    # deployment (removed instances drop out; a skipped instance keeps its
+    # entry but with EMPTY host_keys, so the fast-path never fires and the
+    # next push retries it in full; a flagged instance gets no entry). Record
+    # the generation the service just returned so the next push can
+    # flap-detect (US5).
     #
     # An instance the service still cannot authenticate to is dropped from the
     # cache as well (#122): caching it would make it eligible for the very

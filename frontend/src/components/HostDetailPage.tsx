@@ -15,7 +15,10 @@ import {
   ApiError,
   cloneProject,
   deleteProject,
+  getRegistryJobStatus,
   rebuildProject,
+  removeHost,
+  startConfigure,
   type DiscoveryInstance,
   type JobAccepted,
   type SessionTarget,
@@ -24,11 +27,13 @@ import { useDiscovery } from "../state/discovery";
 import { useHealth } from "../state/health";
 import { useHostStats } from "../state/hostStats";
 import { hostKey } from "../state/settings";
+import { ConfigureConfirmDialog } from "./ConfigureConfirmDialog";
 import { DeleteProjectDialog } from "./DeleteProjectDialog";
 import { HostShellPanel } from "./HostShellPanel";
 import { JobProgressPanel } from "./JobProgressPanel";
 import { providerMeta, statusMeta } from "./providerMeta";
 import { RebuildConfirmDialog } from "./RebuildConfirmDialog";
+import { RemoveHostDialog } from "./RemoveHostDialog";
 import "./HostDetailPage.css";
 
 interface HostDetailPageProps {
@@ -39,19 +44,26 @@ interface HostDetailPageProps {
   onOpenTarget: (target: SessionTarget) => void;
 }
 
-/** The remo-host operations the maintenance surface needs (contract §ops). */
-const MAINTENANCE_OPS = ["projects.clone", "projects.delete", "projects.rebuild", "jobs.status"];
+/** The remo-host operations the maintenance surface needs (contract §ops).
+ * `projects.rebuild` is deliberately NOT here: remo-host omits it on hosts
+ * without the reference devcontainer CLI, and clone/delete/jobs still work
+ * there — rebuild is gated separately via `canRebuild`. */
+const MAINTENANCE_OPS = ["projects.clone", "projects.delete", "jobs.status"];
 
 /**
  * The command that brings a host's tools up to date. Console-owned mapping:
  * an added (`type="ssh"`) host is configured via `remo configure`, a provider
  * host via its `upgrade` verb (the five configure plays are not
- * interchangeable — 022).
+ * interchangeable — 022). Host-scoped providers register `host/container`
+ * names, but their upgrade verbs take the SHORT container name — mirror the
+ * backend's configure_remediation, or the printed command dead-ends.
  */
 function upgradeCommand(instance: DiscoveryInstance): string {
-  return instance.instance_type === "ssh"
-    ? `remo configure ${instance.instance_name}`
-    : `remo ${instance.instance_type} upgrade ${instance.instance_name}`;
+  if (instance.instance_type === "ssh") {
+    return `remo configure ${instance.instance_name}`;
+  }
+  const shortName = instance.instance_name.split("/").pop() || instance.instance_name;
+  return `remo ${instance.instance_type} upgrade ${shortName}`;
 }
 
 function formatBytes(n: number): string {
@@ -132,6 +144,7 @@ export function HostDetailPage({
   const [shellOpen, setShellOpen] = useState(false);
   const [job, setJob] = useState<JobAccepted | null>(null);
   const [rebuildFor, setRebuildFor] = useState<SessionTarget | null>(null);
+  const [rebuildError, setRebuildError] = useState<string | null>(null);
   const [deleteFor, setDeleteFor] = useState<SessionTarget | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -139,6 +152,13 @@ export function HostDetailPage({
   const [cloneName, setCloneName] = useState("");
   const [cloneBusy, setCloneBusy] = useState(false);
   const [cloneError, setCloneError] = useState<string | null>(null);
+  // Registry-admin (023): configure job + remove-host dialog state.
+  const [configureOpen, setConfigureOpen] = useState(false);
+  const [configureJob, setConfigureJob] = useState<JobAccepted | null>(null);
+  const [configureError, setConfigureError] = useState<string | null>(null);
+  const [removeOpen, setRemoveOpen] = useState(false);
+  const [removeBusy, setRemoveBusy] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   const instance = discovery.instances.find((i) => i.instance_id === instanceId);
 
@@ -174,17 +194,30 @@ export function HostDetailPage({
   const status = statusMeta(instance.status);
   const capability = instance.capability ?? null;
   const hostAdmin = health.hostAdmin;
+  // Registry admin (023): SSH-added hosts only — provider hosts are managed
+  // by their provider verbs on the workstation.
+  const registryAdmin = health.registryAdmin && instance.instance_type === "ssh";
   const ops = capability?.operations ?? [];
   const missingOps = MAINTENANCE_OPS.filter((op) => !ops.includes(op));
   // Actions need both the feature gate AND a host whose tools carry the verbs.
   const canMaintain = hostAdmin && missingOps.length === 0;
+  // Rebuild additionally needs the reference devcontainer CLI on the host;
+  // remo-host omits `projects.rebuild` without it, and clone/delete/jobs are
+  // unaffected — so its absence hides only the Rebuild button, never the
+  // maintenance surface or the nudge.
+  const canRebuild = canMaintain && ops.includes("projects.rebuild");
   // The nudge replaces the action sections: gate on, host reachable, verbs
   // missing — i.e. an upgrade would actually fix it. A stats 409 is the same
   // condition observed the other way; its envelope's remediation is preferred
-  // because the server words the exact command for this host type.
-  const showNudge = hostAdmin && !canMaintain && instance.status === "ok";
+  // because the server words the exact command for this host type. It ALSO
+  // renders for a registry-admin ssh host still reporting `no_remo_host` —
+  // the freshly added host the Configure-now flow exists for.
+  const showNudge =
+    (hostAdmin && !canMaintain && instance.status === "ok") ||
+    (registryAdmin && instance.status === "no_remo_host");
   const nudgeText =
     unsupported?.remediation ||
+    instance.error?.remediation ||
     `This host's tools predate project maintenance. Run: ${upgradeCommand(instance)}`;
 
   const refreshInstance = (): void => {
@@ -216,11 +249,18 @@ export function HostDetailPage({
 
   const confirmRebuild = async (target: SessionTarget, noCache: boolean): Promise<void> => {
     setRebuildFor(null);
+    setRebuildError(null);
     try {
       const accepted = await rebuildProject(instanceId, target.project, noCache);
       setJob(accepted);
     } catch (error) {
-      setCloneError(error instanceof ApiError ? error.message : "Rebuild failed");
+      if (error instanceof ApiError) {
+        setRebuildError(
+          error.remediation ? `${error.message} — ${error.remediation}` : error.message,
+        );
+      } else {
+        setRebuildError(error instanceof Error ? error.message : "Rebuild failed");
+      }
     }
   };
 
@@ -421,12 +461,15 @@ export function HostDetailPage({
                         >
                           Open
                         </button>
-                        {canMaintain && t.has_devcontainer && (
+                        {canRebuild && t.has_devcontainer && (
                           <button
                             type="button"
                             className="hd-btn"
                             data-testid={`rebuild-project-${t.id}`}
-                            onClick={() => setRebuildFor(t)}
+                            onClick={() => {
+                              setRebuildError(null);
+                              setRebuildFor(t);
+                            }}
                           >
                             Rebuild
                           </button>
@@ -436,6 +479,11 @@ export function HostDetailPage({
                   ))}
                 </tbody>
               </table>
+            )}
+            {rebuildError && (
+              <div className="hd-error" data-testid="rebuild-error">
+                {rebuildError}
+              </div>
             )}
           </section>
 
@@ -457,8 +505,31 @@ export function HostDetailPage({
                 <code>{instance.instance_name}</code>.
               </p>
               <code>{nudgeText}</code>
+              {registryAdmin && (
+                <div className="hd-nudge-actions">
+                  <button
+                    type="button"
+                    className="hd-btn hd-btn--primary"
+                    data-testid="configure-now"
+                    onClick={() => setConfigureOpen(true)}
+                  >
+                    Configure now
+                  </button>
+                </div>
+              )}
             </div>
           )}
+
+          {registryAdmin && configureJob && (
+            <JobProgressPanel
+              instanceId={instanceId}
+              job={configureJob}
+              fetchStatus={getRegistryJobStatus}
+              onFinished={refreshInstance}
+              onDismiss={() => setConfigureJob(null)}
+            />
+          )}
+          {configureError && <div className="hd-error">{configureError}</div>}
 
           {canMaintain && (
             <section data-testid="new-project-section">
@@ -525,6 +596,29 @@ export function HostDetailPage({
               ))}
             </section>
           )}
+          {registryAdmin && (
+            <section className="hd-danger" data-testid="remove-host-zone">
+              <div className="hd-heading hd-heading--danger">Registry</div>
+              <div className="hd-danger-row">
+                <span className="hd-danger-name">{instance.instance_name}</span>
+                <span className="hd-danger-note">
+                  Remove this host from the console registry. The machine itself is never
+                  touched.
+                </span>
+                <button
+                  type="button"
+                  className="hd-btn hd-btn--danger"
+                  data-testid="remove-host"
+                  onClick={() => {
+                    setRemoveError(null);
+                    setRemoveOpen(true);
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            </section>
+          )}
         </div>
       </div>
 
@@ -534,6 +628,50 @@ export function HostDetailPage({
           target={rebuildFor}
           onConfirm={(noCache) => void confirmRebuild(rebuildFor, noCache)}
           onCancel={() => setRebuildFor(null)}
+        />
+      )}
+      {configureOpen && (
+        <ConfigureConfirmDialog
+          hostName={instance.instance_name}
+          hostUser="the registered account"
+          onConfirm={() => {
+            setConfigureOpen(false);
+            setConfigureError(null);
+            void startConfigure(instanceId)
+              .then(setConfigureJob)
+              .catch((error) => {
+                setConfigureError(
+                  error instanceof ApiError
+                    ? error.remediation
+                      ? `${error.message} — ${error.remediation}`
+                      : error.message
+                    : "Could not start configure",
+                );
+              });
+          }}
+          onCancel={() => setConfigureOpen(false)}
+        />
+      )}
+      {removeOpen && (
+        <RemoveHostDialog
+          hostName={instance.instance_name}
+          busy={removeBusy}
+          error={removeError}
+          onConfirm={() => {
+            setRemoveBusy(true);
+            setRemoveError(null);
+            void removeHost(instanceId)
+              .then(() => {
+                setRemoveOpen(false);
+                onClose();
+                void discovery.refresh();
+              })
+              .catch((error) => {
+                setRemoveError(error instanceof ApiError ? error.message : "Remove failed");
+              })
+              .finally(() => setRemoveBusy(false));
+          }}
+          onCancel={() => setRemoveOpen(false)}
         />
       )}
       {deleteFor && (
