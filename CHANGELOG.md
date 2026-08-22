@@ -1,5 +1,14 @@
 # Changelog
 
+## [4.4.0](https://github.com/get2knowio/remo/compare/v4.3.6...v4.4.0) (2026-08-22)
+
+
+### Features
+
+* **web:** console host management + bi-directional registry sync (remo web sync) ([#189](https://github.com/get2knowio/remo/issues/189)) ([dbae890](https://github.com/get2knowio/remo/commit/dbae89091eff3261ae3078a0829783e8b4157cd8))
+* **web:** host detail page, maintenance surface, and rail favorites ([#187](https://github.com/get2knowio/remo/issues/187)) ([a25e5e5](https://github.com/get2knowio/remo/commit/a25e5e5cb83424fd0ac6b85cf67933977292cf4b))
+* **web:** read-only console diagnostics snapshot (Settings + window.__remo) ([#184](https://github.com/get2knowio/remo/issues/184)) ([08faed5](https://github.com/get2knowio/remo/commit/08faed56eb28e0949826413fd3ce7932df65f1b3))
+
 ## [4.3.6](https://github.com/get2knowio/remo/compare/v4.3.5...v4.3.6) (2026-08-16)
 
 
