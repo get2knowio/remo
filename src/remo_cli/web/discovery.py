@@ -44,7 +44,12 @@ from remo_cli.models.host import KnownHost
 from remo_cli.models.session_target import SessionTarget, derive_session_target_id
 from remo_cli.web.config import WebSettings
 
-__all__ = ["DiscoveryService", "derive_instance_id"]
+__all__ = [
+    "DiscoveryService",
+    "build_service_ssh_prefix",
+    "configure_remediation",
+    "derive_instance_id",
+]
 
 logger = logging.getLogger("remo_cli.web.discovery")
 
@@ -105,14 +110,17 @@ def _read_registry_hosts_readonly() -> list[KnownHost]:
 # ---------------------------------------------------------------------------
 
 
-def _discover_one_sync(
-    host: KnownHost, settings: WebSettings
-) -> tuple[RemoteCapability, list[ProjectEntry]]:
-    """Blocking discovery of one instance; run in a worker thread."""
-    # Adopted mode uses the service's own key (R6). Other modes fall back to
-    # the mounted ~/.ssh — and to a registry identity only when that path
-    # actually resolves here; see WebSettings.ssh_identity_for.
-    ssh_argv_prefix = build_ssh_base_cmd(
+def build_service_ssh_prefix(host: KnownHost, settings: WebSettings) -> list[str]:
+    """The SSH argv prefix this *service* uses to run ``remo-host`` on *host*.
+
+    One construction shared by discovery and every other web-service call
+    path (host stats, project maintenance) so the identity/known-hosts
+    resolution can never diverge between them. Adopted mode uses the
+    service's own key (R6). Other modes fall back to the mounted ``~/.ssh``
+    — and to a registry identity only when that path actually resolves here;
+    see :meth:`WebSettings.ssh_identity_for`.
+    """
+    return build_ssh_base_cmd(
         host,
         control_dir=settings.ssh_control_dir,
         identity_file=settings.ssh_identity_for(host),
@@ -121,6 +129,13 @@ def _discover_one_sync(
         use_registry_identity=False,
         known_hosts_file=settings.ssh_known_hosts_file,
     )
+
+
+def _discover_one_sync(
+    host: KnownHost, settings: WebSettings
+) -> tuple[RemoteCapability, list[ProjectEntry]]:
+    """Blocking discovery of one instance; run in a worker thread."""
+    ssh_argv_prefix = build_service_ssh_prefix(host, settings)
     capability = get_capabilities(ssh_argv_prefix, timeout=settings.discovery_timeout_s)
     entries = list_sessions(ssh_argv_prefix, timeout=settings.discovery_timeout_s)
     return capability, entries
@@ -151,7 +166,7 @@ def _snapshot(
     )
 
 
-def _configure_remediation(host: KnownHost) -> str:
+def configure_remediation(host: KnownHost) -> str:
     """Name the exact command that installs/refreshes this host's remo tools.
 
     The verb differs by how the host got here, and the wrong one is worse than
@@ -276,7 +291,7 @@ async def _discover_one(
                     retryable=False,
                     remediation=(
                         "remo-host on this instance returned an unexpected response. "
-                        + _configure_remediation(host)
+                        + configure_remediation(host)
                     ),
                 ),
             )
@@ -293,7 +308,7 @@ async def _discover_one(
                         # Name the actual command. This used to say "re-run
                         # configure", which for a `remo add` host pointed at
                         # something that did not exist until `remo configure`.
-                        remediation=_configure_remediation(host),
+                        remediation=configure_remediation(host),
                     ),
                 )
             return _snapshot(
@@ -396,6 +411,15 @@ class DiscoveryService:
     def find_target(self, target_id: str) -> SessionTarget | None:
         """Look up a `SessionTarget` by its opaque id in the current cache."""
         return self._targets_by_id.get(target_id)
+
+    def find_instance(self, instance_id: str) -> DiscoverySnapshot | None:
+        """Look up an instance's `DiscoverySnapshot` by its opaque id.
+
+        Cache-backed like :meth:`find_target` (the same re-authorization
+        model the terminals API uses, FR-050): an id that the most recent
+        discovery run did not produce is unknown — never guessed at.
+        """
+        return self._snapshots.get(instance_id)
 
     def find_host(self, instance_type: str, instance_name: str) -> KnownHost | None:
         """Resolve a `(instance_type, instance_name)` pair to its full `KnownHost`.

@@ -19,10 +19,23 @@ from remo_cli.models.discovery import TypedError
 __all__ = [
     "ExitInfo",
     "TerminalAttachment",
+    "TerminalKind",
     "TerminalState",
     "TypedError",
     "WsToken",
 ]
+
+
+class TerminalKind(str, Enum):
+    """What a terminal attaches to (plan §2.3, host-shell terminal path).
+
+    ``session`` -- the classic ``remo-host sessions attach`` project session.
+    ``host_shell`` -- a plain interactive login shell on the host itself
+    (host-admin-gated; needs no host tools).
+    """
+
+    SESSION = "session"
+    HOST_SHELL = "host_shell"
 
 
 class TerminalState(str, Enum):
@@ -55,6 +68,8 @@ class TerminalAttachment:
     """Server-side ephemeral terminal (data-model.md, "TerminalAttachment")."""
 
     terminal_id: str
+    #: The attach origin's opaque id: a ``SessionTarget.id`` for
+    #: ``kind=session``, the instance id for ``kind=host_shell``.
     session_target_id: str
     state: TerminalState
     cols: int
@@ -63,6 +78,7 @@ class TerminalAttachment:
     created_at: str
     last_activity_at: str
     client_id: str
+    kind: TerminalKind = TerminalKind.SESSION
     exit: ExitInfo | None = None
     error: TypedError | None = None
 

@@ -806,7 +806,8 @@ class _ConsoleEndpoint:
     has_body: bool  # False for a legitimately-empty 204 (no `content` at all)
 
 
-#: The 9 endpoints frontend/src/api/client.ts calls today (data-model.md).
+#: The endpoints frontend/src/api/client.ts calls (data-model.md, plus the
+#: host-detail feature's stats + host-admin surface).
 #: POST /pairing/end and DELETE /terminals/{id} are declared 204-no-body by
 #: design (T012/pairing.py, terminals.py) -- that is correct, not drift, so
 #: they are checked for presence only, not for a response schema.
@@ -820,6 +821,19 @@ CONSOLE_ENDPOINTS: tuple[_ConsoleEndpoint, ...] = (
     _ConsoleEndpoint("/api/v1/terminals", "post", "201", True),
     _ConsoleEndpoint("/api/v1/terminals", "get", "200", True),
     _ConsoleEndpoint("/api/v1/terminals/{terminal_id}", "delete", "204", False),
+    # Host detail: ungated live stats + the host-admin maintenance surface
+    # (dormant-404 at runtime unless REMO_WEB_HOST_ADMIN=enabled; the OpenAPI
+    # artifact still declares the routes -- the contract is the app, not the
+    # deployment's gate state).
+    _ConsoleEndpoint("/api/v1/hosts/{instance_id}/stats", "get", "200", True),
+    _ConsoleEndpoint("/api/v1/hosts/{instance_id}/projects", "post", "202", True),
+    _ConsoleEndpoint(
+        "/api/v1/hosts/{instance_id}/projects/{project}", "delete", "200", True
+    ),
+    _ConsoleEndpoint(
+        "/api/v1/hosts/{instance_id}/projects/{project}/rebuild", "post", "202", True
+    ),
+    _ConsoleEndpoint("/api/v1/hosts/{instance_id}/jobs/{job_id}", "get", "200", True),
 )
 
 

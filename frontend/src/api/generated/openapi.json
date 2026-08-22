@@ -3,9 +3,22 @@
     "schemas": {
       "CapabilityOut": {
         "properties": {
+          "docker": {
+            "default": false,
+            "title": "Docker",
+            "type": "boolean"
+          },
           "host_tools_version": {
             "title": "Host Tools Version",
             "type": "string"
+          },
+          "operations": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Operations",
+            "type": "array"
           },
           "projects_root": {
             "title": "Projects Root",
@@ -14,6 +27,11 @@
           "protocol_version": {
             "title": "Protocol Version",
             "type": "integer"
+          },
+          "zellij": {
+            "default": false,
+            "title": "Zellij",
+            "type": "boolean"
           }
         },
         "required": [
@@ -24,23 +42,64 @@
         "title": "CapabilityOut",
         "type": "object"
       },
+      "CreateProjectRequest": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "repo": {
+            "title": "Repo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo"
+        ],
+        "title": "CreateProjectRequest",
+        "type": "object"
+      },
       "CreateTerminalRequest": {
         "properties": {
           "cols": {
             "title": "Cols",
             "type": "integer"
           },
+          "instance_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Instance Id"
+          },
           "rows": {
             "title": "Rows",
             "type": "integer"
           },
           "session_target_id": {
-            "title": "Session Target Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Target Id"
           }
         },
         "required": [
-          "session_target_id",
           "cols",
           "rows"
         ],
@@ -104,6 +163,35 @@
         "title": "DevcontainerRunning",
         "type": "string"
       },
+      "DiskUsageOut": {
+        "description": "Wire mirror of `models.host_stats.DiskUsage` (the OpenAPI artifact is\nthe contract, so the shape is declared here rather than inferred).",
+        "properties": {
+          "avail_bytes": {
+            "default": 0,
+            "title": "Avail Bytes",
+            "type": "integer"
+          },
+          "mount": {
+            "title": "Mount",
+            "type": "string"
+          },
+          "size_bytes": {
+            "default": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "used_bytes": {
+            "default": 0,
+            "title": "Used Bytes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "mount"
+        ],
+        "title": "DiskUsageOut",
+        "type": "object"
+      },
       "ErrorEnvelope": {
         "description": "The `{\"error\": {...}}` wire envelope every failure response that\nactually returns it uses (`terminals.py`, `setup.py`, the `app.py`\nmiddleware). Declared only on routes that return this exact shape \u2014\n`pairing.py`'s 403 returns `{\"detail\": ...}` instead (data-model.md \u00a72).",
         "properties": {
@@ -145,6 +233,20 @@
         "title": "ErrorOut",
         "type": "object"
       },
+      "FeaturesOut": {
+        "description": "Optional service surfaces the console should (not) render UI for.\n\n``host_admin``: whether the gated host-maintenance API + host-shell\nterminal path are enabled (``REMO_WEB_HOST_ADMIN=enabled``). Advertising\nthe flag here discloses only a config bit \u2014 the gated routes themselves\nstay dormant-404 (and operator-auth-gated when configured) regardless.",
+        "properties": {
+          "host_admin": {
+            "title": "Host Admin",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "host_admin"
+        ],
+        "title": "FeaturesOut",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -160,6 +262,9 @@
       },
       "HealthResponse": {
         "properties": {
+          "features": {
+            "$ref": "#/components/schemas/FeaturesOut"
+          },
           "status": {
             "title": "Status",
             "type": "string"
@@ -171,9 +276,88 @@
         },
         "required": [
           "status",
-          "version"
+          "version",
+          "features"
         ],
         "title": "HealthResponse",
+        "type": "object"
+      },
+      "HostStatsResponse": {
+        "description": "Wire mirror of `models.host_stats.HostStats`: a live snapshot, no\ntime series. ``temps`` is empty on hosts without sensors (VMs/containers);\nthe console hides the card entirely then.",
+        "properties": {
+          "cpu_count": {
+            "default": 0,
+            "title": "Cpu Count",
+            "type": "integer"
+          },
+          "cpu_used_pct": {
+            "default": 0.0,
+            "title": "Cpu Used Pct",
+            "type": "number"
+          },
+          "disks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DiskUsageOut"
+            },
+            "title": "Disks",
+            "type": "array"
+          },
+          "load_1": {
+            "default": 0.0,
+            "title": "Load 1",
+            "type": "number"
+          },
+          "load_15": {
+            "default": 0.0,
+            "title": "Load 15",
+            "type": "number"
+          },
+          "load_5": {
+            "default": 0.0,
+            "title": "Load 5",
+            "type": "number"
+          },
+          "mem_available": {
+            "default": 0,
+            "title": "Mem Available",
+            "type": "integer"
+          },
+          "mem_total": {
+            "default": 0,
+            "title": "Mem Total",
+            "type": "integer"
+          },
+          "mem_used": {
+            "default": 0,
+            "title": "Mem Used",
+            "type": "integer"
+          },
+          "swap_total": {
+            "default": 0,
+            "title": "Swap Total",
+            "type": "integer"
+          },
+          "swap_used": {
+            "default": 0,
+            "title": "Swap Used",
+            "type": "integer"
+          },
+          "temps": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TempReadingOut"
+            },
+            "title": "Temps",
+            "type": "array"
+          },
+          "uptime_s": {
+            "default": 0.0,
+            "title": "Uptime S",
+            "type": "number"
+          }
+        },
+        "title": "HostStatsResponse",
         "type": "object"
       },
       "HostsResponse": {
@@ -294,6 +478,78 @@
         "title": "InstanceStatus",
         "type": "string"
       },
+      "JobAcceptedResponse": {
+        "description": "202: the host detached a job; poll `GET /hosts/{id}/jobs/{job_id}`.",
+        "properties": {
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "kind",
+          "project"
+        ],
+        "title": "JobAcceptedResponse",
+        "type": "object"
+      },
+      "JobState": {
+        "description": "Lifecycle state of a detached ``remo-host`` job.",
+        "enum": [
+          "running",
+          "succeeded",
+          "failed"
+        ],
+        "title": "JobState",
+        "type": "string"
+      },
+      "JobStatusResponse": {
+        "properties": {
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "finished_at": {
+            "default": "",
+            "title": "Finished At",
+            "type": "string"
+          },
+          "log_tail": {
+            "default": "",
+            "title": "Log Tail",
+            "type": "string"
+          },
+          "started_at": {
+            "default": "",
+            "title": "Started At",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/JobState"
+          }
+        },
+        "required": [
+          "state"
+        ],
+        "title": "JobStatusResponse",
+        "type": "object"
+      },
       "KnownProviderType": {
         "description": "The built-in provider types (data-model.md \u00a71).\n\nFixed by the built-in set, not derived from `core.provider_registry.\nall_descriptors()` at import time (FR-004a/SC-011): a third-party\nprovider install must never perturb the exported OpenAPI artifact.\n`tests/unit/test_schema_drift.py` (T-8) asserts this enum's members\nequal the built-in descriptor names, so a first-party provider addition\nfails loudly instead of silently drifting from reality.\n\nEvery field this annotates stays typed `KnownProviderType | str`\n(FR-014, SC-009): the wire value is unconstrained (any provider type\nname is valid data); this enum only makes the *known* vocabulary a\nreferenceable OpenAPI component for the console to enumerate.",
         "enum": [
@@ -341,6 +597,24 @@
         "title": "MintPairingResponse",
         "type": "object"
       },
+      "ProjectDeletedResponse": {
+        "properties": {
+          "deleted": {
+            "default": true,
+            "title": "Deleted",
+            "type": "boolean"
+          },
+          "project": {
+            "title": "Project",
+            "type": "string"
+          }
+        },
+        "required": [
+          "project"
+        ],
+        "title": "ProjectDeletedResponse",
+        "type": "object"
+      },
       "ReadinessResponse": {
         "properties": {
           "checks": {
@@ -371,6 +645,17 @@
           "checks"
         ],
         "title": "ReadinessResponse",
+        "type": "object"
+      },
+      "RebuildProjectRequest": {
+        "properties": {
+          "no_cache": {
+            "default": false,
+            "title": "No Cache",
+            "type": "boolean"
+          }
+        },
+        "title": "RebuildProjectRequest",
         "type": "object"
       },
       "RefreshRequest": {
@@ -605,11 +890,47 @@
         "title": "SetupStatusResponse",
         "type": "object"
       },
+      "TempReadingOut": {
+        "description": "Wire mirror of `models.host_stats.TempReading`.",
+        "properties": {
+          "celsius": {
+            "title": "Celsius",
+            "type": "number"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "label",
+          "celsius"
+        ],
+        "title": "TempReadingOut",
+        "type": "object"
+      },
+      "TerminalKind": {
+        "description": "What a terminal attaches to (plan \u00a72.3, host-shell terminal path).\n\n``session`` -- the classic ``remo-host sessions attach`` project session.\n``host_shell`` -- a plain interactive login shell on the host itself\n(host-admin-gated; needs no host tools).",
+        "enum": [
+          "session",
+          "host_shell"
+        ],
+        "title": "TerminalKind",
+        "type": "string"
+      },
       "TerminalOut": {
         "properties": {
           "created_at": {
             "title": "Created At",
             "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/TerminalKind"
           },
           "last_activity_at": {
             "title": "Last Activity At",
@@ -631,6 +952,7 @@
         "required": [
           "terminal_id",
           "session_target_id",
+          "kind",
           "state",
           "created_at",
           "last_activity_at"
@@ -850,6 +1172,450 @@
           }
         },
         "summary": "Get Hosts"
+      }
+    },
+    "/api/v1/hosts/{instance_id}/jobs/{job_id}": {
+      "get": {
+        "description": "Poll a detached job's status + log tail (console polls at 2s).",
+        "operationId": "get_job_status_route_api_v1_hosts__instance_id__jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Get Job Status Route"
+      }
+    },
+    "/api/v1/hosts/{instance_id}/projects": {
+      "post": {
+        "description": "Clone a repository into the host's ``projects_root`` (detached job).",
+        "operationId": "create_project_api_v1_hosts__instance_id__projects_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateProjectRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Create Project"
+      }
+    },
+    "/api/v1/hosts/{instance_id}/projects/{project}": {
+      "delete": {
+        "description": "Delete a project (synchronous on the host: session + containers + dir).",
+        "operationId": "delete_project_route_api_v1_hosts__instance_id__projects__project__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDeletedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Delete Project Route"
+      }
+    },
+    "/api/v1/hosts/{instance_id}/projects/{project}/rebuild": {
+      "post": {
+        "description": "Rebuild a project's devcontainer (detached job).",
+        "operationId": "rebuild_project_api_v1_hosts__instance_id__projects__project__rebuild_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "project",
+            "required": true,
+            "schema": {
+              "title": "Project",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RebuildProjectRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobAcceptedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Rebuild Project"
+      }
+    },
+    "/api/v1/hosts/{instance_id}/stats": {
+      "get": {
+        "description": "`GET /api/v1/hosts/{instance_id}/stats` -- live host statistics snapshot.\n\nUngated by design: the same trust level as `GET /hosts` (it discloses\nload/mem/temps to anyone who can reach the service \u2014 a documented\naccepted risk for this home-lab tool). Polling is coalesced by\n:class:`HostStatsCache` to at most one SSH call per TTL per host.",
+        "operationId": "get_host_stats_route_api_v1_hosts__instance_id__stats_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "instance_id",
+            "required": true,
+            "schema": {
+              "title": "Instance Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostStatsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Bad Gateway"
+          }
+        },
+        "summary": "Get Host Stats Route"
       }
     },
     "/api/v1/pairing/end": {

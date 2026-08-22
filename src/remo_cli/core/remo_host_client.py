@@ -20,21 +20,31 @@ values line up directly with `SessionTarget` fields for the later
 from __future__ import annotations
 
 import json
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass
 from enum import Enum
 
+from remo_cli.core.errors import PreconditionError
 from remo_cli.models.capability import RemoteCapability
+from remo_cli.models.host_job import JobRef, JobState, JobStatus
+from remo_cli.models.host_stats import DiskUsage, HostStats, TempReading
 from remo_cli.models.session_target import DevcontainerRunning, ZellijState
 
 __all__ = [
     "DEFAULT_PAYLOAD_CAP",
     "DEFAULT_TIMEOUT",
+    "PROJECT_DELETE_TIMEOUT",
     "SSH_TRANSPORT_EXIT_CODE",
     "SUPPORTED_PROTOCOL_RANGE",
     "DevcontainerRunning",
+    "DiskUsage",
+    "HostStats",
     "IncompatibleProtocolError",
+    "JobRef",
+    "JobState",
+    "JobStatus",
     "MalformedResponseError",
     "PayloadTooLargeError",
     "REMOTE_PATH_PREFIX",
@@ -44,12 +54,18 @@ __all__ = [
     "RemoHostExitReason",
     "RemoteCapability",
     "SshTransportError",
+    "TempReading",
     "ZellijState",
     "build_remo_host_argv",
     "build_remo_host_shell_cmd",
+    "delete_project",
     "get_capabilities",
+    "get_host_stats",
+    "get_job_status",
     "list_sessions",
     "run_remo_host_json",
+    "start_project_clone",
+    "start_project_rebuild",
 ]
 
 # ---------------------------------------------------------------------------
@@ -66,6 +82,12 @@ DEFAULT_PAYLOAD_CAP = 256 * 1024
 SSH_TRANSPORT_EXIT_CODE = 255
 
 DEFAULT_TIMEOUT = 10.0
+
+#: `projects delete` is the one synchronous mutating verb (kills the zellij
+#: session, `docker rm -f`, `rm -rf` the tree), so it gets a longer budget
+#: than :data:`DEFAULT_TIMEOUT`. Clone/rebuild detach host-side and return a
+#: job ref immediately, so the 10s default holds for them.
+PROJECT_DELETE_TIMEOUT = 30.0
 
 #: The `user_setup` Ansible role installs `remo-host` (and `project-launch`) to
 #: ``~/.local/bin``, which is NOT on the PATH of a non-interactive
@@ -203,19 +225,50 @@ class ProjectEntry:
 # ---------------------------------------------------------------------------
 
 
+def _reject_unsupported_flags(verb: str, **flags: object) -> None:
+    """Raise ValueError if any flag in *flags* carries a non-default value.
+
+    Per-verb flag validation: a caller passing e.g. ``repo=`` to
+    ``"host stats"`` is a programming error surfaced immediately, never a
+    silently-dropped flag.
+    """
+    passed = sorted(k for k, v in flags.items() if v not in (None, False))
+    if passed:
+        raise ValueError(
+            f"flag(s) {', '.join(passed)} are not supported by the {verb!r} verb"
+        )
+
+
+def _require_flag(verb: str, flag_name: str, value: str | None) -> str:
+    if not value:
+        raise ValueError(f"{flag_name} is required for the {verb!r} verb")
+    return value
+
+
 def build_remo_host_argv(
     verb: str,
     *,
     project: str | None = None,
     json: bool = True,
+    repo: str | None = None,
+    name: str | None = None,
+    job: str | None = None,
+    no_cache: bool = False,
 ) -> list[str]:
     """Build the `remo-host` argv for *verb* as a clean list (no shell quoting).
 
     Supported verbs: ``"capabilities"``, ``"sessions list"``,
-    ``"sessions attach"``. *project* is required for ``"sessions attach"``
-    and ignored otherwise. *json* appends ``--json`` for the read-only
-    verbs; it has no effect on ``"sessions attach"``, which is always
-    interactive and never emits ``--json``.
+    ``"sessions attach"``, ``"host stats"``, ``"jobs status"``,
+    ``"projects clone"``, ``"projects delete"``, ``"projects rebuild"``
+    (contracts/remo-host-protocol.md). *project* is required for
+    ``"sessions attach"``/``"projects delete"``/``"projects rebuild"`` and
+    ignored by the pre-existing read-only verbs (unchanged legacy
+    behavior); *repo* (+ optional *name*) belongs to ``"projects clone"``,
+    *job* to ``"jobs status"``, *no_cache* to ``"projects rebuild"``.
+    Passing a flag to a verb that does not take it raises ValueError.
+    *json* appends ``--json`` after the verb's flags; it has no effect on
+    ``"sessions attach"``, which is always interactive and never emits
+    ``--json``.
 
     Returns a plain argv list — safe to pass straight to
     ``subprocess.run([...])`` (no ``shell=True``). Callers that need a
@@ -225,10 +278,37 @@ def build_remo_host_argv(
     argv = ["remo-host", *verb.split()]
 
     if verb == "sessions attach":
+        _reject_unsupported_flags(verb, repo=repo, name=name, job=job, no_cache=no_cache)
         if not project:
             raise ValueError("project is required for the 'sessions attach' verb")
         argv += ["--project", project]
         return argv
+
+    if verb == "host stats":
+        _reject_unsupported_flags(
+            verb, project=project, repo=repo, name=name, job=job, no_cache=no_cache
+        )
+    elif verb == "jobs status":
+        _reject_unsupported_flags(verb, project=project, repo=repo, name=name, no_cache=no_cache)
+        argv += ["--job", _require_flag(verb, "job", job)]
+    elif verb == "projects clone":
+        _reject_unsupported_flags(verb, project=project, job=job, no_cache=no_cache)
+        argv += ["--repo", _require_flag(verb, "repo", repo)]
+        if name:
+            argv += ["--name", name]
+    elif verb == "projects delete":
+        _reject_unsupported_flags(verb, repo=repo, name=name, job=job, no_cache=no_cache)
+        argv += ["--project", _require_flag(verb, "project", project)]
+    elif verb == "projects rebuild":
+        _reject_unsupported_flags(verb, repo=repo, name=name, job=job)
+        argv += ["--project", _require_flag(verb, "project", project)]
+        if no_cache:
+            argv.append("--no-cache")
+    else:
+        # Pre-existing verbs (capabilities, sessions list) and forward-compat
+        # unknown verbs: byte-identical legacy behavior — *project* stays
+        # ignored, but the new flags are still rejected.
+        _reject_unsupported_flags(verb, repo=repo, name=name, job=job, no_cache=no_cache)
 
     if json:
         argv.append("--json")
@@ -338,6 +418,11 @@ def run_remo_host_json(
     ssh_argv_prefix: list[str],
     verb: str,
     *,
+    project: str | None = None,
+    repo: str | None = None,
+    name: str | None = None,
+    job: str | None = None,
+    no_cache: bool = False,
     timeout: float = DEFAULT_TIMEOUT,
     payload_cap: int = DEFAULT_PAYLOAD_CAP,
     supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
@@ -347,6 +432,8 @@ def run_remo_host_json(
     *ssh_argv_prefix* is the already-built SSH invocation, e.g.
     ``["ssh", *opts, "user@host"]`` — this function appends the
     ``remo-host`` argv itself and never touches SSH option construction.
+    The per-verb flags (*project*, *repo*, *name*, *job*, *no_cache*) are
+    passed straight through to :func:`build_remo_host_argv`.
 
     Raises :class:`SshTransportError`, :class:`RemoHostCommandError`,
     :class:`PayloadTooLargeError`, :class:`MalformedResponseError`, or
@@ -355,7 +442,19 @@ def run_remo_host_json(
     # REMOTE_PATH_PREFIX is a separate command word; ssh joins the post-target
     # words with spaces, so the remote shell evaluates it as a `PATH=... cmd`
     # assignment prefix that locates remo-host in ~/.local/bin.
-    argv = [*ssh_argv_prefix, REMOTE_PATH_PREFIX, *build_remo_host_argv(verb, json=True)]
+    argv = [
+        *ssh_argv_prefix,
+        REMOTE_PATH_PREFIX,
+        *build_remo_host_argv(
+            verb,
+            project=project,
+            json=True,
+            repo=repo,
+            name=name,
+            job=job,
+            no_cache=no_cache,
+        ),
+    ]
     result = _invoke(argv, timeout=timeout)
     _classify_exit(result, verb=verb)
     payload = _decode_json_payload(result.stdout, payload_cap=payload_cap)
@@ -458,3 +557,197 @@ def list_sessions(
             continue
 
     return entries
+
+
+# ---------------------------------------------------------------------------
+# Client-side input pre-validation (defense in depth, FR-014)
+#
+# The remo-host template validates these again host-side; this layer exists
+# so an unvalidated string never even reaches the remote argv. Invalid input
+# is a caller/user mistake, so it raises the core taxonomy's
+# PreconditionError (not a client transport/protocol error).
+# ---------------------------------------------------------------------------
+
+#: ``owner/repo`` shorthand (mirrors the host-side clone validation).
+_REPO_SHORT_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+#: ``https://github.com/owner/repo`` URL form (optionally ``.git`` / trailing slash).
+_REPO_URL_RE = re.compile(
+    r"^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\.git)?/?$"
+)
+
+#: Safe charset for project names and job ids (single path component,
+#: no separators, no shell metacharacters).
+_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+
+def _validate_repo(repo: str) -> str:
+    invalid = (
+        not repo
+        or repo.startswith("-")
+        or not (_REPO_SHORT_RE.match(repo) or _REPO_URL_RE.match(repo))
+        # The charset admits "." and ".." as whole segments ("../.." would
+        # otherwise pass as owner/repo and read as a local path traversal).
+        or any(seg in {".", ".."} for seg in repo.split("/"))
+    )
+    if invalid:
+        raise PreconditionError(
+            f"Invalid repository {repo!r}: expected 'owner/repo' or an "
+            "https://github.com/owner/repo URL."
+        )
+    return repo
+
+
+def _validate_safe_name(value: str, *, what: str) -> str:
+    if (
+        not value
+        or value.startswith("-")
+        or value in {".", ".."}
+        or not _SAFE_NAME_RE.match(value)
+    ):
+        raise PreconditionError(
+            f"Invalid {what} {value!r}: only letters, digits, '.', '_' and '-' "
+            "are allowed, and it must not start with '-'."
+        )
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Typed wrappers: host stats, project maintenance, job polling
+# ---------------------------------------------------------------------------
+
+
+def get_host_stats(
+    ssh_argv_prefix: list[str],
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+    payload_cap: int = DEFAULT_PAYLOAD_CAP,
+    supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
+) -> HostStats:
+    """Run `remo-host host stats --json` and return a typed snapshot.
+
+    Missing/garbage stats fields degrade to safe defaults (see
+    :class:`~remo_cli.models.host_stats.HostStats`) — a partially-broken
+    host still reports what it can.
+    """
+    payload = run_remo_host_json(
+        ssh_argv_prefix,
+        "host stats",
+        timeout=timeout,
+        payload_cap=payload_cap,
+        supported_range=supported_range,
+    )
+    return HostStats.from_dict(payload)
+
+
+def get_job_status(
+    ssh_argv_prefix: list[str],
+    job_id: str,
+    *,
+    timeout: float = DEFAULT_TIMEOUT,
+    payload_cap: int = DEFAULT_PAYLOAD_CAP,
+    supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
+) -> JobStatus:
+    """Run `remo-host jobs status --job ID --json` and return a typed status."""
+    _validate_safe_name(job_id, what="job id")
+    payload = run_remo_host_json(
+        ssh_argv_prefix,
+        "jobs status",
+        job=job_id,
+        timeout=timeout,
+        payload_cap=payload_cap,
+        supported_range=supported_range,
+    )
+    try:
+        return JobStatus.from_dict(payload)
+    except ValueError as e:
+        raise MalformedResponseError(f"job status response invalid: {e}") from e
+
+
+def start_project_clone(
+    ssh_argv_prefix: list[str],
+    repo: str,
+    *,
+    name: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    payload_cap: int = DEFAULT_PAYLOAD_CAP,
+    supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
+) -> JobRef:
+    """Run `remo-host projects clone --repo V [--name N] --json`.
+
+    The clone detaches host-side and returns a job ref immediately
+    (202-style), so the default :data:`DEFAULT_TIMEOUT` holds; poll with
+    :func:`get_job_status`.
+    """
+    _validate_repo(repo)
+    if name is not None:
+        _validate_safe_name(name, what="project name")
+    payload = run_remo_host_json(
+        ssh_argv_prefix,
+        "projects clone",
+        repo=repo,
+        name=name,
+        timeout=timeout,
+        payload_cap=payload_cap,
+        supported_range=supported_range,
+    )
+    try:
+        return JobRef.from_dict(payload)
+    except ValueError as e:
+        raise MalformedResponseError(f"clone job ref response invalid: {e}") from e
+
+
+def delete_project(
+    ssh_argv_prefix: list[str],
+    project: str,
+    *,
+    timeout: float = PROJECT_DELETE_TIMEOUT,
+    payload_cap: int = DEFAULT_PAYLOAD_CAP,
+    supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
+) -> None:
+    """Run `remo-host projects delete --project N --json` (synchronous).
+
+    Success returns None; failures raise the usual typed client errors
+    (an unknown project surfaces as :class:`RemoHostCommandError` with
+    reason ``invalid_project``, exit 3).
+    """
+    _validate_safe_name(project, what="project name")
+    run_remo_host_json(
+        ssh_argv_prefix,
+        "projects delete",
+        project=project,
+        timeout=timeout,
+        payload_cap=payload_cap,
+        supported_range=supported_range,
+    )
+
+
+def start_project_rebuild(
+    ssh_argv_prefix: list[str],
+    project: str,
+    *,
+    no_cache: bool = False,
+    timeout: float = DEFAULT_TIMEOUT,
+    payload_cap: int = DEFAULT_PAYLOAD_CAP,
+    supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
+) -> JobRef:
+    """Run `remo-host projects rebuild --project N [--no-cache] --json`.
+
+    The rebuild detaches host-side and returns a job ref immediately
+    (202-style), so the default :data:`DEFAULT_TIMEOUT` holds; poll with
+    :func:`get_job_status`.
+    """
+    _validate_safe_name(project, what="project name")
+    payload = run_remo_host_json(
+        ssh_argv_prefix,
+        "projects rebuild",
+        project=project,
+        no_cache=no_cache,
+        timeout=timeout,
+        payload_cap=payload_cap,
+        supported_range=supported_range,
+    )
+    try:
+        return JobRef.from_dict(payload)
+    except ValueError as e:
+        raise MalformedResponseError(f"rebuild job ref response invalid: {e}") from e

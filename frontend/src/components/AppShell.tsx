@@ -10,10 +10,11 @@ import { exitBrowserFullscreen } from "../lib/fullscreen";
 import { useDiscovery } from "../state/discovery";
 import { useHealth } from "../state/health";
 import { useLatency } from "../state/latency";
-import { settingsActions, useSettings } from "../state/settings";
+import { hostKey, settingsActions, useSettings } from "../state/settings";
 import { useConsoleKeyboard } from "../state/useConsoleKeyboard";
 import { useWorkspace } from "../state/workspace";
 import { buildRailModel, type RailFilters } from "./railModel";
+import { HostDetailPage } from "./HostDetailPage";
 import { OfflineOverlay } from "./OfflineOverlay";
 import { SessionRail } from "./SessionRail";
 import { SettingsPage } from "./SettingsPage";
@@ -34,6 +35,7 @@ export function AppShell(): JSX.Element {
   const [sessionOnly, setSessionOnly] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [hostDetailId, setHostDetailId] = useState<string | null>(null);
   const [narrow, setNarrow] = useState(
     typeof window !== "undefined" ? window.innerWidth < NARROW_BREAKPOINT : false,
   );
@@ -74,17 +76,30 @@ export function AppShell(): JSX.Element {
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, [maximized, restore]);
 
-  // Per-terminal theme overrides are keyed by target id; drop the ones whose
-  // target no longer exists so the stored map can't grow without bound.
-  // Guarded on a non-empty snapshot: discovery keeps its last-known targets
-  // when a poll fails, and pruning against an empty list — the pre-first-poll
-  // state, or a failed one — would wipe live preferences.
+  // Per-terminal theme overrides and favorites are keyed by target id, and
+  // collapse prefs by instance id; drop the ones whose subject no longer
+  // exists so the stored maps can't grow without bound. Guarded on a non-empty
+  // snapshot: discovery keeps its last-known state when a poll fails, and
+  // pruning against an empty list — the pre-first-poll state, or a failed one
+  // — would wipe live preferences. Favorites additionally only prune when the
+  // parent host reports "ok" (see pruneFavorites), so an unreachable host's
+  // pins survive as stale rows.
   useEffect(() => {
     if (discovery.targets.length === 0) {
       return;
     }
-    settingsActions.pruneTermThemeOverrides(discovery.targets.map((t) => t.id));
-  }, [discovery.targets]);
+    const targetIds = discovery.targets.map((t) => t.id);
+    settingsActions.pruneTermThemeOverrides(targetIds);
+    settingsActions.pruneFavorites(
+      targetIds,
+      discovery.instances
+        .filter((i) => i.status === "ok")
+        .map((i) => hostKey(i.instance_type, i.instance_name)),
+    );
+    if (discovery.instances.length > 0) {
+      settingsActions.pruneCollapsedHosts(discovery.instances.map((i) => i.instance_id));
+    }
+  }, [discovery.targets, discovery.instances]);
 
   const filters: RailFilters = useMemo(
     () => ({ search, providerFilter, sessionOnly }),
@@ -105,15 +120,31 @@ export function AppShell(): JSX.Element {
   // Feeding both into the rail is what makes the ⚡ appear on the spot.
   const [liveTargetIds, setLiveTargetIds] = useState<ReadonlySet<string>>(() => new Set());
 
+  const collapsedHostIds = useMemo(
+    () => new Set(settings.collapsedHosts),
+    [settings.collapsedHosts],
+  );
+
   const railModel = useMemo(
-    () => buildRailModel(discovery.instances, discovery.targets, filters, liveTargetIds),
-    [discovery.instances, discovery.targets, filters, liveTargetIds],
+    () =>
+      buildRailModel(discovery.instances, discovery.targets, filters, liveTargetIds, {
+        collapsedHostIds,
+        favorites: settings.favorites,
+      }),
+    [
+      discovery.instances,
+      discovery.targets,
+      filters,
+      liveTargetIds,
+      collapsedHostIds,
+      settings.favorites,
+    ],
   );
 
   const regionByKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const i of discovery.instances) {
-      map.set(`${i.instance_type}::${i.instance_name}`, i.region);
+      map.set(hostKey(i.instance_type, i.instance_name), i.region);
     }
     return map;
   }, [discovery.instances]);
@@ -121,7 +152,7 @@ export function AppShell(): JSX.Element {
   const instanceIdByKey = useMemo(() => {
     const map = new Map<string, string>();
     for (const i of discovery.instances) {
-      map.set(`${i.instance_type}::${i.instance_name}`, i.instance_id);
+      map.set(hostKey(i.instance_type, i.instance_name), i.instance_id);
     }
     return map;
   }, [discovery.instances]);
@@ -140,7 +171,7 @@ export function AppShell(): JSX.Element {
         next.delete(target.id);
         return next;
       });
-      const id = instanceIdByKey.get(`${target.instance_type}::${target.instance_name}`);
+      const id = instanceIdByKey.get(hostKey(target.instance_type, target.instance_name));
       void refresh(id);
     },
     [instanceIdByKey, refresh],
@@ -157,6 +188,12 @@ export function AppShell(): JSX.Element {
   );
 
   const onEscapeOverlay = useCallback((): boolean => {
+    // Host detail first: it opens on top of the dashboard, so Esc must close
+    // it before falling through to the settings/shortcuts overlays.
+    if (hostDetailId !== null) {
+      setHostDetailId(null);
+      return true;
+    }
     if (settingsOpen) {
       setSettingsOpen(false);
       return true;
@@ -166,7 +203,7 @@ export function AppShell(): JSX.Element {
       return true;
     }
     return false;
-  }, [settingsOpen, shortcutsOpen]);
+  }, [hostDetailId, settingsOpen, shortcutsOpen]);
 
   const onToggleShortcuts = useCallback(() => setShortcutsOpen((v) => !v), []);
 
@@ -259,6 +296,9 @@ export function AppShell(): JSX.Element {
             onToggleProvider={(p) => setProviderFilter((cur) => (cur === p ? null : p))}
             onToggleSessionOnly={() => setSessionOnly((v) => !v)}
             onOpenAllAvailable={() => workspace.openMany(railModel.flatOpenable)}
+            onToggleHostCollapsed={settingsActions.toggleHostCollapsed}
+            onToggleFavorite={settingsActions.toggleFavorite}
+            onOpenHostDetail={setHostDetailId}
           />
         </aside>
 
@@ -294,6 +334,16 @@ export function AppShell(): JSX.Element {
         </div>
       </div>
 
+      {hostDetailId !== null && (
+        <HostDetailPage
+          instanceId={hostDetailId}
+          onClose={() => setHostDetailId(null)}
+          onOpenTarget={(target) => {
+            workspace.selectOnly(target);
+            setHostDetailId(null);
+          }}
+        />
+      )}
       {settingsOpen && <SettingsPage onClose={() => setSettingsOpen(false)} />}
       {shortcutsOpen && <ShortcutsModal onClose={() => setShortcutsOpen(false)} />}
       {health.status === "offline" && <OfflineOverlay onRetry={() => void health.retry()} />}

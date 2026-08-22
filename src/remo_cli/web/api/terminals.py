@@ -38,12 +38,14 @@ from remo_cli.web.frames import (
     ReadyFrame,
     ResizeFrame,
 )
-from remo_cli.web.models import TerminalState
+from remo_cli.web.models import TerminalKind, TerminalState
 from remo_cli.web.terminal import (
     MAX_DIMENSION,
     ErrorClass,
     TerminalSession,
     build_attach_argv,
+    build_host_shell_argv,
+    classify_shell_exit,
 )
 from remo_cli.web.terminal_registry import CapReachedError, TerminalRegistry
 
@@ -84,7 +86,10 @@ def _error_frame(cls: ErrorClass) -> ErrorFrame:
 
 
 class CreateTerminalRequest(BaseModel):
-    session_target_id: str
+    #: Exactly ONE of `session_target_id` (a project session terminal) or
+    #: `instance_id` (a host-admin-gated plain shell on the host) must be set.
+    session_target_id: str | None = None
+    instance_id: str | None = None
     cols: int
     rows: int
 
@@ -99,7 +104,10 @@ class CreateTerminalResponse(BaseModel):
 
 class TerminalOut(BaseModel):
     terminal_id: str
+    #: The attach origin's opaque id: a session-target id for
+    #: `kind=session`, the instance id for `kind=host_shell`.
     session_target_id: str
+    kind: TerminalKind
     state: str
     created_at: str
     last_activity_at: str
@@ -151,6 +159,34 @@ def _error(status_code: int, code: str, message: str, *, remediation: str, retry
     )
 
 
+def _unknown_target_error():
+    """The one 404 for anything that does not resolve to an attachable target.
+
+    Deliberately shared by (a) a stale/undiscovered session-target id, (b) an
+    unknown instance id, and (c) an `instance_id` request while the host-admin
+    surface is off or operator auth refuses — dormancy-equivalence on a route
+    that legitimately exists (plan §2.3): the response must not reveal whether
+    the gate or the id was the problem.
+    """
+    return _error(
+        404,
+        "unknown_target",
+        "The requested session target is not currently discovered.",
+        remediation="Refresh discovery and pick a currently available target.",
+        retryable=True,
+    )
+
+
+def _host_shell_authorized(request: Request) -> bool:
+    """True when the host-admin surface is on AND operator auth (if configured)
+    accepts this request — the same two checks `require_host_admin` runs."""
+    settings = request.app.state.settings
+    if not settings.host_admin_enabled:
+        return False
+    provider = getattr(request.app.state, "operator_auth_provider", None)
+    return provider is None or provider.authenticate(request) is not None
+
+
 # ---------------------------------------------------------------------------
 # REST endpoints
 # ---------------------------------------------------------------------------
@@ -196,21 +232,40 @@ async def create_terminal(request: Request, body: CreateTerminalRequest):
     cols = min(body.cols, MAX_DIMENSION)
     rows = min(body.rows, MAX_DIMENSION)
 
-    # Re-authorize the target against the CURRENT discovery cache (FR-050): a
-    # client never supplies a raw target, and a stale/undiscovered id is a 404.
-    target = _discovery(request.app).find_target(body.session_target_id)
-    if target is None:
+    # Exactly one attach origin (plan §2.3): a session target OR an instance.
+    if (body.session_target_id is None) == (body.instance_id is None):
         return _error(
-            404,
-            "unknown_target",
-            "The requested session target is not currently discovered.",
-            remediation="Refresh discovery and pick a currently available target.",
-            retryable=True,
+            400,
+            "invalid_request",
+            "Exactly one of session_target_id or instance_id must be provided.",
+            remediation="Send a session_target_id for a project session, or an "
+            "instance_id for a host shell — never both, never neither.",
+            retryable=False,
         )
+
+    if body.instance_id is not None:
+        # Host shell: gated like the host-admin API, but on a route that
+        # legitimately exists — gate-off/unauthenticated/unknown are all the
+        # SAME 404 a stale session-target id gets (dormancy-equivalence).
+        if not _host_shell_authorized(request):
+            return _unknown_target_error()
+        if _discovery(request.app).find_instance(body.instance_id) is None:
+            return _unknown_target_error()
+        origin_id = body.instance_id
+        kind = TerminalKind.HOST_SHELL
+    else:
+        # Re-authorize the target against the CURRENT discovery cache
+        # (FR-050): a client never supplies a raw target, and a
+        # stale/undiscovered id is a 404.
+        assert body.session_target_id is not None  # narrowed by the XOR above
+        if _discovery(request.app).find_target(body.session_target_id) is None:
+            return _unknown_target_error()
+        origin_id = body.session_target_id
+        kind = TerminalKind.SESSION
 
     try:
         attachment, token = await _registry(request.app).register(
-            body.session_target_id, cols, rows, _client_id(request)
+            origin_id, cols, rows, _client_id(request), kind=kind
         )
     except CapReachedError as exc:
         return _error(
@@ -241,6 +296,7 @@ async def list_terminals(request: Request) -> TerminalsListResponse:
             TerminalOut(
                 terminal_id=a.terminal_id,
                 session_target_id=a.session_target_id,
+                kind=a.kind,
                 state=a.state.value,
                 created_at=a.created_at,
                 last_activity_at=a.last_activity_at,
@@ -312,13 +368,24 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str) -> None:
         await websocket.close(code=_WS_POLICY_VIOLATION)
         return
 
-    target = discovery.find_target(attachment.session_target_id)
-    if target is None:
-        registry.set_state(terminal_id, TerminalState.ERROR)
-        await websocket.close(code=_WS_POLICY_VIOLATION)
-        return
+    # Re-resolve the attach origin against the CURRENT cache (FR-050).
+    project: str | None = None
+    if attachment.kind is TerminalKind.HOST_SHELL:
+        snapshot = discovery.find_instance(attachment.session_target_id)
+        if snapshot is None:
+            registry.set_state(terminal_id, TerminalState.ERROR)
+            await websocket.close(code=_WS_POLICY_VIOLATION)
+            return
+        host = discovery.find_host(snapshot.instance_type, snapshot.instance_name)
+    else:
+        target = discovery.find_target(attachment.session_target_id)
+        if target is None:
+            registry.set_state(terminal_id, TerminalState.ERROR)
+            await websocket.close(code=_WS_POLICY_VIOLATION)
+            return
+        project = target.project
+        host = discovery.find_host(target.instance_type, target.instance_name)
 
-    host = discovery.find_host(target.instance_type, target.instance_name)
     if host is None:
         registry.set_state(terminal_id, TerminalState.ERROR)
         await websocket.close(code=_WS_POLICY_VIOLATION)
@@ -328,14 +395,26 @@ async def terminal_ws(websocket: WebSocket, terminal_id: str) -> None:
     await websocket.accept(subprotocol=PROTOCOL_ID)
     registry.set_state(terminal_id, TerminalState.CONNECTING)
 
-    # 5. Spawn the PTY + ssh attach. build_attach_argv() re-validates the
-    # project name (T059, defense-in-depth) before constructing the remote
-    # command, so a failure there is handled the same as any other
-    # spawn/launch failure below.
+    # 5. Spawn the PTY + ssh. Session terminals attach the project session
+    # (build_attach_argv() re-validates the project name, T059,
+    # defense-in-depth, so a failure there is handled the same as any other
+    # spawn/launch failure below); host shells run the plain login shell
+    # with classify_shell_exit so a user's own nonzero `exit` never surfaces
+    # as a project-flavored error (plan §2.3).
     session: TerminalSession | None = None
     try:
-        argv = build_attach_argv(host, target.project, control_dir=settings.ssh_control_dir)
-        session = TerminalSession(argv, cols=attachment.cols, rows=attachment.rows)
+        if attachment.kind is TerminalKind.HOST_SHELL:
+            argv = build_host_shell_argv(host, control_dir=settings.ssh_control_dir)
+            session = TerminalSession(
+                argv,
+                cols=attachment.cols,
+                rows=attachment.rows,
+                exit_classifier=classify_shell_exit,
+            )
+        else:
+            assert project is not None  # set on the session branch above
+            argv = build_attach_argv(host, project, control_dir=settings.ssh_control_dir)
+            session = TerminalSession(argv, cols=attachment.cols, rows=attachment.rows)
         await session.start()
     except Exception:  # noqa: BLE001 - any spawn failure is surfaced + reaped.
         await _send_control(websocket, _error_frame(ErrorClass.REMOTE_LAUNCH))

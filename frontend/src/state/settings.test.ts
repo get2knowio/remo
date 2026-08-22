@@ -304,6 +304,133 @@ describe("tiling split", () => {
   });
 });
 
+describe("collapsed hosts", () => {
+  it("defaults to none collapsed, including for legacy persisted JSON without the key", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ themeMode: "dark" }));
+    const settings = await load();
+    expect(settings.getSettings().collapsedHosts).toEqual([]);
+  });
+
+  it("toggles a host in and out and round-trips through localStorage", async () => {
+    const first = await load();
+    act(() => first.settingsActions.toggleHostCollapsed("i-1"));
+    act(() => first.settingsActions.toggleHostCollapsed("i-2"));
+    expect(first.getSettings().collapsedHosts).toEqual(["i-1", "i-2"]);
+
+    act(() => first.settingsActions.toggleHostCollapsed("i-1"));
+    expect(first.getSettings().collapsedHosts).toEqual(["i-2"]);
+
+    const reloaded = await load();
+    expect(reloaded.getSettings().collapsedHosts).toEqual(["i-2"]);
+  });
+
+  it("rejects garbage persisted values, keeping only string ids", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ collapsedHosts: "i-1" }));
+    expect((await load()).getSettings().collapsedHosts).toEqual([]);
+
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ collapsedHosts: ["i-1", 7, null, { id: "i-2" }] }),
+    );
+    expect((await load()).getSettings().collapsedHosts).toEqual(["i-1"]);
+  });
+
+  it("prunes collapse prefs for hosts that no longer exist, keeping live ones", async () => {
+    const settings = await load();
+    act(() => settings.settingsActions.toggleHostCollapsed("i-1"));
+    act(() => settings.settingsActions.toggleHostCollapsed("gone"));
+
+    act(() => settings.settingsActions.pruneCollapsedHosts(["i-1", "i-2"]));
+    expect(settings.getSettings().collapsedHosts).toEqual(["i-1"]);
+  });
+
+  it("pruning collapse prefs against an unchanged set leaves the state object identical", async () => {
+    const settings = await load();
+    act(() => settings.settingsActions.toggleHostCollapsed("i-1"));
+    const before = settings.getSettings();
+
+    act(() => settings.settingsActions.pruneCollapsedHosts(["i-1", "i-2"]));
+    expect(settings.getSettings()).toBe(before);
+  });
+});
+
+describe("favorites", () => {
+  const entry = { project: "remo", instanceType: "incus", instanceName: "lab/dev1" };
+
+  it("defaults to none, including for legacy persisted JSON without the key", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ themeMode: "dark" }));
+    const settings = await load();
+    expect(settings.getSettings().favorites).toEqual({});
+  });
+
+  it("toggles a favorite on and off and round-trips through localStorage", async () => {
+    const first = await load();
+    act(() => first.settingsActions.toggleFavorite("t-1", entry));
+    expect(first.getSettings().favorites).toEqual({ "t-1": entry });
+
+    const reloaded = await load();
+    expect(reloaded.getSettings().favorites).toEqual({ "t-1": entry });
+
+    act(() => reloaded.settingsActions.toggleFavorite("t-1", entry));
+    expect(reloaded.getSettings().favorites).toEqual({});
+  });
+
+  it("rejects garbage persisted values, keeping only complete entries", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ favorites: "nope" }));
+    expect((await load()).getSettings().favorites).toEqual({});
+
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        favorites: {
+          "t-1": entry,
+          "t-2": { project: "x", instanceType: "incus" },
+          "t-3": { project: 7, instanceType: "incus", instanceName: "n" },
+          "t-4": null,
+        },
+      }),
+    );
+    expect((await load()).getSettings().favorites).toEqual({ "t-1": entry });
+  });
+
+  // The load-bearing pruning case: an unreachable host's targets are absent
+  // from discovery, and its favorites must survive that (rendered stale), or
+  // one network blip would silently wipe the user's pins.
+  it("keeps a favorite whose host is not reachable, even when its target is gone", async () => {
+    const settings = await load();
+    act(() => settings.settingsActions.toggleFavorite("t-1", entry));
+
+    act(() =>
+      settings.settingsActions.pruneFavorites(["other-target"], [settings.hostKey("aws", "box")]),
+    );
+    expect(settings.getSettings().favorites).toEqual({ "t-1": entry });
+  });
+
+  it("drops a favorite whose project was truly removed from a reachable host", async () => {
+    const settings = await load();
+    act(() => settings.settingsActions.toggleFavorite("t-1", entry));
+    act(() =>
+      settings.settingsActions.toggleFavorite("t-2", { ...entry, project: "keep" }),
+    );
+
+    act(() =>
+      settings.settingsActions.pruneFavorites(["t-2"], [settings.hostKey("incus", "lab/dev1")]),
+    );
+    expect(settings.getSettings().favorites).toEqual({ "t-2": { ...entry, project: "keep" } });
+  });
+
+  it("pruning favorites against an unchanged set leaves the state object identical", async () => {
+    const settings = await load();
+    act(() => settings.settingsActions.toggleFavorite("t-1", entry));
+    const before = settings.getSettings();
+
+    act(() =>
+      settings.settingsActions.pruneFavorites(["t-1"], [settings.hostKey("incus", "lab/dev1")]),
+    );
+    expect(settings.getSettings()).toBe(before);
+  });
+});
+
 describe("useSettings", () => {
   it("re-renders subscribers when the theme changes", async () => {
     const settings = await load();

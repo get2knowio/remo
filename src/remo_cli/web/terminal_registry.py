@@ -23,6 +23,7 @@ from remo_cli.web.models import (
     LIVE_STATES,
     ExitInfo,
     TerminalAttachment,
+    TerminalKind,
     TerminalState,
     WsToken,
 )
@@ -113,8 +114,14 @@ class TerminalRegistry:
         cols: int,
         rows: int,
         client_id: str,
+        *,
+        kind: TerminalKind = TerminalKind.SESSION,
     ) -> tuple[TerminalAttachment, WsToken]:
         """Create a ``pending`` attachment + issue its single-use WS token.
+
+        *session_target_id* is the attach origin's opaque id — a
+        ``SessionTarget.id`` for ``kind=session``, the instance id for
+        ``kind=host_shell``. Both kinds count toward the same caps (FR-022).
 
         Enforces caps *before* issuing anything. Raises :class:`CapReachedError`
         when the global or per-client cap is already met, which the API layer
@@ -142,6 +149,7 @@ class TerminalRegistry:
             created_at=_iso(now),
             last_activity_at=_iso(now),
             client_id=client_id,
+            kind=kind,
         )
         self._attachments[terminal_id] = attachment
         return attachment, token

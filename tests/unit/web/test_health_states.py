@@ -145,6 +145,25 @@ class TestHealthVersion:
         assert body["status"] == "alive"
         assert body["version"] == remo_version
         assert body["version"]
+        # Host-admin is off by default; the console gates its maintenance
+        # affordances on this flag (plan §2.3).
+        assert body["features"] == {"host_admin": False}
+
+    def test_health_features_advertises_host_admin_when_enabled(
+        self, state_dir, monkeypatch
+    ):
+        state_dir.unconfigured()
+        _patch_ssh_on_path(monkeypatch)
+        settings = state_dir.settings(
+            allowed_hosts=["testserver", "localhost", "127.0.0.1"],
+            host_admin="enabled",
+        )
+        application = app_module.create_app(settings)
+        application.state.discovery_service = _NoopDiscovery()
+        response = TestClient(application, base_url=_ORIGIN).get("/api/v1/health")
+
+        assert response.status_code == 200
+        assert response.json()["features"] == {"host_admin": True}
 
 
 class TestReadyBroken:

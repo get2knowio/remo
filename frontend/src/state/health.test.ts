@@ -10,10 +10,11 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getReady = vi.fn();
+const getHealth = vi.fn();
 
 vi.mock("../api/client", async () => {
   const actual = await vi.importActual<typeof import("../api/client")>("../api/client");
-  return { ...actual, getReady };
+  return { ...actual, getReady, getHealth };
 });
 
 // `ApiError` identity matters: both the store's `instanceof` check and
@@ -36,6 +37,10 @@ async function load(): Promise<{
 
 beforeEach(() => {
   getReady.mockReset();
+  getHealth.mockReset();
+  // Most tests don't care about /health; an unreachable one must simply leave
+  // hostAdmin at its false default.
+  getHealth.mockRejectedValue(new Error("health unavailable"));
 });
 
 describe("health store", () => {
@@ -66,6 +71,38 @@ describe("health store", () => {
       expect(result.current.status).toBe("healthy");
     },
   );
+
+  it("defaults hostAdmin to false when /health is unreachable or silent", async () => {
+    const { health } = await load();
+    getReady.mockResolvedValue({ ready: true, status: "ready", checks: {} });
+    const { result } = renderHook(() => health.useHealth());
+
+    await waitFor(() => expect(result.current.status).toBe("healthy"));
+    expect(result.current.hostAdmin).toBe(false);
+  });
+
+  it("defaults hostAdmin to false when the features field is absent (old service)", async () => {
+    const { health } = await load();
+    getReady.mockResolvedValue({ ready: true, status: "ready", checks: {} });
+    getHealth.mockResolvedValue({ status: "alive", version: "0.0.0" });
+    const { result } = renderHook(() => health.useHealth());
+
+    await waitFor(() => expect(result.current.status).toBe("healthy"));
+    expect(result.current.hostAdmin).toBe(false);
+  });
+
+  it("exposes hostAdmin=true when /health advertises features.host_admin", async () => {
+    const { health } = await load();
+    getReady.mockResolvedValue({ ready: true, status: "ready", checks: {} });
+    getHealth.mockResolvedValue({
+      status: "alive",
+      version: "0.0.0",
+      features: { host_admin: true },
+    });
+    const { result } = renderHook(() => health.useHealth());
+
+    await waitFor(() => expect(result.current.hostAdmin).toBe(true));
+  });
 
   it("still degrades on an unexpected error shape", async () => {
     const { health } = await load();

@@ -9,14 +9,16 @@
 // Reconnect is never a resume of the closed socket (contracts/
 // terminal-websocket.md): every retry — automatic or manual — calls
 // createTerminal() again for a brand-new terminal_id + token, attaching to
-// the SAME still-running remote Zellij session because session_target_id is
-// unchanged.
+// the SAME still-running remote Zellij session (or host shell) because the
+// origin — session_target_id / instance_id — is unchanged.
 
 import {
   ApiError,
+  asTerminalOrigin,
   closeTerminal as closeTerminalRequest,
   createTerminal,
   openTerminalSocket,
+  type TerminalOrigin,
   type TypedError,
 } from "../api/client";
 // Generated from the service-side `remo-terminal.v1` frame contract
@@ -108,7 +110,7 @@ export interface TerminalConnectionCallbacks {
  * fallback once the auto-retry budget is exhausted.
  */
 export class TerminalConnection {
-  private readonly sessionTargetId: string;
+  private readonly origin: TerminalOrigin;
   private cols: number;
   private rows: number;
   private readonly callbacks: TerminalConnectionCallbacks;
@@ -138,13 +140,19 @@ export class TerminalConnection {
   /** Control frames sendControl dropped because the socket was not OPEN. */
   private droppedControlFrames = 0;
 
+  /**
+   * `origin` is what the terminal attaches to: a bare string is the session
+   * shorthand (`{kind: "session", sessionTargetId}` — every pre-existing call
+   * site unchanged), `{kind: "host_shell", instanceId}` is a plain login shell
+   * on the host itself (host-admin-gated).
+   */
   constructor(
-    sessionTargetId: string,
+    origin: string | TerminalOrigin,
     cols: number,
     rows: number,
     callbacks: TerminalConnectionCallbacks = {},
   ) {
-    this.sessionTargetId = sessionTargetId;
+    this.origin = asTerminalOrigin(origin);
     this.cols = cols;
     this.rows = rows;
     this.callbacks = callbacks;
@@ -354,7 +362,7 @@ export class TerminalConnection {
 
     let created;
     try {
-      created = await createTerminal(this.sessionTargetId, this.cols, this.rows);
+      created = await createTerminal(this.origin, this.cols, this.rows);
     } catch (error) {
       this.attaching = false;
       // A newer attach (e.g. a wake-triggered one) has superseded this; stay quiet.

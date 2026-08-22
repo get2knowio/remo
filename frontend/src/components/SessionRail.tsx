@@ -5,9 +5,10 @@
 
 import type { MouseEvent } from "react";
 import type { SessionTarget } from "../api/client";
+import type { FavoriteEntry } from "../state/settings";
 import type { UseWorkspaceResult } from "../state/workspace";
 import { providerMeta } from "./providerMeta";
-import type { RailFilters, RailGroup, RailModel } from "./railModel";
+import type { RailFavorite, RailFilters, RailGroup, RailModel } from "./railModel";
 import "./SessionRail.css";
 
 interface SessionRailProps {
@@ -22,6 +23,9 @@ interface SessionRailProps {
   onToggleProvider: (provider: string) => void;
   onToggleSessionOnly: () => void;
   onOpenAllAvailable: () => void;
+  onToggleHostCollapsed: (instanceId: string) => void;
+  onToggleFavorite: (id: string, entry: FavoriteEntry) => void;
+  onOpenHostDetail: (instanceId: string) => void;
 }
 
 const SKELETON_WIDTHS = ["70%", "52%", "84%", "44%", "66%", "58%", "76%", "48%", "62%"];
@@ -42,6 +46,9 @@ export function SessionRail({
   onToggleProvider,
   onToggleSessionOnly,
   onOpenAllAvailable,
+  onToggleHostCollapsed,
+  onToggleFavorite,
+  onOpenHostDetail,
 }: SessionRailProps): JSX.Element {
   const { attached, visible, focusedId } = workspace;
 
@@ -119,20 +126,47 @@ export function SessionRail({
             variant="warn"
           />
         ) : (
-          model.groups.map((group) => (
-            <RailInstance
-              key={group.instance.instance_id}
-              group={group}
-              attached={attached}
-              visible={visible}
-              focusedId={focusedId}
-              onSelect={(t, e) =>
-                isModifierClick(e) ? workspace.addSession(t) : workspace.selectOnly(t)
-              }
-              onAdd={(t) => workspace.addSession(t)}
-              onOpenAll={(ts) => workspace.openMany(ts)}
-            />
-          ))
+          <>
+            {model.favorites.length > 0 && (
+              <div className="rail-inst" data-testid="rail-favorites">
+                <div className="rail-inst-head">
+                  <span className="rail-fav-star">★</span>
+                  <span className="rail-inst-name">Favorites</span>
+                </div>
+                {model.favorites.map((fav) => (
+                  <RailFavoriteRow
+                    key={`fav-row-${fav.id}`}
+                    fav={fav}
+                    attached={attached}
+                    visible={visible}
+                    focusedId={focusedId}
+                    onSelect={(t, e) =>
+                      isModifierClick(e) ? workspace.addSession(t) : workspace.selectOnly(t)
+                    }
+                    onAdd={(t) => workspace.addSession(t)}
+                    onToggleFavorite={onToggleFavorite}
+                  />
+                ))}
+              </div>
+            )}
+            {model.groups.map((group) => (
+              <RailInstance
+                key={group.instance.instance_id}
+                group={group}
+                attached={attached}
+                visible={visible}
+                focusedId={focusedId}
+                onSelect={(t, e) =>
+                  isModifierClick(e) ? workspace.addSession(t) : workspace.selectOnly(t)
+                }
+                onAdd={(t) => workspace.addSession(t)}
+                onOpenAll={(ts) => workspace.openMany(ts)}
+                onToggleCollapsed={onToggleHostCollapsed}
+                onToggleFavorite={onToggleFavorite}
+                onOpenHostDetail={onOpenHostDetail}
+              />
+            ))}
+          </>
         )}
       </div>
 
@@ -162,6 +196,9 @@ interface RailInstanceProps {
   onSelect: (target: SessionTarget, e: MouseEvent) => void;
   onAdd: (target: SessionTarget) => void;
   onOpenAll: (targets: SessionTarget[]) => void;
+  onToggleCollapsed: (instanceId: string) => void;
+  onToggleFavorite: (id: string, entry: FavoriteEntry) => void;
+  onOpenHostDetail: (instanceId: string) => void;
 }
 
 function RailInstance({
@@ -172,13 +209,50 @@ function RailInstance({
   onSelect,
   onAdd,
   onOpenAll,
+  onToggleCollapsed,
+  onToggleFavorite,
+  onOpenHostDetail,
 }: RailInstanceProps): JSX.Element {
   const { instance, meta, status, error } = group;
+  const bodyId = `rail-inst-body-${instance.instance_id}`;
+  const activeCount = group.rows.filter((r) => r.active).length;
   return (
     <div className="rail-inst">
-      <div className="rail-inst-head">
+      {/* The whole header is a pointer convenience for the caret's toggle;
+          every other control in it stops propagation — including the host
+          NAME, which opens the host detail page (the Part 1 contract:
+          chevron/header = collapse, name = detail). */}
+      <div
+        className="rail-inst-head rail-inst-head--clickable"
+        onClick={() => onToggleCollapsed(instance.instance_id)}
+      >
+        <button
+          type="button"
+          className="rail-inst-caret"
+          data-testid={`collapse-toggle-${instance.instance_id}`}
+          title={group.collapsed ? "Expand" : "Collapse"}
+          aria-expanded={!group.collapsed}
+          aria-controls={bodyId}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleCollapsed(instance.instance_id);
+          }}
+        >
+          {group.collapsed ? "›" : "⌄"}
+        </button>
         <span className="rail-inst-dot" style={{ background: meta.color }} />
-        <span className="rail-inst-name">{instance.instance_name}</span>
+        <button
+          type="button"
+          className="rail-inst-name rail-inst-name--link"
+          data-testid={`host-name-${instance.instance_id}`}
+          title="Host details"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenHostDetail(instance.instance_id);
+          }}
+        >
+          {instance.instance_name}
+        </button>
         {instance.region && <span className="rail-inst-region">{instance.region}</span>}
         <span className="rail-inst-spacer" />
         <span
@@ -195,48 +269,71 @@ function RailInstance({
           />
           {status.label}
         </span>
+        {group.collapsed && (
+          <span
+            className="rail-inst-count"
+            data-testid={`collapsed-count-${instance.instance_id}`}
+            title={`${group.rows.length} sessions${activeCount > 0 ? `, ${activeCount} active` : ""}`}
+          >
+            {group.rows.length}
+            {activeCount > 0 && (
+              <span style={{ color: "var(--git-active)" }}> ⚡{activeCount}</span>
+            )}
+          </span>
+        )}
         {group.openableTargets.length > 0 && (
           <button
             type="button"
             className="rail-inst-openall"
             data-testid={`open-all-instance-${instance.instance_id}`}
             title="Open all on this instance"
-            onClick={() => onOpenAll(group.openableTargets)}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenAll(group.openableTargets);
+            }}
           >
             ⊞
           </button>
         )}
       </div>
 
-      {error && (
-        <div className="rail-inst-error">
-          <div className="rail-inst-error-title">
-            {error.icon} {error.title}
-          </div>
-          <div className="rail-inst-error-msg">{error.message}</div>
-          {error.hint && <code className="rail-inst-error-hint">{error.hint}</code>}
-        </div>
-      )}
+      <div id={bodyId}>
+        {!group.collapsed && (
+          <>
+            {error && (
+              <div className="rail-inst-error">
+                <div className="rail-inst-error-title">
+                  {error.icon} {error.title}
+                </div>
+                <div className="rail-inst-error-msg">{error.message}</div>
+                {error.hint && <code className="rail-inst-error-hint">{error.hint}</code>}
+              </div>
+            )}
 
-      {group.isEmptyProjects && (
-        <div className="rail-inst-empty">
-          Reachable, no projects in <code>~/projects</code>
-        </div>
-      )}
+            {group.isEmptyProjects && (
+              <div className="rail-inst-empty">
+                Reachable, no projects in <code>~/projects</code>
+              </div>
+            )}
 
-      {group.rows.map((row) => (
-        <RailSessionRow
-          key={row.target.id}
-          target={row.target}
-          providerColor={meta.color}
-          active={row.active}
-          attached={attached.includes(row.target.id)}
-          visible={visible.includes(row.target.id)}
-          focused={focusedId === row.target.id}
-          onSelect={onSelect}
-          onAdd={onAdd}
-        />
-      ))}
+            {group.rows.map((row) => (
+              <RailSessionRow
+                key={row.target.id}
+                target={row.target}
+                providerColor={meta.color}
+                active={row.active}
+                favorited={row.favorited}
+                attached={attached.includes(row.target.id)}
+                visible={visible.includes(row.target.id)}
+                focused={focusedId === row.target.id}
+                onSelect={onSelect}
+                onAdd={onAdd}
+                onToggleFavorite={onToggleFavorite}
+              />
+            ))}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -246,21 +343,25 @@ interface RailSessionRowProps {
   providerColor: string;
   /** Has a live session — discovered, or one this console is attached to. */
   active: boolean;
+  favorited: boolean;
   attached: boolean;
   visible: boolean;
   focused: boolean;
   onSelect: (target: SessionTarget, e: MouseEvent) => void;
   onAdd: (target: SessionTarget) => void;
+  onToggleFavorite: (id: string, entry: FavoriteEntry) => void;
 }
 
 function RailSessionRow({
   target,
   active,
+  favorited,
   attached,
   visible,
   focused,
   onSelect,
   onAdd,
+  onToggleFavorite,
 }: RailSessionRowProps): JSX.Element {
   const mark = focused ? "▸" : visible ? "•" : attached ? "◦" : "";
   const rowClass = [
@@ -308,6 +409,23 @@ function RailSessionRow({
       </span>
       <button
         type="button"
+        className={`rail-row-fav${favorited ? " rail-row-fav--on" : ""}`}
+        data-testid={`fav-toggle-${target.id}`}
+        title={favorited ? "Remove from favorites" : "Add to favorites"}
+        aria-pressed={favorited}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleFavorite(target.id, {
+            project: target.project,
+            instanceType: target.instance_type,
+            instanceName: target.instance_name,
+          });
+        }}
+      >
+        {favorited ? "★" : "☆"}
+      </button>
+      <button
+        type="button"
         className="rail-row-add"
         data-testid={`add-to-grid-${target.id}`}
         title={visible ? "Remove from grid" : "Add to grid (⌘-click)"}
@@ -318,6 +436,95 @@ function RailSessionRow({
       >
         {visible ? "−" : "+"}
       </button>
+    </div>
+  );
+}
+
+interface RailFavoriteRowProps {
+  fav: RailFavorite;
+  attached: string[];
+  visible: string[];
+  focusedId: string | null;
+  onSelect: (target: SessionTarget, e: MouseEvent) => void;
+  onAdd: (target: SessionTarget) => void;
+  onToggleFavorite: (id: string, entry: FavoriteEntry) => void;
+}
+
+function RailFavoriteRow({
+  fav,
+  attached,
+  visible,
+  focusedId,
+  onSelect,
+  onAdd,
+  onToggleFavorite,
+}: RailFavoriteRowProps): JSX.Element {
+  const { target } = fav;
+  const stale = target === null;
+  const isVisible = target !== null && visible.includes(target.id);
+  const isFocused = target !== null && focusedId === target.id;
+  const mark = isFocused ? "▸" : isVisible ? "•" : target !== null && attached.includes(target.id) ? "◦" : "";
+  const rowClass = [
+    "rail-row",
+    stale ? "rail-row--stale" : "",
+    isVisible ? "rail-row--visible" : "",
+    isFocused ? "rail-row--focused" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div
+      className={rowClass}
+      data-testid={`fav-row-${fav.id}`}
+      title={
+        stale
+          ? "Host unavailable — favorite kept"
+          : isVisible
+            ? "In view · click to focus alone, ⌘-click to remove"
+            : "Click to open · ⌘-click to add to grid"
+      }
+      onClick={target === null ? undefined : (e) => onSelect(target, e)}
+    >
+      <span className="rail-row-mark">{mark}</span>
+      <span className="rail-row-name">{fav.project}</span>
+      <span className="rail-row-host" style={{ color: fav.providerColor }}>
+        {fav.hostLabel}
+      </span>
+      <span className="rail-row-glyphs">
+        {fav.active && (
+          <span title="Active Zellij session" style={{ color: "var(--git-active)" }}>
+            ⚡
+          </span>
+        )}
+      </span>
+      <button
+        type="button"
+        className="rail-row-fav rail-row-fav--on"
+        data-testid={`fav-row-toggle-${fav.id}`}
+        title="Remove from favorites"
+        aria-pressed
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleFavorite(fav.id, fav.entry);
+        }}
+      >
+        ★
+      </button>
+      {target !== null && (
+        <button
+          type="button"
+          className="rail-row-add"
+          data-testid={`fav-add-${fav.id}`}
+          title={isVisible ? "Remove from grid" : "Add to grid (⌘-click)"}
+          onClick={(e) => {
+            e.stopPropagation();
+            onAdd(target);
+          }}
+        >
+          {isVisible ? "−" : "+"}
+        </button>
+      )}
     </div>
   );
 }

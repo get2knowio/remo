@@ -24,7 +24,13 @@
 // page that is one navigation away from working again.
 
 import { useCallback, useEffect, useSyncExternalStore } from "react";
-import { ApiError, getReady, isAuthChallenge, type ReadinessResponse } from "../api/client";
+import {
+  ApiError,
+  getHealth,
+  getReady,
+  isAuthChallenge,
+  type ReadinessResponse,
+} from "../api/client";
 
 const DEFAULT_POLL_INTERVAL_MS = 10_000;
 
@@ -34,9 +40,14 @@ interface HealthState {
   status: HealthStatus;
   checks: Record<string, string>;
   detail: string | null;
+  /** GET /health `features.host_admin` — whether the gated host-maintenance
+   * API + host-shell terminal path are enabled. Defaults to false until the
+   * flag is actually observed (absent field, old service, failed fetch), so
+   * the console never renders mutating affordances it can't back. */
+  hostAdmin: boolean;
 }
 
-let state: HealthState = { status: "loading", checks: {}, detail: null };
+let state: HealthState = { status: "loading", checks: {}, detail: null, hostAdmin: false };
 
 const listeners = new Set<() => void>();
 
@@ -56,6 +67,24 @@ function getSnapshot(): HealthState {
   return state;
 }
 
+/** True once /health has answered — the flag is config, not liveness, so one
+ * successful read per page life is enough (a config change means a service
+ * restart, which reloads the console anyway). */
+let featuresResolved = false;
+
+async function resolveFeaturesOnce(): Promise<void> {
+  if (featuresResolved) {
+    return;
+  }
+  try {
+    const health = await getHealth();
+    featuresResolved = true;
+    setState({ hostAdmin: health.features?.host_admin === true });
+  } catch {
+    // Leave the false default; the next poll tick retries.
+  }
+}
+
 let pollInFlight = false;
 
 async function pollOnce(): Promise<void> {
@@ -63,6 +92,7 @@ async function pollOnce(): Promise<void> {
     return;
   }
   pollInFlight = true;
+  void resolveFeaturesOnce();
   try {
     const ready: ReadinessResponse = await getReady();
     // Any 200 status other than "unconfigured" (e.g. "ok") means configured.
@@ -119,6 +149,8 @@ export interface UseHealthResult {
   status: HealthStatus;
   checks: Record<string, string>;
   detail: string | null;
+  /** features.host_admin from GET /health; false until observed true. */
+  hostAdmin: boolean;
   /** Force an immediate re-poll (offline overlay "Retry connection"). */
   retry: () => Promise<void>;
 }
@@ -134,6 +166,7 @@ export function useHealth(intervalMs: number = DEFAULT_POLL_INTERVAL_MS): UseHea
     status: snapshot.status,
     checks: snapshot.checks,
     detail: snapshot.detail,
+    hostAdmin: snapshot.hostAdmin,
     retry,
   };
 }

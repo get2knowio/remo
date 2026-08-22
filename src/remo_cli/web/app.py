@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from remo_cli.web.api.host_admin import router as host_admin_router
 from remo_cli.web.api.hosts import router as hosts_router
 from remo_cli.web.api.pairing import router as pairing_router
 from remo_cli.web.api.setup import router as setup_router
@@ -137,6 +138,17 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
             settings.forward_auth_header,
         )
 
+    # Host-maintenance surface (plan §2.3): mutating project actions + host
+    # shells. Enabling it with NO operator-auth provider means the only gate
+    # is network reachability — never entered silently.
+    if settings.host_admin_enabled and operator_auth_provider is None:
+        logger.warning(
+            "REMO_WEB_HOST_ADMIN is enabled but operator authentication is NOT "
+            "configured: the host-maintenance API (project clone/delete/rebuild, "
+            "host shells) is gated by network reachability alone. Configure "
+            "REMO_WEB_OPERATOR_AUTH for anything reachable by others."
+        )
+
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Startup (011-web-adopt T030/FR-002, research R3): mint the service
@@ -241,6 +253,9 @@ def create_app(settings: WebSettings | None = None) -> FastAPI:
     # --- API routers --------------------------------------------------------
     app.include_router(health_router, prefix="/api/v1")
     app.include_router(hosts_router, prefix="/api/v1")
+    # Mounted unconditionally: dormancy (404 when REMO_WEB_HOST_ADMIN is off,
+    # or operator auth refuses) lives inside require_host_admin, like setup's.
+    app.include_router(host_admin_router, prefix="/api/v1")
     app.include_router(terminals_router, prefix="/api/v1")
     app.include_router(setup_router, prefix="/api/v1")
     app.include_router(pairing_router, prefix="/api/v1")
