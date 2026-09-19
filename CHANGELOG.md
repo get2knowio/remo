@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.4.0](https://github.com/get2knowio/remo/compare/v4.3.6...v4.4.0) (2026-09-19)
+
+
+### Features
+
+* **ci:** build promotable RC wheels and attach them to a GitHub pre-release ([#198](https://github.com/get2knowio/remo/issues/198)) ([1192454](https://github.com/get2knowio/remo/commit/11924549f7c740ed30b852cb873e728a5ca590b6))
+* **ci:** publish the remo-web image for a pre-release (rc-image.yml) ([#199](https://github.com/get2knowio/remo/issues/199)) ([5780f3b](https://github.com/get2knowio/remo/commit/5780f3b4ade70b9b1e7eaea95acfd73024150623))
+* **web:** console host management + bi-directional registry sync (remo web sync) ([#189](https://github.com/get2knowio/remo/issues/189)) ([dbae890](https://github.com/get2knowio/remo/commit/dbae89091eff3261ae3078a0829783e8b4157cd8))
+* **web:** host detail page, maintenance surface, and rail favorites ([#187](https://github.com/get2knowio/remo/issues/187)) ([a25e5e5](https://github.com/get2knowio/remo/commit/a25e5e5cb83424fd0ac6b85cf67933977292cf4b))
+* **web:** read-only console diagnostics snapshot (Settings + window.__remo) ([#184](https://github.com/get2knowio/remo/issues/184)) ([08faed5](https://github.com/get2knowio/remo/commit/08faed56eb28e0949826413fd3ce7932df65f1b3))
+* **web:** tolerate intermittent instance connectivity in the console (spec 024) ([#205](https://github.com/get2knowio/remo/issues/205)) ([680dbf7](https://github.com/get2knowio/remo/commit/680dbf7f195f204e75ca8ca2ce0a8973679951c3))
+
 ## [4.3.6](https://github.com/get2knowio/remo/compare/v4.3.5...v4.3.6) (2026-08-16)
 
 
