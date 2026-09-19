@@ -11,6 +11,13 @@ The fixture JSON files under ``fixtures/`` were captured from the service
 this exact request harness against the pre-change code. They must never be
 regenerated to make a test pass — a mismatch here means a declaration changed
 a real byte, which is a bug in the declaration, not in the fixture.
+
+Exception: ``hosts_response.json`` was deliberately regenerated for
+specs/024-discovery-resilience — that feature adds three ADDITIVE advisory
+fields (`stale`, `last_ok_at`, `consecutive_failures`) to `InstanceOut` per
+contracts/instance-out-stale.md, a real (and spec-mandated) wire-shape change,
+not a declaration-only regression. Every byte before those three new
+trailing keys is still untouched; only appended bytes moved.
 """
 
 from __future__ import annotations

@@ -61,27 +61,37 @@ globalThis.ResizeObserver = NoopResizeObserver as unknown as typeof ResizeObserv
 const target = (id: string): SessionTarget =>
   ({ id, project: id, instance_type: "incus", instance_name: "box" }) as unknown as SessionTarget;
 
+/** Mount the pane with `ids` open, and expose `setTargets` so a test can
+ * re-render with a different `targetsById` (simulating a target leaving the
+ * served discovery listing) without unmounting the pane. */
 async function mount(ids: string[]) {
   vi.resetModules();
   window.localStorage.clear();
   adapters.length = 0;
   const workspaceMod = await import("../state/workspace");
   const { WorkspacePane } = await import("./WorkspacePane");
-  const targetsById = new Map(ids.map((id) => [id, target(id)]));
 
-  const view = render(
+  const page = (targetsById: Map<string, SessionTarget>) => (
     <WorkspacePane
       targetsById={targetsById}
       regionByKey={new Map()}
       onTerminalEnded={() => {}}
       onTerminalStarted={() => {}}
       narrow={false}
-    />,
+    />
   );
+
+  const view = render(page(new Map(ids.map((id) => [id, target(id)]))));
   // Drive the store directly: the rail isn't mounted here.
   const store = renderStore(workspaceMod);
   act(() => store.openMany(ids.map(target)));
-  return { view, store };
+  return {
+    view,
+    store,
+    setTargets: (targetsById: Map<string, SessionTarget>) => {
+      act(() => view.rerender(page(targetsById)));
+    },
+  };
 }
 
 /** The store's actions, outside React. `useWorkspace` returns them, but this
@@ -102,6 +112,92 @@ const body = (): HTMLElement => screen.getByTestId("workspace").querySelector(".
 
 beforeEach(() => {
   window.localStorage.clear();
+});
+
+// ---------------------------------------------------------------------------
+// Discovery resilience (024): sticky last-known-target map (spec US3, FR-009)
+// ---------------------------------------------------------------------------
+
+describe("sticky pane targets survive a target disappearing from discovery", () => {
+  it("keeps a resolved pane mounted (same surface, no remount) once its target vanishes", async () => {
+    const { setTargets } = await mount(["a", "b"]);
+    const surfaceBefore = screen.getByTestId("terminal-surface-a");
+    const buildsBefore = adapters.length;
+
+    // "a" is gone from the served targets (discovery blip, or grace-exhausted
+    // hard error) -- the sticky fallback keeps the pane resolved.
+    setTargets(new Map([["b", target("b")]]));
+
+    expect(screen.getByTestId("terminal-card-a")).toBeInTheDocument();
+    expect(Object.is(screen.getByTestId("terminal-surface-a"), surfaceBefore)).toBe(true);
+    expect(adapters).toHaveLength(buildsBefore);
+  });
+
+  it("does not fall to the empty state while a sticky-resolved pane exists", async () => {
+    const { setTargets } = await mount(["a"]);
+
+    setTargets(new Map()); // every target gone from the served listing
+
+    expect(screen.getByTestId("terminal-card-a")).toBeInTheDocument();
+    expect(screen.queryByText("Select a session")).not.toBeInTheDocument();
+  });
+
+  it("drops the sticky record when the pane is explicitly closed", async () => {
+    const { store, setTargets } = await mount(["a", "b"]);
+    setTargets(new Map([["b", target("b")]])); // "a" now sticky-resolved
+    expect(screen.getByTestId("terminal-card-a")).toBeInTheDocument();
+
+    act(() => (screen.getByTestId("terminal-close-a") as HTMLButtonElement).click());
+    expect(screen.queryByTestId("terminal-card-a")).not.toBeInTheDocument();
+
+    // The card vanishing proves only that "a" left `attached`. What the spec
+    // actually forbids is the RECORD surviving: re-open "a" while it is still
+    // absent from live discovery and it must stay unresolved, not come back
+    // off a leaked sticky entry (spec US3 scenario 3 / FR-009).
+    act(() => store.openMany([target("a")]));
+    expect(screen.queryByTestId("terminal-card-a")).not.toBeInTheDocument();
+  });
+
+  it("drops the sticky record for a close that bypasses the card's ✕", async () => {
+    // AppShell's narrow "‹ Sessions" back-bar calls `workspace.closeTerm`
+    // directly (AppShell.tsx), never WorkspacePane's onClose — a sticky record
+    // dropped only in that handler leaks here, and resurrects the pane.
+    const { store, setTargets } = await mount(["a"]);
+    expect(screen.getByTestId("terminal-card-a")).toBeInTheDocument();
+
+    act(() => store.closeTerm("a"));
+    expect(screen.queryByTestId("terminal-card-a")).not.toBeInTheDocument();
+
+    setTargets(new Map()); // "a" is gone from live discovery too
+    act(() => store.openMany([target("a")]));
+    expect(screen.queryByTestId("terminal-card-a")).not.toBeInTheDocument();
+  });
+
+  it("keeps today's filtered-out behavior for an id never once resolved", async () => {
+    // Simulates a layout restored from localStorage before the first
+    // discovery run lands: "ghost" was never in targetsById, so it has no
+    // sticky entry either, and stays filtered out (not a regression).
+    vi.resetModules();
+    window.localStorage.clear();
+    adapters.length = 0;
+    const workspaceMod = await import("../state/workspace");
+    const { WorkspacePane } = await import("./WorkspacePane");
+
+    render(
+      <WorkspacePane
+        targetsById={new Map()}
+        regionByKey={new Map()}
+        onTerminalEnded={() => {}}
+        onTerminalStarted={() => {}}
+        narrow={false}
+      />,
+    );
+    const store = renderStore(workspaceMod);
+    act(() => store.openMany([target("ghost")]));
+
+    expect(screen.queryByTestId("terminal-card-ghost")).not.toBeInTheDocument();
+    expect(screen.getByText("Select a session")).toBeInTheDocument();
+  });
 });
 
 describe("WorkspacePane layout wiring", () => {

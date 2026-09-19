@@ -69,6 +69,15 @@ export interface RailGroup {
   rows: RailRow[];
   openableTargets: SessionTarget[];
   isError: boolean;
+  /**
+   * Discovery resilience (024, spec FR-008): true only when the backend
+   * served a retained-ok snapshot during its grace window (`status` stays
+   * "ok"; `instance.stale === true`). Orthogonal to `isError` by
+   * construction — `isError` requires `status !== "ok"`, so a group is
+   * never both. Never softens `isError`'s presentation (spec US2 scenario 2
+   * — grace-exhausted / non-retryable instances still get `isError`).
+   */
+  isStale: boolean;
   isEmptyProjects: boolean;
   error: RailErrorInfo | null;
   /** Effective collapse: the stored pref, overridden open by an active search
@@ -165,6 +174,7 @@ export function buildRailModel(
     });
 
     const isError = instance.status !== "ok" && instance.error != null;
+    const isStale = instance.status === "ok" && instance.stale === true;
     const isEmptyProjects = openable && instTargets.length === 0;
 
     let error: RailErrorInfo | null = null;
@@ -185,6 +195,7 @@ export function buildRailModel(
       rows,
       openableTargets: openable ? filtered : [],
       isError,
+      isStale,
       isEmptyProjects,
       error,
       collapsed: q === "" && (prefs.collapsedHostIds?.has(instance.instance_id) ?? false),

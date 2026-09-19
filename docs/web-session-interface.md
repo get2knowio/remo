@@ -1014,10 +1014,36 @@ instance never looks the same as "no projects" (FR-006). From
 | `no_remo_host` | The instance answered but has no `remo-host` command installed. | Not retryable as-is — re-run the instance's configure/upgrade flow (see [Upgrade compatibility](#upgrade-compatibility)) to install it. |
 | `incompatible_protocol` | `remo-host` responded, but its `protocol_version` is outside the client's supported `[min,max]` range. | Update the instance's Remo host tools to a version whose `remo-host` reports a compatible protocol version. |
 | `malformed` | `remo-host` produced output that isn't valid/parseable JSON for the expected schema. | Usually indicates a broken or partial `remo-host` install — re-run configure. |
-| `timeout` | The remote command didn't respond within the configured discovery timeout. | Retryable — the instance may be slow or overloaded; increase `REMO_WEB_DISCOVERY_TIMEOUT_S` if this is chronic. |
+| `timeout` | The instance's two sequential probe calls (`remo-host capabilities`, then `sessions list`) did not both finish within the total per-instance budget — approximately `2 × REMO_WEB_DISCOVERY_TIMEOUT_S + 5s`, so one slow-but-healthy call can no longer starve the other into a spurious timeout. | Retryable — the instance may be slow or overloaded; increase `REMO_WEB_DISCOVERY_TIMEOUT_S` if this is chronic. |
 
 One instance's failure never blocks or delays the others — discovery runs concurrently per instance
 (`REMO_WEB_DISCOVERY_CONCURRENCY`), and each instance's snapshot is independent.
+
+### Discovery resilience (024)
+
+`timeout` and `unreachable` are *retryable*: a single blip against a previously-healthy instance does
+not tear down the console's working state. Instead of overwriting an `ok` snapshot with an empty
+failure, the service retains the last-known-good snapshot (capability + targets) through a bounded
+grace window (`REMO_WEB_DISCOVERY_OFFLINE_GRACE_S`, default ~120s, elapsed time since the last
+successful discovery). The served instance shape gains three additive advisory fields so the console
+can tell a retained snapshot from a fresh one:
+
+| Field | Meaning |
+|---|---|
+| `stale` | `true` only on a retained snapshot served during the grace window (`status` stays `ok`). Always `false` on a fresh success or on any non-`ok` snapshot — including the hard-error snapshot served once the grace budget is exhausted. |
+| `last_ok_at` | ISO-8601 timestamp of the instance's last successful discovery, or `null` before any success. Display-only — never used for the grace calculation itself. |
+| `consecutive_failures` | Count of consecutive retryable failures since the last success. Advisory only, never the grace-window trigger (elapsed time is). |
+
+Because a retained snapshot keeps `status: "ok"`, its targets stay in `GET /api/v1/sessions` and remain
+valid for opening/reattaching terminals throughout the grace window — the whole point. The console's
+navigation rail renders a stale instance dimmed with a compact "not responding · retrying" chip rather
+than the red error block, and already-open terminal panes are resolved against an in-memory
+last-known-target record so they are never unmounted just because a target briefly left the served
+listing. All of this is orthogonal to non-retryable statuses (`auth_failed`, `no_remo_host`,
+`incompatible_protocol`, `malformed`), which always surface immediately with no retention — and to a
+retryable failure that outlasts the grace budget, which hardens into today's error snapshot (cleared
+targets, `stale: false`) exactly as before. Setting `REMO_WEB_DISCOVERY_OFFLINE_GRACE_S=0` disables
+retention entirely, restoring pre-024 behavior.
 
 ## Terminal limits
 
@@ -1188,8 +1214,9 @@ locally with zero configuration; a container overrides everything via env alone.
 | `REMO_WEB_BIND_HOST` | `127.0.0.1` | Address the Uvicorn server binds to. `--host` on `remo web serve` overrides this per-invocation. The Docker image sets this to `0.0.0.0` internally via the Dockerfile's `ENV` (Docker's port publishing can't reach a loopback-only bind); the host-side LAN exposure decision stays in Compose's `ports:` mapping. |
 | `REMO_WEB_BIND_PORT` | `8080` | Port the server binds to. `--port` on `remo web serve` overrides this per-invocation. |
 | `REMO_WEB_DISCOVERY_CONCURRENCY` | `8` | Maximum number of instances discovered concurrently. |
-| `REMO_WEB_DISCOVERY_TIMEOUT_S` | `10.0` | Per-instance timeout (seconds) for a discovery round-trip before it's classified `timeout`. |
+| `REMO_WEB_DISCOVERY_TIMEOUT_S` | `10.0` | Per-**call** timeout (seconds) for one `remo-host` round-trip. A per-instance discovery probe makes two sequential calls (`capabilities`, then `sessions list`), each getting this full budget, so the outer bound that classifies an instance `timeout` is `2 ×` this `+ 5s` — a slow-but-healthy first call can't starve the second (spec 024 FR-007). |
 | `REMO_WEB_DISCOVERY_CACHE_TTL_S` | `30.0` | How long a discovery snapshot is served from cache before the console's background poll is allowed to re-run discovery. This — not the console's poll interval, and not how many browser tabs are open — is what sets how often instances are actually contacted. An explicit refresh (`POST /api/v1/discovery/refresh` with the default `force: true`, which is what the Refresh button and the post-terminal-exit refresh send) bypasses it. |
+| `REMO_WEB_DISCOVERY_OFFLINE_GRACE_S` | `120.0` | Elapsed-time grace budget (seconds since the instance's last successful discovery) during which a *retryable* failure (`timeout`/`unreachable`) is served as a stale-marked `ok` snapshot — targets and capability retained, open terminals stay authorized — instead of the real failure status. A retryable failure processed after this much time has elapsed hardens into today's failure status (cleared targets). Non-retryable failures (`auth_failed`, `no_remo_host`, `incompatible_protocol`, `malformed`) always surface immediately, with no grace. `0` disables retention entirely (every retryable failure surfaces immediately, matching pre-024 behavior). Must be non-negative; a negative value is a fail-fast startup error. See [Discovery resilience](#discovery-resilience-024). |
 | `REMO_WEB_TERMINAL_CAP_GLOBAL` | `32` | Maximum concurrent terminal attachments across all clients. |
 | `REMO_WEB_TERMINAL_CAP_PER_CLIENT` | `16` | Maximum concurrent terminal attachments for a single client. |
 | `REMO_WEB_WS_TOKEN_TTL_S` | `30.0` | Seconds a single-use WebSocket terminal token remains valid between issuance and successful upgrade. |

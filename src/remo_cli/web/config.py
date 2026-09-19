@@ -85,7 +85,10 @@ class WebSettings:
     bind_host: str = field(default_factory=lambda: _env_str("BIND_HOST", "127.0.0.1"))
     bind_port: int = field(default_factory=lambda: _env_int("BIND_PORT", 8080))
 
-    # Discovery (US1): bounded concurrency + per-host timeout + result cache.
+    # Discovery (US1): bounded concurrency + per-CALL timeout + result cache.
+    # `discovery_timeout_s` bounds ONE remote call; a per-instance probe makes
+    # two sequential calls, so its total bound is ~2x that plus slack
+    # (`web/discovery.py::_total_probe_budget_s`, 024 spec FR-007).
     discovery_concurrency: int = field(
         default_factory=lambda: _env_int("DISCOVERY_CONCURRENCY", 8)
     )
@@ -94,6 +97,14 @@ class WebSettings:
     )
     discovery_cache_ttl_s: float = field(
         default_factory=lambda: _env_float("DISCOVERY_CACHE_TTL_S", 30.0)
+    )
+    # Discovery resilience (024, spec FR-004): elapsed-time grace budget, in
+    # seconds since the last successful discovery, during which a retryable
+    # failure (timeout/unreachable) is served as a stale-marked `ok` snapshot
+    # instead of the real failure. 0 disables retention entirely (today's
+    # behavior). Validated >= 0 below (host_stats_ttl_s precedent).
+    discovery_offline_grace_s: float = field(
+        default_factory=lambda: _env_float("DISCOVERY_OFFLINE_GRACE_S", 120.0)
     )
 
     # Terminal caps (Clarifications Q3 defaults: 32 global / 16 per-client).
@@ -221,6 +232,12 @@ class WebSettings:
             raise WebConfigError(
                 f"REMO_WEB_HOST_STATS_TTL_S={self.host_stats_ttl_s!r} is not valid; "
                 "expected a positive number of seconds."
+            )
+        if self.discovery_offline_grace_s < 0:
+            raise WebConfigError(
+                f"REMO_WEB_DISCOVERY_OFFLINE_GRACE_S={self.discovery_offline_grace_s!r} "
+                "is not valid; expected a non-negative number of seconds (0 disables "
+                "retention)."
             )
 
     @property

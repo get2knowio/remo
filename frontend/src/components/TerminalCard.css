@@ -382,6 +382,25 @@
   padding: 2px 4px;
 }
 
+/* Discovery resilience (024, spec US3/FR-010): a mounted card's presentation
+ * is driven by its OWN connection state, never by discovery — this is the
+ * card's half of "panes never depend on discovery liveness". The state pill
+ * already recolors for disconnected/error (`.terminal-card-state--*` above);
+ * this dims the terminal body itself so a dead card reads as dead at a
+ * glance, with the existing state pill + manual-reconnect button (unchanged,
+ * still fully legible/clickable) as the way back. `closed` is dimmed too:
+ * it is the state a clean remote exit (WS code 1000) lands in, from which
+ * nothing reconnects on its own — the deadest of the three. */
+.terminal-card[data-connection-state="disconnected"] .terminal-card-surface,
+.terminal-card[data-connection-state="closed"] .terminal-card-surface,
+.terminal-card[data-connection-state="error"] .terminal-card-surface {
+  opacity: 0.55;
+  filter: grayscale(35%);
+}
+.terminal-card[data-connection-state="reconnecting"] .terminal-card-surface {
+  opacity: 0.75;
+}
+
 /* Touch devices (iPad et al.): enlarge the card's header controls, especially
  * the compact grid-tile close ✕, so they're comfortably tappable. */
 @media (pointer: coarse) {

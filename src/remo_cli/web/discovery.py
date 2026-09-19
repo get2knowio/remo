@@ -20,9 +20,11 @@ prevents other instances' results from being produced.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 
 from remo_cli.core.config import ADDED_HOST_TYPE
@@ -166,6 +168,101 @@ def _snapshot(
     )
 
 
+# ---------------------------------------------------------------------------
+# Discovery resilience (024): retention merge (research.md D1-D4, data-model.md)
+# ---------------------------------------------------------------------------
+
+#: Exactly the failure statuses eligible for retention (spec FR-001/FR-005,
+#: Assumptions: "new statuses added later default to non-retryable unless
+#: classified otherwise").
+_RETRYABLE_STATUSES = frozenset({InstanceStatus.TIMEOUT, InstanceStatus.UNREACHABLE})
+
+
+def _merge_snapshot(
+    prior: DiscoverySnapshot | None,
+    fresh: DiscoverySnapshot,
+    *,
+    now_monotonic: float,
+    last_ok_monotonic: float | None,
+    grace_s: float,
+) -> DiscoverySnapshot:
+    """Apply discovery-resilience retention to one probe result.
+
+    Pure and unit-testable (research.md D2): the only inputs are the stored
+    prior snapshot (if any), the fresh probe result, and the clock/budget
+    values the caller already holds under its lock. NEITHER argument is
+    mutated — *prior* is aliased by lock-free readers (an in-place write
+    would be visible mid-read), and mutating *fresh* would silently rewrite
+    the object the caller still holds a name for. Every outcome is either a
+    brand-new `DiscoverySnapshot` or *fresh* returned untouched. See
+    data-model.md "State transitions".
+    """
+    if fresh.status is InstanceStatus.OK:
+        # Fresh success fully replaces retention state (spec FR-006).
+        return dataclasses.replace(
+            fresh,
+            last_ok_at=fresh.refreshed_at,
+            consecutive_failures=0,
+            stale=False,
+        )
+
+    if prior is None:
+        # Nothing to retain (spec US4 scenario 3 / edge case): served as
+        # `_discover_one` built it — defaults `stale=False`,
+        # `consecutive_failures=0`, `last_ok_at=None`.
+        return fresh
+
+    retryable = fresh.status in _RETRYABLE_STATUSES
+
+    if (
+        retryable
+        and prior.status is InstanceStatus.OK
+        and grace_s > 0
+        and last_ok_monotonic is not None
+        and now_monotonic - last_ok_monotonic <= grace_s
+    ):
+        # Retained-ok: a NEW object built from prior's capability/targets/
+        # region/last_ok_at plus fresh's error/refreshed_at/identity fields.
+        return dataclasses.replace(
+            prior,
+            instance_id=fresh.instance_id,
+            instance_type=fresh.instance_type,
+            instance_name=fresh.instance_name,
+            status=InstanceStatus.OK,
+            error=fresh.error,
+            refreshed_at=fresh.refreshed_at,
+            stale=True,
+            consecutive_failures=prior.consecutive_failures + 1,
+        )
+
+    # The failure surfaces as-is, carrying `last_ok_at` forward for
+    # observability. A retryable-but-not-retainable failure (no prior OK,
+    # budget 0, or grace exhausted) keeps incrementing the streak counter; a
+    # non-retryable one (deterministic misconfiguration, spec FR-005) resets
+    # it, since the counter means "consecutive RETRYABLE failures".
+    return dataclasses.replace(
+        fresh,
+        last_ok_at=prior.last_ok_at,
+        consecutive_failures=prior.consecutive_failures + 1 if retryable else 0,
+        stale=False,
+    )
+
+
+def _total_probe_budget_s(settings: WebSettings) -> float:
+    """Outer `wait_for` budget for the two sequential per-instance calls.
+
+    `_discover_one_sync` runs `get_capabilities` then `list_sessions`
+    sequentially, each legitimately owning a full `discovery_timeout_s`
+    (that per-call budget is unchanged). The outer bound below exists only
+    as a safety net over BOTH calls together and must not be tighter than
+    their sum, or
+    a slow-but-healthy first call starves the second into a spurious
+    instance timeout (spec FR-007, research.md D5). `+5.0` is slack for SSH
+    argv/process setup between the two calls.
+    """
+    return 2 * settings.discovery_timeout_s + 5.0
+
+
 def configure_remediation(host: KnownHost) -> str:
     """Name the exact command that installs/refreshes this host's remo tools.
 
@@ -239,7 +336,11 @@ def _classify_ssh_transport(exc: SshTransportError) -> tuple[InstanceStatus, str
 async def _discover_one(
     host: KnownHost, settings: WebSettings, semaphore: asyncio.Semaphore
 ) -> DiscoverySnapshot:
-    """Discover one instance, bounded by *semaphore* and `discovery_timeout_s`.
+    """Discover one instance, bounded by *semaphore* and `_total_probe_budget_s`.
+
+    The outer bound covers BOTH sequential remote calls together (024, spec
+    FR-007); each call still gets its own full `discovery_timeout_s` inside
+    `_discover_one_sync`.
 
     Never raises: every failure mode (SSH transport, protocol incompatibility,
     malformed/oversized payload, missing `remo-host`, timeout, or any other
@@ -251,10 +352,11 @@ async def _discover_one(
 
     async with semaphore:
         loop = asyncio.get_running_loop()
+        total_budget_s = _total_probe_budget_s(settings)
         try:
             capability, entries = await asyncio.wait_for(
                 loop.run_in_executor(None, _discover_one_sync, host, settings),
-                timeout=settings.discovery_timeout_s,
+                timeout=total_budget_s,
             )
         except TimeoutError:
             return _snapshot(
@@ -263,7 +365,7 @@ async def _discover_one(
                 InstanceStatus.TIMEOUT,
                 error=TypedError(
                     code="timeout",
-                    message=f"Discovery timed out after {settings.discovery_timeout_s:.0f}s",
+                    message=f"Discovery timed out after {total_budget_s:.0f}s",
                     retryable=True,
                     remediation="Check instance is reachable and not overloaded; retry.",
                 ),
@@ -390,13 +492,31 @@ class DiscoveryService:
     FR-035).
     """
 
-    def __init__(self, settings: WebSettings | None = None) -> None:
+    def __init__(
+        self,
+        settings: WebSettings | None = None,
+        *,
+        monotonic: Callable[[], float] | None = None,
+    ) -> None:
         self._settings = settings or WebSettings()
+        # Injectable clock (discovery-resilience, 024): lets tests advance
+        # the grace budget deterministically without real sleeps. ONE clock
+        # for the whole object -- the cache-TTL bookkeeping below reads it
+        # too, so an injected clock can never leave `_is_fresh()` measuring
+        # against a different timeline than the grace budget. The default
+        # resolves `time.monotonic` at call time (not at import), so the
+        # existing tests that monkeypatch `time.monotonic` still work.
+        self._monotonic: Callable[[], float] = monotonic or (lambda: time.monotonic())
         self._lock = asyncio.Lock()
         self._snapshots: dict[str, DiscoverySnapshot] = {}
         self._targets_by_id: dict[str, SessionTarget] = {}
         self._last_refreshed_at: str | None = None
         self._last_refresh_monotonic: float | None = None
+        # Retention bookkeeping (024): monotonic time of each instance's
+        # last successful (non-stale) discovery. Written only at the store
+        # site under `self._lock`; entries removed on evict/deregistration
+        # prune. See research.md D2/D3.
+        self._last_ok_monotonic: dict[str, float] = {}
 
     # -- cache reads (sync, non-blocking) ---------------------------------
 
@@ -444,7 +564,7 @@ class DiscoveryService:
     def _is_fresh(self) -> bool:
         if self._last_refresh_monotonic is None:
             return False
-        elapsed = time.monotonic() - self._last_refresh_monotonic
+        elapsed = self._monotonic() - self._last_refresh_monotonic
         return elapsed < self._settings.discovery_cache_ttl_s
 
     # -- refresh (async, the only method that performs I/O) ---------------
@@ -476,7 +596,18 @@ class DiscoveryService:
         async def _run_and_store(host: KnownHost) -> None:
             snapshot = await _discover_one(host, self._settings, semaphore)
             async with self._lock:
-                self._snapshots[snapshot.instance_id] = snapshot
+                prior = self._snapshots.get(snapshot.instance_id)
+                now = self._monotonic()
+                merged = _merge_snapshot(
+                    prior,
+                    snapshot,
+                    now_monotonic=now,
+                    last_ok_monotonic=self._last_ok_monotonic.get(snapshot.instance_id),
+                    grace_s=self._settings.discovery_offline_grace_s,
+                )
+                self._snapshots[merged.instance_id] = merged
+                if merged.status is InstanceStatus.OK and not merged.stale:
+                    self._last_ok_monotonic[merged.instance_id] = now
                 self._rebuild_target_index()
 
         # return_exceptions=True is defense-in-depth: _discover_one already
@@ -491,9 +622,10 @@ class DiscoveryService:
                 current_ids = {derive_instance_id(h) for h in hosts}
                 for stale_id in [sid for sid in self._snapshots if sid not in current_ids]:
                     del self._snapshots[stale_id]
+                    self._last_ok_monotonic.pop(stale_id, None)
                 self._rebuild_target_index()
             self._last_refreshed_at = _now_iso()
-            self._last_refresh_monotonic = time.monotonic()
+            self._last_refresh_monotonic = self._monotonic()
 
     async def evict(self, instance_id: str) -> None:
         """Drop one instance's snapshot (a targeted prune; no I/O).
@@ -506,6 +638,7 @@ class DiscoveryService:
         async with self._lock:
             if self._snapshots.pop(instance_id, None) is not None:
                 self._rebuild_target_index()
+            self._last_ok_monotonic.pop(instance_id, None)
 
     def _rebuild_target_index(self) -> None:
         """Recompute the flattened target-by-id index from current snapshots.
