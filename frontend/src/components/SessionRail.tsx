@@ -252,8 +252,9 @@ function RailInstance({
   const { instance, meta, status, error } = group;
   const bodyId = `rail-inst-body-${instance.instance_id}`;
   const activeCount = group.rows.filter((r) => r.active).length;
+  const railInstClass = group.isStale ? "rail-inst rail-inst--stale" : "rail-inst";
   return (
-    <div className="rail-inst">
+    <div className={railInstClass}>
       {/* The whole header is a pointer convenience for the caret's toggle;
           every other control in it stops propagation — including the host
           NAME, which opens the host detail page (the Part 1 contract:
@@ -291,20 +292,34 @@ function RailInstance({
         </button>
         {instance.region && <span className="rail-inst-region">{instance.region}</span>}
         <span className="rail-inst-spacer" />
-        <span
-          className="rail-inst-status"
-          style={{ color: status.color }}
-          title={status.label}
-        >
+        {/* While stale, the chip below carries the reachability signal; the
+            green "ok" label would sit 8px away saying the opposite, so it
+            yields for the duration of the grace window (spec FR-008). */}
+        {!group.isStale && (
           <span
-            className="rail-inst-status-dot"
-            style={{
-              background: status.color,
-              animation: status.pulse ? "rpulse 1.6s ease infinite" : undefined,
-            }}
-          />
-          {status.label}
-        </span>
+            className="rail-inst-status"
+            style={{ color: status.color }}
+            title={status.label}
+          >
+            <span
+              className="rail-inst-status-dot"
+              style={{
+                background: status.color,
+                animation: status.pulse ? "rpulse 1.6s ease infinite" : undefined,
+              }}
+            />
+            {status.label}
+          </span>
+        )}
+        {group.isStale && (
+          <span
+            className="rail-inst-stale-chip"
+            data-testid={`stale-chip-${instance.instance_id}`}
+            title="Last discovery attempt failed; the host stays available while it retries."
+          >
+            not responding · retrying
+          </span>
+        )}
         {group.collapsed && (
           <span
             className="rail-inst-count"

@@ -242,6 +242,46 @@
   white-space: nowrap;
 }
 
+/* Discovery resilience (024, spec FR-008): a stale-marked group (backend
+ * kept status=ok during its grace window) is dimmed, not error-red — rows
+ * stay fully present and clickable, only the visual weight drops so it
+ * reads as "degraded" rather than "down". */
+.rail-inst--stale .rail-inst-head {
+  opacity: 0.68;
+}
+/* FR-008 says the GROUP dims, not just its header: rows drop to the same
+ * visual weight while staying fully present and clickable. */
+.rail-inst--stale .rail-row {
+  opacity: 0.68;
+}
+/* Scoped to the stale state so no other group's layout changes: the chip is
+ * the only thing that makes this header overflow, so only here does the name
+ * need to be able to ellipsize. */
+.rail-inst--stale .rail-inst-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Shrinkable, unlike every other header item: at the 262px minimum rail width
+ * a ~150px nowrap chip added to a row of nowrap items with nothing able to
+ * give would push the ⊞ open-all control (and the collapsed count) right out
+ * of the rail. The chip yields first, then the host name. */
+.rail-inst-stale-chip {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 500;
+  color: var(--warn-text-dim);
+  background: var(--warn-surface);
+  border: 1px solid var(--warn-border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  white-space: nowrap;
+}
+
 .rail-inst-error {
   margin: 2px 4px 6px;
   padding: 9px 10px;

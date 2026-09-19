@@ -570,6 +570,11 @@
               }
             ]
           },
+          "consecutive_failures": {
+            "default": 0,
+            "title": "Consecutive Failures",
+            "type": "integer"
+          },
           "error": {
             "anyOf": [
               {
@@ -599,6 +604,17 @@
             ],
             "title": "Instance Type"
           },
+          "last_ok_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Ok At"
+          },
           "refreshed_at": {
             "anyOf": [
               {
@@ -614,6 +630,11 @@
             "default": "",
             "title": "Region",
             "type": "string"
+          },
+          "stale": {
+            "default": false,
+            "title": "Stale",
+            "type": "boolean"
           },
           "status": {
             "$ref": "#/components/schemas/InstanceStatus"

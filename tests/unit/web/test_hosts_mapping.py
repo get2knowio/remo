@@ -98,6 +98,41 @@ def test_instance_out_carries_capability_operations_and_tools() -> None:
     assert out.capability.docker is False
 
 
+def test_instance_out_maps_staleness_advisory_fields() -> None:
+    """`_instance_out` carries the 024 advisory fields through unmodified.
+
+    contracts/instance-out-stale.md.
+    """
+    snapshot = DiscoverySnapshot(
+        instance_id="abc123",
+        instance_type="incus",
+        instance_name="lab",
+        status=InstanceStatus.OK,
+        stale=True,
+        last_ok_at="2026-09-19T11:58:00Z",
+        consecutive_failures=2,
+    )
+    out = _instance_out(snapshot)
+    assert out.stale is True
+    assert out.last_ok_at == "2026-09-19T11:58:00Z"
+    assert out.consecutive_failures == 2
+
+
+def test_instance_out_staleness_defaults_for_a_plain_snapshot() -> None:
+    """A snapshot that never sets the 024 fields maps to the safe defaults
+    (fresh success / pre-024 construction — old clients unaffected)."""
+    snapshot = DiscoverySnapshot(
+        instance_id="abc123",
+        instance_type="incus",
+        instance_name="lab",
+        status=InstanceStatus.OK,
+    )
+    out = _instance_out(snapshot)
+    assert out.stale is False
+    assert out.last_ok_at is None
+    assert out.consecutive_failures == 0
+
+
 def test_instance_out_capability_defaults_for_old_hosts() -> None:
     """A pre-change host payload (no operations/zellij/docker keys) maps to
     the same safe defaults RemoteCapability itself carries."""

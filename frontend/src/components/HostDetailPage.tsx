@@ -217,7 +217,13 @@ export function HostDetailPage({
     (registryAdmin && instance.status === "no_remo_host");
   const nudgeText =
     unsupported?.remediation ||
-    instance.error?.remediation ||
+    // `instance.error` used to imply a non-ok status. Since 024 a RETAINED
+    // (stale) snapshot keeps `status: "ok"` and carries the last discovery
+    // failure as advisory detail — whose remediation is "retry, the host may
+    // be overloaded", which is not what a capability nudge is about. Ignore
+    // the error on a stale instance so the nudge still names the upgrade
+    // command (spec 024 FR-002: the fields are advisory, never a status).
+    (instance.stale ? undefined : instance.error?.remediation) ||
     `This host's tools predate project maintenance. Run: ${upgradeCommand(instance)}`;
 
   const refreshInstance = (): void => {

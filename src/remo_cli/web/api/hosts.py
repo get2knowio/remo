@@ -107,6 +107,18 @@ class InstanceOut(BaseModel):
     capability: CapabilityOut | None = None
     error: ErrorOut | None = None
     refreshed_at: str | None = None
+    # Discovery resilience (024): additive advisory fields, defaults preserve
+    # the pre-024 shape for any client that ignores them. See
+    # contracts/instance-out-stale.md (specs/024-discovery-resilience).
+    #: True only on a retained-ok snapshot served during the grace window
+    #: (status stays "ok"); never true otherwise.
+    stale: bool = False
+    #: ISO-8601 timestamp of the last successful discovery for this
+    #: instance, or null before any success. Display-only.
+    last_ok_at: str | None = None
+    #: Count of consecutive retryable failures since the last success.
+    #: Advisory only — never the grace-window trigger.
+    consecutive_failures: int = 0
 
 
 class HostsResponse(BaseModel):
@@ -220,6 +232,9 @@ def _instance_out(snapshot: DiscoverySnapshot) -> InstanceOut:
         capability=capability_out,
         error=error_out,
         refreshed_at=snapshot.refreshed_at or None,
+        stale=snapshot.stale,
+        last_ok_at=snapshot.last_ok_at,
+        consecutive_failures=snapshot.consecutive_failures,
     )
 
 

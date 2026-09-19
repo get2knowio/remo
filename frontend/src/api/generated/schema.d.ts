@@ -942,6 +942,11 @@ export interface components {
         /** InstanceOut */
         InstanceOut: {
             capability?: components["schemas"]["CapabilityOut"] | null;
+            /**
+             * Consecutive Failures
+             * @default 0
+             */
+            consecutive_failures: number;
             error?: components["schemas"]["ErrorOut"] | null;
             /** Instance Id */
             instance_id: string;
@@ -949,6 +954,8 @@ export interface components {
             instance_name: string;
             /** Instance Type */
             instance_type: components["schemas"]["KnownProviderType"] | string;
+            /** Last Ok At */
+            last_ok_at?: string | null;
             /** Refreshed At */
             refreshed_at?: string | null;
             /**
@@ -956,6 +963,11 @@ export interface components {
              * @default
              */
             region: string;
+            /**
+             * Stale
+             * @default false
+             */
+            stale: boolean;
             status: components["schemas"]["InstanceStatus"];
         };
         /**

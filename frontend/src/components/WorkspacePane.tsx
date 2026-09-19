@@ -2,7 +2,7 @@
 // terminal (each mounted for its lifetime so hidden ones stay connected),
 // laid out as a single view (one visible) or a responsive grid (two-plus).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DndContext,
   DragOverlay,
@@ -135,19 +135,58 @@ export function WorkspacePane({
     useSensor(KeyboardSensor),
   );
 
+  // Sticky last-known-target map (discovery resilience, 024, spec FR-009):
+  // an open pane must never unmount just because its target disappeared from
+  // the served `targetsById` — during a discovery grace window, or after it.
+  // Each attached id that DOES resolve live refreshes its sticky entry;
+  // resolution falls back to the sticky entry when the live lookup misses.
+  // In-memory only (never persisted with the layout — spec clarification 3);
+  // a closed pane has its entry dropped (the prune effect below), and an id
+  // that has never once resolved (e.g. a layout restored from localStorage
+  // before the first discovery run lands) has no sticky entry and keeps
+  // today's filtered-out behavior.
+  const stickyTargets = useRef<Map<string, SessionTarget>>(new Map());
+  const resolveTarget = (id: string): SessionTarget | undefined => {
+    const live = targetsById.get(id);
+    if (live) {
+      stickyTargets.current.set(id, live);
+      return live;
+    }
+    return stickyTargets.current.get(id);
+  };
+
+  // Drop the sticky record of every pane that is no longer open (spec FR-009 /
+  // US3 scenario 3: "stickiness never resurrects closed panes"). Keyed off the
+  // workspace store rather than this component's ✕ handler, because that
+  // handler is NOT the only close path — AppShell's narrow back-bar calls
+  // `workspace.closeTerm` directly, and a record leaked there resurrects the
+  // pane the moment the same target id is re-opened while absent from live
+  // discovery. An effect, not render work: pruning is a side effect on a ref
+  // and must not run for a render React may throw away.
+  useEffect(() => {
+    const open = new Set([...attached, ...visible]);
+    for (const id of [...stickyTargets.current.keys()]) {
+      if (!open.has(id)) {
+        stickyTargets.current.delete(id);
+      }
+    }
+  }, [attached, visible]);
+
   // Render visible tiles in `visible` order (so the grid layout follows the
   // reorderable order + the number badges), then the hidden-but-attached cards
   // (kept mounted for their live connections; display:none, order irrelevant).
   const orderedTargets = useMemo(() => {
     const visibleSet = new Set(visible);
     const inGridOrder = visible
-      .map((id) => targetsById.get(id))
+      .map((id) => resolveTarget(id))
       .filter((t): t is SessionTarget => t !== undefined);
     const hidden = attached
       .filter((id) => !visibleSet.has(id))
-      .map((id) => targetsById.get(id))
+      .map((id) => resolveTarget(id))
       .filter((t): t is SessionTarget => t !== undefined);
     return [...inGridOrder, ...hidden];
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resolveTarget
+    // closes over targetsById (already a dep below) and the stable sticky ref.
   }, [visible, attached, targetsById]);
 
   if (orderedTargets.length === 0) {
@@ -196,7 +235,7 @@ export function WorkspacePane({
 
   // Reordering is possible only within a real grid (two-plus visible tiles).
   const reorderable = !maximized && paneMode === "grid" && visible.length > 1;
-  const activeTarget = activeId ? targetsById.get(activeId) : undefined;
+  const activeTarget = activeId ? resolveTarget(activeId) : undefined;
 
   const cycleTile = (id: string): void => {
     // From a single view (or fullscreen), the control means "put me back in the
@@ -279,7 +318,14 @@ export function WorkspacePane({
                 isFocused={focusedId === id}
                 viewState={viewState}
                 reorderEnabled={reorderable && isVisible}
-                onClose={() => workspace.closeTerm(id)}
+                onClose={() => {
+                  // Explicitly closing a pane drops its sticky record at once
+                  // — stickiness never resurrects a closed pane (spec US3
+                  // scenario 3 / FR-009). The prune effect above is the
+                  // catch-all for every OTHER close path.
+                  stickyTargets.current.delete(id);
+                  workspace.closeTerm(id);
+                }}
                 onNormal={() => workspace.soloTile(id)}
                 onGrid={
                   // In a TILED grid the ⊞ control flattens back to even tiles —

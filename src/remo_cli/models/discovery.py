@@ -41,7 +41,14 @@ class TypedError:
 
 @dataclass
 class DiscoverySnapshot:
-    """Per-instance discovery result; immutable and wholesale-replaced on refresh."""
+    """Per-instance discovery result.
+
+    Treated as immutable by convention, not by construction: a stored
+    snapshot is never mutated in place, only ever replaced wholesale by a
+    fresh :class:`DiscoverySnapshot` (readers alias the stored object, so an
+    in-place mutation would be visible mid-read). See
+    ``specs/024-discovery-resilience/research.md`` decision D2.
+    """
 
     instance_id: str
     instance_type: str
@@ -55,3 +62,11 @@ class DiscoverySnapshot:
     # the UI can label an instance as `provider · name · region`. Registry-side
     # only — no remote round-trip; empty string when the registry omits it.
     region: str = ""
+    # Discovery resilience (024): advisory staleness fields, additive so any
+    # existing constructor call site keeps working unmodified. `stale=True`
+    # only on a retained-ok snapshot served during the grace window; never
+    # true on a fresh `ok` or on any non-ok snapshot. See
+    # specs/024-discovery-resilience/data-model.md.
+    stale: bool = False
+    last_ok_at: str | None = None
+    consecutive_failures: int = 0

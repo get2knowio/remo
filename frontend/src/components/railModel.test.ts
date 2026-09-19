@@ -27,6 +27,10 @@ function instance(overrides: Partial<DiscoveryInstance> = {}): DiscoveryInstance
     targets: [],
     error: null,
     refreshed_at: "2026-08-02T00:00:00Z",
+    // Discovery resilience (024): safe defaults for a fresh/ok instance.
+    stale: false,
+    last_ok_at: null,
+    consecutive_failures: 0,
     ...overrides,
   } as DiscoveryInstance;
 }
@@ -268,6 +272,85 @@ describe("favorites", () => {
       ["beta", "a-host"],
       ["beta", "b-host"],
     ]);
+  });
+});
+
+describe("RailGroup.isStale (024, spec FR-008/US2)", () => {
+  it("is true for a stale-ok instance, isError stays false, rows/targets stay openable", () => {
+    const model = buildRailModel(
+      [instance({ status: "ok", stale: true, consecutive_failures: 2, error: {
+        code: "timeout",
+        message: "Discovery timed out after 25s",
+        retryable: true,
+        remediation: "Check instance is reachable and not overloaded; retry.",
+      } })],
+      [target()],
+      NO_FILTERS,
+    );
+
+    const group = model.groups[0];
+    expect(group.isStale).toBe(true);
+    expect(group.isError).toBe(false);
+    expect(group.rows).toHaveLength(1);
+    expect(group.openableTargets).toHaveLength(1);
+  });
+
+  it("is false for a genuinely-errored (non-ok) instance — isError unchanged", () => {
+    const model = buildRailModel(
+      [
+        instance({
+          status: "timeout",
+          error: {
+            code: "timeout",
+            message: "Discovery timed out",
+            retryable: true,
+            remediation: "retry",
+          },
+        }),
+      ],
+      [],
+      NO_FILTERS,
+    );
+
+    const group = model.groups[0];
+    expect(group.isError).toBe(true);
+    expect(group.isStale).toBe(false);
+  });
+
+  it("is false for a fresh ok instance (both isStale and isError false)", () => {
+    const model = buildRailModel([instance()], [target()], NO_FILTERS);
+
+    const group = model.groups[0];
+    expect(group.isStale).toBe(false);
+    expect(group.isError).toBe(false);
+  });
+
+  it("post-grace hard-error shape (status non-ok, stale=false) still renders isError, never isStale", () => {
+    // spec FR-004: the hard-error snapshot after grace exhaustion serves
+    // stale=false while keeping the advisory fields populated. US2 must
+    // never soften this into the stale presentation.
+    const model = buildRailModel(
+      [
+        instance({
+          status: "timeout",
+          stale: false,
+          last_ok_at: "2026-09-19T11:55:00Z",
+          consecutive_failures: 5,
+          error: {
+            code: "timeout",
+            message: "Discovery timed out",
+            retryable: true,
+            remediation: "Check instance is reachable and not overloaded; retry.",
+          },
+        }),
+      ],
+      [],
+      NO_FILTERS,
+    );
+
+    const group = model.groups[0];
+    expect(group.isError).toBe(true);
+    expect(group.isStale).toBe(false);
   });
 });
 

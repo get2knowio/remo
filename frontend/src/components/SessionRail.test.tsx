@@ -21,6 +21,10 @@ function instance(overrides: Partial<DiscoveryInstance> = {}): DiscoveryInstance
     capability: null,
     error: null,
     refreshed_at: "2026-08-02T00:00:00Z",
+    // Discovery resilience (024): safe defaults for a fresh/ok instance.
+    stale: false,
+    last_ok_at: null,
+    consecutive_failures: 0,
     ...overrides,
   } as DiscoveryInstance;
 }
@@ -51,7 +55,12 @@ const workspace = {
 } as unknown as UseWorkspaceResult;
 
 function mountRail(
-  options: { registryAdmin?: boolean; noRegistry?: boolean; onAddHost?: () => void } = {},
+  options: {
+    registryAdmin?: boolean;
+    noRegistry?: boolean;
+    onAddHost?: () => void;
+    instanceOverrides?: Partial<DiscoveryInstance>;
+  } = {},
 ): {
   onOpenHostDetail: ReturnType<typeof vi.fn>;
   onToggleHostCollapsed: ReturnType<typeof vi.fn>;
@@ -60,7 +69,7 @@ function mountRail(
   const onToggleHostCollapsed = vi.fn();
   const noRegistry = options.noRegistry ?? false;
   const model = buildRailModel(
-    noRegistry ? [] : [instance()],
+    noRegistry ? [] : [instance(options.instanceOverrides)],
     noRegistry ? [] : [target()],
     NO_FILTERS,
     new Set(),
@@ -113,6 +122,67 @@ describe("SessionRail host-name click", () => {
     // The header is the name button's parent .rail-inst-head.
     fireEvent.click(name.closest(".rail-inst-head")!);
     expect(onToggleHostCollapsed).toHaveBeenCalledWith("inst-1");
+  });
+});
+
+describe("staleness presentation (024, spec FR-008/US2)", () => {
+  it("renders the stale chip + dimmed group + all rows for a stale-ok instance", () => {
+    mountRail({
+      instanceOverrides: {
+        status: "ok",
+        stale: true,
+        consecutive_failures: 2,
+        error: {
+          code: "timeout",
+          message: "Discovery timed out after 25s",
+          retryable: true,
+          remediation: "Check instance is reachable and not overloaded; retry.",
+        },
+      },
+    });
+
+    expect(screen.getByTestId("stale-chip-inst-1")).toHaveTextContent(
+      "not responding · retrying",
+    );
+    expect(screen.getByTestId("host-name-inst-1").closest(".rail-inst")).toHaveClass(
+      "rail-inst--stale",
+    );
+    expect(screen.getByTestId("session-row-t-1")).toBeInTheDocument();
+    expect(screen.queryByText(/SSH auth failed|Unreachable|Timed out|Protocol error/)).not.toBeInTheDocument();
+    // The chip owns the reachability signal while stale: the green "ok"
+    // status label would contradict it and yields for the grace window.
+    expect(screen.queryByTitle("online")).not.toBeInTheDocument();
+  });
+
+  it("still renders the .rail-inst-error block for a genuinely-errored group", () => {
+    mountRail({
+      instanceOverrides: {
+        status: "timeout",
+        stale: false,
+        error: {
+          code: "timeout",
+          message: "Discovery timed out",
+          retryable: true,
+          remediation: "Check instance is reachable and not overloaded; retry.",
+        },
+      },
+      noRegistry: false,
+    });
+
+    expect(screen.queryByTestId("stale-chip-inst-1")).not.toBeInTheDocument();
+    expect(screen.getByText(/Timed out/)).toBeInTheDocument();
+    expect(screen.getByText("Discovery timed out")).toBeInTheDocument();
+  });
+
+  it("renders neither chip nor error block for a recovered (fresh ok) group", () => {
+    mountRail({ instanceOverrides: { status: "ok", stale: false, error: null } });
+
+    expect(screen.queryByTestId("stale-chip-inst-1")).not.toBeInTheDocument();
+    expect(screen.getByTestId("host-name-inst-1").closest(".rail-inst")).not.toHaveClass(
+      "rail-inst--stale",
+    );
+    // Fresh ok: the normal status label is back.
+    expect(screen.getByTitle("online")).toBeInTheDocument();
   });
 });
 
