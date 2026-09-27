@@ -92,6 +92,13 @@ You land in an interactive project menu. Pick a project, and you're in a persist
 
 All platforms give you the same dev workflow and tooling described below.
 
+**SSM connector (any host, no inbound ports)**: for a host that isn't AWS at
+all — a Proxmox/Incus box behind home NAT, or an isolated server you'd
+rather not expose — enroll it as a **connector**: a hybrid-activated SSM
+managed node in your own AWS account that reaches its exposed project
+sessions with zero inbound ports and no VPN. See
+[docs/ssm-connector.md](docs/ssm-connector.md).
+
 ---
 
 ## The Dev Workflow
@@ -421,6 +428,14 @@ remo add NAME host --user alice     # Override default SSH user (default: remo)
 remo configure NAME                 # Install/refresh the dev tools on an added host
 remo configure NAME --skip docker   # Skip a tool (repeatable; --only is the inverse)
 remo remove NAME [--yes]            # Deregister an added host (local-only)
+
+# SSM connector (any host, no inbound ports — see docs/ssm-connector.md)
+remo connector enroll NAME --activation-id ID --region REGION --expose HOST/PROJECT
+                                     # Turn a registered host into a connector (prompts for the activation code)
+remo connector status NAME          # Agent state, managed-node id, region, exposed targets
+remo connector unenroll NAME [--purge] [--yes]   # Stop the agent, remove local registration
+remo connector document             # Print the shipped remo-attach session document
+remo connector document --name      # Print only the document name (remo-attach)
 
 # Hetzner Cloud
 remo hetzner create                 # Provision VM

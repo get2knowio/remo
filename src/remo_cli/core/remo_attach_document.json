@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1.0",
+  "description": "remo-attach v1: attach the caller to an exposed Remo project session via a remo connector (https://github.com/get2knowio/remo, docs/ssm-connector.md)",
+  "sessionType": "InteractiveCommands",
+  "parameters": {
+    "target": {
+      "type": "String",
+      "description": "base64url (no padding) of {\"v\":1,\"host\":\"<host>\",\"project\":\"<project>\"}",
+      "allowedPattern": "^[A-Za-z0-9_-]{1,1024}$",
+      "maxChars": 1024
+    }
+  },
+  "properties": {
+    "linux": {
+      "commands": "exec /opt/remo-connector/bin/remo connector attach -- {{ target }}",
+      "runAsElevated": false
+    }
+  }
+}

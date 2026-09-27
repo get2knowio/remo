@@ -1,0 +1,237 @@
+---
+# ssm_connector role (specs/025-ssm-connector, contracts/ansible-role.md):
+# install/verify SSM Agent, register the hybrid-activated managed node,
+# create the run-as user, provision a pinned remo with its own private
+# registry/exposure/identity, and trust every exposed host's key from the
+# connector's own vantage point. Idempotent: a second run with the same
+# inputs reports no changes (Constitution VII).
+#
+# `ssm_activation_code` is handled ONLY by task 1 (defensive re-assert) and
+# task "Register the connector" below — both carry `no_log: true` so the
+# secret never reaches a log line, a failure dump, or `-v` output
+# (Constitution "secrets never in logs"; research R6 documents the one
+# connector-side residual this role cannot avoid: the code is briefly a
+# process argument to `amazon-ssm-agent -register` on the connector itself).
+
+- name: Assert Debian family and required connector inputs
+  ansible.builtin.assert:
+    that:
+      - ansible_os_family | default('') == 'Debian'
+      - ssm_activation_id is defined and (ssm_activation_id | string | length) > 0
+      - ssm_region is defined and (ssm_region | string | length) > 0
+      - ssm_activation_code is defined and (ssm_activation_code | string | length) > 0
+      - (remo_version | default('') | length) > 0 or (remo_source | default('') | length) > 0
+    fail_msg: >-
+      ssm_connector requires a Debian-family host plus ssm_activation_id, ssm_region,
+      ssm_activation_code and one of remo_version/remo_source — run this role through
+      'remo connector enroll', not directly.
+    quiet: true
+  no_log: true
+
+- name: Install base packages (openssh-client curl ca-certificates)
+  ansible.builtin.apt:
+    name:
+      - openssh-client
+      - curl
+      - ca-certificates
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Probe for an existing amazon-ssm-agent install
+  ansible.builtin.stat:
+    path: /usr/bin/amazon-ssm-agent
+  register: ssm_agent_binary_probe
+  changed_when: false
+
+- name: Install SSM Agent from the AWS-hosted .deb
+  ansible.builtin.apt:
+    deb: "{{ ssm_agent_deb_url }}"
+  when: not (ssm_agent_binary_probe.stat.exists | default(false))
+  notify: Restart amazon-ssm-agent
+
+- name: Probe for an existing SSM registration
+  ansible.builtin.stat:
+    path: /var/lib/amazon/ssm/registration
+  register: ssm_registration_probe
+  changed_when: false
+
+- name: Stop the agent before registering
+  ansible.builtin.systemd:
+    name: amazon-ssm-agent
+    state: stopped
+  when: not (ssm_registration_probe.stat.exists | default(false))
+
+- name: Register the connector as a hybrid-activated managed node
+  ansible.builtin.command:
+    cmd: >-
+      amazon-ssm-agent -register
+      -code {{ ssm_activation_code | quote }}
+      -id {{ ssm_activation_id | quote }}
+      -region {{ ssm_region | quote }}
+      -y
+    creates: /var/lib/amazon/ssm/registration
+  register: ssm_register_result
+  when: not (ssm_registration_probe.stat.exists | default(false))
+  no_log: true
+
+- name: Enable and start amazon-ssm-agent
+  ansible.builtin.systemd:
+    name: amazon-ssm-agent
+    enabled: true
+    state: started
+
+- name: Read the managed-node id from the registration file
+  ansible.builtin.slurp:
+    path: /var/lib/amazon/ssm/registration
+  register: ssm_registration_slurp
+  failed_when: false
+
+- name: Fail when the registration file is missing after registration
+  ansible.builtin.fail:
+    msg: "registration missing after register"
+  when: ssm_registration_slurp.content is not defined
+
+- name: Set the managed-node id fact
+  ansible.builtin.set_fact:
+    ssm_node_id: >-
+      {{ (ssm_registration_slurp.content | default('e30=') | b64decode | from_json).ManagedInstanceID | default('') }}
+
+- name: "Managed node id: {{ ssm_node_id | default('unknown') }}"
+  ansible.builtin.debug:
+    msg: "Managed node registered: {{ ssm_node_id | default('unknown') }}"
+
+- name: Create the connector run-as user
+  ansible.builtin.user:
+    name: "{{ connector_run_as_user }}"
+    shell: /bin/bash
+    create_home: true
+    state: present
+
+- name: Create the connector install directory
+  ansible.builtin.file:
+    path: "{{ connector_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install uv for the connector
+  ansible.builtin.shell: |
+    set -euo pipefail
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR="{{ connector_install_dir }}/uv" sh
+  args:
+    executable: /bin/bash
+    creates: "{{ connector_install_dir }}/uv/uv"
+
+- name: Probe the installed remo version
+  ansible.builtin.command:
+    cmd: "{{ connector_install_dir }}/bin/remo --version"
+  register: ssm_remo_version_probe
+  changed_when: false
+  failed_when: false
+
+- name: Install the pinned remo-cli for the connector
+  ansible.builtin.command:
+    cmd: >-
+      {{ connector_install_dir }}/uv/uv tool install --force
+      "{{ remo_source if (remo_source | default('') | length) > 0 else ('remo-cli==' ~ remo_version) }}"
+  environment:
+    UV_TOOL_DIR: "{{ connector_install_dir }}/tools"
+    UV_TOOL_BIN_DIR: "{{ connector_install_dir }}/bin"
+    UV_PYTHON_INSTALL_DIR: "{{ connector_install_dir }}/python"
+  register: ssm_remo_install
+  changed_when: true
+  # `remo --version` prints `remo X.Y.Z`; compare the whole token so 4.4.0 never
+  # matches 4.4.0rc1 or 14.4.0 by substring.
+  when: >-
+    (remo_source | default('') | length) > 0
+    or (('remo ' ~ (remo_version | default(''))) != (ssm_remo_version_probe.stdout | default('') | trim))
+
+- name: Create the connector state directory
+  ansible.builtin.file:
+    path: "{{ connector_state_dir }}"
+    state: directory
+    owner: "{{ connector_run_as_user }}"
+    group: "{{ connector_run_as_user }}"
+    mode: "0700"
+
+- name: Create the connector SSH ControlMaster socket directory
+  ansible.builtin.file:
+    path: "{{ connector_state_dir }}/ssh"
+    state: directory
+    owner: "{{ connector_run_as_user }}"
+    group: "{{ connector_run_as_user }}"
+    mode: "0700"
+
+- name: Generate the connector's SSH identity
+  community.crypto.openssh_keypair:
+    path: "{{ connector_state_dir }}/id_ed25519"
+    type: ed25519
+    owner: "{{ connector_run_as_user }}"
+    group: "{{ connector_run_as_user }}"
+    mode: "0600"
+
+- name: Read the connector's public key
+  ansible.builtin.slurp:
+    path: "{{ connector_state_dir }}/id_ed25519.pub"
+  register: ssm_pubkey_slurp
+
+- name: Set the connector public key fact
+  ansible.builtin.set_fact:
+    connector_public_key: "{{ ssm_pubkey_slurp.content | default('') | b64decode | trim }}"
+
+- name: Write the connector's private registry.json
+  ansible.builtin.copy:
+    content: "{{ connector_registry_json }}"
+    dest: "{{ connector_state_dir }}/registry.json"
+    owner: "{{ connector_run_as_user }}"
+    group: "{{ connector_run_as_user }}"
+    mode: "0600"
+
+- name: Write the connector's exposure.json
+  ansible.builtin.copy:
+    content: "{{ {'version': 1, 'exposures': connector_exposures} | to_nice_json }}"
+    dest: "{{ connector_state_dir }}/exposure.json"
+    owner: "{{ connector_run_as_user }}"
+    group: "{{ connector_run_as_user }}"
+    mode: "0600"
+
+- name: Trust every exposed host's key from the connector's own vantage point
+  ansible.builtin.include_tasks: scan_and_trust_host_key.yml
+  loop: "{{ connector_exposed_hosts }}"
+  loop_control:
+    loop_var: exposed_host
+    label: "{{ exposed_host.name }}"
+
+- name: Read any existing connector state record
+  ansible.builtin.slurp:
+    path: "{{ connector_state_dir }}/connector.json"
+  register: ssm_existing_state_slurp
+  failed_when: false
+
+# Keep the ORIGINAL enrollment timestamp on a re-run so the content-compared
+# write below is a no-op when nothing else changed (Constitution VII).
+- name: Resolve the enrollment timestamp
+  ansible.builtin.set_fact:
+    ssm_enrolled_at: >-
+      {{ ((ssm_existing_state_slurp.content | default('e30=') | b64decode | from_json).enrolled_at)
+         | default(ansible_date_time.iso8601 | default(''), true) }}
+
+- name: Write the connector's state record (connector.json)
+  ansible.builtin.copy:
+    content: >-
+      {{ {
+        'version': 1,
+        'name': connector_name,
+        'node_id': ssm_node_id | default(''),
+        'region': ssm_region,
+        'run_as_user': connector_run_as_user,
+        'remo_version': remo_version | default(''),
+        'document_version': 1,
+        'enrolled_at': ssm_enrolled_at,
+      } | to_nice_json }}
+    dest: "{{ connector_state_dir }}/connector.json"
+    owner: "{{ connector_run_as_user }}"
+    group: "{{ connector_run_as_user }}"
+    mode: "0600"

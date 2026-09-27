@@ -1,0 +1,113 @@
+---
+# SSM Connector Enrollment Playbook (specs/025-ssm-connector,
+# contracts/ansible-role.md).
+#
+# Caller: src/remo_cli/providers/connector.py::enroll via
+#   core.ansible_runner.run_playbook("ssm_connector_enroll.yml",
+#     ["-e", "@<0600 vars file>", "-e", "ssm_activation_id=…", …]) — the
+#   free-form remo_ssh_* connection vars and remo_source travel in the vars
+#   file too (a `-e key=value` extra-var is split on whitespace).
+#
+# NEVER run by hand with the activation code on the command line — the code
+# travels only through the "-e @<vars file>" 0600 JSON file `remo connector
+# enroll` writes and deletes. See docs/ssm-connector.md.
+#
+# Required extra-vars (all supplied by the CLI): ssm_activation_id, ssm_region,
+# ssm_activation_code (vars-file only), connector_name, connector_run_as_user,
+# remo_version OR remo_source, remo_ssh_host, remo_ssh_user, remo_ssh_port,
+# connector_registry_json, connector_exposures, connector_exposed_hosts.
+# Optional: remo_ssh_identity, remo_ssh_common_args.
+
+- name: Validate enrollment inputs and build the in-memory inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Assert the activation inputs are present
+      ansible.builtin.assert:
+        that:
+          - ssm_activation_id is defined and (ssm_activation_id | string | length) > 0
+          - ssm_region is defined and (ssm_region | string | length) > 0
+          - ssm_activation_code is defined and (ssm_activation_code | string | length) > 0
+        fail_msg: >-
+          ssm_connector_enroll.yml needs ssm_activation_id, ssm_region and
+          ssm_activation_code (passed via "-e @<vars file>"). Run it through
+          'remo connector enroll' rather than directly.
+        quiet: true
+      no_log: true
+
+    - name: Assert the connector's own connection variables are present
+      ansible.builtin.assert:
+        that:
+          - remo_ssh_host is defined and (remo_ssh_host | string | length) > 0
+          - remo_ssh_user is defined and (remo_ssh_user | string | length) > 0
+          - remo_ssh_port is defined
+          - connector_name is defined and (connector_name | string | length) > 0
+        fail_msg: >-
+          ssm_connector_enroll.yml needs remo_ssh_host, remo_ssh_user, remo_ssh_port and
+          connector_name. Run it through 'remo connector enroll' rather than directly.
+        quiet: true
+
+    - name: Add the connector to the in-memory inventory
+      ansible.builtin.add_host:
+        name: remo_connector
+        groups:
+          - remo_connector_group
+        ansible_host: "{{ remo_ssh_host }}"
+        ansible_user: "{{ remo_ssh_user }}"
+        ansible_port: "{{ remo_ssh_port | int }}"
+        ansible_python_interpreter: /usr/bin/python3
+        # `omit`, never a hardcoded path — see ssh_configure.yml's identical
+        # rationale: a path default risks offering the WRONG key.
+        ansible_ssh_private_key_file: "{{ remo_ssh_identity | default(omit) }}"
+        ansible_ssh_common_args: "{{ remo_ssh_common_args | default(omit) }}"
+
+    - name: Add every directly-exposed (non-self) host to the in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ item.name }}"
+        groups:
+          - remo_exposed_hosts_group
+        ansible_host: "{{ item.address }}"
+        ansible_user: "{{ item.user }}"
+        ansible_port: "{{ item.port | int }}"
+        ansible_python_interpreter: /usr/bin/python3
+        # `default(omit, true)`: an empty string (no stored identity) must
+        # omit the key, not offer an empty path.
+        ansible_ssh_private_key_file: "{{ item.identity | default(omit, true) }}"
+        ansible_ssh_common_args: "{{ item.common_args | default(omit, true) }}"
+      loop: "{{ connector_exposed_hosts | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.address != 'localhost'
+
+    - name: Also authorize the connector's key on itself, for a self-target
+      ansible.builtin.add_host:
+        name: remo_connector
+        groups:
+          - remo_exposed_hosts_group
+      when: >-
+        connector_exposed_hosts | default([])
+        | selectattr('address', 'equalto', 'localhost') | list | length > 0
+
+- name: Provision the connector
+  hosts: remo_connector_group
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: ssm_connector
+
+- name: Authorize the connector's key on every exposed host
+  hosts: remo_exposed_hosts_group
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Authorize the connector's public key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ hostvars['remo_connector']['connector_public_key'] }}"
+        comment: "remo-connector@{{ connector_name }}"
+        exclusive: false

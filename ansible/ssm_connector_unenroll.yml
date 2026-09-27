@@ -1,0 +1,94 @@
+---
+# SSM Connector Unenrollment Playbook (specs/025-ssm-connector,
+# contracts/ansible-role.md). Caller: providers/connector.py::unenroll.
+#
+# Stops and disables the agent, clears its local registration, and removes
+# connector.json; with connector_purge=true also removes the state dir, the
+# install dir, and the run-as user. Account-side deregistration
+# (`aws ssm deregister-managed-instance`) is a SEPARATE step the CLI prints
+# afterward — this playbook never touches AWS.
+
+- name: Validate unenroll inputs and build the in-memory inventory
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  become: false
+
+  tasks:
+    - name: Assert the connector's connection variables are present
+      ansible.builtin.assert:
+        that:
+          - remo_ssh_host is defined and (remo_ssh_host | string | length) > 0
+          - remo_ssh_user is defined and (remo_ssh_user | string | length) > 0
+          - remo_ssh_port is defined
+        fail_msg: >-
+          ssm_connector_unenroll.yml needs remo_ssh_host, remo_ssh_user and remo_ssh_port.
+          Run it through 'remo connector unenroll' rather than directly.
+        quiet: true
+
+    - name: Add the connector to the in-memory inventory
+      ansible.builtin.add_host:
+        name: remo_connector
+        groups:
+          - remo_connector_group
+        ansible_host: "{{ remo_ssh_host }}"
+        ansible_user: "{{ remo_ssh_user }}"
+        ansible_port: "{{ remo_ssh_port | int }}"
+        ansible_python_interpreter: /usr/bin/python3
+        ansible_ssh_private_key_file: "{{ remo_ssh_identity | default(omit) }}"
+        ansible_ssh_common_args: "{{ remo_ssh_common_args | default(omit) }}"
+
+- name: Unenroll the connector
+  hosts: remo_connector_group
+  become: true
+  gather_facts: false
+
+  # Distinct names: a play var that templates ITSELF (`x: "{{ x | default(..) }}"`)
+  # is a recursive-loop error in Ansible whenever `x` is not passed as an extra-var.
+  vars:
+    ssm_unenroll_state_dir: "{{ connector_state_dir | default('/var/lib/remo-connector') }}"
+    ssm_unenroll_install_dir: "{{ connector_install_dir | default('/opt/remo-connector') }}"
+    ssm_unenroll_run_as_user: "{{ connector_run_as_user | default('remo-connector') }}"
+
+  tasks:
+    - name: Probe for an existing SSM registration
+      ansible.builtin.stat:
+        path: /var/lib/amazon/ssm/registration
+      register: ssm_registration_probe
+      changed_when: false
+
+    - name: Stop and disable amazon-ssm-agent
+      ansible.builtin.systemd:
+        name: amazon-ssm-agent
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Clear the local SSM registration
+      ansible.builtin.command:
+        cmd: amazon-ssm-agent -register -clear
+      when: ssm_registration_probe.stat.exists | default(false)
+
+    - name: Remove the connector's state record (connector.json)
+      ansible.builtin.file:
+        path: "{{ ssm_unenroll_state_dir }}/connector.json"
+        state: absent
+
+    - name: Remove the connector's state directory (--purge)
+      ansible.builtin.file:
+        path: "{{ ssm_unenroll_state_dir }}"
+        state: absent
+      when: connector_purge | default(false) | bool
+
+    - name: Remove the connector's install directory (--purge)
+      ansible.builtin.file:
+        path: "{{ ssm_unenroll_install_dir }}"
+        state: absent
+      when: connector_purge | default(false) | bool
+
+    - name: Remove the connector run-as user (--purge)
+      ansible.builtin.user:
+        name: "{{ ssm_unenroll_run_as_user }}"
+        state: absent
+        remove: true
+      when: connector_purge | default(false) | bool

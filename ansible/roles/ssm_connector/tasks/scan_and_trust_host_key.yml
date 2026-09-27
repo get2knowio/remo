@@ -1,0 +1,93 @@
+---
+# Per-exposed-host host-key trust (research R9, contracts/ansible-role.md
+# rows 20-21): scan from the CONNECTOR's own network vantage point (it may
+# see a NAT'd host a workstation cannot), append the key only when this host
+# has no recorded key yet, and fail — never silently overwrite — when a
+# recorded key no longer matches (the operator resolves it by hand).
+#
+# Included once per `connector_exposed_hosts` entry; `exposed_host` is the
+# current loop item (loop_var, see tasks/main.yml).
+#
+# known_hosts lookup key: `[address]:port` for a non-22 port, the bare
+# address for port 22 — the exact form ssh-keyscan emits and ssh itself
+# looks up (mirrors core/web_adopt.known_hosts_lookup_key).
+
+- name: "Compute {{ exposed_host.name }}'s known_hosts lookup key"
+  ansible.builtin.set_fact:
+    ssm_known_hosts_key: >-
+      {{ exposed_host.address if (exposed_host.port | int) == 22
+         else '[' ~ exposed_host.address ~ ']:' ~ (exposed_host.port | int) }}
+
+- name: "Scan {{ exposed_host.name }}'s host key from the connector"
+  ansible.builtin.command:
+    argv:
+      - ssh-keyscan
+      - -T
+      - "5"
+      - -p
+      - "{{ exposed_host.port | int }}"
+      - "{{ exposed_host.address }}"
+  register: ssm_keyscan_result
+  changed_when: false
+  failed_when: false
+
+- name: "Look up {{ exposed_host.name }}'s recorded host key, if any"
+  ansible.builtin.command:
+    argv:
+      - ssh-keygen
+      - -F
+      - "{{ ssm_known_hosts_key }}"
+      - -f
+      - "{{ connector_state_dir }}/known_hosts"
+  register: ssm_known_hosts_lookup
+  changed_when: false
+  failed_when: false
+
+# Compare line-by-line, never as one multi-line substring: `ssh-keygen -F`
+# interleaves a "# Host … found: line N" header before every matching key,
+# and ssh-keyscan's key-type order is not guaranteed stable.
+- name: "Normalize {{ exposed_host.name }}'s scanned and recorded key lines"
+  ansible.builtin.set_fact:
+    ssm_scanned_key_lines: >-
+      {{ ssm_keyscan_result.stdout_lines | default([]) | map('trim')
+         | reject('match', '^(#|$)') | list }}
+    ssm_recorded_key_lines: >-
+      {{ (ssm_known_hosts_lookup.stdout_lines | default([]))
+         if (ssm_known_hosts_lookup.rc | default(1)) == 0 else [] }}
+
+- name: "Fail when {{ exposed_host.name }} is unreachable from the connector"
+  ansible.builtin.fail:
+    msg: >-
+      {{ exposed_host.name }} ({{ exposed_host.address }}:{{ exposed_host.port }}) is not
+      reachable from the connector for host-key scanning. Check the connector's network path
+      to it, then re-run enrollment.
+  when: ssm_scanned_key_lines | length == 0
+
+- name: "Fail when {{ exposed_host.name }}'s recorded host key has changed"
+  ansible.builtin.fail:
+    msg: >-
+      {{ exposed_host.name }}'s host key has changed since it was recorded. This is an error
+      the operator must resolve, never a silent overwrite: remove the stale line(s) for
+      {{ ssm_known_hosts_key }} from {{ connector_state_dir }}/known_hosts, confirm the new
+      key out of band, then re-run enrollment.
+  # A recorded key "differs" when the host now presents the same key TYPE
+  # with different key material. A recorded type the host no longer offers
+  # (or a new type it now offers) is not a mismatch.
+  when: >-
+    ssm_recorded_key_lines
+    | map('trim') | reject('match', '^(#|$)')
+    | reject('in', ssm_scanned_key_lines)
+    | map('split') | map(attribute=1)
+    | select('in', ssm_scanned_key_lines | map('split') | map(attribute=1) | list)
+    | list | length > 0
+
+- name: "Record {{ exposed_host.name }}'s host key on first enrollment"
+  ansible.builtin.blockinfile:
+    path: "{{ connector_state_dir }}/known_hosts"
+    marker: "# {mark} remo-connector known_hosts: {{ exposed_host.name }}"
+    block: "{{ ssm_scanned_key_lines | join('\n') }}"
+    create: true
+    owner: "{{ connector_run_as_user }}"
+    group: "{{ connector_run_as_user }}"
+    mode: "0600"
+  when: (ssm_known_hosts_lookup.rc | default(1)) != 0

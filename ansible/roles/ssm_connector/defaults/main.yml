@@ -1,0 +1,22 @@
+---
+# Defaults for the ssm_connector role (specs/025-ssm-connector,
+# contracts/ansible-role.md). Every var here is safe to leave at its default
+# EXCEPT ssm_region/remo_version|remo_source, which the role asserts are set
+# (the CLI always passes them).
+
+connector_run_as_user: remo-connector
+connector_state_dir: /var/lib/remo-connector
+connector_install_dir: /opt/remo-connector
+
+remo_version: "" # required unless remo_source is set
+remo_source: "" # PEP 508 / git spec for Tier 1 testing
+
+ssm_region: "" # required
+
+ssm_agent_deb_url: >-
+  https://amazon-ssm-{{ ssm_region }}.s3.{{ ssm_region }}.amazonaws.com/latest/debian_{{
+  'arm64' if (ansible_architecture | default('') in ['aarch64', 'arm64']) else 'amd64' }}/amazon-ssm-agent.deb
+
+connector_exposures: [] # E2 shape: [{host, projects: [...]}]
+connector_registry_json: "" # E5 content (a whole registry.json document, pre-rendered)
+connector_exposed_hosts: [] # [{name, address, user, port, common_args}, ...] — for host-key scanning

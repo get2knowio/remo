@@ -41,9 +41,8 @@ import termios
 from collections.abc import Callable
 from enum import Enum
 
-from remo_cli.core.remo_host_client import build_remo_host_shell_cmd
+from remo_cli.core.attach import build_attach_argv as core_build_attach_argv
 from remo_cli.core.ssh import build_ssh_base_cmd
-from remo_cli.core.validation import validate_project_name
 from remo_cli.models.host import KnownHost
 from remo_cli.web.config import WebSettings
 
@@ -214,12 +213,10 @@ def build_attach_argv(
         If *project* fails validation (propagated from
         :func:`validate_project_name`).
     """
-    validate_project_name(project)
     resolved_settings = settings if settings is not None else WebSettings()
-    base = build_ssh_base_cmd(
+    return core_build_attach_argv(
         host,
-        tty=True,
-        multiplex=True,
+        project,
         control_dir=control_dir,
         identity_file=resolved_settings.ssh_identity_for(host),
         # The service must not inherit a WORKSTATION key path from the
@@ -227,9 +224,6 @@ def build_attach_argv(
         use_registry_identity=False,
         known_hosts_file=resolved_settings.ssh_known_hosts_file,
     )
-    remote_cmd = build_remo_host_shell_cmd("sessions attach", project=project)
-    # base == ["ssh", *opts, "-tt", target]; keep BatchMode right after "ssh".
-    return [base[0], "-o", "BatchMode=yes", *base[1:], remote_cmd]
 
 
 def build_host_shell_argv(
