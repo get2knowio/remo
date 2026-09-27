@@ -349,6 +349,11 @@ If interrupted, the instance stops (not terminates), preserving your EBS data.
 
 All instances use SSM Session Manager — no inbound ports are opened. The SSM agent on the EC2 instance phones home to AWS over outbound HTTPS. SSH connections are tunneled through the SSM session using a ProxyCommand.
 
+This is the built-in path for `aws`-type EC2 instances only. For non-EC2
+hosts — a Proxmox/Incus box behind home NAT, or any other server you'd
+rather not expose — see [docs/ssm-connector.md](ssm-connector.md), which
+reaches those hosts through an SSM **connector** instead.
+
 ### Prerequisites
 
 1. **AWS Session Manager Plugin** — must be installed locally:

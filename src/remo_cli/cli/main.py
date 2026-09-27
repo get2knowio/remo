@@ -275,6 +275,7 @@ def _register_commands() -> None:
     from remo_cli.cli.added import add, configure, remove  # noqa: F811
     from remo_cli.cli.providers.factory import build_provider_group  # noqa: F811
     from remo_cli.cli.web import web  # noqa: F811
+    from remo_cli.cli.connector import connector  # noqa: F811
     from remo_cli.core.provider_registry import all_descriptors  # noqa: F811
 
     cli.add_command(shell)
@@ -285,6 +286,7 @@ def _register_commands() -> None:
     for descriptor in all_descriptors():
         cli.add_command(build_provider_group(descriptor))
     cli.add_command(web)
+    cli.add_command(connector)
 
 
 _register_commands()

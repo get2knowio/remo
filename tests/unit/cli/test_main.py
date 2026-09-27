@@ -93,6 +93,7 @@ class TestSubcommandRegistration:
         "aws",
         "completion",
         "web",
+        "connector",
     ]
 
     def test_all_subcommands_registered(self):
