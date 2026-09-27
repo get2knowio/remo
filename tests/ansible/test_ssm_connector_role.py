@@ -276,10 +276,40 @@ def test_unenroll_playbook_purge_is_guarded() -> None:
 # ---------------------------------------------------------------------------
 
 ANSIBLE_PLAYBOOK = shutil.which("ansible-playbook")
+ANSIBLE_GALAXY = shutil.which("ansible-galaxy")
+
+#: Collections the enroll playbook resolves at syntax-check time (the role's
+#: ``community.crypto.openssh_keypair`` and play 3's
+#: ``ansible.posix.authorized_key``). ``--syntax-check`` resolves every module
+#: name, so without them it fails with "couldn't resolve module/action" rather
+#: than proving anything about the YAML. CI does not install Galaxy
+#: collections (``core/ansible_runner._ensure_collections`` does that lazily on
+#: a workstation), so the check is skipped — not failed — when they are absent,
+#: exactly like the ``user_setup`` syntax check in test_remo_host_idempotency.
+REQUIRED_COLLECTIONS = ("community.crypto", "ansible.posix")
+
+
+def _missing_collections() -> list[str]:
+    if ANSIBLE_GALAXY is None:
+        return list(REQUIRED_COLLECTIONS)
+    result = subprocess.run(
+        [ANSIBLE_GALAXY, "collection", "list"],
+        capture_output=True,
+        text=True,
+    )
+    installed = result.stdout if result.returncode == 0 else ""
+    return [c for c in REQUIRED_COLLECTIONS if c not in installed]
 
 
 @pytest.mark.skipif(ANSIBLE_PLAYBOOK is None, reason="ansible-playbook not available in this sandbox")
 def test_enroll_playbook_syntax_check() -> None:
+    missing = _missing_collections()
+    if missing:
+        pytest.skip(
+            "Galaxy collections not installed in this environment: "
+            + ", ".join(missing)
+            + " (run: ansible-galaxy collection install -r ansible/requirements.yml)"
+        )
     result = subprocess.run(
         [
             ANSIBLE_PLAYBOOK,
