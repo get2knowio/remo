@@ -3,7 +3,7 @@
 Drafted per research.md R15 / tasks.md T041. **Not filed** in this
 implementation run (the branch has not been pushed). File each with `gh
 issue create` when the branch is pushed/PR is opened, then replace the
-`issue #TBD` placeholders in `docs/ssm-connector.md` and in this file with
+the placeholders in `docs/ssm-connector.md` (done: filed 2026-09-27 as get2knowio/remo#207, #208, #209, #210) with
 the real issue numbers.
 
 ---

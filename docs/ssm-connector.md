@@ -185,7 +185,7 @@ its registry entry is `localhost` with the port *you* registered for the
 connector. If you reach the connector through a NAT or port-forward (say
 2222 forwarded to 22), `localhost:2222` will not answer on the connector
 itself; register the host with its real local port, or wait for the
-`--self-port` follow-up tracked in the manual-gate issue (#TBD).
+`--self-port` follow-up tracked in the manual-gate issue (#207).
 
 `--remo-version` pins a specific released `remo-cli`; `--remo-source` installs
 from a PEP 508 / git spec instead (Constitution IX Tier 1 testing) and is
@@ -213,11 +213,11 @@ aws ssm terminate-session --session-id <id>
 
 | Shape | Verified | Not yet verified |
 |-------|----------|-------------------|
-| Dedicated connector in a Proxmox LXC, reaching several Proxmox/Incus hosts on the same LAN | The role's structure (`.deb` install path, `no_log` on every activation-code task, `default()` on registered variables, the host-key trust logic) is statically tested and the playbooks pass `--syntax-check` | Any live run of the enrollment automation (including a second-run idempotency check), live SSM registration, attach through a real session, agent persistence in an **unprivileged** LXC across container restarts (`/etc/machine-id`/`/var/lib/amazon/ssm/registration` persistence is a known AWS troubleshooting failure mode and SSM Agent inside an unprivileged LXC is **not an AWS-documented configuration**) — tracked in issue #TBD |
-| Connector directly on an isolated Hetzner host, targeting itself (self-target) | The self-target `host: "localhost"` registry mapping and the launcher's ordinary (non-special-cased) loopback SSH path are unit-tested | Live enrollment and attach, and whether a custom `InteractiveCommands` document honors Run As on a real hybrid node — tracked in issue #TBD |
+| Dedicated connector in a Proxmox LXC, reaching several Proxmox/Incus hosts on the same LAN | The role's structure (`.deb` install path, `no_log` on every activation-code task, `default()` on registered variables, the host-key trust logic) is statically tested and the playbooks pass `--syntax-check` | Any live run of the enrollment automation (including a second-run idempotency check), live SSM registration, attach through a real session, agent persistence in an **unprivileged** LXC across container restarts (`/etc/machine-id`/`/var/lib/amazon/ssm/registration` persistence is a known AWS troubleshooting failure mode and SSM Agent inside an unprivileged LXC is **not an AWS-documented configuration**) — tracked in issue #207 |
+| Connector directly on an isolated Hetzner host, targeting itself (self-target) | The self-target `host: "localhost"` registry mapping and the launcher's ordinary (non-special-cased) loopback SSH path are unit-tested | Live enrollment and attach, and whether a custom `InteractiveCommands` document honors Run As on a real hybrid node — tracked in issue #207 |
 
 Both shapes' live proof, plus resize/Unicode/full-screen-TUI checks and the
-run-as identity proof, are the manual gate (SC-008) — tracked in issue #TBD
+run-as identity proof, are the manual gate (SC-008) — tracked in issue #207
 and recorded here once it runs.
 
 ## Cost
@@ -242,9 +242,9 @@ document does not hardcode a number.
 `InteractiveCommands` session documents are documented by AWS as supported
 only from the AWS CLI's Session Manager plugin (not a browser data-channel
 client) — noted here because a future browser-direct transport depends on
-that changing or being worked around; tracked in issue #TBD.
+that changing or being worked around; tracked in issue #209.
 
 ## Docker (deferred)
 
 Running the connector itself as a Docker container is not proven by this
-feature; it is explicitly deferred — tracked in issue #TBD.
+feature; it is explicitly deferred — tracked in issue #208.
