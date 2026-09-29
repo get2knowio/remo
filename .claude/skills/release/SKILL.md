@@ -15,15 +15,23 @@ release-please integration.
 **Non-negotiable safety rules — apply in every mode:**
 
 - **Publishing to PyPI is irreversible.** A version, once uploaded, can never be
-  replaced. Run the local build + smoke gate (Step V below) before any tag,
-  merge, or publish — no exceptions.
+  replaced. Run the local build + smoke gate (Step V below) before anything that
+  reaches PyPI — a stable release PR merge, or RC outcome **D**.
+- **A `v*` tag publishes to PyPI. An `rc-*` tag does not.** `release.yml`
+  triggers on `tags: v*`; the GitHub-pre-release path (RC outcome **B**) tags
+  `rc-<version>` and never uploads. Check which namespace you are in before
+  pushing anything.
 - **Never** `git push` a tag, `git push` a version-bump commit, or `gh pr merge`
   a release PR **without explicit user approval in the current turn.** Approval
-  from an earlier task does not carry over.
+  from an earlier task does not carry over. Dispatching `dev-build.yml` is not in
+  this class — it neither commits nor uploads — but say what it will tag.
 - Work only from a **clean working tree** on an **up-to-date `main`**. If the
-  tree is dirty or `main` is behind `origin/main`, stop and surface it.
-- Prefer testing **without** publishing. Only publish an RC to PyPI when the user
-  explicitly asks for a public prerelease.
+  tree is dirty or `main` is behind `origin/main`, stop and surface it. A dirty
+  file the operator owns and you did not touch is theirs: report it, never
+  revert it.
+- Prefer testing **without** publishing. "Publish a pre-release" in this repo
+  means outcome **B** (GitHub) unless the user says PyPI. Never infer PyPI from
+  the word "publish".
 
 ## Step 0 — Determine the mode
 
@@ -86,67 +94,149 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
 
 ## RC lane (manual — release-please stays out)
 
+**Two tag namespaces, and confusing them is the one unrecoverable mistake here:**
+
+| Tag | Created by | Publishes to |
+|-----|-----------|--------------|
+| `rc-X.Y.ZrcN` | `dev-build.yml` (`prerelease=true`) | **GitHub pre-release only** |
+| `vX.Y.Z*` | release-please, or a hand-pushed tag | **PyPI + GHCR** (`release.yml`) |
+
+`release.yml` triggers on `tags: v*`. A `v`-prefixed RC tag therefore uploads to
+PyPI, which is irreversible; `dev-build.yml` refuses to create one for exactly
+that reason. Outcome B below is what "publish a pre-release so we can install it
+by version" means in this repo — **not** a `v` tag.
+
 1. `git checkout main && git pull --ff-only`.
 2. Determine the RC version `X.Y.ZrcN` (PEP 440 form, **no separator**):
    - `X.Y.Z` is the next target version (feat → minor, fix → patch over the last
      stable tag).
-   - `N` increments from the last `vX.Y.Z-rcM` tag for the same `X.Y.Z`
-     (`git tag --list "vX.Y.Z-rc*"`), else `1`.
+   - `N` increments from the last RC for the same `X.Y.Z`. The tags are
+     `rc`-prefixed, so: `git tag --list "rc-X.Y.Zrc*"`, else `1`.
    - Confirm the chosen version with the user.
-3. Confirm these two files carry no pre-existing edits, then bump
-   `pyproject.toml` `[project].version` to `X.Y.ZrcN` (optionally run `uv lock`
-   to keep the lockfile's version in step):
-   ```bash
-   git diff --quiet -- pyproject.toml uv.lock \
-     || { echo "pyproject.toml/uv.lock already modified — STOP"; }
-   ```
-   Step 0 already required a clean tree, but re-assert it here: the revert in
-   Step 5 discards whatever is in these files, and the gap between Step 0 and
-   Step 5 spans a full test run.
-4. **Run the validation gate (Step V).**
-5. Ask the user which outcome they want:
-   - **Local test only (default, no PyPI):** revert the bump, then hand off the
-     built wheel (`dist/*.whl`) or the git-install one-liner
-     (`uv tool install --force "git+https://github.com/get2knowio/remo.git@<branch>"`).
-     Nothing is committed, tagged, or published.
+3. Ask which outcome they want, then follow only that one. **A** is the default;
+   **B** is what to reach for when someone wants to install the RC by version on
+   another machine.
 
-     Look before discarding — never `git checkout`/`git restore` these paths
-     blind. Print the diff, confirm it is **only** the version bump you made in
-     Step 3, and only then restore:
-     ```bash
-     git diff -- pyproject.toml uv.lock   # MUST show only the X.Y.ZrcN bump
-     git restore --source=HEAD --worktree -- pyproject.toml uv.lock
-     ```
-     If that diff contains anything else, stop and surface it: something edited
-     these files during the run, and discarding it destroys unrecoverable work.
-   - **CI dev build for cross-machine testing (no PyPI):** trigger the
-     `dev-build.yml` workflow, which builds the wheel in clean CI and uploads it
-     as a run artifact. The stamped version carries a `+g<sha>` local segment, so
-     it is unique and can never reach PyPI. Nothing is committed or tagged.
-     ```bash
-     gh workflow run dev-build.yml -f version=X.Y.ZrcN   # omit -f for an auto dev version
-     # `gh run watch` with no argument fails outside a TTY ("run ID required
-     # when not running interactively"), so resolve the run id first. Give the
-     # dispatch a couple of seconds to register before listing.
-     RUN_ID="$(gh run list --workflow=dev-build.yml --limit 1 \
-                 --json databaseId --jq '.[0].databaseId')"
-     gh run watch "$RUN_ID"
-     # then, on ANY machine:
-     gh run download "$RUN_ID" -n remo-wheel -D ./dl
-     uv tool install --force ./dl/remo_cli-*.whl
-     ```
-   - **Publish a prerelease (only on explicit approval):**
-     ```bash
-     git commit -am "chore(release): X.Y.ZrcN"
-     git tag vX.Y.Z-rcN
-     git push origin main vX.Y.Z-rcN
-     ```
-     `release.yml` detects the `rc` suffix, publishes the prerelease to PyPI +
-     GHCR, and never moves `latest`. Offer to watch CI.
+### A — Local validation only (nothing tagged, nothing published)
+
+Bump `pyproject.toml` `[project].version` to `X.Y.ZrcN` and run `uv lock` so the
+lockfile agrees (`tests/unit/test_lockfile_version.py` gates that pair). First
+confirm neither file already carries edits — the revert below discards whatever
+is in them, and a full test run separates the two moments:
+
+```bash
+git diff --quiet -- pyproject.toml uv.lock \
+  || { echo "pyproject.toml/uv.lock already modified — STOP"; }
+```
+
+Run the validation gate (**Step V**), then hand off `dist/*.whl` or the Tier 1
+one-liner
+(`uv tool install --force "git+https://github.com/get2knowio/remo.git@<branch>"`).
+
+Then revert. Look before discarding — never `git restore` these paths blind:
+
+```bash
+git diff -- pyproject.toml uv.lock   # MUST show only the X.Y.ZrcN bump
+git restore --source=HEAD --worktree -- pyproject.toml uv.lock
+```
+
+If that diff contains anything else, stop and surface it: something edited these
+files during the run, and discarding it destroys unrecoverable work.
+
+### B — GitHub pre-release, installable by version (no PyPI)
+
+The usual way to get an RC onto other machines. `dev-build.yml` stamps the
+version in CI, so **no local bump is needed** and nothing is committed. The
+`prerelease` job attaches the *same* wheel the build job produced — it does not
+rebuild — to a GitHub pre-release tagged `rc-X.Y.ZrcN`.
+
+```bash
+gh workflow run dev-build.yml --ref main -f version=X.Y.ZrcN -f prerelease=true
+# This also publishes ghcr.io/get2knowio/remo-web:X.Y.ZrcN (never `latest`) for
+# Compose-based deployments — `image` defaults to true, so an RC is a complete
+# artifact rather than a wheel with no image behind it. Add -f image=false for a
+# CLI-only RC, which skips the emulated arm64 build.
+
+# `gh run watch` needs an explicit run id outside a TTY. Give the dispatch a
+# couple of seconds to register before listing.
+RUN_ID="$(gh run list --workflow=dev-build.yml --limit 1 \
+            --json databaseId --jq '.[0].databaseId')"
+gh run watch "$RUN_ID"
+```
+
+Then **validate the published artifact**, which is stronger than a pre-build
+local check because it is the wheel testers will actually fetch. Use a throwaway
+venv so the operator's own install is untouched:
+
+```bash
+URL="https://github.com/get2knowio/remo/releases/download/rc-X.Y.ZrcN/remo_cli-X.Y.ZrcN-py3-none-any.whl"
+uv venv /tmp/remo-rc && uv pip install --python /tmp/remo-rc/bin/python "remo-cli @ $URL"
+/tmp/remo-rc/bin/remo --version    # MUST print X.Y.ZrcN
+/tmp/remo-rc/bin/remo --help
+```
+
+Confirm with `gh release view rc-X.Y.ZrcN` that it is marked pre-release, and
+report that PyPI is unchanged. Testers install it with no `gh` auth:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --prerelease X.Y.ZrcN
+# or directly:
+uv tool install --force "remo-cli @ <URL above>"
+```
+
+A GitHub pre-release is deletable and the version re-cuttable, so this outcome is
+recoverable — unlike D.
+
+### C — Dev build artifact (no version reserved, no tag)
+
+For cross-machine testing when no version should be claimed at all. Omit
+`version` and the workflow stamps `X.Y.Z.devN+g<sha>`; that PEP 440 **local
+segment** is what PyPI rejects outright, making publication structurally
+impossible. Note this applies only to the auto version — an explicit
+`-f version=X.Y.ZrcN` is stamped **verbatim with no local segment**, precisely so
+it stays promotable.
+
+```bash
+gh workflow run dev-build.yml            # auto dev version
+RUN_ID="$(gh run list --workflow=dev-build.yml --limit 1 \
+            --json databaseId --jq '.[0].databaseId')"
+gh run watch "$RUN_ID"
+gh run download "$RUN_ID" -n remo-wheel -D ./dl   # needs gh auth on that machine
+uv tool install --force ./dl/remo_cli-*.whl
+```
+
+### D — Publish the RC to PyPI (exceptional; explicit approval required)
+
+Constitution IX permits this, but as **the exception**: "taken only when the
+tester cannot install off-index." Outcome B needs no `gh` auth and no index, so
+that condition is now rarely met — before proposing D, state why B will not work
+for this tester. Never take D merely because the word "publish" was used.
+
+Requires **Step V** on the bumped tree first (this is irreversible), then:
+
+```bash
+git commit -am "chore(release): X.Y.ZrcN"
+git tag vX.Y.ZrcN          # a v* tag: this is what triggers release.yml
+git push origin main vX.Y.ZrcN
+```
+
+`release.yml` marks it a prerelease off the tag suffix, publishes to PyPI + GHCR,
+and never moves `latest`. Offer to watch CI. Warn the operator that this reserves
+`X.Y.ZrcN` on PyPI permanently.
 
 ---
 
 ## Step V — Validation gate (test the exact wheel before PyPI)
+
+**Required for anything that reaches PyPI:** the stable lane, and RC outcome
+**D**. Also used by RC outcome **A**, whose whole purpose it is.
+
+Outcomes **B** and **C** build in clean CI rather than locally, so Step V does
+not apply as written — their equivalent is the post-publish check in **B**, which
+validates the artifact testers will actually fetch. If a full local run was
+already green on the same commit, say so rather than repeating it; do not claim
+Step V ran when CI did.
 
 Run this on whatever ref will be released (the release-please PR head for stable,
 or the bumped working tree for an RC). The published version comes from
@@ -167,7 +257,9 @@ doesn't load, **stop** and surface it — do not proceed to tag/merge/publish.
 
 ## Done when
 
-- The requested lane completed through the point the user approved (validated
-  only; RC wheel handed off; RC published; or stable PR merged).
+- The requested lane completed through the point the user approved (RC outcome
+  A/B/C/D, or stable PR merged).
 - No tag was pushed, commit was pushed, or PR merged without explicit approval.
-- The outcome (and, if published, the immutable version) was reported clearly.
+- The outcome was reported clearly, naming **which index was touched**: for
+  outcomes A–C, that PyPI is unchanged; for D or a stable release, the version
+  now permanently reserved there.

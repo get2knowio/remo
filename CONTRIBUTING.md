@@ -34,13 +34,34 @@ Releases run through GitHub Actions in **two lanes**:
   creates the `vX.Y.Z` tag + GitHub release, which triggers `release.yml` to
   publish to PyPI and GHCR. You never bump the version or tag a stable release by
   hand.
-- **Pre-releases (RC/beta)** are **manual** — release-please stays out of them.
-  You bump `pyproject.toml` to the RC version yourself and push a `vX.Y.Z-rcN`
-  tag, which `release.yml` publishes as a prerelease.
+- **Pre-releases (RC/beta)** are **manual** — release-please stays out of them,
+  and by default they do **not** go to PyPI (Constitution IX). Dispatch
+  `dev-build.yml` with an explicit version to build the wheel in clean CI:
+
+  ```bash
+  gh workflow run dev-build.yml -f version=X.Y.ZrcN -f prerelease=true
+  ```
+
+  That attaches the wheel to a GitHub pre-release tagged **`rc-X.Y.ZrcN`**, which
+  installs anywhere with no `gh` auth and no index:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+    | bash -s -- --prerelease X.Y.ZrcN
+  ```
+
+  Nothing is committed and no version is reserved on PyPI. Publishing an RC *to*
+  PyPI is permitted but exceptional, requires explicit approval, and is done by
+  pushing a `v`-prefixed tag — see Constitution IX.
+
+> **⚠️ The two tag namespaces are not interchangeable.** `release.yml` triggers on
+> `tags: v*` and publishes to PyPI + GHCR; `dev-build.yml` tags `rc-<version>` and
+> publishes only a GitHub pre-release — it refuses to create a `v*` tag for
+> exactly this reason. A `v`-prefixed RC tag *will* upload to PyPI.
 
 > **⚠️ Publishing to PyPI is irreversible** — a version, once uploaded, can never
-> be replaced or re-uploaded. Whether you're about to merge a release PR or push
-> an RC tag, **validate the build locally first** (next section).
+> be replaced or re-uploaded. Before merging a release PR or pushing a `v*` tag,
+> **validate the build locally first** (next section).
 
 ### Test a release build locally (before tagging)
 
@@ -86,26 +107,67 @@ the tag.
 
 ### Pre-release (RC/Beta) — manual
 
-release-please does **not** cut RCs. To publish a pre-release for wider testing:
+release-please does **not** cut RCs. There are two ways to cut one, and they
+differ in whether PyPI is touched.
+
+#### The default: a GitHub pre-release (no PyPI)
+
+`dev-build.yml` builds the wheel in clean CI and attaches it to a GitHub
+pre-release tagged `rc-<version>`. No local bump, nothing committed, no version
+reserved on PyPI:
+
+```bash
+gh workflow run dev-build.yml -f version=2.3.0rc1 -f prerelease=true
+# add -f image=true for ghcr.io/get2knowio/remo-web:2.3.0rc1 (never `latest`)
+```
+
+Testers install it by version, with no `gh` auth:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --prerelease 2.3.0rc1
+
+# or the newest pre-release, whatever it is
+curl -fsSL .../install.sh | bash -s -- --prerelease
+```
+
+Because this is reversible — delete the pre-release, re-cut the version — it is
+the right default. Verify the published wheel afterwards:
+
+```bash
+URL=https://github.com/get2knowio/remo/releases/download/rc-2.3.0rc1/remo_cli-2.3.0rc1-py3-none-any.whl
+uv venv /tmp/remo-rc && uv pip install --python /tmp/remo-rc/bin/python "remo-cli @ $URL"
+/tmp/remo-rc/bin/remo --version    # should print 2.3.0rc1
+```
+
+#### The exception: publishing the RC to PyPI
+
+Permitted by Constitution IX, but only "when the tester cannot install
+off-index" — which the path above makes rare. It is **irreversible**, so validate
+the build locally first (see the section above), then:
 
 ```bash
 # 1. Bump pyproject.toml to the RC version (PEP 440 form, no separator):
 #        version = "2.3.0rc1"
-#    ...and validate the build locally (see the section above).
-# 2. Commit the bump, then tag and push. The tag suffix must contain `rc`
-#    (or `beta`/`alpha`) so release.yml marks it a pre-release:
+#    ...and run `uv lock` so the lockfile agrees.
+# 2. Commit the bump, then tag and push. The tag must start with `v` to trigger
+#    release.yml, and contain `rc` (or `beta`/`alpha`) so it is marked a
+#    pre-release:
 git commit -am "chore(release): 2.3.0rc1"
-git tag v2.3.0-rc1
-git push origin main v2.3.0-rc1
+git tag v2.3.0rc1
+git push origin main v2.3.0rc1
 ```
 
-`release.yml` detects the pre-release (from the `rc` suffix), creates a GitHub
-pre-release, and publishes the prerelease to PyPI + GHCR (`latest` is never
-moved). Users can install with:
+`release.yml` detects the pre-release from the tag suffix, creates a GitHub
+release, and publishes to PyPI + GHCR (`latest` is never moved). Only then does
+uv's resolver flag work, because only then is the version on PyPI:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --pre-release
+uv tool install remo-cli --prerelease allow
 ```
+
+Note that `install.sh --prerelease` will **not** find a PyPI-only RC: it resolves
+against the `rc-*` GitHub pre-releases, by design.
 
 > Prefer testing **without** publishing when you can — a local wheel or a
 > `git+https://…@<branch>` install (see the local-test section) needs no tag and
