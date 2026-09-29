@@ -130,9 +130,10 @@ def resolve_devcontainer_runtime(override: str | None) -> str:
     """Resolve and validate the devcontainer runtime.
 
     Precedence: explicit *override* (CLI flag) > REMO_DEVCONTAINER_RUNTIME env >
-    built-in default. Unlike the --devcontainer-runtime flag (guarded by
-    click.Choice), the env-var path is otherwise unchecked, so a mis-cased or
-    bogus value would silently fall back to the Node runtime; validate it here.
+    built-in default ("auto", resolved on the host — spec 026). Unlike the
+    --devcontainer-runtime flag (guarded by click.Choice), the env-var path is
+    otherwise unchecked, so a mis-cased or bogus value would silently fall back
+    to a runtime the operator did not choose; validate it here.
     """
     # Imported lazily to keep core.config free of validation dependencies.
     from remo_cli.core.config import DEVCONTAINER_RUNTIMES, get_devcontainer_runtime

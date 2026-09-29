@@ -1,7 +1,11 @@
 ---
-# Deacon — experimental single-binary (Rust) devcontainer runtime.
-# Pinned to a specific release; the musl target is used for portability
-# (static binary, no glibc version coupling). No stable release exists yet,
-# so this tracks the latest 0.2.0 release candidate.
-deacon_version: "0.2.0-rc.11"
+# Deacon — single-binary (Rust) devcontainer runtime; the default runtime for
+# new hosts since spec 026 (selected through `devcontainer_runtime: auto`).
+# Pinned to a specific stable release; the musl target is used for
+# portability (static binary, no glibc version coupling). Bump deliberately:
+# the flags remo invokes (`up --workspace-folder --trust-workspace-persist
+# --remove-existing-container --build-no-cache`, `exec --workspace-folder`)
+# were verified against this exact release's binary — see
+# specs/026-deacon-default-runtime/research.md R2.
+deacon_version: "0.4.0"
 deacon_binary_path: /usr/local/bin/deacon

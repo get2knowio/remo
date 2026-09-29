@@ -166,11 +166,13 @@
       register: nested_docker_real_cli
       when: (nested_docker_npm_prefix.rc | default(1)) == 0
 
-    # A deacon-only host, or one configured with --skip devcontainers/nodejs,
-    # has no @devcontainers/cli to wrap. Say so rather than installing a shim
-    # that delegates to nothing. (deacon is a separate binary with a different
-    # flag set; it is not covered by this shim — see docs/nested-overlayfs.md.)
-    - name: "Devcontainer shim SKIPPED — no @devcontainers/cli found on this host, so Compose-based devcontainers will not build (see docs/nested-overlayfs.md)"
+    # A deacon-only host (only by explicit request: `auto` keeps the reference
+    # CLI on nested-overlayfs hosts precisely because this shim wraps only that
+    # CLI — spec 026), or one configured with --skip devcontainers/nodejs, has
+    # no @devcontainers/cli to wrap. Say so rather than installing a shim that
+    # delegates to nothing. (deacon is a separate binary with a different flag
+    # set; it is not covered by this shim — see docs/nested-overlayfs.md.)
+    - name: "Devcontainer shim SKIPPED — no @devcontainers/cli found on this host (deacon-only or --skip devcontainers), so Compose-based devcontainers are unverified/will not build here (see docs/nested-overlayfs.md)"
       ansible.builtin.debug:
         msg: >-
           npm prefix -g rc={{ nested_docker_npm_prefix.rc | default('n/a') }};

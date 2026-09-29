@@ -184,19 +184,26 @@ def is_verbose() -> bool:
     return os.environ.get("REMO_VERBOSE") == "1"
 
 
-# Supported devcontainer runtimes. "deacon" is an experimental single-binary
-# Rust reimplementation opted into per deployment; "devcontainer" is the
-# default Node-based @devcontainers/cli.
-DEVCONTAINER_RUNTIMES: tuple[str, ...] = ("devcontainer", "deacon")
-DEFAULT_DEVCONTAINER_RUNTIME = "devcontainer"
+# Supported devcontainer runtimes (spec 026). "auto" — the default — is
+# resolved ON THE HOST by ansible/tasks/resolve_devcontainer_runtime.yml:
+# an explicit value wins; otherwise a host keeps the runtime recorded in
+# ~/.remo-devcontainer-runtime, a legacy host that already has the reference
+# CLI keeps it, a host whose kernel refuses nested overlayfs gets the
+# reference CLI (the only one with a build shim there), and every other new
+# host gets deacon. "deacon" is the single-binary Rust runtime;
+# "devcontainer" is the Node-based @devcontainers/cli reference runtime.
+DEVCONTAINER_RUNTIMES: tuple[str, ...] = ("auto", "deacon", "devcontainer")
+DEFAULT_DEVCONTAINER_RUNTIME = "auto"
 
 
 def get_devcontainer_runtime() -> str:
-    """Return the default devcontainer runtime.
+    """Return the default devcontainer runtime request.
 
-    Reads REMO_DEVCONTAINER_RUNTIME, falling back to "devcontainer". An empty
-    or unset value resolves to the default. Callers may override this per
-    deployment (e.g. the --devcontainer-runtime flag).
+    Reads REMO_DEVCONTAINER_RUNTIME, falling back to "auto". An empty or
+    unset value resolves to the default. Callers may override this per
+    deployment (e.g. the --devcontainer-runtime flag). The value is a
+    *request*: "auto" becomes a concrete runtime on the host (see
+    DEVCONTAINER_RUNTIMES).
     """
     value = os.environ.get("REMO_DEVCONTAINER_RUNTIME", "").strip()
     return value or DEFAULT_DEVCONTAINER_RUNTIME
