@@ -310,8 +310,9 @@ gh workflow run dev-build.yml                                         # dev buil
                                                                       #   un-uploadable, validation only
 gh workflow run dev-build.yml -f version=X.Y.ZrcN                     # RC: canonical, no local segment,
                                                                       #   so it stays promotable
-gh workflow run dev-build.yml -f version=X.Y.ZrcN -f prerelease=true  # + GitHub pre-release (tag rc-<ver>)
-gh workflow run dev-build.yml -f version=X.Y.ZrcN -f prerelease=true -f image=true  # + remo-web:<ver> image (never latest)
+gh workflow run dev-build.yml -f version=X.Y.ZrcN -f prerelease=true  # GitHub pre-release (tag rc-<ver>)
+                                                                      #   + remo-web:<ver> image (image=true is the DEFAULT)
+gh workflow run dev-build.yml -f version=X.Y.ZrcN -f prerelease=true -f image=false  # CLI-only RC, skips the arm64 build
 gh workflow run rc-image.yml -f version=X.Y.ZrcN                      # image only, for an existing rc-<ver> tag
 
 # Install a run artifact (needs gh auth on that machine):
@@ -410,10 +411,14 @@ promotable — promotion publishes the *identical* validated wheel, never a
 rebuild. With `-f prerelease=true` that same wheel is attached to a GitHub
 pre-release under an `rc-<version>` tag (never `v*`, which would trigger
 `release.yml` and its PyPI/GHCR publish), giving a plain URL that installs
-without `gh` auth. Add `-f image=true` (or run `rc-image.yml` for an existing
-`rc-<version>` tag) to also publish `ghcr.io/get2knowio/remo-web:<version>` —
-the deployable half of an RC for Compose-based installs such as a Hola catalog
-channel — tagged only by its exact version, never `latest`. TestPyPI is not a dev channel. Principle IX has no CI row — it is
+without `gh` auth. That same run also publishes
+`ghcr.io/get2knowio/remo-web:<version>` — the deployable half of an RC, for
+Compose-based installs such as a Hola catalog channel — tagged only by its
+exact version, never `latest`. That is the default (`image=true`), because a
+wheel without its image is a partial artifact and the pre-release does not say
+which half you have; pass `-f image=false` for a CLI-only RC to skip the
+emulated arm64 build, or run `rc-image.yml` alone to backfill an image for an
+existing `rc-<version>` tag. TestPyPI is not a dev channel. Principle IX has no CI row — it is
 enforced by the `release` skill's validation gate, by that unremovable local
 segment, and by review; name the tier that validated a packaging change in the
 PR description.
