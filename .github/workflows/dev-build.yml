@@ -20,16 +20,19 @@ name: dev-build
 # NOTHING here publishes to PyPI. The pre-release tag is `rc-*`, which
 # release.yml (`tags: v*`) deliberately does not match.
 #
-# With `image=true` (requires `prerelease=true`) it also publishes the remo-web
-# container image for the same version via rc-image.yml —
-# `ghcr.io/<owner>/remo-web:<version>`, never `latest` — so a Compose-based
-# deployment can pin the pre-release by digest. See rc-image.yml.
+# A `prerelease=true` run ALSO publishes the remo-web container image for the
+# same version via rc-image.yml — `ghcr.io/<owner>/remo-web:<version>`, never
+# `latest` — so a Compose-based deployment can pin the pre-release by digest.
+# That is `image`'s default: a pre-release should be a complete artifact, the
+# wheel and the image for one version or neither. Pass `-f image=false` for a
+# CLI-only RC, which skips the emulated arm64 build (the slowest job here).
+# See rc-image.yml.
 #
 # Trigger:
 #   gh workflow run dev-build.yml                                    # dev build
 #   gh workflow run dev-build.yml -f version=4.4.0rc1                # RC, artifact only
-#   gh workflow run dev-build.yml -f version=4.4.0rc1 -f prerelease=true
-#   gh workflow run dev-build.yml -f version=4.4.0rc1 -f prerelease=true -f image=true
+#   gh workflow run dev-build.yml -f version=4.4.0rc1 -f prerelease=true  # wheel + image
+#   gh workflow run dev-build.yml -f version=4.4.0rc1 -f prerelease=true -f image=false
 #
 # Install on any machine:
 #   # run artifact (needs gh auth)
@@ -53,10 +56,14 @@ on:
         required: false
         default: false
       image:
-        description: "Also publish the remo-web container image ghcr.io/<owner>/remo-web:<version> for this pre-release (rc-image.yml). Requires prerelease=true. Never moves `latest`."
+        description: "Publish the remo-web container image ghcr.io/<owner>/remo-web:<version> alongside the wheel (rc-image.yml). ON by default so a pre-release is a complete artifact — the wheel and the image for one version, or neither. Set false for a CLI-only RC to skip the emulated arm64 build. Ignored unless prerelease=true. Never moves `latest`."
         type: boolean
         required: false
-        default: false
+        # Default ON: an RC with a wheel but no image is a partial artifact, and
+        # nothing on the GitHub pre-release says which half you have — someone
+        # pinning a Compose deployment finds out when the pull 404s. rc-image.yml
+        # exists precisely to close that gap, so it should not be opt-in.
+        default: true
 
 permissions:
   contents: read
