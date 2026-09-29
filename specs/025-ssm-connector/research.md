@@ -21,13 +21,13 @@ Every anchor below was verified against the working tree by a read-only sweep; l
 
 ## R2. The `target` parameter: encoding and length bound
 
-**Decision**: `target` is `base64url(JSON)` without padding, of `{"v":1,"host":"<host>","project":"<project>"}` serialized compactly (`separators=(",", ":")`, `ensure_ascii=False`, UTF-8). `allowedPattern: "^[A-Za-z0-9_-]{1,1000}$"` and `maxChars: 1024`. The launcher additionally enforces the decoded caps below.
+**Decision**: `target` is `base64url(JSON)` without padding, of `{"v":1,"host":"<host>","project":"<project>"}` serialized compactly (`separators=(",", ":")`, `ensure_ascii=False`, UTF-8). `allowedPattern: "^[A-Za-z0-9_-]{1,1000}$"` and `maxChars: 1000`. The launcher additionally enforces the decoded caps below.
 
 **Justification of N = 1000**:
 - **Hard upper bound (verified live 2026-09-28)**: SSM validates `allowedPattern` with Go's RE2 engine, whose counted repetition is capped at 1000. `CreateDocument` with `{1,1024}` fails with `InvalidDocumentContent: allowedPattern is not a valid regex: error parsing regexp: invalid repeat count: {1,1024}` (observed from go-remo/remo-platform's first apply). N is therefore 1000, and a unit test asserts every counted repeat in the pattern is ≤ 1000.
 - Host names pass `core/validation.py:validate_name` (`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`, max 63 chars, `validation.py:17-21`). ASCII only, ≤ 63 bytes.
 - Project names pass `validate_project_name` (`validation.py:75`): control characters, any `/`, leading `.` and `..` traversal are rejected; spaces, Unicode, quotes and a leading `-` are allowed; there is **no length cap today**. A project is a directory name under `~/projects` on the host (`dev_workspace_dir`), so the practical cap is `NAME_MAX` = 255 bytes of UTF-8. Contract v1 fixes **255 bytes UTF-8** as the project cap; the launcher rejects longer decoded projects with `invalid-name`.
-- Worst-case JSON: `{"v":1,"host":"","project":""}` is 30 bytes; host ≤ 63; a project of 255 `"` characters escapes to 510 bytes. Total ≤ 603 bytes → base64 ≤ ⌈603/3⌉·4 = 804 characters. 1024 leaves headroom for v1 without inviting abuse; a raw name of any shape (space, quote, `/`, Unicode, leading `.`) fails the pattern before the agent runs anything.
+- Worst-case JSON: `{"v":1,"host":"","project":""}` is 30 bytes; host ≤ 63; a project of 255 `"` characters escapes to 510 bytes. Total ≤ 603 bytes → base64 ≤ ⌈603/3⌉·4 = 804 characters. 1000 leaves headroom for v1 without inviting abuse; a raw name of any shape (space, quote, `/`, Unicode, leading `.`) fails the pattern before the agent runs anything.
 - The document command uses `--` before `{{ target }}` so a value that begins with `-` (legal in base64url) can never be parsed as an option.
 
 **Alternatives rejected**: two parameters `host` + `project` with their own patterns (a project pattern that admits spaces and quotes cannot be made injection-safe against string substitution); hex (2× longer, no benefit); padded base64 (`=` is not in a conservative pattern and is unnecessary).

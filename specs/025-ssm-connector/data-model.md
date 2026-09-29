@@ -14,7 +14,7 @@ The caller's request, carried as the document's single parameter.
 | `host` | str | MUST pass `core/validation.validate_name` (`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`, ≤ 63 chars) → else `invalid-name` |
 | `project` | str | MUST pass `core/validation.validate_project_name` **and** be ≤ 255 bytes UTF-8 → else `invalid-name` |
 
-Wire form: `base64url(json.dumps({"v":1,"host":…,"project":…}, separators=(",",":"), ensure_ascii=False).encode("utf-8"))` with `=` padding stripped. Decoding re-adds padding, decodes strict base64url, parses JSON, requires an object with exactly those three keys present (unknown extra keys are ignored within `v == 1`; a missing key is `bad-target`). Total encoded length ≤ 1024 (pattern); the launcher re-checks it.
+Wire form: `base64url(json.dumps({"v":1,"host":…,"project":…}, separators=(",",":"), ensure_ascii=False).encode("utf-8"))` with `=` padding stripped. Decoding re-adds padding, decodes strict base64url, parses JSON, requires an object with exactly those three keys present (unknown extra keys are ignored within `v == 1`; a missing key is `bad-target`). Total encoded length ≤ 1000 (pattern; RE2 caps counted repeats at 1000); the launcher re-checks it.
 
 Validation order in the launcher: length/pattern → decode → `v` → field presence/types → `host` name → `project` name → run-as → config → exposure. (Run-as is checked **first** at process start in practice; the codec is exercised independently by tests.)
 
