@@ -183,3 +183,18 @@ def test_format_error_line_is_exactly_one_line() -> None:
     assert "\n" not in line
     assert line.startswith("remo-connector-error: not-exposed ")
     assert "multi line message" in line
+
+
+def test_target_pattern_repeat_counts_fit_re2() -> None:
+    """SSM validates ``allowedPattern`` with Go's RE2, which caps counted repeats
+    at 1000. ``{1,1024}`` was rejected live with ``invalid repeat count`` on the
+    first remo-platform apply (2026-09-28); keep every ``{m,n}`` in the shipped
+    pattern within RE2's limit so the document can be created at all."""
+    import re as _re
+
+    from remo_cli.core.connector import TARGET_MAX_CHARS, TARGET_PATTERN
+
+    counts = [int(n) for _, n in _re.findall(r"\{(\d+),(\d+)\}", TARGET_PATTERN)]
+    assert counts, "pattern is expected to carry a counted repeat"
+    assert all(n <= 1000 for n in counts), counts
+    assert TARGET_MAX_CHARS == max(counts)

@@ -57,7 +57,7 @@ Written by the role after registration; read by `remo connector status` (over SS
 
 ## E4. Session document (`src/remo_cli/core/remo_attach_document.json`)
 
-Constants in `core/connector.py`: `DOCUMENT_NAME = "remo-attach"`, `DOCUMENT_VERSION = 1`, `TARGET_PATTERN = r"^[A-Za-z0-9_-]{1,1024}$"`, `TARGET_MAX_CHARS = 1024`, `PROJECT_MAX_BYTES = 255`, `LAUNCHER_PATH = "/opt/remo-connector/bin/remo"`, `STATE_DIR = "/var/lib/remo-connector"`, `RUN_AS_USER_DEFAULT = "remo-connector"`. The file content is the contract in [contracts/session-document.md](contracts/session-document.md); a unit test asserts the constants and the file agree (one parameter, that pattern, that command).
+Constants in `core/connector.py`: `DOCUMENT_NAME = "remo-attach"`, `DOCUMENT_VERSION = 1`, `TARGET_PATTERN = r"^[A-Za-z0-9_-]{1,1000}$"`, `TARGET_MAX_CHARS = 1000`, `PROJECT_MAX_BYTES = 255`, `LAUNCHER_PATH = "/opt/remo-connector/bin/remo"`, `STATE_DIR = "/var/lib/remo-connector"`, `RUN_AS_USER_DEFAULT = "remo-connector"`. The file content is the contract in [contracts/session-document.md](contracts/session-document.md); a unit test asserts the constants and the file agree (one parameter, that pattern, that command).
 
 ## E5. Connector registry (`/var/lib/remo-connector/registry.json`)
 
