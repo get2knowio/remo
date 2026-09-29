@@ -152,8 +152,10 @@ rebuild — to a GitHub pre-release tagged `rc-X.Y.ZrcN`.
 
 ```bash
 gh workflow run dev-build.yml --ref main -f version=X.Y.ZrcN -f prerelease=true
-# add -f image=true to also publish ghcr.io/get2knowio/remo-web:X.Y.ZrcN
-# (never `latest`), for Compose-based deployments.
+# This also publishes ghcr.io/get2knowio/remo-web:X.Y.ZrcN (never `latest`) for
+# Compose-based deployments — `image` defaults to true, so an RC is a complete
+# artifact rather than a wheel with no image behind it. Add -f image=false for a
+# CLI-only RC, which skips the emulated arm64 build.
 
 # `gh run watch` needs an explicit run id outside a TTY. Give the dispatch a
 # couple of seconds to register before listing.
