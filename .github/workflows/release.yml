@@ -58,7 +58,22 @@ jobs:
         id: prerelease
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
-          if [[ "$TAG" == *"rc"* ]] || [[ "$TAG" == *"beta"* ]] || [[ "$TAG" == *"alpha"* ]] || [[ "$TAG" == *"dev"* ]]; then
+          # PEP 440 pre-release segments come in two written forms: canonical
+          # (no separator — v4.4.0rc3 / v4.4.0a2 / v4.4.0b3 / v4.4.0.dev5) and
+          # the dashed convenience form many projects use on git tags
+          # (v4.4.0-rc1). Match both, each anchored on a trailing digit run.
+          #
+          # This replaced a bare substring test (`"$TAG" == *"rc"*`) that
+          # classified any tag merely CONTAINING those letters: a hand-pushed
+          # `v1.0.0-hotfix-search` matched on the "rc" inside "search" and
+          # would have shipped a stable release as a pre-release. Kept
+          # identical to get2knowio/airframe's release.yml, the portfolio
+          # reference for this step;
+          # tests/unit/test_release_prerelease_detection.py executes this
+          # exact block rather than a copy of it.
+          if [[ "$TAG" =~ -(rc|beta|alpha|dev)[0-9]+$ ]] \
+             || [[ "$TAG" =~ [0-9](rc|a|b|c)[0-9]+$ ]] \
+             || [[ "$TAG" =~ \.dev[0-9]+$ ]]; then
             echo "is_prerelease=true" >> $GITHUB_OUTPUT
             echo "This is a pre-release"
           else
@@ -76,8 +91,16 @@ jobs:
             # Pre-release: compare against immediately previous tag
             PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           else
-            # Stable release: find the previous stable tag (skip rc/beta/alpha)
-            PREV_TAG=$(git tag -l | grep -v -E '(rc|beta|alpha|dev)' | grep -v "^${TAG}$" | sort -V | tail -1)
+            # Stable release: the previous STABLE tag. Restricted to the `v*`
+            # release namespace, because `git tag -l` also lists the `rc-*`
+            # tags dev-build.yml creates for GitHub pre-releases, which are not
+            # releases at all. Pre-releases are then excluded with the same
+            # anchored pattern the detection step above uses, as one combined
+            # ERE; the old filter was an unanchored
+            # `grep -v -E '(rc|beta|alpha|dev)'`, which would equally have
+            # dropped a stable tag that merely contained those letters.
+            PRE_RE='(-(rc|beta|alpha|dev)[0-9]+|[0-9](rc|a|b|c)[0-9]+|\.dev[0-9]+)$'
+            PREV_TAG=$(git tag -l 'v*' | grep -v -E "$PRE_RE" | grep -v "^${TAG}$" | sort -V | tail -1)
             PREV_TAG="${PREV_TAG:-}"
           fi
 
