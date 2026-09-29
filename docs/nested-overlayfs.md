@@ -199,7 +199,7 @@ original #160 report. What deacon does, from its v0.4.0 source, suggests a
 
 If you try it, export `BUILDX_BUILDER=remo-native` (and, for a Compose
 project, `DOCKER_BUILDKIT=1 COMPOSE_BAKE=1`) before `deacon up`, and report
-the outcome on the tracked issue (#TBD) — proving this on a real OrbStack
+the outcome on the tracked issue (#216) — proving this on a real OrbStack
 host, or shipping a deacon shim, is what lets the conditional default go
 away.
 

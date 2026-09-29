@@ -1,7 +1,6 @@
 # Deferred issues: 026-deacon-default-runtime
 
-Filed after the feature PR merges (`gh issue create -R get2knowio/remo`); replace the
-`#TBD` in `docs/nested-overlayfs.md` with issue 1's number.
+Filed 2026-09-29 as get2knowio/remo#216 (nested-overlayfs proof/shim), #217 (manual gate), #218 (pin bump); `docs/nested-overlayfs.md` references #216.
 
 ## 1. Prove deacon on a nested-overlayfs (OrbStack) host, or ship a deacon shim, then drop the conditional default
 
