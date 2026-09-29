@@ -18,9 +18,34 @@ setup step is needed.
 
 ### Prerequisites
 
+- Linux or macOS (see [Windows](#windows) below)
 - Python 3.11+
 - SSH key pair (`~/.ssh/id_rsa`)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
+
+#### Windows
+
+remo does not run natively on Windows: it needs `fcntl`, which Windows Python
+does not have, and it drives Ansible, which does not support Windows as a
+control node. `pip install` succeeds — nothing in a wheel can refuse a
+platform — but the first `remo` command exits with a message pointing here.
+
+Use [WSL2](https://learn.microsoft.com/windows/wsl/install) and install remo
+inside the Linux distribution:
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+Then, in the Ubuntu shell:
+
+```bash
+uv tool install remo-cli
+```
+
+Note that `~/.ssh` inside WSL2 is separate from your Windows one. Copy a key
+over if you want to reuse it — it has to live on the Linux filesystem, since
+`ssh` rejects the permissions that keys under `/mnt/c` report.
 
 ### Shell completion (optional)
 

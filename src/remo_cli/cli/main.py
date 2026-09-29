@@ -8,6 +8,26 @@ import click
 
 import remo_cli
 from remo_cli.core.completion import SHELLS
+from remo_cli.core.platform import UNSUPPORTED_PLATFORM_MESSAGE, is_supported_platform
+
+
+def _enforce_supported_platform() -> None:
+    """Refuse native Windows with one actionable message.
+
+    Must run before `_register_commands()` at the bottom of this module: that
+    import chain reaches core/registry.py's module-level `import fcntl`, which
+    on Windows raises ModuleNotFoundError while this module is still being
+    imported -- so a Click callback would never get the chance to run, and even
+    `remo --help` dies on a traceback naming a stdlib module the user never
+    asked for. tests/unit/cli/test_platform_gate.py pins that ordering.
+    """
+    if is_supported_platform():
+        return
+    click.echo(UNSUPPORTED_PLATFORM_MESSAGE, err=True)
+    sys.exit(1)
+
+
+_enforce_supported_platform()
 
 
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
