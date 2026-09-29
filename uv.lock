@@ -1065,6 +1065,11 @@ web = [
     { name = "websockets" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "remo-fixture-provider" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "ansible-core", specifier = ">=2.18.0,<2.20.0" },
@@ -1084,6 +1089,14 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'web'" },
 ]
 provides-extras = ["dev", "web"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "remo-fixture-provider", editable = "tests/fixtures/remo_fixture_provider" }]
+
+[[package]]
+name = "remo-fixture-provider"
+version = "0.1.0"
+source = { editable = "tests/fixtures/remo_fixture_provider" }
 
 [[package]]
 name = "requests"

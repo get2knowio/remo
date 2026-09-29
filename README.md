@@ -232,6 +232,17 @@ they continue to incur storage costs on AWS/Hetzner).
 
 ---
 
+## Provider plugins
+
+The four providers above are built in, but the provider mechanism is open:
+any installed Python distribution can contribute a provider through the
+`remo.providers` entry-point group, with no change to remo. `remo providers`
+lists what was discovered (and why a broken plugin was skipped);
+`REMO_DISABLE_PROVIDER_PLUGINS=1` turns discovery off. See
+[docs/provider-plugins.md](docs/provider-plugins.md) to build one.
+
+---
+
 ## Register an SSH-reachable host
 
 Already have SSH access to a box — a VM, a bare-metal server, someone else's

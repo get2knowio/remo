@@ -75,6 +75,11 @@ DESCRIPTOR = ProviderDescriptor(
     default_instance_name="dev1",
     name_format=NameFormat.HOST_SCOPED,
     registry_fields=(("instance_id", "vmid"), ("region", "host_user")),
+    # `host_user` replaced `node_user` when `--node-user` became `--host-user`.
+    # Registries written before that still carry the old key; core/registry.py
+    # reads it through this declaration and the next write emits `host_user`.
+    registry_legacy_keys=(("node_user", "region"),),
+    sync_scope_description="proxmox node {host} (this node only)",
     connection=ConnectionSpec(),
     implementation="remo_cli.providers.proxmox",
     sdk_extra=None,

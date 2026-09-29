@@ -9,6 +9,12 @@ conditionally — see below) from the descriptor via `cli/providers/factory.py`.
 Adding DigitalOcean or Vultr touches zero existing CLI files — you add two
 new files and one two-line registration (SC-001).
 
+Since spec 027 a provider does not even have to live in this repository: an
+installed distribution can contribute a descriptor through the
+`remo.providers` entry-point group and remo discovers it at startup. See
+[provider-plugins.md](provider-plugins.md) for the plugin contract; everything
+below about descriptors and the implementation module applies unchanged.
+
 This describes the current state of the codebase, delivered by
 `specs/018-provider-abstraction/` and extended by `specs/021-cli-plane-separation/`
 (the `update` verb split into `upgrade`/`resize`/`tag`, and the `host` subgroup

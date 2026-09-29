@@ -34,7 +34,37 @@ from remo_cli.core.config import (
 from remo_cli.models.host import KnownHost
 
 SUPPORTED_VERSION = 2
-KNOWN_TYPES = frozenset({"incus", "proxmox", "aws", "hetzner", "ssh"})
+
+#: The one pseudo-type the registry handles without a provider descriptor
+#: (`remo add` hosts, feature 014). Never registered; never an entry point.
+SSH_PSEUDO_TYPE = "ssh"
+
+
+def is_known_type(type_: str) -> bool:
+    """True for the ``ssh`` pseudo-type and every registered provider type —
+    built-in or discovered from a ``remo.providers`` entry point (027 FR-006).
+    Replaces the pre-027 ``KNOWN_TYPES`` literal set, so a plugin's entries are
+    accepted on parse exactly like a built-in's."""
+    if type_ == SSH_PSEUDO_TYPE:
+        return True
+    from remo_cli.core.provider_registry import is_provider_type  # noqa: PLC0415
+
+    return is_provider_type(type_)
+
+
+def _mode_field_aware(type_: str) -> bool:
+    """True when *type_*'s descriptor declares ``ConnectionSpec.mode_field_aware``
+    (027 FR-008) — the descriptor-driven replacement for the old aws literal in
+    the access-mode inference and validation rules."""
+    from remo_cli.core.provider_registry import get_descriptor, is_provider_type  # noqa: PLC0415
+
+    return is_provider_type(type_) and get_descriptor(type_).connection.mode_field_aware
+
+
+def _mode_field_aware_types() -> list[str]:
+    from remo_cli.core.provider_registry import all_descriptors  # noqa: PLC0415
+
+    return [d.type_name for d in all_descriptors() if d.connection.mode_field_aware]
 
 
 # ---------------------------------------------------------------------------
@@ -145,6 +175,27 @@ def _provider_nested_fields(type_: str, instance_id: str, region: str) -> dict[s
     return nested
 
 
+def _parse_provider_nested_fields(type_: str, nested: dict[str, Any]) -> tuple[str, str]:
+    """Read ``instance_id``/``region`` back from a provider's nested v2 block.
+
+    Primary keys come from ``descriptor.registry_fields``; when an attribute is
+    still empty, ``descriptor.registry_legacy_keys`` is consulted (Proxmox's
+    pre-rename ``node_user`` -> ``region``), which keeps the lazy key migration
+    working: the next write emits the current key (027 FR-007).
+    """
+    from remo_cli.core.provider_registry import get_descriptor  # noqa: PLC0415
+
+    descriptor = get_descriptor(type_)
+    values: dict[str, str] = {"instance_id": "", "region": ""}
+    for attr_name, json_key in descriptor.registry_fields:
+        if attr_name in values:
+            values[attr_name] = str(nested.get(json_key, "") or "")
+    for legacy_key, attr_name in descriptor.registry_legacy_keys:
+        if attr_name in values and not values[attr_name]:
+            values[attr_name] = str(nested.get(legacy_key, "") or "")
+    return values["instance_id"], values["region"]
+
+
 def known_host_to_entry(host: KnownHost) -> dict[str, Any]:
     """Serialize a :class:`KnownHost` into a v2 hostEntry dict (key order fixed)."""
     entry: dict[str, Any] = {
@@ -212,40 +263,25 @@ def entry_to_known_host(entry: dict[str, Any]) -> KnownHost | None:
         return None
     if access not in ("direct", "ssm"):
         return None
-    if type_ not in KNOWN_TYPES:
+    if not is_known_type(type_):
         return None
 
     instance_id = ""
     region = ""
 
-    if type_ == "incus":
-        nested = entry.get("incus")
-        if isinstance(nested, dict):
-            instance_id = str(nested.get("host_user", "") or "")
-    elif type_ == "proxmox":
-        nested = entry.get("proxmox")
-        if isinstance(nested, dict):
-            instance_id = str(nested.get("vmid", "") or "")
-            # `host_user` replaced `node_user` when `--node-user` became
-            # `--host-user`, matching Incus and the `proxmox_host_user` Ansible
-            # var. Registries written before that still carry the old key, so
-            # accept it on read; the next write emits `host_user` and the entry
-            # migrates without the operator doing anything.
-            region = str(
-                nested.get("host_user", "") or nested.get("node_user", "") or ""
-            )
-    elif type_ == "aws":
-        nested = entry.get("aws")
-        if isinstance(nested, dict):
-            instance_id = str(nested.get("instance_id", "") or "")
-            region = str(nested.get("region", "") or "")
-    elif type_ == "ssh":
-        nested = entry.get("ssh")
+    nested = entry.get(type_)
+    if type_ == SSH_PSEUDO_TYPE:
         if isinstance(nested, dict):
             port = nested.get("port", "")
             instance_id = str(port) if port != "" else ""
             region = str(nested.get("identity_file", "") or "")
-    # hetzner: nothing further.
+    elif isinstance(nested, dict):
+        # The exact reverse of _provider_nested_fields (027 FR-007): the
+        # descriptor's (attribute, json_key) pairs decide what is read, so
+        # parse and serialize agree by construction for built-ins and
+        # plugins alike. A provider with no nested fields (hetzner) simply
+        # reads nothing.
+        instance_id, region = _parse_provider_nested_fields(type_, nested)
 
     return KnownHost(
         type=type_,
@@ -273,7 +309,7 @@ def legacy_fields_to_entry(
     without knowing the type. Shared by CLI migration and setup-API v1
     payload mapping (research R8/R9) — the single legacy->v2 mapper.
     """
-    if type_ not in KNOWN_TYPES:
+    if not is_known_type(type_):
         entry: dict[str, Any] = {
             "type": type_,
             "name": name,
@@ -287,7 +323,9 @@ def legacy_fields_to_entry(
         return entry
 
     access = "direct"
-    if type_ == "aws" and (access_mode == "ssm" or (instance_id and not access_mode)):
+    # Mode-field-aware providers (AWS today, any plugin that declares it)
+    # infer `ssm` from a legacy instance id with no explicit mode (027 FR-008).
+    if _mode_field_aware(type_) and (access_mode == "ssm" or (instance_id and not access_mode)):
         access = "ssm"
 
     entry = {
@@ -364,8 +402,11 @@ def _validate_single_host(h: KnownHost) -> str | None:
             f"access must be 'direct' or 'ssm', got {h.access_mode!r} "
             f"(entry: {entry_label})"
         )
-    if effective_access == "ssm" and h.type != "aws":
-        return f"access 'ssm' is only valid for type 'aws' (entry: {entry_label})"
+    if effective_access == "ssm" and not _mode_field_aware(h.type):
+        # Byte-identical to the pre-027 message for the built-in set ("type
+        # 'aws'"); lists every mode-field-aware type once plugins declare one.
+        aware = ", ".join(repr(t) for t in _mode_field_aware_types()) or "(none registered)"
+        return f"access 'ssm' is only valid for type {aware} (entry: {entry_label})"
 
     if h.type == "ssh" and h.instance_id:
         try:
@@ -428,7 +469,7 @@ def _parse_legacy_lines(lines: list[str]) -> _LegacyParseResult:
         entry = legacy_fields_to_entry(
             kh.type, kh.name, kh.host, kh.user, kh.instance_id, kh.access_mode, kh.region
         )
-        if kh.type in KNOWN_TYPES:
+        if is_known_type(kh.type):
             known_host = entry_to_known_host(entry)
             if known_host is None:
                 skipped_lines.append(line)
@@ -503,8 +544,16 @@ def _read_v2_file(path: Path) -> _ParsedDocument:
         if not isinstance(type_, str) or not type_:
             warnings.append(f"skipped entry at index {i}: missing or invalid 'type'")
             continue
-        if type_ not in KNOWN_TYPES:
+        if not is_known_type(type_):
+            # No provider for this type is installed here (a plugin present on
+            # the machine that wrote the file, absent on this one). Keep the
+            # entry byte-for-byte so the next write never drops it (027 FR-009).
             unknown_raw.append(raw_entry)
+            name = raw_entry.get("name", "?")
+            warnings.append(
+                f"entry {name!r} has type {type_!r} with no installed provider; "
+                f"preserved verbatim (install the provider plugin to manage it)"
+            )
             continue
         known_host = entry_to_known_host(raw_entry)
         if known_host is None:

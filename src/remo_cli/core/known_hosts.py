@@ -21,6 +21,22 @@ from remo_cli.models.host import KnownHost
 _migration_notice_shown = False
 
 
+def display_name_for(host: KnownHost) -> str:
+    """Human-friendly name for picker UIs (027 FR-011).
+
+    For providers whose descriptor declares ``NameFormat.HOST_SCOPED`` the
+    name encodes both the host node and the container (``host/container``);
+    that is formatted as ``"container (on host)"``. Every other type — the
+    ``ssh`` pseudo-type, flat providers, unknown types — is returned unchanged.
+    ``KnownHost.display_name`` delegates here so ``models/`` stays free of any
+    core import at module load.
+    """
+    if _is_host_scoped_type(host.type) and "/" in host.name:
+        node, container = host.name.split("/", maxsplit=1)
+        return f"{container} (on {node})"
+    return host.name
+
+
 def _is_host_scoped_type(type_name: str) -> bool:
     """True when *type_name* is a registered provider using "host/container"
     names (018 T048 — replaces the literal ``{"incus", "proxmox"}`` checks).

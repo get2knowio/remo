@@ -57,6 +57,8 @@ DESCRIPTOR = ProviderDescriptor(
     ),
     implementation="remo_cli.providers.aws",
     sdk_extra="aws",
+    region_scoped_sync=True,
+    sync_scope_description="aws region {region}",
     create_options=(
         _INSTANCE_TYPE,
         REGION,

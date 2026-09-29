@@ -57,6 +57,7 @@ DESCRIPTOR = ProviderDescriptor(
     default_instance_name="dev1",
     name_format=NameFormat.HOST_SCOPED,
     registry_fields=(("instance_id", "host_user"),),
+    sync_scope_description="incus host {host} (default project)",
     connection=ConnectionSpec(),
     implementation="remo_cli.providers.incus",
     sdk_extra=None,

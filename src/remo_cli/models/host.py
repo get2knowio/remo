@@ -150,12 +150,16 @@ class KnownHost:
     def display_name(self) -> str:
         """Human-friendly name for picker UIs.
 
-        For *incus* and *proxmox* hosts the name encodes both the host node
-        and the container (``host/container``); this property formats that as
-        ``"container (on host)"`` for readability.  For every other
-        provider the name is returned unchanged.
+        Host-scoped providers (those whose descriptor declares
+        ``NameFormat.HOST_SCOPED`` — incus and proxmox among the built-ins,
+        plus any plugin that says so) encode both the host node and the
+        container in the name (``host/container``); that is formatted as
+        ``"container (on host)"``. Every other type is returned unchanged.
+
+        Shim (027 FR-011): the rule lives in
+        :func:`remo_cli.core.known_hosts.display_name_for`, imported lazily
+        here so ``models/`` stays dependency-free at import time.
         """
-        if self.type in {"incus", "proxmox"} and "/" in self.name:
-            node, container = self.name.split("/", maxsplit=1)
-            return f"{container} (on {node})"
-        return self.name
+        from remo_cli.core.known_hosts import display_name_for  # noqa: PLC0415
+
+        return display_name_for(self)

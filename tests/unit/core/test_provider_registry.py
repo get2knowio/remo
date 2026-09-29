@@ -48,17 +48,16 @@ pytestmark = pytest.mark.usefixtures("_no_real_builtins")
 
 @pytest.fixture(autouse=True)
 def _no_real_builtins(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Prevent the lazy ``providers.builtin`` import from running.
+    """Prevent the lazy discovery step (built-ins + entry-point plugins, 027)
+    from running.
 
-    That module doesn't exist yet (created in a later task, T013). Every
-    lookup helper (``get_descriptor``/``all_descriptors``/``is_provider_type``)
-    calls ``_ensure_builtins_imported()`` first; short-circuit it so tests
-    exercise only the descriptor-registry logic under test, not an import of
-    a module that isn't there.
+    Every lookup helper (``get_descriptor``/``all_descriptors``/
+    ``is_provider_type``) calls ``_ensure_discovered()`` first; short-circuit
+    it so tests exercise only the descriptor-registry logic under test.
     """
     import remo_cli.core.provider_registry as pr
 
-    monkeypatch.setattr(pr, "_builtins_imported", True)
+    monkeypatch.setattr(pr, "_discovered", True)
 
 
 def _make_descriptor(

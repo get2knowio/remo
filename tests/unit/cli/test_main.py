@@ -94,7 +94,18 @@ class TestSubcommandRegistration:
         "completion",
         "web",
         "connector",
+        "providers",
     ]
+
+    @staticmethod
+    def _plugin_groups() -> set[str]:
+        """Provider groups contributed by `remo.providers` entry points (027):
+        one per loaded plugin (the in-repo fixture plugin when the dev extra
+        is installed). Computed, not listed, so the exact-set guard still
+        catches an accidental first-party registration."""
+        from remo_cli.core.provider_plugins import plugin_load_records
+
+        return {r.type_name for r in plugin_load_records() if r.type_name is not None}
 
     def test_all_subcommands_registered(self):
         """Every expected command name must be present in the CLI group's commands dict."""
@@ -107,7 +118,7 @@ class TestSubcommandRegistration:
         match exactly what we expect (update this test when adding new
         commands)."""
         registered = set(cli.commands.keys())
-        expected = set(self.EXPECTED_COMMANDS)
+        expected = set(self.EXPECTED_COMMANDS) | self._plugin_groups()
         assert registered == expected, (
             f"Registered commands differ from expected.\n"
             f"  Extra:   {registered - expected}\n"
