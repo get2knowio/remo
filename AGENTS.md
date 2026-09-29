@@ -75,6 +75,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   └── builtin.py         # register_builtins(): the four built-in descriptors in fixed order; called by provider_registry._ensure_discovered() before entry-point discovery (027)
 ├── core/                  # Shared utilities (no provider knowledge)
 │   ├── config.py          # REMO_HOME, paths, read-only registry accessor
+│   ├── platform.py        # POSIX-only startup gate: is_supported_platform() + the WSL2 message cli/main.py exits on (no remo_cli imports — it runs before them)
 │   ├── errors.py          # ProviderError taxonomy (contracts/errors.md); single CLI translation boundary is factory.py's provider_command wrapper
 │   ├── provider_registry.py  # ProviderDescriptor/OptionSpec/CommandSpec/ConnectionSpec/ArgumentSpec + shared OptionSpec catalog + register/get_descriptor/get_provider/all_descriptors/builtin_descriptors/descriptor_source/is_provider_type/temporary_registration; PROVIDER_API_VERSION; _ensure_discovered() = builtins then entry points (027); descriptor fields registry_legacy_keys/region_scoped_sync/sync_scope_description carry the last per-type facts out of core
 │   ├── provider_plugins.py   # `remo.providers` entry-point discovery (stdlib importlib.metadata): one warning per broken plugin, first-wins duplicates, REMO_DISABLE_PROVIDER_PLUGINS, REMO_PROVIDER_API_VERSION handshake, PluginLoadRecord/plugin_load_records() for `remo providers` + `remo web check` (027)

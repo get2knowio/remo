@@ -9,6 +9,24 @@ description = "Remote development environment CLI"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
+# Advisory only -- no installer enforces these. remo is POSIX-only (core/
+# registry.py needs fcntl; the Ansible control node has no Windows support), and
+# the only hard install-time gate would be platform-tagged wheels instead of the
+# one py3-none-any we ship. That trade is deliberately not made: a resolver
+# "no matching distribution" error is a worse diagnostic than the startup gate in
+# core/platform.py, which can name WSL2. The classifiers exist so PyPI shows the
+# supported systems before anyone installs.
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: System :: Systems Administration",
+]
 dependencies = [
     "click>=8.1",
     "InquirerPy>=0.3.4",
