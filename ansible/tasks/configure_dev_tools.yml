@@ -13,6 +13,11 @@
 #   configure_fzf: false
 #   configure_zellij: false
 
+# Decide the devcontainer runtime BEFORE anything that renders it (user_setup
+# bakes it into the launcher scripts) — spec 026, contracts/runtime-resolution.md.
+- name: Resolve the devcontainer runtime for this host
+  ansible.builtin.include_tasks: tasks/resolve_devcontainer_runtime.yml
+
 - name: Install base utilities
   ansible.builtin.apt:
     name:
@@ -51,28 +56,58 @@
     remo_version: "{{ remo_version | default('') }}"
   when: configure_user_setup | default(true) | bool
 
+# Record the runtime this host got so later configure/upgrade runs keep it
+# (stickiness — a host never changes runtime unless asked explicitly). Written
+# once the account exists; content-compare keeps a second run at "ok".
+- name: Record the devcontainer runtime for this host
+  ansible.builtin.copy:
+    dest: "/home/{{ remo_user }}/.remo-devcontainer-runtime"
+    content: "{{ devcontainer_runtime_effective | default(devcontainer_runtime) }}\n"
+    owner: "{{ remo_user }}"
+    group: "{{ remo_user }}"
+    mode: '0644'
+  when: configure_devcontainers | default(true) | bool
+
 - name: Install Node.js
   ansible.builtin.include_role:
     name: nodejs
   when: configure_nodejs | default(true) | bool
 
-# Devcontainer runtime is selectable via `devcontainer_runtime`
-# (default: devcontainer). "deacon" is an experimental single-binary Rust
-# reimplementation. Both remain governed by the `configure_devcontainers`
-# tool toggle so --only/--skip keep working.
-- name: Install Dev Containers CLI (devcontainer runtime)
+# Exactly one devcontainer runtime is installed and wired: the one
+# tasks/resolve_devcontainer_runtime.yml resolved (deacon for new hosts;
+# the reference CLI for legacy hosts, nested-overlayfs hosts, and explicit
+# requests). Both stay governed by the `configure_devcontainers` tool toggle
+# so --only/--skip keep working. Two runtimes on one host is unsupported:
+# the other binary, if present from an earlier choice, is left inert.
+- name: Install Dev Containers CLI (reference devcontainer runtime)
   ansible.builtin.include_role:
     name: devcontainers
   when:
     - configure_devcontainers | default(true) | bool
-    - (devcontainer_runtime | default('devcontainer')) != 'deacon'
+    - (devcontainer_runtime_effective | default(devcontainer_runtime)) != 'deacon'
 
-- name: Install Deacon (experimental devcontainer runtime)
+- name: Install deacon (devcontainer runtime)
   ansible.builtin.include_role:
     name: deacon
   when:
     - configure_devcontainers | default(true) | bool
-    - (devcontainer_runtime | default('devcontainer')) == 'deacon'
+    - (devcontainer_runtime_effective | default(devcontainer_runtime)) == 'deacon'
+
+# deacon on a host whose kernel refuses nested overlayfs is possible only by
+# explicit request (auto keeps the reference CLI there) and has not been
+# verified: the reference CLI's shim does not wrap deacon, so Compose-based
+# builds may fail on the first RUN. Say so where the operator will see it.
+- name: "Devcontainer runtime deacon on a nested-overlayfs host is NOT verified — Compose builds may fail; see docs/nested-overlayfs.md"
+  ansible.builtin.debug:
+    msg: >-
+      auto would have kept the reference CLI here; deacon was requested
+      explicitly. Export BUILDX_BUILDER=remo-native (and DOCKER_BUILDKIT=1
+      COMPOSE_BAKE=1 for Compose projects) before building, and report the
+      outcome — see docs/nested-overlayfs.md.
+  when:
+    - configure_devcontainers | default(true) | bool
+    - (devcontainer_runtime_effective | default(devcontainer_runtime)) == 'deacon'
+    - docker_nested_overlayfs | default(false) | bool
 
 # Hosts whose kernel refuses nested overlayfs mounts cannot build ANY
 # devcontainer with the stock Docker setup (#160), and the obvious workaround

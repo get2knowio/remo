@@ -102,7 +102,7 @@ remo proxmox info --name dev1
 | `--volume-size <GiB>` | `20` | Rootfs size. When the container exists, grows the rootfs via `pct resize`. |
 | `--unprivileged/--privileged` | `--unprivileged` | Container privilege mode |
 | `--domain <domain>` | (none) | FQDN suffix for the container |
-| `--devcontainer-runtime <name>` | `devcontainer` | Devcontainer runtime to install/use: `devcontainer` or `deacon` (experimental). See [Experimental: Deacon runtime](#experimental-deacon-runtime). |
+| `--devcontainer-runtime <name>` | `auto` | Devcontainer runtime request: `auto` (resolved on the host — deacon for new hosts, the reference CLI on legacy and nested-overlayfs hosts), `deacon`, or `devcontainer`. See [Devcontainer runtime](#devcontainer-runtime-deacon-by-default). |
 
 ### Upgrade Options
 
@@ -112,7 +112,7 @@ remo proxmox info --name dev1
 | `--skip <tool>` | Skip the specified tool (can repeat) |
 | `--host <host>` | Proxmox host (auto-detected from registry if omitted) |
 | `--host-user <user>` | SSH user on the **Proxmox node**, for host-side `pct` commands — not the container login (always `remo`). Defaults to the value recorded at create/sync time; if none was recorded, your `ssh_config` decides. |
-| `--devcontainer-runtime <name>` | `devcontainer` or `deacon` (experimental). Re-provisions the launcher scripts to use the chosen runtime. |
+| `--devcontainer-runtime <name>` | `auto`, `deacon`, or `devcontainer`. Re-provisions the launcher scripts to use the chosen runtime and records the choice on the host. |
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
@@ -194,13 +194,25 @@ VMID is a hard error — unlike `create`'s best-effort marker application.
 | **Auto-start on boot** | `--onboot 1` — survives node reboots |
 | **Same dev tools as Incus/Hetzner** | Docker, Node.js, fzf, github_cli, devcontainers, zellij, user_setup |
 
-## Experimental: Deacon runtime
+## Devcontainer runtime (deacon by default)
 
-By default remo installs the Node-based [`@devcontainers/cli`](https://github.com/devcontainers/cli)
-and invokes `devcontainer up` / `devcontainer exec` from the project launcher
-scripts. You can opt a deployment into
-[**Deacon**](https://github.com/get2knowio/deacon) instead — a single-binary
-Rust reimplementation of the devcontainer CLI that needs no Node.js runtime:
+remo bakes one devcontainer runtime into a host's launcher scripts. Since
+spec 026 the default request is **`auto`**, which resolves *on the host*:
+
+1. an explicit `--devcontainer-runtime deacon|devcontainer` always wins;
+2. a host that already recorded a runtime (`~/.remo-devcontainer-runtime`)
+   keeps it — `upgrade`/`configure` never switch a host by themselves;
+3. a host that already has the reference CLI installed keeps it (a host
+   provisioned before the default flipped is never moved silently);
+4. a host whose kernel refuses nested overlayfs (OrbStack) gets the
+   reference CLI, the only runtime with a build shim there
+   ([nested-overlayfs.md](nested-overlayfs.md));
+5. every other new host gets [**deacon**](https://github.com/get2knowio/deacon),
+   a single-binary Rust devcontainer runtime that needs no Node.js.
+
+The run prints which rule applied (`Devcontainer runtime: deacon (default)`).
+The Node-based [`@devcontainers/cli`](https://github.com/devcontainers/cli)
+stays fully supported as the reference runtime:
 
 ```bash
 # Per deployment (overrides the global default)
@@ -213,8 +225,9 @@ remo proxmox upgrade dev1 --devcontainer-runtime deacon
 export REMO_DEVCONTAINER_RUNTIME=deacon
 ```
 
-Resolution order: `--devcontainer-runtime` flag → `REMO_DEVCONTAINER_RUNTIME`
-env → built-in default (`devcontainer`).
+Resolution order for the *request*: `--devcontainer-runtime` flag →
+`REMO_DEVCONTAINER_RUNTIME` env → built-in default (`auto`); the host then
+applies the five rules above.
 
 When `deacon` is selected, the `deacon` binary is installed (in place of the
 npm CLI) and the launcher scripts call `deacon up` / `deacon exec`. remo's
@@ -224,17 +237,21 @@ label. Because Deacon's non-interactive workspace-trust gate would otherwise
 block host-side lifecycle hooks (`initializeCommand`, dotfiles), remo passes
 `--trust-workspace-persist` on `up`.
 
-> **Experimental.** Deacon is opt-in and not yet the default. Known gaps versus
-> the reference CLI: feature installation is supported for Dockerfile-based
-> configs only (Docker-Compose / image-reference configs with `features` error
-> out), and GPU passthrough on Podman is unwired. Validate your projects before
-> relying on it.
+> **Known gaps versus the reference CLI** (as of deacon 0.4.0): GPU passthrough
+> on Podman is unwired, and deacon has not been verified on a host whose kernel
+> refuses nested overlayfs (that is why rule 4 keeps the reference CLI there).
+> Validate your projects; the reference CLI is one flag away.
 
 ### Switching an existing deployment
 
-You do **not** need to recreate a container to try Deacon — `upgrade`
-re-provisions the runtime in place. Data, projects, and container config are
-untouched.
+You do **not** need to recreate a container to switch runtimes — `upgrade`
+re-provisions the runtime in place and records the new choice, so later
+upgrades keep it. Data, projects, and container config are untouched. **Stop
+running projects first** (exit the project shell, which stops its container,
+or `docker stop` it): deacon and the reference CLI keep their Docker state
+separate by design (deacon #265 — different labels and image names), so
+neither adopts the other's running container. Two runtimes on one host is
+unsupported: configure wires exactly one, and the other binary is left inert.
 
 ```bash
 # Flip to Deacon (installs the binary + re-points the launcher scripts)
@@ -257,6 +274,10 @@ Notes:
 
 - The previously-installed runtime is left in place (not uninstalled), so
   reverting only re-points the launcher scripts — low risk, fully reversible.
+- The previous runtime's containers and images are neither adopted nor
+  removed; list them with
+  `docker ps -a --filter label=devcontainer.local_folder=$HOME/projects/<project>`
+  and remove what you no longer need.
 - `upgrade` re-runs the dev-tools roles idempotently; expect it to take about as
   long as the original configure step.
 

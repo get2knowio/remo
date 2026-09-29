@@ -373,7 +373,9 @@ so Docker inside it is nested and the kernel refuses the overlayfs mounts
 BuildKit's default snapshotter needs — without help, no devcontainer builds at
 all. `remo configure` detects this and provisions a `native`-snapshotter buildx
 builder plus a `devcontainer` shim that picks the right build environment per
-project; builds work, but are noticeably slower. Two limits it cannot fix —
+project; builds work, but are noticeably slower. The automatic runtime choice
+keeps the reference `devcontainer` CLI on such hosts (deacon is the default
+elsewhere) because only that CLI has the shim. Two limits it cannot fix —
 `apt` inside a running container, and therefore `playwright install --with-deps`
 — are covered in [`docs/nested-overlayfs.md`](docs/nested-overlayfs.md).
 
@@ -526,7 +528,7 @@ See platform-specific docs for full options:
 | Variable | Description |
 |----------|-------------|
 | `REMO_HOME` | Config directory for remo state (default: `~/.config/remo`) |
-| `REMO_DEVCONTAINER_RUNTIME` | Default devcontainer runtime for new deployments: `devcontainer` (default) or `deacon` (experimental). Overridden per-deployment by `--devcontainer-runtime`. See [Proxmox docs](docs/proxmox.md#experimental-deacon-runtime). |
+| `REMO_DEVCONTAINER_RUNTIME` | Devcontainer runtime request for new deployments: `auto` (default — deacon for new hosts; a host's recorded runtime, the reference CLI on legacy and nested-overlayfs hosts), `deacon`, or `devcontainer`. Overridden per-deployment by `--devcontainer-runtime`. See [Devcontainer runtime](docs/proxmox.md#devcontainer-runtime-deacon-by-default). |
 
 ---
 

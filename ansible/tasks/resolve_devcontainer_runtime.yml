@@ -1,0 +1,79 @@
+---
+# Resolve the devcontainer runtime request into the runtime this host gets
+# (spec 026, contracts/runtime-resolution.md). Included FIRST by
+# tasks/configure_dev_tools.yml, so every configure/site playbook and every
+# provider share one rule and every consumer reads one fact.
+#
+# Input:  devcontainer_runtime   auto (default) | deacon | devcontainer
+# Output: devcontainer_runtime_effective   deacon | devcontainer
+#         devcontainer_runtime_source      explicit | marker | legacy | nested-overlayfs | default
+#
+# Rules, first match wins:
+#   1. an explicit request (deacon/devcontainer) is honoured as-is;
+#   2. a host that already recorded a runtime keeps it (the marker);
+#   3. a host that already has the reference CLI installed keeps it (a legacy
+#      host provisioned before the default flipped is never moved silently);
+#   4. a host whose kernel refuses nested overlayfs mounts gets the reference
+#      CLI — the only runtime with a build shim there (docs/nested-overlayfs.md);
+#   5. every other new host gets deacon.
+#
+# Principle V: every registered access below uses | default(); the probes
+# never fail the play, because on a fresh host the account and its home may
+# not exist yet (user_setup runs after this file).
+
+- name: Probe the recorded devcontainer runtime marker
+  ansible.builtin.stat:
+    path: "/home/{{ remo_user }}/.remo-devcontainer-runtime"
+  register: devcontainer_runtime_marker_stat
+  failed_when: false
+
+- name: Read the recorded devcontainer runtime marker
+  ansible.builtin.slurp:
+    src: "/home/{{ remo_user }}/.remo-devcontainer-runtime"
+  register: devcontainer_runtime_marker
+  failed_when: false
+  when: devcontainer_runtime_marker_stat.stat.exists | default(false)
+
+- name: Decode the recorded devcontainer runtime marker
+  ansible.builtin.set_fact:
+    devcontainer_runtime_recorded: >-
+      {{ (devcontainer_runtime_marker.content | default('') | b64decode | trim)
+         if (devcontainer_runtime_marker.content is defined) else '' }}
+
+- name: Find the npm global prefix (legacy reference-CLI probe)
+  ansible.builtin.command: npm prefix -g
+  register: devcontainer_runtime_npm_prefix
+  changed_when: false
+  failed_when: false
+
+- name: Probe for an already-installed reference devcontainer CLI
+  ansible.builtin.stat:
+    path: "{{ devcontainer_runtime_npm_prefix.stdout | default('') | trim }}/bin/devcontainer"
+  register: devcontainer_runtime_reference_cli
+  failed_when: false
+  when: (devcontainer_runtime_npm_prefix.rc | default(1)) == 0
+
+- name: Resolve the effective devcontainer runtime
+  ansible.builtin.set_fact:
+    devcontainer_runtime_effective: >-
+      {{ 'deacon' if devcontainer_runtime | default('auto') == 'deacon'
+         else 'devcontainer' if devcontainer_runtime | default('auto') == 'devcontainer'
+         else devcontainer_runtime_recorded if devcontainer_runtime_recorded in ['deacon', 'devcontainer']
+         else 'devcontainer' if (devcontainer_runtime_reference_cli.stat.exists | default(false))
+         else 'devcontainer' if (docker_nested_overlayfs | default(false) | bool)
+         else 'deacon' }}
+    devcontainer_runtime_source: >-
+      {{ 'explicit' if devcontainer_runtime | default('auto') in ['deacon', 'devcontainer']
+         else 'marker' if devcontainer_runtime_recorded in ['deacon', 'devcontainer']
+         else 'legacy' if (devcontainer_runtime_reference_cli.stat.exists | default(false))
+         else 'nested-overlayfs' if (docker_nested_overlayfs | default(false) | bool)
+         else 'default' }}
+
+# The task NAME carries the decision: core/ansible_runner.py's filtered output
+# prints task names and suppresses debug bodies, so this is what the operator
+# sees in `remo <type> create` / `remo configure`.
+- name: "Devcontainer runtime: {{ devcontainer_runtime_effective }} ({{ devcontainer_runtime_source }})"
+  ansible.builtin.assert:
+    that:
+      - devcontainer_runtime_effective in ['deacon', 'devcontainer']
+    quiet: true

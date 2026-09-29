@@ -1,8 +1,9 @@
 """Tests for devcontainer-runtime resolution in providers/proxmox.create.
 
 The runtime resolves as: explicit flag > REMO_DEVCONTAINER_RUNTIME env >
-built-in default ("devcontainer"). The resolved value is passed to Ansible as
-`-e devcontainer_runtime=<value>`.
+built-in default ("auto", spec 026 — turned into a concrete runtime on the
+host by ansible/tasks/resolve_devcontainer_runtime.yml). The resolved value is
+passed to Ansible as `-e devcontainer_runtime=<value>`.
 """
 
 from __future__ import annotations
@@ -55,9 +56,22 @@ def capture_runtime(mocker):
     return run
 
 
-def test_default_runtime_is_devcontainer(capture_runtime, monkeypatch):
+def test_default_runtime_is_auto(capture_runtime, monkeypatch):
+    """Spec 026: the CLI no longer decides between the runtimes by default —
+    it asks the host to (`auto`), so an existing host is never flipped
+    silently and a nested-overlayfs host keeps the shimmed reference CLI."""
     monkeypatch.delenv("REMO_DEVCONTAINER_RUNTIME", raising=False)
-    assert capture_runtime() == "devcontainer"
+    assert capture_runtime() == "auto"
+
+
+def test_explicit_auto_is_passed_through(capture_runtime, monkeypatch):
+    monkeypatch.delenv("REMO_DEVCONTAINER_RUNTIME", raising=False)
+    assert capture_runtime(devcontainer_runtime="auto") == "auto"
+
+
+def test_env_auto_is_accepted(capture_runtime, monkeypatch):
+    monkeypatch.setenv("REMO_DEVCONTAINER_RUNTIME", "auto")
+    assert capture_runtime() == "auto"
 
 
 def test_explicit_flag_selects_deacon(capture_runtime, monkeypatch):

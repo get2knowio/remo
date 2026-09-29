@@ -178,10 +178,30 @@ sed -i '/DOCKER_BUILDKIT/d' ~/.bashrc ~/.bash_profile
 
 ### The `deacon` runtime
 
-The shim wraps `@devcontainers/cli` only. A host provisioned with
-`--devcontainer-runtime deacon` gets the `remo-native` builder but no shim, and
-`remo configure` says so. `deacon` has a different flag set and has not been
-evaluated on an affected host.
+The shim wraps `@devcontainers/cli` only, so on an affected host the
+**automatic runtime choice keeps the reference CLI**: with the default
+`--devcontainer-runtime auto`, `remo configure` resolves a nested-overlayfs
+host to `devcontainer` (the run prints `Devcontainer runtime: devcontainer
+(nested-overlayfs)`), installs the shim, and everything above applies. Every
+other new host gets deacon by default (spec 026).
+
+Forcing deacon here (`--devcontainer-runtime deacon`) is allowed and
+**not verified**: the run prints a warning task, the shim is not installed,
+and Compose-based builds may fail on the first `RUN` exactly as in the
+original #160 report. What deacon does, from its v0.4.0 source, suggests a
+*simpler* shim than the reference CLI needs:
+
+| step | deacon runs | would need here |
+|---|---|---|
+| image / Dockerfile build | `docker buildx build` (`--buildkit auto` follows `DOCKER_BUILDKIT`) | `BUILDX_BUILDER=remo-native` |
+| Compose build | `docker compose build` | `DOCKER_BUILDKIT=1 COMPOSE_BAKE=1` |
+| updateUID | `docker exec` inside the container (no plain `docker build`) | nothing |
+
+If you try it, export `BUILDX_BUILDER=remo-native` (and, for a Compose
+project, `DOCKER_BUILDKIT=1 COMPOSE_BAKE=1`) before `deacon up`, and report
+the outcome on the tracked issue (#TBD) — proving this on a real OrbStack
+host, or shipping a deacon shim, is what lets the conditional default go
+away.
 
 ## Verifying
 

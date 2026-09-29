@@ -62,8 +62,9 @@ def _render_remo_host(projects_dir: str, devcontainer_cli_bin: str = "devcontain
     """Render remo-host.sh.j2 with the minimal context it needs.
 
     The template interpolates ``dev_workspace_dir`` (as ``PROJECTS_DIR``) and
-    ``devcontainer_cli_bin`` (gates ``projects rebuild``, which needs the
-    reference CLI's ``--remove-existing-container``).
+    ``devcontainer_cli_bin`` (gates ``projects rebuild``: the reference CLI and
+    deacon both accept ``--remove-existing-container`` — spec 026 — any other
+    runtime name is advertised as lacking it).
     """
     source = REMO_HOST_TEMPLATE.read_text()
     template = Environment(autoescape=False).from_string(source)
@@ -997,7 +998,10 @@ def test_remo_host_rebuild_requires_devcontainer_config(
 
 
 @pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
-def test_remo_host_rebuild_unsupported_with_deacon(tmp_path: Path) -> None:
+def test_remo_host_rebuild_passes_runtime_check_with_deacon(tmp_path: Path) -> None:
+    """Spec 026: deacon >= 0.4.0 accepts --remove-existing-container, so the
+    runtime check passes and the next validation (`--json` required, exit 2)
+    is what stops this call — proving the old exit-4 refusal is gone."""
     projects_dir = tmp_path / "projects"
     (projects_dir / "beta" / ".devcontainer").mkdir(parents=True)
     rendered = _render_remo_host(str(projects_dir), devcontainer_cli_bin="deacon")
@@ -1005,15 +1009,14 @@ def test_remo_host_rebuild_unsupported_with_deacon(tmp_path: Path) -> None:
     script_path.write_text(rendered)
     script_path.chmod(0o755)
 
-    result = _run_remo_host(
-        script_path, tmp_path, "projects", "rebuild", "--project", "beta", "--json"
-    )
-    assert result.returncode == 4
+    result = _run_remo_host(script_path, tmp_path, "projects", "rebuild", "--project", "beta")
+    assert result.returncode == 2
+    assert "--json is required" in result.stderr
     assert result.stdout == ""
 
 
 @pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
-def test_remo_host_capabilities_deacon_omits_rebuild_operation(tmp_path: Path) -> None:
+def test_remo_host_capabilities_deacon_advertises_rebuild(tmp_path: Path) -> None:
     projects_dir = tmp_path / "projects"
     projects_dir.mkdir()
     rendered = _render_remo_host(str(projects_dir), devcontainer_cli_bin="deacon")
@@ -1024,10 +1027,33 @@ def test_remo_host_capabilities_deacon_omits_rebuild_operation(tmp_path: Path) -
     result = _run_remo_host(script_path, tmp_path, "capabilities", "--json")
     assert result.returncode == 0, result.stderr
     operations = json.loads(result.stdout)["operations"]
-    assert "projects.rebuild" not in operations
-    # Every other new operation is unconditional.
+    assert "projects.rebuild" in operations
     for op in ("host.stats", "projects.clone", "projects.delete", "jobs.status"):
         assert op in operations
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
+def test_remo_host_rebuild_unsupported_runtime_is_omitted_and_refused(tmp_path: Path) -> None:
+    """The capability-omission mechanism survives the deacon flip: a runtime
+    that is not known to accept --remove-existing-container is left out of
+    `operations` and refused at call time with exit 4 (FR-004)."""
+    projects_dir = tmp_path / "projects"
+    (projects_dir / "beta" / ".devcontainer").mkdir(parents=True)
+    rendered = _render_remo_host(str(projects_dir), devcontainer_cli_bin="nope")
+    script_path = tmp_path / "remo-host"
+    script_path.write_text(rendered)
+    script_path.chmod(0o755)
+
+    caps = _run_remo_host(script_path, tmp_path, "capabilities", "--json")
+    assert caps.returncode == 0, caps.stderr
+    assert "projects.rebuild" not in json.loads(caps.stdout)["operations"]
+
+    result = _run_remo_host(
+        script_path, tmp_path, "projects", "rebuild", "--project", "beta", "--json"
+    )
+    assert result.returncode == 4
+    assert result.stdout == ""
+    assert "--remove-existing-container" in result.stderr
 
 
 # --- jobs status ------------------------------------------------------------

@@ -33,6 +33,16 @@ PROTOCOL_VERSION=1
 PROJECTS_DIR="{{ dev_workspace_dir }}"
 DEVCONTAINER_BIN="{{ devcontainer_cli_bin }}"
 
+# Runtimes whose `up` accepts --remove-existing-container, which `projects
+# rebuild` needs: the reference CLI, and deacon (verified against the pinned
+# deacon release — spec 026 research R2). A runtime not in this list is
+# advertised honestly as lacking projects.rebuild (omitted from `operations`)
+# and refused at call time, never failed halfway through a job.
+case "$DEVCONTAINER_BIN" in
+    devcontainer|deacon) REBUILD_SUPPORTED=true ;;
+    *)                   REBUILD_SUPPORTED=false ;;
+esac
+
 # Test-environment overrides (contracts/remo-host-protocol.md "Environment"):
 # production hosts never set these, so the defaults are the real kernel
 # interfaces and the per-user state dir.
@@ -89,11 +99,10 @@ cmd_capabilities() {
         docker_bool="true"
     fi
 
-    # projects.rebuild needs `--remove-existing-container`, which only the
-    # reference devcontainer CLI supports (deacon lacks it) — advertise it
-    # only when this host was provisioned with that CLI.
+    # projects.rebuild needs `--remove-existing-container`; advertise it only
+    # when this host's runtime is known to support it (REBUILD_SUPPORTED).
     rebuild_op=""
-    if [[ "$DEVCONTAINER_BIN" == "devcontainer" ]]; then
+    if [[ "$REBUILD_SUPPORTED" == true ]]; then
         rebuild_op=',"projects.rebuild"'
     fi
 
@@ -748,12 +757,13 @@ cmd_projects_delete() {
 # projects rebuild --project NAME [--no-cache] --json
 #
 # Detached job: kill the project's zellij session, then rebuild its
-# devcontainer via `up --remove-existing-container`. Only supported with the
-# reference devcontainer CLI (deacon lacks --remove-existing-container).
+# devcontainer via `up --remove-existing-container`. Supported by every
+# runtime in REBUILD_SUPPORTED (the reference CLI and deacon); anything else
+# is refused here with exit 4 and never advertised.
 # ---------------------------------------------------------------------------
 cmd_projects_rebuild() {
-    if [[ "$DEVCONTAINER_BIN" != "devcontainer" ]]; then
-        echo "remo-host: unsupported subcommand: projects rebuild (requires the devcontainer CLI, this host uses $DEVCONTAINER_BIN)" >&2
+    if [[ "$REBUILD_SUPPORTED" != true ]]; then
+        echo "remo-host: unsupported subcommand: projects rebuild (requires a runtime whose up accepts --remove-existing-container, this host uses $DEVCONTAINER_BIN)" >&2
         exit 4
     fi
 

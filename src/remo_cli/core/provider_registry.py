@@ -316,9 +316,11 @@ DEVCONTAINER_RUNTIME = OptionSpec(
     param="devcontainer_runtime",
     type=click.Choice(DEVCONTAINER_RUNTIMES),
     default=None,
-    help="Devcontainer runtime to install and invoke. 'deacon' is an experimental "
-    "single-binary Rust reimplementation. Overrides REMO_DEVCONTAINER_RUNTIME "
-    "(default: devcontainer).",
+    help="Devcontainer runtime to install and invoke. 'auto' (the default) keeps a "
+    "host's recorded runtime, keeps the reference CLI on legacy hosts and on hosts "
+    "whose kernel refuses nested overlayfs, and picks deacon for every other new "
+    "host; 'deacon' is the single-binary Rust runtime; 'devcontainer' is the Node "
+    "reference CLI. Overrides REMO_DEVCONTAINER_RUNTIME.",
 )
 REGION = OptionSpec(name="--region", param="region", default="", help="Provider region.")
 LOCATION = OptionSpec(name="--location", param="location", default="", help="Provider location.")

@@ -28,7 +28,7 @@ This directory contains the Ansible automation for provisioning and configuring 
 Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task file (`tasks/configure_dev_tools.yml`) to install:
 - Docker (with docker-compose plugin)
 - Node.js LTS
-- @devcontainers/cli
+- a devcontainer runtime: deacon (default for new hosts) or @devcontainers/cli (the reference CLI — kept on legacy hosts, nested-overlayfs hosts, and by explicit request; see `tasks/resolve_devcontainer_runtime.yml`)
 - GitHub CLI (gh)
 - fzf
 - Zellij terminal multiplexer
@@ -73,7 +73,8 @@ Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task 
 | `docker` | Installs Docker CE and docker-compose plugin |
 | `user_setup` | Creates user with sudo and docker access |
 | `nodejs` | Installs Node.js LTS from NodeSource |
-| `devcontainers` | Installs @devcontainers/cli globally |
+| `devcontainers` | Installs @devcontainers/cli globally (the reference runtime; selected on legacy/nested-overlayfs hosts or by `--devcontainer-runtime devcontainer`) |
+| `deacon` | Installs the pinned deacon devcontainer runtime (the default for new hosts since spec 026; `--devcontainer-runtime auto`) |
 | `github_cli` | Installs GitHub CLI (`gh`) |
 | `fzf` | Installs fzf fuzzy finder |
 | `zellij` | Installs and configures Zellij terminal multiplexer |
