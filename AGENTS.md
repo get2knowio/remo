@@ -292,6 +292,18 @@ uv tool install git+https://github.com/get2knowio/remo@BRANCH         # Tier 1, 
 uv tool install "remo-cli[web] @ git+https://github.com/get2knowio/remo@BRANCH"  # with extras
 uv tool install remo-cli --force                                      # back to the released PyPI build
 
+# install.sh routes by version shape: a final version comes from PyPI, a
+# pre-release version from its GitHub pre-release wheel (RCs never reach PyPI).
+# Picks uv, or pipx when that is what is already installed; never bare pip
+# (PEP 668). Refuses Git Bash/MSYS2/Cygwin before installing anything.
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+curl -fsSL .../install.sh | bash -s -- --prerelease            # newest GitHub pre-release
+curl -fsSL .../install.sh | bash -s -- --prerelease 4.4.0rc3   # a specific one
+curl -fsSL .../install.sh | bash -s -- --prerelease --dry-run  # print the command, change nothing
+REMO_VERSION=4.4.0rc3 curl -fsSL .../install.sh | bash          # env twin of --version
+# Flag spelling, env-var names and grep/sed release resolution are kept in
+# parity with try-hola/hola's cli-install.sh; `--pre-release` stays an alias.
+
 # Tier 2 — the real wheel, built in clean CI. Two shapes, and the difference is
 # whether the artifact can later be promoted to PyPI as-is:
 gh workflow run dev-build.yml                                         # dev build: X.Y.Z.devN+g<sha>,
