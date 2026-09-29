@@ -1,0 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "remo-fixture-provider"
+version = "0.1.0"
+description = "In-repo fixture provider plugin for remo's entry-point discovery tests (spec 027). Never published."
+requires-python = ">=3.11"
+dependencies = []
+
+# The whole point of this distribution: one entry point in the `remo.providers`
+# group whose object is a ProviderDescriptor (contracts/plugin-contract.md).
+[project.entry-points."remo.providers"]
+fixture = "remo_fixture_provider.descriptor:DESCRIPTOR"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/remo_fixture_provider"]

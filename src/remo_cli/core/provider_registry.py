@@ -150,6 +150,19 @@ class ProviderDescriptor:
     registry_fields: tuple[tuple[str, str], ...]
     connection: ConnectionSpec
     implementation: str  # dotted module path, imported lazily
+    # (legacy registry v2 nested JSON key, KnownHost attribute name) pairs
+    # read on parse when the attribute is still empty after registry_fields
+    # (027): e.g. Proxmox's pre-rename ``node_user`` -> ``region``. Never
+    # written back; the next write emits the current key, so the lazy
+    # migration keeps working with no type literal in core/registry.py.
+    registry_legacy_keys: tuple[tuple[str, str], ...] = ()
+    # True when `remo <type> sync` scopes by region rather than by host or
+    # project (AWS): drives core/reconcile.SyncScope's region matching (027).
+    region_scoped_sync: bool = False
+    # ``str.format`` template for SyncScope.describe() with ``{host}`` /
+    # ``{region}`` placeholders; ``None`` -> "<display name lower> (all
+    # servers in project)". Keeps the per-provider wording out of core (027).
+    sync_scope_description: str | None = None
     create_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
     upgrade_options: tuple[OptionSpec, ...] = field(default_factory=tuple)
     resize_dimensions: tuple[OptionSpec, ...] = field(default_factory=tuple)
@@ -200,32 +213,62 @@ class UnknownProviderError(PreconditionError):
 # Registry
 # ---------------------------------------------------------------------------
 
+#: The provider API this remo exposes to out-of-tree providers (027 FR-005).
+#: A plugin declares the version it targets as a ``REMO_PROVIDER_API_VERSION``
+#: module attribute; a mismatch warns and still registers. Bump by hand when
+#: ProviderDescriptor / the Provider Protocol change shape.
+PROVIDER_API_VERSION = 1
+
+#: Source label for the four descriptors registered by providers/builtin.py.
+BUILTIN_SOURCE = "builtin"
+
 _REGISTRY: dict[str, ProviderDescriptor] = {}
 _MODULE_CACHE: dict[str, ModuleType] = {}
-_builtins_imported = False
+#: type_name -> where it came from: BUILTIN_SOURCE or "<distribution> <version>".
+_SOURCES: dict[str, str] = {}
+_discovered = False
 
 
-def register(descriptor: ProviderDescriptor) -> None:
-    """Register *descriptor*. Raises ``ValueError`` on duplicate type_name (FR-007)."""
+def register(descriptor: ProviderDescriptor, *, source: str = BUILTIN_SOURCE) -> None:
+    """Register *descriptor*. Raises ``ValueError`` on duplicate type_name (FR-007).
+
+    *source* records provenance for ``descriptor_source()`` / ``remo providers``
+    (027): built-ins keep the default; entry-point discovery passes the
+    distribution name and version.
+    """
     if descriptor.type_name in _REGISTRY:
         raise ValueError(f"provider type already registered: {descriptor.type_name!r}")
     _REGISTRY[descriptor.type_name] = descriptor
+    _SOURCES[descriptor.type_name] = source
 
 
-def _ensure_builtins_imported() -> None:
-    """Lazily import providers/builtin.py so every entry point sees the four
-    built-in providers without needing an explicit import (data-model.md)."""
-    global _builtins_imported
-    if _builtins_imported:
+def _ensure_discovered() -> None:
+    """Lazily register every provider, exactly once per process (027 FR-002).
+
+    Order is fixed: providers/builtin.py first (incus, proxmox, aws, hetzner —
+    unchanged since 018), then ``remo.providers`` entry points sorted by name
+    (core/provider_plugins.py), unless ``REMO_DISABLE_PROVIDER_PLUGINS`` is
+    set. Both steps import by dotted name at call time, so core/ keeps its
+    static one-way layering (Principle I) and knows no provider's name.
+    """
+    global _discovered
+    if _discovered:
         return
-    _builtins_imported = True
-    importlib.import_module("remo_cli.providers.builtin")
+    _discovered = True
+    importlib.import_module("remo_cli.providers.builtin").register_builtins()
+    from remo_cli.core.provider_plugins import discover_entry_points  # noqa: PLC0415
+
+    discover_entry_points()
+
+
+# Pre-027 name, kept for any out-of-tree caller; identical behavior.
+_ensure_builtins_imported = _ensure_discovered
 
 
 def get_descriptor(type_name: str) -> ProviderDescriptor:
     """Return the descriptor for *type_name*. Raises ``UnknownProviderError`` naming
     the type if it isn't registered (FR-006)."""
-    _ensure_builtins_imported()
+    _ensure_discovered()
     try:
         return _REGISTRY[type_name]
     except KeyError:
@@ -263,14 +306,31 @@ def get_provider(type_name: str) -> ModuleType:
 
 
 def all_descriptors() -> tuple[ProviderDescriptor, ...]:
-    """All registered descriptors, in registration order."""
-    _ensure_builtins_imported()
+    """All registered descriptors, in registration order (built-ins, then
+    entry-point plugins in name order — 027 FR-002)."""
+    _ensure_discovered()
     return tuple(_REGISTRY.values())
+
+
+def builtin_descriptors() -> tuple[ProviderDescriptor, ...]:
+    """Only the descriptors registered by providers/builtin.py (027 FR-017).
+
+    The fixed vocabulary that ``web/api/hosts.py::KnownProviderType`` and the
+    exact-command-set test pin; plugins never appear here.
+    """
+    _ensure_discovered()
+    return tuple(d for d in _REGISTRY.values() if _SOURCES.get(d.type_name) == BUILTIN_SOURCE)
+
+
+def descriptor_source(type_name: str) -> str:
+    """``"builtin"`` or ``"<distribution> <version>"`` for a registered type (027 FR-012)."""
+    get_descriptor(type_name)
+    return _SOURCES[type_name]
 
 
 def is_provider_type(type_name: str) -> bool:
     """``False`` for ``"ssh"``/unknown types (the ssh pseudo-type is never registered)."""
-    _ensure_builtins_imported()
+    _ensure_discovered()
     return type_name in _REGISTRY
 
 
@@ -283,6 +343,20 @@ def temporary_registration(descriptor: ProviderDescriptor) -> Iterator[ProviderD
     finally:
         _REGISTRY.pop(descriptor.type_name, None)
         _MODULE_CACHE.pop(descriptor.type_name, None)
+        _SOURCES.pop(descriptor.type_name, None)
+
+
+def reset_discovery_for_tests() -> None:
+    """Forget every registration and load record so the next lookup re-runs
+    discovery (test-only; 027 R9). Production code never calls this."""
+    global _discovered
+    _REGISTRY.clear()
+    _MODULE_CACHE.clear()
+    _SOURCES.clear()
+    _discovered = False
+    from remo_cli.core.provider_plugins import _reset_records  # noqa: PLC0415
+
+    _reset_records()
 
 
 # ---------------------------------------------------------------------------

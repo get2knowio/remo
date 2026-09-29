@@ -76,8 +76,10 @@ def _find_name_conflict(name: str) -> KnownHost | None:
     exact = next((h for h in hosts if h.name == name), None)
     if exact is not None:
         return exact
+    from remo_cli.core.known_hosts import _is_host_scoped_type  # noqa: PLC0415
+
     for h in hosts:
-        if h.type in {"incus", "proxmox"} and "/" in h.name:
+        if _is_host_scoped_type(h.type) and "/" in h.name:
             if h.name.split("/", maxsplit=1)[1] == name:
                 return h
     return None

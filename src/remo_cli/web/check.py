@@ -268,6 +268,54 @@ def _executable_check(name: str, binary: str) -> CheckResult:
 # ---------------------------------------------------------------------------
 
 
+def _provider_plugins_check() -> CheckResult:
+    """One always-PASS line naming every `remo.providers` plugin and its load
+    status (027 FR-013).
+
+    Deliberately never FAILs: `remo web check` is the container's startup gate,
+    and a broken plugin must never keep the service from starting. Skipped
+    plugins are listed with their reason and a remediation instead.
+    """
+    from remo_cli.core.provider_plugins import (  # noqa: PLC0415
+        DISABLE_ENV_VAR,
+        discovery_was_disabled,
+        plugin_load_records,
+    )
+    from remo_cli.core.provider_registry import all_descriptors  # noqa: PLC0415
+
+    # In the unconfigured shape nothing has touched the provider registry yet,
+    # so make sure discovery has run before reading its records.
+    all_descriptors()
+
+    if discovery_was_disabled():
+        return CheckResult(
+            "provider_plugins", True, f"discovery disabled ({DISABLE_ENV_VAR} is set)"
+        )
+    records = plugin_load_records()
+    loaded = [r for r in records if r.status == "loaded"]
+    skipped = [r for r in records if r.status == "skipped"]
+    if not records:
+        return CheckResult("provider_plugins", True, "no plugins installed")
+    parts = []
+    if loaded:
+        parts.append(
+            f"{len(loaded)} loaded: "
+            + ", ".join(f"{r.type_name} ({r.source})" for r in loaded)
+        )
+    if skipped:
+        parts.append(
+            f"{len(skipped)} skipped: "
+            + "; ".join(f"{r.entry_point} ({r.source}): {r.reason}" for r in skipped)
+        )
+    remediation = None
+    if skipped:
+        remediation = (
+            "Fix or uninstall the skipped plugin distribution(s), or set "
+            f"{DISABLE_ENV_VAR}=1 to ignore every plugin; run `remo providers` for details."
+        )
+    return CheckResult("provider_plugins", True, "; ".join(parts), remediation)
+
+
 def _instance_check(host: KnownHost, settings: WebSettings) -> CheckResult:
     name = f"instance {host.type}/{host.name}"
     # Same transport the rest of the service uses (R6): in adopted mode the
@@ -355,6 +403,7 @@ def run_checks(
             _operator_auth_check(settings),
             _runtime_dir_check(settings.ssh_control_dir),
             _executable_check("ssh", "ssh"),
+            _provider_plugins_check(),
         ]
 
     hosts, source_format, registry_failure = _read_registry_for_check()
@@ -367,6 +416,7 @@ def run_checks(
         _ssh_identity_check(settings),
         _runtime_dir_check(settings.ssh_control_dir),
         _executable_check("ssh", "ssh"),
+        _provider_plugins_check(),
     ]
 
     ssm_hosts = [h for h in hosts if _is_ssm_host(h)]

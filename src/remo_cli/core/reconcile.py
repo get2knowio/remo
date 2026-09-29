@@ -96,28 +96,26 @@ class SyncScope:
             raise ScopeError(f"{self.type} sync scope must not carry a host or region")
 
     def in_update_scope(self, entry: KnownHost) -> bool:
-        if get_descriptor(self.type).name_format is NameFormat.HOST_SCOPED:
+        descriptor = get_descriptor(self.type)
+        if descriptor.name_format is NameFormat.HOST_SCOPED:
             return entry.type == self.type and entry.name.startswith(f"{self.host}/")
-        if self.type == "aws":
-            # A region-less legacy AWS entry matches every region's update
-            # scope, so a hit against the queried region self-heals it --
-            # but it can never be *removed* while region-less (see below).
-            return entry.type == "aws" and entry.region in (self.region, "")
+        if descriptor.region_scoped_sync:
+            # A region-less legacy entry (AWS, pre-region registries) matches
+            # every region's update scope, so a hit against the queried
+            # region self-heals it -- but it can never be *removed* while
+            # region-less (see below). Descriptor-driven since 027 (FR-010).
+            return entry.type == self.type and entry.region in (self.region, "")
         return entry.type == self.type
 
     def in_removal_scope(self, entry: KnownHost) -> bool:
-        if self.type == "aws":
-            return entry.type == "aws" and entry.region == self.region
+        if get_descriptor(self.type).region_scoped_sync:
+            return entry.type == self.type and entry.region == self.region
         return self.in_update_scope(entry)
 
     def describe(self) -> str:
         descriptor = get_descriptor(self.type)
-        if self.type == "aws":
-            return f"aws region {self.region}"
-        if self.type == "incus":
-            return f"incus host {self.host} (default project)"
-        if self.type == "proxmox":
-            return f"proxmox node {self.host} (this node only)"
+        if descriptor.sync_scope_description is not None:
+            return descriptor.sync_scope_description.format(host=self.host, region=self.region)
         return f"{descriptor.display_name.lower()} (all servers in project)"
 
 

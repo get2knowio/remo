@@ -562,12 +562,15 @@ def test_t8_known_provider_type_matches_builtin_descriptors() -> None:
     from remo_cli.core import provider_registry
     from remo_cli.web.api.hosts import KnownProviderType
 
-    descriptor_names = {d.type_name for d in provider_registry.all_descriptors()}
+    # builtin_descriptors(), not all_descriptors(): entry-point plugins (027)
+    # ride the `KnownProviderType | str` off-union path and must never
+    # perturb the exported enum (FR-004a/SC-011).
+    descriptor_names = {d.type_name for d in provider_registry.builtin_descriptors()}
     enum_names = {member.value for member in KnownProviderType}
 
     assert enum_names == descriptor_names, (
         "KnownProviderType (src/remo_cli/web/api/hosts.py) has drifted from the "
-        "built-in provider set reported by core/provider_registry.all_descriptors() "
+        "built-in provider set reported by core/provider_registry.builtin_descriptors() "
         f"(enum={sorted(enum_names)!r}, descriptors={sorted(descriptor_names)!r}). "
         "When a first-party provider is added (or removed), update "
         "KnownProviderType's members to match, then regenerate: "

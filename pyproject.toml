@@ -66,6 +66,21 @@ remo = "remo_cli.cli.main:main"
 # dependency that Dependabot would have waited on.
 exclude-newer = "7 days"
 
+[tool.uv.sources]
+remo-fixture-provider = { path = "tests/fixtures/remo_fixture_provider", editable = true }
+
+# PEP 735 dependency group, NOT an extra: `uv sync` installs the `dev` group by
+# default (so CI's `uv sync --all-extras` gets it), while nothing here reaches
+# the published wheel's metadata — the fixture distribution exists only in
+# this repository.
+[dependency-groups]
+dev = [
+    # The in-repo fixture provider plugin (tests/fixtures/remo_fixture_provider,
+    # spec 027): a real distribution with a `remo.providers` entry point, so
+    # the test environment exercises entry-point discovery end to end.
+    "remo-fixture-provider",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/remo_cli"]
 
