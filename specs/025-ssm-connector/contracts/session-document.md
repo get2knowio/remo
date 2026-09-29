@@ -13,8 +13,8 @@
     "target": {
       "type": "String",
       "description": "base64url (no padding) of {\"v\":1,\"host\":\"<host>\",\"project\":\"<project>\"}",
-      "allowedPattern": "^[A-Za-z0-9_-]{1,1024}$",
-      "maxChars": 1024
+      "allowedPattern": "^[A-Za-z0-9_-]{1,1000}$",
+      "maxChars": 1000
     }
   },
   "properties": {
@@ -33,7 +33,7 @@ Create it in an account: `remo connector document > remo-attach.json && aws ssm 
 - Exactly one parameter. Value: unpadded base64url of the compact UTF-8 JSON object `{"v":1,"host":H,"project":P}`.
 - `H`: a registry host name, `^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`, ≤ 63 characters.
 - `P`: a Remo project name: no control characters, no `/`, not starting with `.`, not `..`; ≤ 255 bytes UTF-8. Spaces, Unicode, quotes and a leading `-` are legal.
-- Encoded length 1–1024; alphabet `A–Z a–z 0–9 - _` only. Anything else is rejected by SSM before any command runs.
+- Encoded length 1–1000; alphabet `A–Z a–z 0–9 - _` only. Anything else is rejected by SSM before any command runs.
 - Client encoding (reference): `base64.urlsafe_b64encode(json.dumps(obj, separators=(",",":"), ensure_ascii=False).encode()).rstrip(b"=")`.
 
 ## Invocation

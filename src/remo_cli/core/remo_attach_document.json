@@ -6,8 +6,8 @@
     "target": {
       "type": "String",
       "description": "base64url (no padding) of {\"v\":1,\"host\":\"<host>\",\"project\":\"<project>\"}",
-      "allowedPattern": "^[A-Za-z0-9_-]{1,1024}$",
-      "maxChars": 1024
+      "allowedPattern": "^[A-Za-z0-9_-]{1,1000}$",
+      "maxChars": 1000
     }
   },
   "properties": {

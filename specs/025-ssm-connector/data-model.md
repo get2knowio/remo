@@ -14,7 +14,7 @@ The caller's request, carried as the document's single parameter.
 | `host` | str | MUST pass `core/validation.validate_name` (`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`, ≤ 63 chars) → else `invalid-name` |
 | `project` | str | MUST pass `core/validation.validate_project_name` **and** be ≤ 255 bytes UTF-8 → else `invalid-name` |
 
-Wire form: `base64url(json.dumps({"v":1,"host":…,"project":…}, separators=(",",":"), ensure_ascii=False).encode("utf-8"))` with `=` padding stripped. Decoding re-adds padding, decodes strict base64url, parses JSON, requires an object with exactly those three keys present (unknown extra keys are ignored within `v == 1`; a missing key is `bad-target`). Total encoded length ≤ 1024 (pattern); the launcher re-checks it.
+Wire form: `base64url(json.dumps({"v":1,"host":…,"project":…}, separators=(",",":"), ensure_ascii=False).encode("utf-8"))` with `=` padding stripped. Decoding re-adds padding, decodes strict base64url, parses JSON, requires an object with exactly those three keys present (unknown extra keys are ignored within `v == 1`; a missing key is `bad-target`). Total encoded length ≤ 1000 (pattern; RE2 caps counted repeats at 1000); the launcher re-checks it.
 
 Validation order in the launcher: length/pattern → decode → `v` → field presence/types → `host` name → `project` name → run-as → config → exposure. (Run-as is checked **first** at process start in practice; the codec is exercised independently by tests.)
 
@@ -57,7 +57,7 @@ Written by the role after registration; read by `remo connector status` (over SS
 
 ## E4. Session document (`src/remo_cli/core/remo_attach_document.json`)
 
-Constants in `core/connector.py`: `DOCUMENT_NAME = "remo-attach"`, `DOCUMENT_VERSION = 1`, `TARGET_PATTERN = r"^[A-Za-z0-9_-]{1,1024}$"`, `TARGET_MAX_CHARS = 1024`, `PROJECT_MAX_BYTES = 255`, `LAUNCHER_PATH = "/opt/remo-connector/bin/remo"`, `STATE_DIR = "/var/lib/remo-connector"`, `RUN_AS_USER_DEFAULT = "remo-connector"`. The file content is the contract in [contracts/session-document.md](contracts/session-document.md); a unit test asserts the constants and the file agree (one parameter, that pattern, that command).
+Constants in `core/connector.py`: `DOCUMENT_NAME = "remo-attach"`, `DOCUMENT_VERSION = 1`, `TARGET_PATTERN = r"^[A-Za-z0-9_-]{1,1000}$"`, `TARGET_MAX_CHARS = 1000`, `PROJECT_MAX_BYTES = 255`, `LAUNCHER_PATH = "/opt/remo-connector/bin/remo"`, `STATE_DIR = "/var/lib/remo-connector"`, `RUN_AS_USER_DEFAULT = "remo-connector"`. The file content is the contract in [contracts/session-document.md](contracts/session-document.md); a unit test asserts the constants and the file agree (one parameter, that pattern, that command).
 
 ## E5. Connector registry (`/var/lib/remo-connector/registry.json`)
 

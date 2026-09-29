@@ -45,7 +45,7 @@ Full contract: [`specs/025-ssm-connector/contracts/session-document.md`](../spec
 - The document is `InteractiveCommands`, PTY-backed, with exactly one
   parameter, `target`: the unpadded base64url encoding of
   `{"v":1,"host":"<host>","project":"<project>"}`.
-- The `allowedPattern` (`^[A-Za-z0-9_-]{1,1024}$`) admits only the base64url
+- The `allowedPattern` (`^[A-Za-z0-9_-]{1,1000}$`) admits only the base64url
   alphabet, so a raw (unencoded) name — which may legitimately contain
   spaces, Unicode, quotes, or a leading dash — can never reach the launcher
   as a literal string. SSM itself rejects anything else before any command
