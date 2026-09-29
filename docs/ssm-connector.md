@@ -213,12 +213,12 @@ aws ssm terminate-session --session-id <id>
 
 | Shape | Verified | Not yet verified |
 |-------|----------|-------------------|
-| Dedicated connector in a Proxmox LXC, reaching several Proxmox/Incus hosts on the same LAN | The role's structure (`.deb` install path, `no_log` on every activation-code task, `default()` on registered variables, the host-key trust logic) is statically tested and the playbooks pass `--syntax-check` | Any live run of the enrollment automation (including a second-run idempotency check), live SSM registration, attach through a real session, agent persistence in an **unprivileged** LXC across container restarts (`/etc/machine-id`/`/var/lib/amazon/ssm/registration` persistence is a known AWS troubleshooting failure mode and SSM Agent inside an unprivileged LXC is **not an AWS-documented configuration**) — tracked in issue #207 |
-| Connector directly on an isolated Hetzner host, targeting itself (self-target) | The self-target `host: "localhost"` registry mapping and the launcher's ordinary (non-special-cased) loopback SSH path are unit-tested | Live enrollment and attach, and whether a custom `InteractiveCommands` document honors Run As on a real hybrid node — tracked in issue #207 |
+| Dedicated connector in a Proxmox LXC, reaching several Proxmox/Incus hosts on the same LAN | **Live, 2026-09-29** (go-remo/remo-platform connector lab): enrollment of an unprivileged Ubuntu 24.04 LXC on Proxmox 9.1 by hybrid activation; SSM Agent 3.3 registers and stays Online; idempotent re-run; `remo-attach` session lands in the project's Zellij session; **Run As is honored for the custom `InteractiveCommands` document** (agent log `RunAsEnabled: true, RunAsUser: remo-connector`); unexposed project → one `remo-connector-error: not-exposed` line; killing the client leaves Zellij running; every other document denied by the caller policy | Reaching *other* hosts from the connector (the lab exposed the connector itself); interactive resize/Unicode/full-screen TUIs — tracked in issue #207 |
+| Connector directly on an isolated Hetzner host, targeting itself (self-target) | The self-target mechanics (loopback registry entry, ordinary SSH path, run-as isolation) — proven live on the LXC above, which exposed itself | The same on a real Hetzner host — tracked in issue #207 |
 
-Both shapes' live proof, plus resize/Unicode/full-screen-TUI checks and the
-run-as identity proof, are the manual gate (SC-008) — tracked in issue #207
-and recorded here once it runs.
+The run-as identity proof and the LXC shape's live proof were recorded on
+2026-09-29 (issue #207); resize/Unicode/full-screen-TUI checks and the
+Hetzner shape remain part of the manual gate (SC-008).
 
 ## Cost
 
