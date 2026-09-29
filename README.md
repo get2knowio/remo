@@ -8,13 +8,47 @@ Spin up a fully-configured remote development environment in minutes. One comman
 # From PyPI (recommended)
 uv tool install remo-cli
 
-# Or with pip
-pip install remo-cli
+# Or with pipx
+pipx install remo-cli
 ```
+
+Or let the installer pick whichever of the two you already have:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+```
+
+Plain `pip install remo-cli` works inside a virtualenv, but not against a system
+Python on distributions that mark it externally-managed (PEP 668 — Ubuntu 24.04,
+Debian 12, Fedora 38+), where it refuses outright. `uv tool` and `pipx` both
+sidestep that by giving the CLI its own environment.
 
 Ansible collections required by the provider playbooks install automatically the
 first time you run a provider command (e.g. `remo incus create`); no separate
 setup step is needed.
+
+### Pre-release builds
+
+Release candidates are never published to PyPI. They install from the wheel
+attached to their GitHub pre-release:
+
+```bash
+# Newest pre-release
+curl -fsSL .../install.sh | bash -s -- --pre-release
+
+# A specific one
+curl -fsSL .../install.sh | bash -s -- --pre-release 4.4.0rc3
+
+# Print the command it would run, and change nothing
+curl -fsSL .../install.sh | bash -s -- --pre-release --dry-run
+```
+
+Return to the released build with `uv tool install remo-cli --force`.
+
+If you are used to reaching for uv's `--prerelease allow`, it will not work
+here. That flag widens which versions on PyPI are acceptable; it does not change
+where uv looks. With no release candidate on PyPI to find, it resolves to the
+latest stable release and reports success.
 
 ### Prerequisites
 
