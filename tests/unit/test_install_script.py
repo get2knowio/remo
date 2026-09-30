@@ -103,12 +103,41 @@ class TestChannelRouting:
     def test_no_version_installs_the_package_from_pypi(self, fake_path) -> None:
         result = _run(path=fake_path(uv=True))
         assert result.returncode == 0, result.stderr
-        assert result.stdout.strip() == 'uv tool install "remo-cli"'
+        assert result.stdout.strip() == 'uv tool install --force "remo-cli"'
 
-    def test_no_version_does_not_force(self, fake_path) -> None:
-        """A bare re-run stays the no-op it is today (Principle VII)."""
-        result = _run(path=fake_path(uv=True))
-        assert "--force" not in result.stdout
+    @pytest.mark.parametrize(
+        "args",
+        [[], ["--version", "4.3.6"], ["--prerelease", "4.4.0rc3"]],
+        ids=["bare", "version", "prerelease"],
+    )
+    def test_force_is_always_passed(self, fake_path, args: list[str]) -> None:
+        """Including a bare run with no version — this assertion was inverted,
+        and the inversion was a real bug.
+
+        `uv tool install remo-cli` over an existing install keeps the installed
+        version and still prints "Installed 2 executables", so a user on 4.3.6
+        re-running the installer to pick up 4.4.0 stayed on 4.3.6 with the run
+        looking successful. `pipx install` behaves the same way.
+
+        Re-doing the work on every run is the point: the *outcome* is idempotent,
+        which is what Principle VII asks for. Making the run itself a no-op is
+        what produced the silent-no-upgrade.
+        """
+        result = _run(*args, path=fake_path(uv=True))
+        assert result.returncode == 0, result.stderr
+        assert "--force" in result.stdout, (
+            "without --force an existing install is never upgraded, and the run "
+            "still reports success"
+        )
+
+    def test_reports_what_changed(self) -> None:
+        """A version that did not move after an upgrade run is the symptom of the
+        bug above, so the script has to say which version it ended on rather than
+        leaving the reader to infer it."""
+        source = _script()
+        assert "installed_version()" in source
+        assert "nothing changed" in source, "a no-change run must say so"
+        assert "Updated" in source, "a version change must be reported"
 
     def test_final_version_pins_against_pypi(self, fake_path) -> None:
         result = _run("--version", "4.3.6", path=fake_path(uv=True))
