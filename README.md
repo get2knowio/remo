@@ -5,27 +5,57 @@ Spin up a fully-configured remote development environment in minutes. One comman
 ## Installation
 
 ```bash
-# From PyPI (recommended)
-uv tool install remo-cli
-
-# Or with pipx
-pipx install remo-cli
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 ```
 
-Or let the installer pick whichever of the two you already have:
+That is the shortest path, and it does a few things you would otherwise do by
+hand: it uses `uv` or `pipx` if you already have one, installs `uv` if you have
+neither, removes a leftover git-based install from older versions, and offers to
+set up shell completion.
+
+Nothing is installed silently — it prints what it is about to run, and
+`--dry-run` prints it without running anything.
+
+### Or install it yourself
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+uv tool install remo-cli      # recommended
+pipx install remo-cli         # equivalent
 ```
 
 Plain `pip install remo-cli` works inside a virtualenv, but not against a system
 Python on distributions that mark it externally-managed (PEP 668 — Ubuntu 24.04,
 Debian 12, Fedora 38+), where it refuses outright. `uv tool` and `pipx` both
-sidestep that by giving the CLI its own environment.
+sidestep that by giving the CLI its own environment, which is why the installer
+never falls back to bare `pip`.
 
 Ansible collections required by the provider playbooks install automatically the
 first time you run a provider command (e.g. `remo incus create`); no separate
 setup step is needed.
+
+### Installer options
+
+Pass options after `--`, which is how arguments reach a script piped into
+`bash`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --help
+```
+
+| Option | What it does |
+|--------|--------------|
+| `--version <version>` | Install an exact version. A final version (`4.3.6`) comes from PyPI; a pre-release version (`4.4.0rc3`) comes from its GitHub pre-release. |
+| `--prerelease [<version>]` | Install a pre-release. With no version, the newest one. `--pre-release` also works. |
+| `--dry-run` | Print the install command and exit, changing nothing. |
+| `--help` | Show the options. |
+
+Each has an environment twin, for CI or a dotfile: `REMO_VERSION`,
+`REMO_PRERELEASE`, and `REMO_REPO_SLUG` to install from a fork. An explicit flag
+wins over the environment.
+
+On Windows, the installer stops with a pointer to [WSL2](#windows) rather than
+installing — including under Git Bash, MSYS2 or Cygwin, where it would otherwise
+succeed and then fail on the first command.
 
 ### Pre-release builds
 
@@ -34,13 +64,16 @@ attached to their GitHub pre-release:
 
 ```bash
 # Newest pre-release
-curl -fsSL .../install.sh | bash -s -- --pre-release
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --prerelease
 
 # A specific one
-curl -fsSL .../install.sh | bash -s -- --pre-release 4.4.0rc3
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --prerelease 4.4.0rc3
 
-# Print the command it would run, and change nothing
-curl -fsSL .../install.sh | bash -s -- --pre-release --dry-run
+# See the command without running it
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --prerelease --dry-run
 ```
 
 Return to the released build with `uv tool install remo-cli --force`.
@@ -50,12 +83,20 @@ here. That flag widens which versions on PyPI are acceptable; it does not change
 where uv looks. With no release candidate on PyPI to find, it resolves to the
 latest stable release and reports success.
 
+Each pre-release also publishes a matching container image for the web service,
+tagged by its exact version and never `latest`:
+
+```yaml
+image: ghcr.io/get2knowio/remo-web:4.4.0rc3
+```
+
 ### Prerequisites
 
 - Linux or macOS (see [Windows](#windows) below)
 - Python 3.11+
 - SSH key pair (`~/.ssh/id_rsa`)
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
+- [uv](https://docs.astral.sh/uv/) (recommended) or [pipx](https://pipx.pypa.io/)
+  — the installer sets up `uv` for you if you have neither
 
 #### Windows
 
