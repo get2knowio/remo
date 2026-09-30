@@ -6,11 +6,10 @@
 #   stable      -> PyPI, resolved by uv/pipx
 #   pre-release -> the wheel attached to a GitHub pre-release, by direct URL
 #
-# Usage:
+# Usage — see `--help` for the full set. URLs are written out rather than
+# elided, here and there, because `.../install.sh` cannot be pasted:
 #   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
-#   curl -fsSL .../install.sh | bash -s -- --version 4.3.6
-#   curl -fsSL .../install.sh | bash -s -- --prerelease
-#   curl -fsSL .../install.sh | bash -s -- --prerelease 4.4.0rc3
+#   …the same, with: -s -- --version 4.3.6 | -s -- --prerelease [VERSION]
 
 set -e
 
@@ -80,8 +79,12 @@ while [[ $# -gt 0 ]]; do
 remo installer — stable from PyPI, pre-releases from GitHub releases
 
 USAGE:
-    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
-    curl -fsSL .../install.sh | bash -s -- [OPTIONS]
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+      | bash
+
+    # Options need `--`, which is how arguments reach a script piped into bash.
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+      | bash -s -- [OPTIONS]
 
 OPTIONS:
     --version <version>     Install a specific version. A final version
@@ -108,17 +111,29 @@ used: on distributions that mark their Python externally-managed (PEP 668,
 e.g. Ubuntu 24.04) it refuses to install anything.
 
 EXAMPLES:
+    # Each block below is self-contained: select it and paste it. The URL is
+    # written out every time on purpose — an elided `.../install.sh` cannot be
+    # pasted, and a shared `$URL` variable breaks if you copy only one block.
+
     # Latest stable
-    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+      | bash
 
     # A specific stable version
-    curl -fsSL .../install.sh | bash -s -- --version 4.3.6
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+      | bash -s -- --version 4.3.6
 
     # Newest pre-release
-    curl -fsSL .../install.sh | bash -s -- --prerelease
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+      | bash -s -- --prerelease
 
     # A specific pre-release
-    curl -fsSL .../install.sh | bash -s -- --prerelease 4.4.0rc3
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+      | bash -s -- --prerelease 4.4.0rc3
+
+    # See what it would run, without running it
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+      | bash -s -- --prerelease --dry-run
 EOF
             exit 0
             ;;
