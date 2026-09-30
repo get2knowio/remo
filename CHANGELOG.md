@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.4.1](https://github.com/get2knowio/remo/compare/v4.4.0...v4.4.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* **install:** upgrade an existing install instead of silently doing nothing ([#236](https://github.com/get2knowio/remo/issues/236)) ([b3dac8c](https://github.com/get2knowio/remo/commit/b3dac8ce51e99300129e4e21bbf946a63a4f1cc8))
+
 ## [4.4.0](https://github.com/get2knowio/remo/compare/v4.3.6...v4.4.0) (2026-09-30)
 
 
