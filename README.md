@@ -16,6 +16,10 @@ set up shell completion.
 Nothing is installed silently — it prints what it is about to run, and
 `--dry-run` prints it without running anything.
 
+**Re-run the same command to upgrade.** It reports what changed
+(`Updated remo-cli: 4.3.6 -> 4.4.0`), or says so plainly when you are already
+current.
+
 ### Or install it yourself
 
 ```bash

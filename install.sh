@@ -316,6 +316,22 @@ install_spec() {
 }
 
 # Install remo-cli
+# Currently-installed version, or empty if not installed. Best-effort: never
+# fails the install, and both spellings are normalised (uv prints `v4.4.0`,
+# pipx prints `4.4.0`).
+#
+# Exists so a run is legible. The silent-no-upgrade bug this guards against was
+# invisible precisely because nothing reported the before and after — uv printed
+# "Installed 2 executables" either way.
+installed_version() {
+    local v=""
+    case "${INSTALLER}" in
+        uv)   v=$(uv tool list 2>/dev/null | awk -v p="${PACKAGE}" '$1==p {print $2; exit}') ;;
+        pipx) v=$(pipx list --short 2>/dev/null | awk -v p="${PACKAGE}" '$1==p {print $2; exit}') ;;
+    esac
+    printf '%s' "${v#v}"
+}
+
 install_remo() {
     local spec
     spec="$(install_spec)"
@@ -327,10 +343,19 @@ install_remo() {
         *)    print_error "No installer selected (internal error)."; exit 1 ;;
     esac
 
-    # --force only when a version was asked for: switching between versions
-    # needs it, while a bare re-run stays the no-op it is today.
-    [ -n "${VERSION}" ] && cmd+=(--force)
-    cmd+=("${spec}")
+    # ALWAYS --force, including a bare run with no version.
+    #
+    # Without it, `uv tool install remo-cli` over an existing install keeps the
+    # installed version and still prints "Installed 2 executables", so the run
+    # looks successful and upgrades nothing. Someone on 4.3.6 re-running the
+    # installer to pick up 4.4.0 stays on 4.3.6 with no indication why. `pipx
+    # install` behaves the same way.
+    #
+    # This does re-do work on every run, which is the point: the *outcome* is
+    # idempotent — after any run you have the version you asked for — and that
+    # is what Principle VII asks for. Skipping the work to make the run itself a
+    # no-op is what produced the silent-no-upgrade bug.
+    cmd+=(--force "${spec}")
 
     if [ "${DRY_RUN}" = true ]; then
         printf '%s "%s"\n' "${cmd[*]:0:${#cmd[@]}-1}" "${spec}"
@@ -338,12 +363,33 @@ install_remo() {
     fi
 
     echo ""
-    print_info "Installing ${PACKAGE}${VERSION:+ ${VERSION}}..."
+    local before
+    before="$(installed_version)"
+    if [ -n "${before}" ]; then
+        print_info "Installing ${PACKAGE}${VERSION:+ ${VERSION}} (replacing ${before})..."
+    else
+        print_info "Installing ${PACKAGE}${VERSION:+ ${VERSION}}..."
+    fi
 
     if ! "${cmd[@]}"; then
         print_error "Installation failed."
         printf '  Try running manually: %s "%s"\n' "${cmd[*]:0:${#cmd[@]}-1}" "${spec}"
         exit 1
+    fi
+
+    # Say what actually happened. An unchanged version after an upgrade run is
+    # the symptom of the bug the --force above exists to prevent, so name it
+    # rather than leaving the reader to compare two numbers.
+    local after
+    after="$(installed_version)"
+    if [ -n "${after}" ]; then
+        if [ -z "${before}" ]; then
+            print_success "Installed ${PACKAGE} ${after}."
+        elif [ "${before}" = "${after}" ]; then
+            print_info "${PACKAGE} ${after} was already installed — nothing changed."
+        else
+            print_success "Updated ${PACKAGE}: ${before} -> ${after}."
+        fi
     fi
 }
 
