@@ -97,6 +97,35 @@ def test_every_dockerfile_is_covered() -> None:
     )
 
 
+def test_every_composite_action_is_covered() -> None:
+    """A composite action whose pinned `uses:` SHAs nobody watches.
+
+    `directory: "/"` for the github-actions ecosystem covers
+    `.github/workflows/` plus a ROOT-level `action.yml`, and nothing else —
+    `.github/actions/**/action.yml` is outside it whatever the directory value.
+    So moving shared steps into a composite action, which is otherwise a plain
+    win, silently freezes every pin it holds unless a directory entry comes with
+    it. An unwatched pin is invisible in exactly the way an unwatched base image
+    is: it simply never produces a PR.
+    """
+    watched = {
+        (REPO_ROOT / d.lstrip("/")).resolve()
+        for eco, d in _pairs()
+        if eco == "github-actions"
+    }
+    on_disk = {
+        p.parent.resolve()
+        for pattern in ("action.yml", "action.yaml")
+        for p in (REPO_ROOT / ".github" / "actions").rglob(pattern)
+    }
+    missing = on_disk - watched
+    assert not missing, (
+        "these composite actions are not covered by any dependabot "
+        "github-actions entry, so their pinned SHAs will never be updated: "
+        + ", ".join(sorted(str(p.relative_to(REPO_ROOT)) for p in missing))
+    )
+
+
 def test_cooldown_applies_to_every_ecosystem() -> None:
     """The supply-chain cooldown (#39) should not be half-applied.
 

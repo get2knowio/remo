@@ -82,9 +82,20 @@ jobs:
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "Building remo-web:$VERSION from $REF"
 
+      # TWO checkouts, and the order matters.
+      #
+      # Root = this workflow's own ref, which is where `uses: ./…` below is read
+      # from: a local composite action is resolved from the checked-out WORKING
+      # TREE, not from the commit the workflow came from. Checking the rc-* tag
+      # out over the root would therefore break backfilling an image for any tag
+      # cut before that action existed — rc-4.4.0rc1..rc3 among them.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # src/ = the ref actually being built.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ steps.ver.outputs.ref }}
+          path: src
 
       - name: Stamp version into pyproject.toml
         env:
@@ -93,45 +104,23 @@ jobs:
           set -euo pipefail
           # Same stamp dev-build.yml applies before `uv build`: the wheel the
           # Dockerfile builds from this checkout reports the pre-release version.
-          sed -i -E "0,/^version = \".*\"/s//version = \"${VERSION}\"/" pyproject.toml
-          grep -m1 '^version = ' pyproject.toml
+          sed -i -E "0,/^version = \".*\"/s//version = \"${VERSION}\"/" src/pyproject.toml
+          grep -m1 '^version = ' src/pyproject.toml
 
-      # Needed for the linux/arm64 half of the manifest: GitHub's runners are
-      # amd64, so arm64 is cross-built under emulation.
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
-
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Derive image tags and labels
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
-        with:
-          images: ghcr.io/${{ github.repository_owner }}/remo-web
-          # latest=false and a single raw tag: a pre-release image is reachable
-          # only by its exact version, never by `latest` or `major.minor`.
-          flavor: latest=false
-          tags: |
-            type=raw,value=${{ steps.ver.outputs.version }}
-
-      - name: Build and push (amd64 + arm64)
+      # The build itself is .github/actions/publish-web-image, shared with
+      # release.yml. A single raw tag: a pre-release image is reachable only by
+      # its exact version, never by `latest` or `major.minor`. `type=semver` is
+      # not usable here — this workflow is dispatched, so `github.ref` is the
+      # branch, not a version tag.
+      - name: Build and push the remo-web image
         id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        uses: ./.github/actions/publish-web-image
         with:
-          context: .
-          file: docker/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          # Includes org.opencontainers.image.source, which is what links the
-          # published GHCR package back to this repository.
-          labels: ${{ steps.meta.outputs.labels }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          context: src
+          dockerfile: src/docker/Dockerfile
+          tag-spec: |
+            type=raw,value=${{ steps.ver.outputs.version }}
 
       - name: Report the pinnable reference
         env:

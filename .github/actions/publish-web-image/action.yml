@@ -1,0 +1,99 @@
+name: Publish the remo-web image
+description: >
+  Build and push ghcr.io/<owner>/remo-web for one version, multi-arch
+  (linux/amd64 + linux/arm64). The single image-publishing path, shared by
+  release.yml (stable, from a v* tag) and rc-image.yml (pre-release, from an
+  rc-* tag).
+
+# Why this exists: the five docker/* steps below were duplicated verbatim in
+# release.yml and rc-image.yml, including their pinned SHAs. Dependabot proposes
+# a bump per file, so PR #212 had to raise the same three pins in both — and a
+# bump that landed in one file only would leave the two paths building with
+# different tooling, with nothing to catch it. Same failure class as the
+# codeql-action mismatch that tests/unit/test_workflow_action_pins.py was
+# written for.
+#
+# What is deliberately NOT here: resolving the version, checking out a ref, and
+# stamping pyproject.toml. Those differ by channel for real reasons — a stable
+# version is already committed by release-please, whereas a pre-release version
+# exists only as a workflow input — so each caller keeps its own.
+
+inputs:
+  tag-spec:
+    description: >
+      The `tags:` value for docker/metadata-action. Callers pass their own
+      because the channels tag differently on purpose: stable gets
+      {{version}} + {{major}}.{{minor}} + conditionally `latest`, while a
+      pre-release gets its exact version and nothing else.
+    required: true
+  github-token:
+    description: >
+      Token for the GHCR login. Passed in because a composite action cannot
+      read `secrets.*` itself.
+    required: true
+  context:
+    description: >
+      Build context directory. Defaults to the workspace root, which is what
+      release.yml wants. rc-image.yml passes a subdirectory, because a local
+      `uses: ./…` action is read from the checked-out WORKING TREE — so that
+      workflow has to keep its own tree at the root (to find this action) and
+      check the target rc-* tag out beside it. Without that, backfilling an
+      image for a tag cut before this action existed would fail with "action
+      not found".
+    required: false
+    default: "."
+  dockerfile:
+    description: Path to the Dockerfile, relative to the workspace root.
+    required: false
+    default: docker/Dockerfile
+
+outputs:
+  digest:
+    description: The pushed manifest's digest, for pinning by digest.
+    value: ${{ steps.build.outputs.digest }}
+  tags:
+    description: The fully-resolved tags that were pushed, newline-separated.
+    value: ${{ steps.meta.outputs.tags }}
+
+runs:
+  using: composite
+  steps:
+    # Needed for the linux/arm64 half of the manifest: GitHub's runners are
+    # amd64, so arm64 is cross-built under emulation. This is what dominates
+    # the job's runtime, hence the 60-minute timeout at both call sites.
+    - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
+
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+    - name: Log in to GHCR
+      uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ inputs.github-token }}
+
+    - name: Derive image tags and labels
+      id: meta
+      uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+      with:
+        images: ghcr.io/${{ github.repository_owner }}/remo-web
+        # Hardcoded, not an input: this disables the action's automatic `latest`
+        # for BOTH channels. Stable re-adds it through an explicit raw tag in its
+        # tag-spec; a pre-release has no way to reach `latest` at all, which is
+        # what makes publishing an RC image safe by default (dev-build.yml's
+        # `image` input). Making it configurable would make that reachable.
+        flavor: latest=false
+        tags: ${{ inputs.tag-spec }}
+
+    - name: Build and push (amd64 + arm64)
+      id: build
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.dockerfile }}
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        # Includes org.opencontainers.image.source, which is what links the
+        # published GHCR package back to this repository.
+        labels: ${{ steps.meta.outputs.labels }}

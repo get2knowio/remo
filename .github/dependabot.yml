@@ -33,7 +33,17 @@ updates:
 
   # GitHub Actions workflow versions
   - package-ecosystem: "github-actions"
-    directory: "/"
+    # "/" covers .github/workflows/ and a ROOT-level action.yml — and nothing
+    # else. Composite actions under .github/actions/** fall outside it whatever
+    # the directory value, so each needs its own entry or its pinned `uses:`
+    # SHAs are never bumped again. Moving the docker/* steps into
+    # publish-web-image without this would have silently frozen five pins,
+    # which is worse than the duplication it removed.
+    # tests/unit/test_dependabot_config.py::test_every_composite_action_is_covered
+    # fails if a new composite action is added without a line here.
+    directories:
+      - "/"
+      - "/.github/actions/publish-web-image"
     schedule:
       interval: "weekly"
       day: "monday"
