@@ -392,6 +392,22 @@ made conditional to get a build green — fix the code or amend the gate by PR.
 | Packaging | wheel install smoke, Docker amd64+arm64 | Distribution integrity |
 | Security | CodeQL, dependency review | Supply chain |
 
+Provider smoke tests (`smoke-test.yml`) are deliberately **not** in that table —
+they are not all merge gates, because they provision real instances and what runs
+when is a cost decision:
+
+| Trigger | Providers | Cost |
+|---------|-----------|------|
+| pull request | `incus` only | runner minutes (local container) |
+| push to `main`, weekly cron | `aws` + `hetzner` + `incus` | aws/hetzner are billable |
+| `workflow_dispatch` | whichever `provider` is chosen | as chosen |
+
+So a PR still proves the real create → configure → destroy path, for free, while
+the billable providers validate `main` right after merge. Paths exclude
+`src/remo_cli/web/**` — the web service has no part in provisioning.
+`tests/unit/test_smoke_test_scope.py` pins the split; the asymmetry between the
+jobs is intentional and must not be "made consistent".
+
 `ruff` and `mypy` share the one `Lint & Types` job. That job must keep
 installing the `web` extra (`uv sync --all-extras`): with
 `ignore_missing_imports = true`, an uninstalled FastAPI/pydantic would degrade

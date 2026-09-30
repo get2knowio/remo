@@ -1,10 +1,26 @@
 name: Smoke Tests
 
+# These provision real instances, so what triggers them is a cost decision as
+# much as a coverage one:
+#
+#   pull_request            -> `incus` only (local container, free)
+#   push to main / weekly   -> aws + hetzner + incus (aws and hetzner are billable)
+#   workflow_dispatch       -> whichever `provider` is chosen
+#
+# The paid providers are gated off pull_request in each job's `if:` below.
+#
+# `src/remo_cli/web/**` is excluded: the web service plays no part in
+# provisioning, so a console-only change (#184, #187, #189) should not provision
+# anything. Negation is order-sensitive — the `!` line must follow the broad
+# `src/remo_cli/**` it narrows.
+#
+# tests/unit/test_smoke_test_scope.py pins all of this.
 on:
   pull_request:
     branches: [main]
     paths:
       - 'src/remo_cli/**'
+      - '!src/remo_cli/web/**'
       - 'ansible/**'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -13,6 +29,7 @@ on:
     branches: [main]
     paths:
       - 'src/remo_cli/**'
+      - '!src/remo_cli/web/**'
       - 'ansible/**'
       - 'pyproject.toml'
       - 'uv.lock'
@@ -38,8 +55,13 @@ jobs:
   # AWS EC2 — SSM access
   # ===========================================================================
   aws:
+    # Not on pull requests: this provisions a real, billable instance.
+    # PRs are covered by the `incus` job below, which exercises the same
+    # create -> configure -> destroy path in a local container for free.
+    # aws/hetzner run on push to main, weekly, and on manual dispatch.
     if: >-
       github.actor != 'dependabot[bot]' &&
+      github.event_name != 'pull_request' &&
       (github.event_name != 'workflow_dispatch' ||
        github.event.inputs.provider == 'all' ||
        github.event.inputs.provider == 'aws')
@@ -207,8 +229,13 @@ jobs:
   # Hetzner Cloud
   # ===========================================================================
   hetzner:
+    # Not on pull requests: this provisions a real, billable instance.
+    # PRs are covered by the `incus` job below, which exercises the same
+    # create -> configure -> destroy path in a local container for free.
+    # aws/hetzner run on push to main, weekly, and on manual dispatch.
     if: >-
       github.actor != 'dependabot[bot]' &&
+      github.event_name != 'pull_request' &&
       (github.event_name != 'workflow_dispatch' ||
        github.event.inputs.provider == 'all' ||
        github.event.inputs.provider == 'hetzner')
@@ -327,6 +354,9 @@ jobs:
   # Incus / LXC (local on runner)
   # ===========================================================================
   incus:
+    # DOES run on pull requests, unlike aws/hetzner: the container is local
+    # to the runner, so it costs nothing beyond runner minutes while still
+    # proving the real provisioning path end to end.
     if: >-
       github.actor != 'dependabot[bot]' &&
       (github.event_name != 'workflow_dispatch' ||
