@@ -1,5 +1,29 @@
 # Changelog
 
+## [4.4.0](https://github.com/get2knowio/remo/compare/v4.3.6...v4.4.0) (2026-09-30)
+
+
+### Features
+
+* **ansible:** make deacon the default devcontainer runtime via a host-resolved `auto` (spec 026) ([#214](https://github.com/get2knowio/remo/issues/214)) ([68ae66f](https://github.com/get2knowio/remo/commit/68ae66f6172d41268bac7e38fcdd1cd167339d53))
+* **ci:** build promotable RC wheels and attach them to a GitHub pre-release ([#198](https://github.com/get2knowio/remo/issues/198)) ([1192454](https://github.com/get2knowio/remo/commit/11924549f7c740ed30b852cb873e728a5ca590b6))
+* **ci:** publish the remo-web image for a pre-release (rc-image.yml) ([#199](https://github.com/get2knowio/remo/issues/199)) ([5780f3b](https://github.com/get2knowio/remo/commit/5780f3b4ade70b9b1e7eaea95acfd73024150623))
+* **connector:** SSM connector — remo-attach session document, launcher, enrollment (spec 025) ([#206](https://github.com/get2knowio/remo/issues/206)) ([3f020ee](https://github.com/get2knowio/remo/commit/3f020ee0c99ff934d6d2f2910168750fb1bf5c4f))
+* **providers:** entry-point provider discovery and a descriptor-driven registry parse side (spec 027) ([#215](https://github.com/get2knowio/remo/issues/215)) ([ea73786](https://github.com/get2knowio/remo/commit/ea73786c54d72990e2ebc6e1ecc2f62f9b0ddb7f))
+* **release:** publish the RC container image by default ([#230](https://github.com/get2knowio/remo/issues/230)) ([6292ffe](https://github.com/get2knowio/remo/commit/6292ffe1d3730dd7b9f3ba5b37789fc457a27a6e))
+* **web:** console host management + bi-directional registry sync (remo web sync) ([#189](https://github.com/get2knowio/remo/issues/189)) ([dbae890](https://github.com/get2knowio/remo/commit/dbae89091eff3261ae3078a0829783e8b4157cd8))
+* **web:** host detail page, maintenance surface, and rail favorites ([#187](https://github.com/get2knowio/remo/issues/187)) ([a25e5e5](https://github.com/get2knowio/remo/commit/a25e5e5cb83424fd0ac6b85cf67933977292cf4b))
+* **web:** read-only console diagnostics snapshot (Settings + window.__remo) ([#184](https://github.com/get2knowio/remo/issues/184)) ([08faed5](https://github.com/get2knowio/remo/commit/08faed56eb28e0949826413fd3ce7932df65f1b3))
+* **web:** tolerate intermittent instance connectivity in the console (spec 024) ([#205](https://github.com/get2knowio/remo/issues/205)) ([680dbf7](https://github.com/get2knowio/remo/commit/680dbf7f195f204e75ca8ca2ce0a8973679951c3))
+
+
+### Bug Fixes
+
+* **cli:** refuse native Windows with an actionable message, not a traceback ([#226](https://github.com/get2knowio/remo/issues/226)) ([e2a596a](https://github.com/get2knowio/remo/commit/e2a596aea68b3ab45cac20c19d3be9c7e0916dec))
+* **connector:** cap the remo-attach target pattern at {1,1000} for SSM's RE2 engine (spec 025) ([#213](https://github.com/get2knowio/remo/issues/213)) ([e680e26](https://github.com/get2knowio/remo/commit/e680e2652e8382862fdc70a6e549ed6a1ca64698))
+* **install:** install pre-releases from GitHub, not from a PyPI flag ([#227](https://github.com/get2knowio/remo/issues/227)) ([93353af](https://github.com/get2knowio/remo/commit/93353af0efb7c05be9bc1307ebc2cec84567a2ce))
+* **release:** anchor pre-release tag detection instead of substring matching ([#229](https://github.com/get2knowio/remo/issues/229)) ([afb0a70](https://github.com/get2knowio/remo/commit/afb0a70736b58384399be7de4bb3d61018d74d4d))
+
 ## [4.3.6](https://github.com/get2knowio/remo/compare/v4.3.5...v4.3.6) (2026-08-16)
 
 
