@@ -128,7 +128,8 @@ curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
   | bash -s -- --prerelease 2.3.0rc1
 
 # or the newest pre-release, whatever it is
-curl -fsSL .../install.sh | bash -s -- --prerelease
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --prerelease
 ```
 
 Because this is reversible — delete the pre-release, re-cut the version — it is

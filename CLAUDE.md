@@ -298,10 +298,12 @@ uv tool install remo-cli --force                                      # back to 
 # Picks uv, or pipx when that is what is already installed; never bare pip
 # (PEP 668). Refuses Git Bash/MSYS2/Cygwin before installing anything.
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
-curl -fsSL .../install.sh | bash -s -- --prerelease            # newest GitHub pre-release
-curl -fsSL .../install.sh | bash -s -- --prerelease 4.4.0rc3   # a specific one
-curl -fsSL .../install.sh | bash -s -- --prerelease --dry-run  # print the command, change nothing
-REMO_VERSION=4.4.0rc3 curl -fsSL .../install.sh | bash          # env twin of --version
+# URLs in full, never elided: an elided one cannot be pasted.
+INSTALL_URL=https://raw.githubusercontent.com/get2knowio/remo/main/install.sh
+curl -fsSL "$INSTALL_URL" | bash -s -- --prerelease            # newest GitHub pre-release
+curl -fsSL "$INSTALL_URL" | bash -s -- --prerelease 4.4.0rc3   # a specific one
+curl -fsSL "$INSTALL_URL" | bash -s -- --prerelease --dry-run  # print the command, change nothing
+REMO_VERSION=4.4.0rc3 curl -fsSL "$INSTALL_URL" | bash         # env twin of --version
 # Flag spelling, env-var names and grep/sed release resolution are kept in
 # parity with try-hola/hola's cli-install.sh; `--pre-release` stays an alias.
 
