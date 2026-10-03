@@ -431,18 +431,37 @@
               fi
               unset _exec_cmd _bash_flags
 
-              # After exiting devcontainer, stop the container to free resources
+              # After exiting devcontainer, stop the container(s) to free resources.
+              #
+              # `docker ps -q` prints one id PER LINE. This used to capture them
+              # into a scalar and pass the whole capture as ONE quoted argument —
+              # a newline-joined string docker rejects. With the error hidden by
+              # a trailing `|| true`, the stop silently became a no-op in exactly
+              # the case it mattered, more than one container left for this
+              # project, so duplicates compounded instead of being cleaned up.
+              # Read into an array and stop every one.
+              #
+              # NOTE: the bash array-length form (dollar, brace, hash) is
+              # deliberately avoided below. Ansible templates this block through
+              # Jinja2, which reads a brace-hash sequence as a comment opener and
+              # swallows everything after it; star expansion is the safe
+              # emptiness check. See the docstring of
+              # tests/unit/test_ansible_templates.py.
               echo ""
               echo "Stopping devcontainer..."
-              _container_id=$(docker ps -q --filter "label=devcontainer.local_folder=$_project_dir")
-              if [[ -n "$_container_id" ]]; then
-                  docker stop "$_container_id" >/dev/null 2>&1 || true
+              mapfile -t _container_ids < <(docker ps -q --filter "label=devcontainer.local_folder=$_project_dir")
+              if [[ -n "${_container_ids[*]}" ]]; then
+                  # Reported rather than silenced: a stop that fails while
+                  # claiming success is what hid this bug in the first place.
+                  if ! docker stop "${_container_ids[@]}" >/dev/null 2>&1; then
+                      echo "Warning: could not stop container(s): ${_container_ids[*]}" >&2
+                  fi
               fi
               
               # Exit the zellij session to return to project menu
               exit 0
           fi
-          unset _project_dir _hash_dir _hash_file _rebuild_flag _current_hash _stored_hash _container_id
+          unset _project_dir _hash_dir _hash_file _rebuild_flag _current_hash _stored_hash _container_ids
       fi
     create: true
     owner: "{{ remo_user }}"
