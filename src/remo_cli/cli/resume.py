@@ -83,7 +83,8 @@ def resume(
     from remo_cli.cli.shell import (  # noqa: PLC0415
         auto_start_host,
         connect_to_host,
-        remember_tab,
+        tab_recorder,
+        this_tab_key,
         upgrade_command_hint,
     )
     from remo_cli.core import tab_records  # noqa: PLC0415
@@ -168,13 +169,16 @@ def resume(
 
     if decision.action == "shell":
         host = resolve_remo_host(decision.requested_name)
+        # An unreadable store was already reported; don't warn twice.
+        fallback_key = None if store_error else this_tab_key()
         connect_to_host(
             host,
             tunnels=tunnels,
             no_open=no_open,
             no_update_check=no_update_check,
-            # An unreadable store was already reported; don't warn twice.
-            tab_key=None if store_error else remember_tab(host.name, None),
+            tab_key=fallback_key,
+            # Recorded only once ssh is about to run (issue #248).
+            on_connect=tab_recorder(fallback_key, host.name, None),
         )
         return
 
@@ -184,11 +188,10 @@ def resume(
     # that only ever resumes is not pruned after 30 days (FR-016 is about stale
     # tabs, not busy ones). A successful attach also updates the project; the
     # menu path keeps the remembered one. Best-effort and silent: the one line
-    # has already been printed (FR-013).
-    try:
-        tab_records.record(key, registered.name, attach_project or record.project)
-    except tab_records.TabRecordError:
-        pass
+    # has already been printed (FR-013). Written only once ssh is about to
+    # run, never before an upgrade prompt the user can still decline, so a
+    # connection that never happened cannot rewrite the record (issue #248).
+    refresh = tab_recorder(key, registered.name, attach_project or record.project, quiet=True)
     connect_to_host(
         registered,
         tunnels=tunnels,
@@ -197,6 +200,7 @@ def resume(
         project=attach_project,
         tab_key=key,
         auto_started=auto_started,
+        on_connect=refresh,
     )
 
 

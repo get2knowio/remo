@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import click
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @click.command()
@@ -91,7 +96,7 @@ def shell(
     host = resolve_remo_host(name)
     # --detach is not an interactive attach, so it neither records nor
     # forwards a tab key (spec 028 R11).
-    tab_key = None if detach else remember_tab(host.name, project)
+    tab_key = None if detach else this_tab_key()
     connect_to_host(
         host,
         tunnels=tunnels,
@@ -101,15 +106,18 @@ def shell(
         exec_cmd=exec_cmd,
         detach=detach,
         tab_key=tab_key,
+        # Written only once ssh is about to run, never before a check or a
+        # prompt that can still stop the connection (issue #248).
+        on_connect=tab_recorder(tab_key, host.name, project),
     )
 
 
-def remember_tab(host_name: str, project: str | None) -> str | None:
-    """Record this terminal tab's host/project and return its forwardable key.
+def this_tab_key() -> str | None:
+    """Return this terminal tab's forwardable resume key, without recording.
 
-    ``None`` when the terminal exposes no tab identity (FR-003). A store that
-    cannot be written degrades to one warning line: the key is still returned
-    so the host can record, and the connection is never blocked (R5).
+    ``None`` when the terminal exposes no tab identity (FR-003), or when the
+    tab secret cannot be read — that degrades to one warning line and never
+    blocks the connection (R5).
     """
     import os  # noqa: PLC0415
 
@@ -121,15 +129,43 @@ def remember_tab(host_name: str, project: str | None) -> str | None:
     if identity is None:
         return None
     try:
-        key = derive_tab_key(identity, tab_records.get_secret())
+        return derive_tab_key(identity, tab_records.get_secret())
     except tab_records.TabRecordError as e:
         print_warning(f"Could not remember this tab for 'remo resume': {e}")
         return None
-    try:
-        tab_records.record(key, host_name, project)
-    except tab_records.TabRecordError as e:
-        print_warning(f"Could not remember this tab for 'remo resume': {e}")
-    return key
+
+
+def tab_recorder(
+    key: str | None,
+    host_name: str,
+    project: str | None,
+    *,
+    quiet: bool = False,
+) -> Callable[[], None] | None:
+    """Build the callback that records this tab's host/project (FR-004).
+
+    It is handed to :func:`connect_to_host` as ``on_connect`` rather than
+    run up front: the record must describe a connection that was actually
+    attempted, so an invalid ``-L``, a failed auto-start or a declined
+    "Connect anyway?" leaves the previous record intact (issue #248). A store
+    that cannot be written prints one warning (none when ``quiet``, for
+    `remo resume`, whose one line is already printed — FR-013) and never
+    blocks the connection; the key is still forwarded (R5).
+    """
+    if key is None:
+        return None
+
+    def _record() -> None:
+        from remo_cli.core import tab_records  # noqa: PLC0415
+        from remo_cli.core.output import print_warning  # noqa: PLC0415
+
+        try:
+            tab_records.record(key, host_name, project)
+        except tab_records.TabRecordError as e:
+            if not quiet:
+                print_warning(f"Could not remember this tab for 'remo resume': {e}")
+
+    return _record
 
 
 def auto_start_host(host):  # noqa: ANN001, ANN201
@@ -162,6 +198,7 @@ def connect_to_host(
     detach: bool = False,
     tab_key: str | None = None,
     auto_started: bool = False,
+    on_connect: Callable[[], None] | None = None,
 ) -> None:
     """Everything `remo shell` does once the host is resolved.
 
@@ -169,7 +206,9 @@ def connect_to_host(
     auto-start, version check / upgrade offer) before it connects (spec 028
     FR-014) — one code path, no drift. ``auto_started`` says the caller has
     already run :func:`auto_start_host` on *host* (resume does, before its
-    lookup), so the instance-state query is not repeated.
+    lookup), so the instance-state query is not repeated. ``on_connect`` is
+    passed through to :func:`shell_connect`, which calls it only once every
+    pre-connect check and prompt has passed (issue #248).
     """
     from remo_cli.core.ssh import check_remote_version, shell_connect  # noqa: PLC0415
     from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
@@ -260,6 +299,7 @@ def connect_to_host(
         detach=detach,
         exec_cmd=exec_cmd,
         tab_key=tab_key,
+        on_connect=on_connect,
     )
 
 
