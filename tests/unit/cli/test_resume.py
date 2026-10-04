@@ -93,7 +93,8 @@ class TestResumeSuccess:
         tab_records.record(world.key, "H", None)
         result = runner.invoke(resume, [])
         assert result.exit_code == 0, result.output
-        assert lines(result) == ["Resuming A on H"] or "Resuming A on H" in result.output
+        assert len(lines(result)) == 1
+        assert "Resuming A on H" in result.output or "Resuming A on H" in result.output
         assert result.output.count("\n") <= 2
         world.connect.assert_called_once()
         args, kwargs = world.connect.call_args
@@ -249,6 +250,31 @@ class TestFallbacks:
         assert "Couldn't ask H which project this tab used — opening its project menu" in result.output
         assert world.connect.call_args.kwargs.get("project") is None
 
+    def test_unreachable_host_skips_liveness_and_opens_menu(self, runner, world, host_h):
+        """#247: one 5 s budget, not two — no `sessions list` after a
+        transport failure, the remembered project is not attached unverified,
+        and exactly one line is printed (FR-011, FR-013)."""
+        tab_records.record(world.key, "H", "A")
+        world.lookup.return_value = (None, "unreachable")
+        result = runner.invoke(resume, [])
+        assert result.exit_code == 0
+        world.live.assert_not_called()
+        assert len(lines(result)) == 1
+        assert "Couldn't ask H which project this tab used — opening its project menu" in result.output
+        assert world.connect.call_args.args == (host_h,)
+        assert world.connect.call_args.kwargs.get("project") is None
+
+    def test_non_transport_lookup_failure_still_checks_liveness(self, runner, world):
+        tab_records.record(world.key, "H", "A")
+        world.lookup.return_value = (None, "failed")
+        world.live.return_value = True
+        result = runner.invoke(resume, [])
+        world.live.assert_called_once()
+        assert world.live.call_args.args[1] == "A"
+        assert len(lines(result)) == 1
+        assert "Resuming A on H" in result.output
+        assert world.connect.call_args.kwargs["project"] == "A"
+
     def test_host_session_not_live(self, runner, world):
         tab_records.record(world.key, "H", None)
         world.lookup.return_value = (TabLookup("A", 1, ZellijState.EXITED), "ok")
@@ -272,6 +298,7 @@ class TestFallbacks:
         scenarios.append((("H", None), (TabLookup("A", 1, ZellijState.ABSENT), "ok"), []))
         scenarios.append((("H", None), (None, "unsupported"), []))
         scenarios.append((("H", None), (None, "failed"), []))
+        scenarios.append((("H", "A"), (None, "unreachable"), []))
         scenarios.append((("H", None), (TabLookup(None, None, None), "ok"), []))
         scenarios.append((("GONE", None), None, []))
         scenarios.append((("H", None), None, ["OTHER"]))

@@ -151,7 +151,9 @@ option. Code anchors were verified against `main` @ `18d0e13` (2026-10-04).
   (mirroring `core/attach.py`). Every `RemoHostClientError` subclass and
   `subprocess.TimeoutExpired` (surfaced as `SshTransportError`) degrades to
   the "no host entry" path. The interactive connection that follows reuses the
-  ControlMaster the lookup opened.
+  ControlMaster the lookup opened. (amended: #247) An `SshTransportError`
+  additionally skips the rows 7–8 `sessions list` liveness call, so an
+  unreachable host costs one 5 s budget rather than two.
 
 ## R10 — Resolving the recorded host
 
