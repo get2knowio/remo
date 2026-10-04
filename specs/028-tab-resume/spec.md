@@ -272,7 +272,11 @@ above is answered and matches behaviour.
   workstation record's project, if it has one (from a `-p` launch), with its
   liveness taken from the existing `remo-host sessions list`. If the chosen
   project's session is live, attach to it through the same path as
-  `remo shell -p <project>`, with no prompt.
+  `remo shell -p <project>`, with no prompt. When the lookup failed at the
+  SSH transport level (host unreachable, ssh failure, or timeout), (b)'s
+  liveness check is skipped — it cannot succeed either — and the project is
+  treated as not live, so resume opens the host's project menu (FR-011)
+  without spending a second timeout. (amended: #247)
 - **FR-011**: If the recorded project's session is not live, `remo resume`
   MUST open the host's project menu instead (plain `remo shell` to that
   host), never create a new session for that project.
@@ -295,10 +299,15 @@ above is answered and matches behaviour.
   connect is started *before* the lookup, so the lookup reaches it at its
   current address; the start is not repeated at connect time.
 - **FR-015**: The lookup round-trip MUST be bounded at 5 seconds; on
-  timeout resume proceeds as for a host without the lookup (FR-010 (b), else
-  the host menu). A lookup failure of any kind (timeout, unreachable,
-  malformed reply) MUST degrade per FR-010 (b)/FR-011/FR-012, never abort with a traceback; a host
-  that is wholly unreachable fails exactly as `remo shell` would.
+  timeout resume proceeds to the host menu without the FR-010 (b) liveness
+  check (amended: #247 — a timeout is a transport failure, so a second
+  bounded call cannot succeed either). A lookup failure of any kind (timeout,
+  unreachable, malformed reply) MUST degrade per FR-010 (b)/FR-011/FR-012,
+  never abort with a traceback; a non-transport failure (malformed reply,
+  remo-host command error) still runs the FR-010 (b) liveness check, while a
+  transport-level failure skips it, so an unreachable host costs one 5 s
+  budget, not two. A host that is wholly unreachable fails exactly as
+  `remo shell` would.
 
 **Housekeeping and safety**
 

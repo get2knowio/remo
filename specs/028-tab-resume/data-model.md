@@ -91,11 +91,17 @@ Client model: `TabLookup` (frozen dataclass) in `core/remo_host_client.py`.
 | 4 | record.host not registered | shell(NAME) | HOST_GONE |
 | 5 | lookup returned an entry, state active | attach(entry.project) | — |
 | 6 | lookup returned an entry, state not active | menu | SESSION_NOT_LIVE |
-| 7 | lookup unsupported / no entry / failed, and record.project set, sessions list says active | attach(record.project) | — (success line only; FR-013 allows exactly one line) |
+| 6a | lookup failed at the SSH transport (unreachable / ssh exit 255 / timeout) — `sessions list` is not called (amended: #247) | menu | LOOKUP_FAILED |
+| 7 | lookup unsupported / no entry / failed (non-transport), and record.project set, sessions list says active | attach(record.project) | — (success line only; FR-013 allows exactly one line) |
 | 8 | as 7 but record.project not active | menu | SESSION_NOT_LIVE |
 | 9 | lookup unsupported, no record.project | menu | HOST_NOT_UPGRADED |
-| 10 | lookup failed, no record.project | menu | LOOKUP_FAILED |
+| 10 | lookup failed (non-transport), no record.project | menu | LOOKUP_FAILED |
 | 11 | lookup supported, no entry, no record.project | menu | NO_RECORD (host has none for this tab) |
 
 Rows 7–8: if `sessions list` itself fails, treat the project as not active
 (row 8) — never attach blind, never create a session.
+
+Row 6a (amended: #247): a transport-level lookup failure (`SshTransportError`,
+lookup status `unreachable`) means the host cannot be reached, so the second
+bounded `sessions list` call is skipped rather than spending another 5 s on
+it; the record's project is never attached unverified (FR-011).

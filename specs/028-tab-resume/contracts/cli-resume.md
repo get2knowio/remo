@@ -32,7 +32,7 @@ before connecting:
 | HOST_GONE | `<recorded> is no longer registered — opening remo shell` |
 | HOST_NOT_UPGRADED | `<host> can't resume a tab's project yet — run '<upgrade command>' — opening its project menu` |
 | SESSION_NOT_LIVE | `<project> is no longer running on <host> — opening its project menu` |
-| LOOKUP_FAILED | `Couldn't ask <host> which project this tab used — opening its project menu` |
+| LOOKUP_FAILED | `Couldn't ask <host> which project this tab used — opening its project menu` (also for a transport-level lookup failure, whether or not the record names a project — no liveness check runs; amended: #247) |
 
 `<upgrade command>` is `upgrade_command_hint(host)` (`remo configure NAME`
 for added hosts, `remo <type> upgrade …` for provider hosts) — no type

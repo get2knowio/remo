@@ -20,6 +20,7 @@ from typing import Literal
 
 from remo_cli.core.remo_host_client import (
     RemoHostClientError,
+    SshTransportError,
     TabLookup,
     TabLookupUnsupported,
     ZellijState,
@@ -32,7 +33,11 @@ from remo_cli.models.host import KnownHost
 
 LOOKUP_TIMEOUT_S = 5.0
 
-LookupStatus = Literal["ok", "unsupported", "failed", "skipped"]
+#: ``unreachable`` is a lookup that failed at the SSH transport (exit 255,
+#: timeout, spawn failure); ``failed`` is any other client error (malformed
+#: reply, remo-host command error). They differ only in whether the rows 7-8
+#: liveness call is worth making (#247).
+LookupStatus = Literal["ok", "unsupported", "failed", "unreachable", "skipped"]
 
 
 class ResumeReason(str, Enum):
@@ -69,9 +74,14 @@ def needs_project_liveness(
 ) -> bool:
     """True when rows 7-8 apply, i.e. the host did not name the project itself.
 
-    Keeps the row-5 fast path to a single extra round-trip (SC-004).
+    Keeps the row-5 fast path to a single extra round-trip (SC-004). A lookup
+    that could not reach the host skips it: a second call over the same
+    transport cannot succeed either, and would double the wait before the
+    fallback (row 6a, #247).
     """
     if record is None or record.project is None:
+        return False
+    if lookup_status == "unreachable":
         return False
     host_named_project = (
         lookup_status == "ok" and lookup is not None and lookup.project is not None
@@ -121,6 +131,12 @@ def decide_resume(
         return ResumeDecision(
             "menu", host_name=host, project=lookup.project, reason=ResumeReason.SESSION_NOT_LIVE
         )
+
+    # 6a: the host could not be reached, so the remembered project was not
+    # checked; never attach to it unverified (FR-011), and don't claim it
+    # stopped running — we only know the host didn't answer (#247).
+    if lookup_status == "unreachable":
+        return ResumeDecision("menu", host_name=host, reason=ResumeReason.LOOKUP_FAILED)
 
     # 7-8: no host-side answer; fall back to the workstation's remembered project.
     if record.project is not None:
@@ -181,6 +197,8 @@ def run_lookup(host: KnownHost, key: str) -> tuple[TabLookup | None, LookupStatu
         return lookup_tab(_ssh_prefix(host), key, timeout=LOOKUP_TIMEOUT_S), "ok"
     except TabLookupUnsupported:
         return None, "unsupported"
+    except SshTransportError:
+        return None, "unreachable"
     except RemoHostClientError:
         return None, "failed"
 

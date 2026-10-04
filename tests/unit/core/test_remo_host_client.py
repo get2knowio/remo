@@ -1425,6 +1425,14 @@ class TestLookupTab:
         with pytest.raises(RemoHostCommandError):
             lookup_tab(SSH_PREFIX, TAB_KEY)
 
+    def test_ssh_255_is_transport_error_not_unsupported(self, mocker):
+        """resume skips its liveness call only on a transport failure (#247)."""
+        from remo_cli.core.remo_host_client import lookup_tab
+
+        self._run(mocker, returncode=255, stderr=b"ssh: connect to host: No route to host")
+        with pytest.raises(SshTransportError):
+            lookup_tab(SSH_PREFIX, TAB_KEY)
+
     def test_timeout_is_transport_error(self, mocker):
         from remo_cli.core.remo_host_client import lookup_tab
 

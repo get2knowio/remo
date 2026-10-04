@@ -9,6 +9,7 @@ import pytest
 from remo_cli.core.remo_host_client import (
     MalformedResponseError,
     ProjectEntry,
+    RemoHostCommandError,
     SshTransportError,
     TabLookup,
     TabLookupUnsupported,
@@ -148,6 +149,21 @@ class TestFallbackRows:
             "Couldn't ask H which project this tab used — opening its project menu"
         )
 
+    @pytest.mark.parametrize("project", ["A", None])
+    @pytest.mark.parametrize("live", [True, False, None])
+    def test_row6a_unreachable_is_menu_and_never_attaches(self, project, live):
+        """#247: an unreachable host's remembered project is never attached
+        unverified, and the line says the host didn't answer, not that the
+        project stopped."""
+        d = decide(
+            record=rec(project=project), lookup=None, lookup_status="unreachable",
+            record_project_live=live,
+        )
+        assert (d.action, d.host_name, d.reason) == ("menu", "H", ResumeReason.LOOKUP_FAILED)
+        assert resume_message(d) == (
+            "Couldn't ask H which project this tab used — opening its project menu"
+        )
+
     def test_row11_supported_no_entry_no_record_project(self):
         d = decide(lookup=MISS, lookup_status="ok")
         assert (d.action, d.reason) == ("menu", ResumeReason.NO_RECORD)
@@ -158,7 +174,7 @@ class TestFallbackRows:
     def test_never_attaches_a_project_that_is_not_active(self):
         for state in (None, ZellijState.EXITED, ZellijState.ABSENT):
             for live in (None, False):
-                for status in ("ok", "unsupported", "failed", "skipped"):
+                for status in ("ok", "unsupported", "failed", "unreachable", "skipped"):
                     lookup = None if state is None else hit(state)
                     d = decide(
                         record=rec(project="R"), lookup=lookup, lookup_status=status,
@@ -176,6 +192,12 @@ class TestNeedsProjectLiveness:
         assert needs_project_liveness(lookup=None, lookup_status="unsupported", record=rec("H", "A"))
         assert needs_project_liveness(lookup=MISS, lookup_status="ok", record=rec("H", "A"))
         assert needs_project_liveness(lookup=None, lookup_status="failed", record=rec("H", "A"))
+
+    def test_transport_failure_skips_liveness(self):
+        """#247: a second call over a transport that just failed can't succeed."""
+        assert not needs_project_liveness(
+            lookup=None, lookup_status="unreachable", record=rec("H", "A")
+        )
 
 
 @pytest.fixture
@@ -207,7 +229,17 @@ class TestRunLookup:
         mocker.patch("remo_cli.core.resume.lookup_tab", side_effect=TabLookupUnsupported("old"))
         assert run_lookup(host, self.KEY) == (None, "unsupported")
 
-    @pytest.mark.parametrize("exc", [SshTransportError("timeout"), MalformedResponseError("x")])
+    @pytest.mark.parametrize(
+        "exc", [SshTransportError("timeout"), SshTransportError("no route", returncode=255)]
+    )
+    def test_transport_error_is_unreachable(self, mocker, host, exc):
+        mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
+        mocker.patch("remo_cli.core.resume.lookup_tab", side_effect=exc)
+        assert run_lookup(host, self.KEY) == (None, "unreachable")
+
+    @pytest.mark.parametrize(
+        "exc", [MalformedResponseError("x"), RemoHostCommandError(3, "boom", verb="sessions lookup")]
+    )
     def test_any_other_client_error_is_failed(self, mocker, host, exc):
         mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
         mocker.patch("remo_cli.core.resume.lookup_tab", side_effect=exc)
