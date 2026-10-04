@@ -83,6 +83,7 @@ class TestSubcommandRegistration:
 
     EXPECTED_COMMANDS = [
         "shell",
+        "resume",
         "cp",
         "add",
         "remove",

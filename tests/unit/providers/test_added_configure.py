@@ -148,6 +148,17 @@ class TestRefusals:
             providers_added.configure(name="web1", assume_yes=True)
         run_playbook.assert_not_called()
 
+    def test_host_scoped_provider_host_names_a_runnable_upgrade(self, run_playbook):
+        # Matched by its short name; the bare container only resolves with
+        # --host, so the guard spells it out (#243).
+        _register(name="node1/dev", type_="incus", port="")
+
+        with pytest.raises(
+            PreconditionError, match="remo incus upgrade dev --host node1"
+        ):
+            providers_added.configure(name="dev", assume_yes=True)
+        run_playbook.assert_not_called()
+
     def test_root_is_refused_before_anything_runs(self, run_playbook):
         # user_setup pins the workspace account to UID 1000; doing that to root
         # would break the host.

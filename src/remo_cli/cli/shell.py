@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import click
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @click.command()
@@ -86,21 +91,131 @@ def shell(
             "could use it. Drop one or the other."
         )
         raise SystemExit(2)
-    from remo_cli.core.ssh import check_remote_version, resolve_remo_host, shell_connect  # noqa: PLC0415
-    from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
-    from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415
-    from remo_cli.providers.aws import auto_start_aws_if_stopped  # noqa: PLC0415
+    from remo_cli.core.ssh import resolve_remo_host  # noqa: PLC0415
 
     host = resolve_remo_host(name)
+    # --detach is not an interactive attach, so it neither records nor
+    # forwards a tab key (spec 028 R11).
+    tab_key = None if detach else this_tab_key()
+    connect_to_host(
+        host,
+        tunnels=tunnels,
+        no_open=no_open,
+        no_update_check=no_update_check,
+        project=project,
+        exec_cmd=exec_cmd,
+        detach=detach,
+        tab_key=tab_key,
+        # Written only once ssh is about to run, never before a check or a
+        # prompt that can still stop the connection (issue #248).
+        on_connect=tab_recorder(tab_key, host.name, project),
+    )
 
-    # Auto-start stopped AWS instances before connecting
+
+def this_tab_key() -> str | None:
+    """Return this terminal tab's forwardable resume key, without recording.
+
+    ``None`` when the terminal exposes no tab identity (FR-003), or when the
+    tab secret cannot be read — that degrades to one warning line and never
+    blocks the connection (R5).
+    """
+    import os  # noqa: PLC0415
+
+    from remo_cli.core import tab_records  # noqa: PLC0415
+    from remo_cli.core.output import print_warning  # noqa: PLC0415
+    from remo_cli.core.tab_identity import derive_tab_key, detect_tab_identity  # noqa: PLC0415
+
+    identity = detect_tab_identity(os.environ)
+    if identity is None:
+        return None
+    try:
+        return derive_tab_key(identity, tab_records.get_secret())
+    except tab_records.TabRecordError as e:
+        print_warning(f"Could not remember this tab for 'remo resume': {e}")
+        return None
+
+
+def tab_recorder(
+    key: str | None,
+    host_name: str,
+    project: str | None,
+    *,
+    quiet: bool = False,
+) -> Callable[[], None] | None:
+    """Build the callback that records this tab's host/project (FR-004).
+
+    It is handed to :func:`connect_to_host` as ``on_connect`` rather than
+    run up front: the record must describe a connection that was actually
+    attempted, so an invalid ``-L``, a failed auto-start or a declined
+    "Connect anyway?" leaves the previous record intact (issue #248). A store
+    that cannot be written prints one warning (none when ``quiet``, for
+    `remo resume`, whose one line is already printed — FR-013) and never
+    blocks the connection; the key is still forwarded (R5).
+    """
+    if key is None:
+        return None
+
+    def _record() -> None:
+        from remo_cli.core import tab_records  # noqa: PLC0415
+        from remo_cli.core.output import print_warning  # noqa: PLC0415
+
+        try:
+            tab_records.record(key, host_name, project)
+        except tab_records.TabRecordError as e:
+            if not quiet:
+                print_warning(f"Could not remember this tab for 'remo resume': {e}")
+
+    return _record
+
+
+def auto_start_host(host):  # noqa: ANN001, ANN201
+    """Start a stopped instance before anything talks to it; return the
+    refreshed host (new IP). A no-op for every host that needs no start.
+
+    Shared by ``connect_to_host`` and ``remo resume``, which must start the
+    instance *before* its host lookup or the lookup hits a stopped box / stale
+    IP and falls back instead of resuming (spec 028 FR-014).
+    """
     from remo_cli.core.errors import ProviderError  # noqa: PLC0415
+    from remo_cli.core.output import print_error  # noqa: PLC0415
+    from remo_cli.providers.aws import auto_start_aws_if_stopped  # noqa: PLC0415
 
     try:
-        host = auto_start_aws_if_stopped(host)
+        return auto_start_aws_if_stopped(host)
     except ProviderError as e:
         print_error(str(e))
         raise SystemExit(e.exit_code) from e
+
+
+def connect_to_host(
+    host,  # noqa: ANN001
+    *,
+    tunnels: tuple[str, ...] | list[str],
+    no_open: bool,
+    no_update_check: bool,
+    project: str | None = None,
+    exec_cmd: str | None = None,
+    detach: bool = False,
+    tab_key: str | None = None,
+    auto_started: bool = False,
+    on_connect: Callable[[], None] | None = None,
+) -> None:
+    """Everything `remo shell` does once the host is resolved.
+
+    Extracted so `remo resume` makes the *same* pre-connect checks (AWS
+    auto-start, version check / upgrade offer) before it connects (spec 028
+    FR-014) — one code path, no drift. ``auto_started`` says the caller has
+    already run :func:`auto_start_host` on *host* (resume does, before its
+    lookup), so the instance-state query is not repeated. ``on_connect`` is
+    passed through to :func:`shell_connect`, which calls it only once every
+    pre-connect check and prompt has passed (issue #248).
+    """
+    from remo_cli.core.ssh import check_remote_version, shell_connect  # noqa: PLC0415
+    from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
+    from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415
+
+    if not auto_started:
+        host = auto_start_host(host)
 
     # Pre-shell remote version check.
     #
@@ -142,14 +257,14 @@ def shell(
                 # No marker file on remote
                 should_update = confirm(
                     f"Instance '{host.name}' has no version info. "
-                    f"Run `{_upgrade_command_hint(host)}`?",
+                    f"Run `{upgrade_command_hint(host)}`?",
                     default=True,
                 )
             elif version_is_newer(local_version, remote_version):
                 # Remote is behind local
                 should_update = confirm(
                     f"Instance '{host.name}' tools are v{remote_version}, "
-                    f"local is v{local_version}. Run `{_upgrade_command_hint(host)}`?",
+                    f"local is v{local_version}. Run `{upgrade_command_hint(host)}`?",
                     default=True,
                 )
             elif version_is_newer(remote_version, local_version):
@@ -183,59 +298,21 @@ def shell(
         project=project,
         detach=detach,
         exec_cmd=exec_cmd,
+        tab_key=tab_key,
+        on_connect=on_connect,
     )
 
 
-def _upgrade_command_hint(host) -> str:  # noqa: ANN001
-    """Render the exact command that accepting the prompt will run.
+def upgrade_command_hint(host) -> str:  # noqa: ANN001
+    """Render the exact command that accepting the prompt will run (SC-003).
 
-    ``remo configure <name>`` for an added (type="ssh") host, and
-    `remo <type> upgrade <name>` for a provider one.
-
-    Names the precise command the accepted prompt runs (SC-003) so the
-    remedy is always executable and truthful.
-
-    Host-scoped providers need the host-user flag spelled out too: accepting
-    the prompt runs ``update_entry``, which reads the host SSH user off the
-    registry entry, but passing ``--host`` on the command line short-circuits
-    that registry lookup and would silently fall back to the provider default
-    (``""``/``root``). The flag and the attribute both come from the
-    descriptor's ``registry_fields`` entry whose JSON key ends in ``_user``
-    (``instance_id``/``host_user`` for Incus, ``region``/``host_user`` for
-    Proxmox) — no provider literals here.
+    Kept under this name because ``cli/resume.py`` imports it; the spelling
+    itself lives in :func:`remo_cli.core.known_hosts.upgrade_command_for` so
+    the web console and the configure guard name the same command (#243).
     """
-    from remo_cli.core.provider_registry import (  # noqa: PLC0415
-        NameFormat,
-        get_descriptor,
-        is_provider_type,
-    )
+    from remo_cli.core.known_hosts import upgrade_command_for  # noqa: PLC0415
 
-    if host.type == "ssh":
-        # Added host: `remo configure` is its upgrade verb — the same shared
-        # role list, reached through ssh_configure.yml. There is no `remo ssh`
-        # command group, so the provider spelling below would name a command
-        # that cannot be run.
-        return f"remo configure {host.name}"
-
-    if not is_provider_type(host.type):
-        # Unrecognized registry type: keep the provider spelling so the message
-        # names the type that is actually wrong. _run_tools_upgrade() refuses
-        # it with a PreconditionError rather than running anything.
-        return f"remo {host.type} upgrade {host.name}"
-
-    descriptor = get_descriptor(host.type)
-    if descriptor.name_format is NameFormat.HOST_SCOPED and "/" in host.name:
-        host_part, _, short_name = host.name.partition("/")
-        cmd = f"remo {host.type} upgrade {short_name} --host {host_part}"
-        for attr, json_key in descriptor.registry_fields:
-            if json_key.endswith("_user"):
-                user_value = getattr(host, attr, "")
-                if user_value:
-                    flag = "--" + json_key.replace("_", "-")
-                    cmd += f" {flag} {user_value}"
-                break
-        return cmd
-    return f"remo {host.type} upgrade {host.name}"
+    return upgrade_command_for(host)
 
 
 def _run_tools_upgrade(host) -> None:  # noqa: ANN001
@@ -244,7 +321,7 @@ def _run_tools_upgrade(host) -> None:  # noqa: ANN001
     Two paths onto the same shared ``tasks/configure_dev_tools.yml`` role list:
     ``providers.added.configure()`` for an added (type="ssh") host, and the
     provider's own ``update_entry()`` for a managed one. Must stay in step with
-    :func:`_upgrade_command_hint`, which promises the user exactly one of them.
+    :func:`upgrade_command_hint`, which promises the user exactly one of them.
 
     Raises :class:`~remo_cli.core.errors.ProviderError` on failure (including
     an unrecognized provider type — no more silent no-op).

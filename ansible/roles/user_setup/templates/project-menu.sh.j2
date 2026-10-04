@@ -404,7 +404,13 @@ launch_session() {
     # The session starts in the project directory
     # If it has a devcontainer, the shell inside will handle starting it
     cd "$project_dir"
-    
+
+    # Remember which project this terminal tab attached, so `remo resume` can
+    # put the tab back (spec 028). Best-effort: never blocks the attach.
+    if [ -n "${REMO_TAB_KEY:-}" ]; then
+        "$HOME/.local/bin/remo-host" sessions record --key "$REMO_TAB_KEY" --project "$project_name" >/dev/null 2>&1 || true
+    fi
+
     # Try to attach, and if it fails due to corrupted session layout, clean up and retry
     if ! zellij attach --create "$project_name" 2>&1; then
         echo "Session may be corrupted, cleaning up and retrying..."

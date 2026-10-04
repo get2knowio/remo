@@ -29,16 +29,18 @@
     name: "{{ timezone }}"
   when: timezone | default('') | length > 0
 
-- name: Allow TZ environment variable via SSH
+# The file keeps its historical name so hosts do not accumulate a second
+# drop-in; REMO_TAB_KEY is the per-tab key `remo resume` forwards (spec 028).
+- name: Allow TZ and REMO_TAB_KEY environment variables via SSH
   ansible.builtin.copy:
     dest: /etc/ssh/sshd_config.d/accept-tz.conf
     content: |
-      # Allow clients to propagate their timezone
-      AcceptEnv TZ
+      # Allow clients to propagate their timezone and remo's per-tab resume key
+      AcceptEnv TZ REMO_TAB_KEY
     mode: '0644'
   register: sshd_tz_config
 
-- name: Restart sshd to apply AcceptEnv TZ
+- name: Restart sshd to apply AcceptEnv
   ansible.builtin.service:
     name: "{{ 'ssh' if ansible_os_family == 'Debian' else 'sshd' }}"
     state: restarted
