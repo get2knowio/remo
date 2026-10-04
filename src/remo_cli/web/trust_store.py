@@ -15,11 +15,11 @@ registry-admin API can maintain per-instance slices of the flat trust file:
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
-import tempfile
 from pathlib import Path
+
+from remo_cli.core.atomic_file import atomic_write_text
 
 #: Plausible OpenSSH key-type token, e.g. ssh-ed25519, ecdsa-sha2-nistp256,
 #: sk-ssh-ed25519@openssh.com, ssh-rsa-cert-v01@openssh.com.
@@ -56,18 +56,10 @@ def write_lines_atomically(path: Path, lines: list[str]) -> None:
     Used only for the service's own SSH ``known_hosts`` trust file (not the
     remo registry, which goes through :mod:`core.registry`'s own atomic writer).
     """
-    dir_ = path.parent
-    dir_.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".known_hosts_tmp_")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            for line in lines:
-                fh.write(line + "\n")
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(
+        path, "".join(line + "\n" for line in lines), prefix=".known_hosts_tmp_"
+    )
 
 
 def _line_hosts_field(line: str) -> str | None:

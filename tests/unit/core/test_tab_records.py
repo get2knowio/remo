@@ -167,3 +167,25 @@ def test_concurrent_writers_never_corrupt(remo_home):
             entry = data["records"][f"{worker:016x}{i:016x}"]
             assert entry["host"] == f"host-{worker}"
             assert entry["project"] == str(i)
+
+
+def test_flock_unsupported_warns_once_and_still_writes(monkeypatch, capsys):
+    """#244: the tab store used to proceed unlocked silently on ENOLCK."""
+    import errno
+    import fcntl
+
+    from remo_cli.core import atomic_file
+
+    monkeypatch.setattr(atomic_file, "_unsupported_warned", set())
+    real_flock = fcntl.flock
+
+    def fake_flock(fd, operation):
+        if operation & fcntl.LOCK_EX:
+            raise OSError(errno.ENOLCK, "no locks available")
+        return real_flock(fd, operation)
+
+    monkeypatch.setattr(fcntl, "flock", fake_flock)
+    tab_records.record(K1, "h", None)
+    tab_records.record(K2, "h", "p")
+    assert tab_records.load(K2) is not None
+    assert capsys.readouterr().out.count("locking unavailable") == 1
