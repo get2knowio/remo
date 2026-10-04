@@ -46,6 +46,17 @@
         zellij_apt_version: "0.0.0"
       when: zellij_apt_version is not defined or zellij_apt_version == ''
 
+    # An upgrade over a version with live sessions hides them; see
+    # live_session_guard.yml. A fresh install (0.0.0) has nothing to hide.
+    - name: Check for live sessions before an apt upgrade
+      ansible.builtin.include_tasks: live_session_guard.yml
+      vars:
+        zellij_target_version: "{{ zellij_apt_version }}"
+      when:
+        - zellij_apt_version is version(zellij_min_version, '>=')
+        - zellij_installed_version is version(zellij_apt_version, '<')
+        - zellij_installed_version != '0.0.0'
+
     - name: Install zellij from apt if version is adequate
       ansible.builtin.apt:
         name: zellij
@@ -54,6 +65,7 @@
       when:
         - zellij_apt_version is version(zellij_min_version, '>=')
         - zellij_installed_version is version(zellij_apt_version, '<')
+        - not (zellij_upgrade_deferred | default(false) | bool)
       register: zellij_apt_install
 
 - name: Install zellij from binary release
@@ -117,8 +129,18 @@
       ansible.builtin.set_fact:
         zellij_needs_install: "{{ zellij_installed_version is version(zellij_download_version, '<') }}"
 
+    - name: Check for live sessions before a binary upgrade
+      ansible.builtin.include_tasks: live_session_guard.yml
+      vars:
+        zellij_target_version: "{{ zellij_download_version }}"
+      when:
+        - zellij_needs_install | bool
+        - zellij_installed_version != '0.0.0'
+
     - name: Download zellij binary
-      when: zellij_needs_install
+      when:
+        - zellij_needs_install | bool
+        - not (zellij_upgrade_deferred | default(false) | bool)
       block:
         - name: Create temporary directory for download
           ansible.builtin.tempfile:
