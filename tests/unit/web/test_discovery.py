@@ -362,9 +362,25 @@ class TestConfigureRemediation:
 
     def test_host_scoped_name_is_shortened_for_the_cli(self):
         # incus/proxmox register as "node/container" but their CLI takes the
-        # container part alone, so the full name would not be accepted.
+        # container part alone, so the full name would not be accepted — and
+        # a bare container name only resolves with --host (#243: this used to
+        # name a command the CLI could not run).
         remediation = configure_remediation(self._host("incus", "node1/dev"))
-        assert "remo incus upgrade dev" in remediation
+        assert remediation == (
+            "Update this instance's Remo host tools with: "
+            "remo incus upgrade dev --host node1"
+        )
+
+    def test_matches_the_shell_prompt_spelling(self):
+        # One helper behind both surfaces (#243), so they cannot drift.
+        from remo_cli.cli.shell import upgrade_command_hint
+
+        for host in (
+            self._host("ssh", "mbp"),
+            self._host("hetzner", "web1"),
+            self._host("incus", "node1/dev"),
+        ):
+            assert configure_remediation(host).endswith(upgrade_command_hint(host))
 
 
 class TestSnapshotDoesNotPublishTheKeyPath:

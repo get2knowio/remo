@@ -47,6 +47,47 @@ def _is_host_scoped_type(type_name: str) -> bool:
     return is_provider_type(type_name) and get_descriptor(type_name).name_format is NameFormat.HOST_SCOPED
 
 
+def upgrade_command_for(host: KnownHost) -> str:
+    """The exact command that refreshes *host*'s remo tools (#243).
+
+    One spelling shared by the ``remo shell`` stale-tools prompt, ``remo
+    resume``, the web console's remediation text and the ``remo configure``
+    guard, so none of them can drift into naming a command that will not run:
+
+    * an added (``type="ssh"``) host -> ``remo configure NAME`` (there is no
+      ``remo ssh`` group; ``remo configure`` reaches the same shared role list
+      through ``ssh_configure.yml``);
+    * a host-scoped provider -> ``remo TYPE upgrade SHORT --host HOST`` plus the
+      host-user flag when the entry carries one. The CLI cannot resolve a bare
+      container name without ``--host``, and ``--host`` on the command line
+      short-circuits the registry lookup ``update_entry`` would otherwise do
+      for the host SSH user, falling back to the provider default — so the
+      user flag must be spelled out too. Flag and attribute both come from the
+      descriptor's ``registry_fields`` entry whose JSON key ends in ``_user``,
+      so no provider literal appears here;
+    * any other provider, or an unrecognized type -> ``remo TYPE upgrade NAME``
+      (for an unknown type this still names the type that is actually wrong;
+      ``remo shell`` refuses to run it).
+    """
+    from remo_cli.core.config import ADDED_HOST_TYPE  # noqa: PLC0415
+    from remo_cli.core.provider_registry import get_descriptor  # noqa: PLC0415
+
+    if host.type == ADDED_HOST_TYPE:
+        return f"remo configure {host.name}"
+
+    if _is_host_scoped_type(host.type) and "/" in host.name:
+        host_part, _, short_name = host.name.partition("/")
+        cmd = f"remo {host.type} upgrade {short_name} --host {host_part}"
+        for attr, json_key in get_descriptor(host.type).registry_fields:
+            if json_key.endswith("_user"):
+                user_value = getattr(host, attr, "")
+                if user_value:
+                    cmd += f" --{json_key.replace('_', '-')} {user_value}"
+                break
+        return cmd
+    return f"remo {host.type} upgrade {host.name}"
+
+
 def _print_migration_notice(report: MigrationReport) -> None:
     """Print the one-time plain-language migration notice (FR-025/FR-026)."""
     from remo_cli.core.output import print_info, print_warning
@@ -273,7 +314,7 @@ def guard_added_ssh_host_only(name: str) -> KnownHost:
         raise PreconditionError(
             f"'{name}' is a {other.type}-managed host, not one added with "
             f"'remo add'. Refresh its dev tools with: "
-            f"remo {other.type} upgrade {name}"
+            f"{upgrade_command_for(other)}"
         )
 
     raise PreconditionError(
