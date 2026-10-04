@@ -10,6 +10,21 @@ set -e
 
 PROJECTS_DIR="{{ dev_workspace_dir }}"
 
+# Pin zellij's session namespace. zellij keeps session sockets in
+# $XDG_RUNTIME_DIR/zellij, falling back to /tmp/zellij-$UID when that variable
+# is unset — and ssh sets it only for a LOGIN SESSION (`ssh host`, a shell
+# channel), not for `ssh host <command>`, which is what `remo shell -p`, the web
+# console and the SSM connector all use. Without this the two contexts see
+# different sessions on the same host: `remo shell` reattached while
+# `remo shell -p NAME` created a duplicate in /tmp, and `remo-host sessions
+# list` reported no active sessions to the console.
+#
+# Guarded on the directory existing, so a host without systemd-logind keeps
+# today's /tmp fallback instead of pointing somewhere nothing will create.
+if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
+    export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+fi
+
 show_usage() {
     echo "Usage: devshell <repo> [clone <github-url>]"
     echo ""
