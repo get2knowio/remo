@@ -259,6 +259,42 @@ remo shell -p my-app --detach --exec \
 
 Then on your phone, open claude.ai/code and pick the session by name.
 
+### Resume After a Dropped Connection
+
+When an SSH connection drops (laptop lid, flaky Wi-Fi), the project's Zellij session keeps
+running on the host. `remo resume` puts the tab back:
+
+```bash
+remo resume                 # in the tab whose connection dropped
+remo resume --forget        # delete this tab's record
+remo resume --forget-all    # delete every record and rotate the tab secret
+```
+
+Each tab is told apart by the first of `TMUX_PANE`, `WEZTERM_PANE`, `KITTY_WINDOW_ID`,
+`ITERM_SESSION_ID`, `TERM_SESSION_ID` or `WT_SESSION` that your terminal sets (in that order).
+Every `remo shell` from a tab remembers its host (and `-p` project) in
+`<REMO_HOME>/tab-records.json` (default `~/.config/remo/`); a secret in `tab-secret` next to it
+turns the tab identity into a one-way key, and only that salted digest ever reaches a host
+(under `~/.local/state/remo/tabs`). A tab that attached through the project menu is found by
+asking the host which project that key last attached, then reattached with no picker.
+
+`remo resume` is never worse than `remo shell`. When it cannot be exact it prints one line
+saying why and falls back, and it never creates a session or lands in another tab's project:
+
+| Situation | What happens |
+|-----------|--------------|
+| Terminal exposes no tab identity | opens `remo shell` |
+| Nothing recorded for this tab, or the host was removed | opens `remo shell` |
+| `remo resume NAME` where this tab last used a different host | opens `remo shell NAME` |
+| The project's session is no longer running | opens that host's project menu |
+| The host could not be asked in 5 seconds | opens that host's project menu |
+| The host has not been upgraded yet | opens its project menu and names the upgrade command |
+
+Exact resume needs the host upgraded once: `remo configure NAME` for an added host, or
+`remo <provider> upgrade NAME`. This also allows the new `REMO_TAB_KEY` environment variable
+through sshd. Until then, a project you reached with `remo shell -p` is still resumed from the
+workstation's own record, and the host picker is still skipped.
+
 ### Port Forwarding
 
 Forward remote ports to your local machine during SSH sessions:
@@ -530,6 +566,13 @@ remo shell -L 9000:8080             # Shell + forward remote :8080 to local :900
 remo shell -L 8080 -L 3000          # Shell + forward multiple ports
 remo shell -L 8080 --no-open        # Skip auto-opening browser
 remo shell --no-update-check        # Skip version check
+
+# Resume a tab after a dropped connection
+remo resume                         # Reattach this tab's last project session
+remo resume my-env                  # Only if this tab last used my-env (else remo shell my-env)
+remo resume -L 8080 --no-open       # Same flags as remo shell
+remo resume --forget                # Delete this tab's resume record
+remo resume --forget-all            # Delete all records and rotate the tab secret
 
 # File transfer
 remo cp ./file.txt :/tmp/           # Upload file

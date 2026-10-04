@@ -282,6 +282,31 @@ def guard_added_ssh_host_only(name: str) -> KnownHost:
     )
 
 
+def _match_host_name(all_hosts: list[KnownHost], name: str) -> KnownHost | None:
+    # First pass: exact name match.
+    for host in all_hosts:
+        if host.name == name:
+            return host
+
+    # Second pass: HOST_SCOPED-type short-name match (container part of "host/container").
+    for host in all_hosts:
+        if _is_host_scoped_type(host.type) and "/" in host.name:
+            _, container = host.name.split("/", maxsplit=1)
+            if container == name:
+                return host
+    return None
+
+
+def find_remo_host_by_name(name: str) -> KnownHost | None:
+    """:func:`resolve_remo_host_by_name` without the exit: ``None`` on a miss.
+
+    For callers that must know which host *name* would resolve to before
+    deciding anything (``remo resume NAME`` compares it with the tab's record,
+    spec 028), so a short name matches exactly as it would for ``remo shell``.
+    """
+    return _match_host_name(get_known_hosts(), name)
+
+
 def resolve_remo_host_by_name(name: str) -> KnownHost:
     """Find a registered host by name, matching across all types.
 
@@ -294,18 +319,9 @@ def resolve_remo_host_by_name(name: str) -> KnownHost:
     typo.
     """
     all_hosts = get_known_hosts()
-
-    # First pass: exact name match.
-    for host in all_hosts:
-        if host.name == name:
-            return host
-
-    # Second pass: HOST_SCOPED-type short-name match (container part of "host/container").
-    for host in all_hosts:
-        if _is_host_scoped_type(host.type) and "/" in host.name:
-            _, container = host.name.split("/", maxsplit=1)
-            if container == name:
-                return host
+    found = _match_host_name(all_hosts, name)
+    if found is not None:
+        return found
 
     # Nothing matched — build a helpful error message.
     available = [h.display_name for h in all_hosts]

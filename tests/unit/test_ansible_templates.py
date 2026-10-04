@@ -149,6 +149,7 @@ def test_remo_host_capabilities_json_stdout_only(rendered_script: Path, tmp_path
         "capabilities",
         "sessions.list",
         "sessions.attach",
+        "sessions.lookup",
         "host.stats",
         "projects.clone",
         "projects.delete",
@@ -1204,3 +1205,224 @@ def test_remo_host_bare_group_usage_error(
     result = _run_remo_host(rendered_script, tmp_path, group)
     assert result.returncode == 2
     assert result.stdout == ""
+
+
+# ---------------------------------------------------------------------------
+# sessions record / sessions lookup (spec 028, contracts/remo-host-sessions-lookup.md)
+# ---------------------------------------------------------------------------
+
+import os  # noqa: E402
+
+TAB_KEY = "0123456789abcdef0123456789abcdef"
+
+
+def _tabs_env(tmp_path: Path) -> dict[str, str]:
+    return {"REMO_HOST_TABS_DIR": str(tmp_path / "tabs")}
+
+
+def _zellij_shim(shim_dir: Path, listing: str) -> None:
+    _write_shim(shim_dir, "zellij", f"cat <<'EOF_LIST'\n{listing}\nEOF_LIST")
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
+class TestSessionsRecordLookup:
+    def test_record_writes_name_and_epoch(self, rendered_script: Path, tmp_path: Path) -> None:
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "record", "--key", TAB_KEY,
+            "--project", "alpha", env=_tabs_env(tmp_path),
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == ""
+        content = (tmp_path / "tabs" / TAB_KEY).read_text()
+        name, _, epoch = content.rstrip("\n").partition("\t")
+        assert name == "alpha"
+        assert abs(int(epoch) - time.time()) < 60
+        assert oct((tmp_path / "tabs").stat().st_mode & 0o777) == "0o700"
+
+    @pytest.mark.parametrize(
+        "key",
+        ["../x", TAB_KEY.upper(), TAB_KEY[:31], TAB_KEY + "0", "", "g" * 32, TAB_KEY + "\n"],
+    )
+    def test_invalid_key_rejected_writes_nothing(
+        self, rendered_script: Path, tmp_path: Path, key: str
+    ) -> None:
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "record", "--key", key,
+            "--project", "alpha", env=_tabs_env(tmp_path),
+        )
+        assert result.returncode in (2, 3)
+        assert not (tmp_path / "tabs").exists() or not any((tmp_path / "tabs").iterdir())
+        assert not (tmp_path / "x").exists()
+
+    def test_missing_flags_exit_2(self, rendered_script: Path, tmp_path: Path) -> None:
+        for args in (["--project", "alpha"], ["--key", TAB_KEY], []):
+            result = _run_remo_host(
+                rendered_script, tmp_path, "sessions", "record", *args, env=_tabs_env(tmp_path)
+            )
+            assert result.returncode == 2
+        assert not (tmp_path / "tabs").exists()
+
+    @pytest.mark.parametrize("project", ["nope", "../alpha", "alpha/../beta", "/etc", ".hidden", ""])
+    def test_invalid_project_exit_3(self, rendered_script: Path, tmp_path: Path, project: str) -> None:
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "record", "--key", TAB_KEY,
+            "--project", project, env=_tabs_env(tmp_path),
+        )
+        assert result.returncode == 3
+        assert not (tmp_path / "tabs").exists()
+
+    def test_prune_old_and_over_cap(self, rendered_script: Path, tmp_path: Path) -> None:
+        tabs = tmp_path / "tabs"
+        tabs.mkdir()
+        now = time.time()
+        old = tabs / ("1" * 32)
+        old.write_text("alpha\t1\n")
+        os.utime(old, (now - 31 * 86400, now - 31 * 86400))
+        for i in range(501):
+            f = tabs / f"{i:032x}"
+            f.write_text("alpha\t1\n")
+            os.utime(f, (now - 1000 - i, now - 1000 - i))
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "record", "--key", TAB_KEY,
+            "--project", "alpha", env=_tabs_env(tmp_path),
+        )
+        assert result.returncode == 0, result.stderr
+        names = {p.name for p in tabs.iterdir()}
+        assert old.name not in names
+        assert TAB_KEY in names
+        assert len(names) == 500
+        # the oldest of the 501 seeded files went, the newer ones stayed
+        assert f"{500:032x}" not in names
+        assert f"{0:032x}" in names
+
+    def test_lookup_no_record(self, rendered_script: Path, tmp_path: Path) -> None:
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "lookup", "--key", TAB_KEY, "--json",
+            env=_tabs_env(tmp_path),
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == {
+            "protocol_version": 1, "key": TAB_KEY, "project": None,
+            "recorded_at": None, "zellij_state": None,
+        }
+        assert result.stdout.count("\n") == 1
+
+    @pytest.mark.parametrize(
+        ("listing", "expected"),
+        [
+            ("alpha [Created 1h ago]\nbeta [Created 2h ago]", "active"),
+            ("alpha [Created 1h ago] (EXITED - attach to resurrect)", "exited"),
+            ("beta [Created 2h ago]", "absent"),
+            ("\x1b[32;1malpha\x1b[m [Created 1h ago]", "active"),
+        ],
+    )
+    def test_lookup_states(
+        self, rendered_script: Path, tmp_path: Path, listing: str, expected: str
+    ) -> None:
+        shims = tmp_path / "shims"
+        _zellij_shim(shims, listing)
+        env = _tabs_env(tmp_path)
+        rec = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "record", "--key", TAB_KEY,
+            "--project", "alpha", env=env,
+        )
+        assert rec.returncode == 0, rec.stderr
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "lookup", "--key", TAB_KEY, "--json",
+            env=env, path_prepend=shims,
+        )
+        assert result.returncode == 0, result.stderr
+        payload = json.loads(result.stdout)
+        assert payload["project"] == "alpha"
+        assert payload["zellij_state"] == expected
+        assert isinstance(payload["recorded_at"], int)
+
+    def test_lookup_without_zellij_is_absent(self, rendered_script: Path, tmp_path: Path) -> None:
+        env = _tabs_env(tmp_path)
+        _run_remo_host(
+            rendered_script, tmp_path, "sessions", "record", "--key", TAB_KEY,
+            "--project", "alpha", env=env,
+        )
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "lookup", "--key", TAB_KEY, "--json", env=env
+        )
+        payload = json.loads(result.stdout)
+        assert payload["zellij_state"] == ("absent" if shutil.which("zellij") is None else payload["zellij_state"])
+
+    def test_lookup_unparseable_record_is_no_record(self, rendered_script: Path, tmp_path: Path) -> None:
+        tabs = tmp_path / "tabs"
+        tabs.mkdir()
+        (tabs / TAB_KEY).write_text("../evil\tnotanumber\n")
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "lookup", "--key", TAB_KEY, "--json",
+            env=_tabs_env(tmp_path),
+        )
+        assert result.returncode == 0
+        assert json.loads(result.stdout)["project"] is None
+
+    @pytest.mark.parametrize("epoch", ["08", "0123"])
+    def test_lookup_leading_zero_epoch_is_no_record(
+        self, rendered_script: Path, tmp_path: Path, epoch: str
+    ) -> None:
+        """printf %d reads a leading-zero number as octal ("08" is an error)."""
+        tabs = tmp_path / "tabs"
+        tabs.mkdir()
+        (tabs / TAB_KEY).write_text(f"alpha\t{epoch}\n")
+        result = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "lookup", "--key", TAB_KEY, "--json",
+            env=_tabs_env(tmp_path),
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout)["project"] is None
+
+    def test_lookup_requires_json_and_valid_key(self, rendered_script: Path, tmp_path: Path) -> None:
+        env = _tabs_env(tmp_path)
+        no_json = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "lookup", "--key", TAB_KEY, env=env
+        )
+        assert no_json.returncode == 2
+        bad_key = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "lookup", "--key", "../x", "--json", env=env
+        )
+        assert bad_key.returncode == 3
+        no_key = _run_remo_host(
+            rendered_script, tmp_path, "sessions", "lookup", "--json", env=env
+        )
+        assert no_key.returncode == 2
+
+    def test_capabilities_advertises_lookup_not_record(self, rendered_script: Path, tmp_path: Path) -> None:
+        result = _run_remo_host(rendered_script, tmp_path, "capabilities", "--json")
+        operations = json.loads(result.stdout)["operations"]
+        assert "sessions.lookup" in operations
+        assert "sessions.record" not in operations
+
+    def test_usage_and_help(self, rendered_script: Path, tmp_path: Path) -> None:
+        usage = _run_remo_host(rendered_script, tmp_path, "sessions")
+        assert usage.returncode == 2
+        assert "lookup" in usage.stderr
+        helped = _run_remo_host(rendered_script, tmp_path, "--help")
+        assert helped.returncode == 0
+        assert "Exit codes:" in helped.stdout
+        assert "5  internal error / operation failure" in helped.stdout
+        assert "sessions lookup --key KEY --json" in helped.stdout
+
+    def test_parallel_records_for_distinct_keys(self, rendered_script: Path, tmp_path: Path) -> None:
+        env = _tabs_env(tmp_path)
+        fake_home = tmp_path / "home"
+        fake_home.mkdir(exist_ok=True)
+        full_env = {"PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(fake_home), **env}
+        keys = [f"{i:032x}" for i in range(10)]
+        procs = [
+            subprocess.Popen(
+                [BASH, str(rendered_script), "sessions", "record", "--key", k, "--project", "alpha"],
+                env=full_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            for k in keys
+        ]
+        for proc in procs:
+            proc.communicate()
+            assert proc.returncode == 0
+        files = sorted(p.name for p in (tmp_path / "tabs").iterdir())
+        assert files == sorted(keys)
+        for k in keys:
+            assert (tmp_path / "tabs" / k).read_text().startswith("alpha\t")

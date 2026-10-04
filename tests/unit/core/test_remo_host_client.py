@@ -1309,3 +1309,136 @@ class TestPreValidation:
         mock_run.return_value = _completed(0, stdout=json.dumps({"protocol_version": 1}).encode())
         delete_project(SSH_PREFIX, "my-api_2.0")
         assert mock_run.called
+
+
+# ---------------------------------------------------------------------------
+# sessions lookup (spec 028)
+# ---------------------------------------------------------------------------
+
+TAB_KEY = "0123456789abcdef0123456789abcdef"
+
+
+class TestLookupTab:
+    def test_argv(self):
+        from remo_cli.core.remo_host_client import build_remo_host_argv
+
+        assert build_remo_host_argv("sessions lookup", key=TAB_KEY, json=True) == [
+            "remo-host", "sessions", "lookup", "--key", TAB_KEY, "--json",
+        ]
+
+    def test_argv_rejects_missing_or_bad_key_and_foreign_flags(self):
+        from remo_cli.core.remo_host_client import build_remo_host_argv
+
+        with pytest.raises(ValueError):
+            build_remo_host_argv("sessions lookup")
+        with pytest.raises(ValueError):
+            build_remo_host_argv("sessions lookup", key="../x")
+        with pytest.raises(ValueError):
+            build_remo_host_argv("sessions lookup", key=TAB_KEY, project="p")
+        with pytest.raises(ValueError):
+            build_remo_host_argv("sessions list", key=TAB_KEY)
+
+    def _run(self, mocker, returncode=0, payload=None, stderr=b""):
+        stdout = json.dumps(payload).encode() if payload is not None else b""
+        return mocker.patch(
+            "remo_cli.core.remo_host_client.subprocess.run",
+            return_value=_completed(returncode, stdout=stdout, stderr=stderr),
+        )
+
+    def test_hit(self, mocker):
+        from remo_cli.core.remo_host_client import TabLookup, lookup_tab
+
+        mock_run = self._run(mocker, payload={
+            "protocol_version": 1, "key": TAB_KEY, "project": "alpha",
+            "recorded_at": 1700000000, "zellij_state": "active",
+        })
+        result = lookup_tab(SSH_PREFIX, TAB_KEY, timeout=5.0)
+        assert result == TabLookup("alpha", 1700000000, ZellijState.ACTIVE)
+        assert mock_run.call_args.kwargs["timeout"] == 5.0
+        argv = mock_run.call_args.args[0]
+        assert argv[-6:] == ["remo-host", "sessions", "lookup", "--key", TAB_KEY, "--json"]
+
+    def test_miss(self, mocker):
+        from remo_cli.core.remo_host_client import TabLookup, lookup_tab
+
+        self._run(mocker, payload={
+            "protocol_version": 1, "key": TAB_KEY, "project": None,
+            "recorded_at": None, "zellij_state": None,
+        })
+        assert lookup_tab(SSH_PREFIX, TAB_KEY) == TabLookup(None, None, None)
+
+    def test_malformed_json(self, mocker):
+        from remo_cli.core.remo_host_client import lookup_tab
+
+        mocker.patch(
+            "remo_cli.core.remo_host_client.subprocess.run",
+            return_value=_completed(0, stdout=b"not json"),
+        )
+        with pytest.raises(MalformedResponseError):
+            lookup_tab(SSH_PREFIX, TAB_KEY)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"protocol_version": 1, "key": TAB_KEY, "project": "a", "recorded_at": "x", "zellij_state": "active"},
+            {"protocol_version": 1, "key": TAB_KEY, "project": "a", "recorded_at": 1, "zellij_state": "weird"},
+            {"protocol_version": 1, "key": TAB_KEY, "project": "a", "recorded_at": 1, "zellij_state": None},
+            {"protocol_version": 1, "key": TAB_KEY, "project": 7, "recorded_at": 1, "zellij_state": "active"},
+        ],
+    )
+    def test_wrong_shapes_are_malformed(self, mocker, payload):
+        from remo_cli.core.remo_host_client import lookup_tab
+
+        self._run(mocker, payload=payload)
+        with pytest.raises(MalformedResponseError):
+            lookup_tab(SSH_PREFIX, TAB_KEY)
+
+    @pytest.mark.parametrize("echoed", [None, "f" * 32])
+    def test_answer_for_another_key_is_malformed(self, mocker, echoed):
+        """An answer not echoing the asked key could name another tab's
+        project (SC-003); it is a failed lookup, never a resume target."""
+        from remo_cli.core.remo_host_client import lookup_tab
+
+        payload = {
+            "protocol_version": 1, "project": "alpha",
+            "recorded_at": 1700000000, "zellij_state": "active",
+        }
+        if echoed is not None:
+            payload["key"] = echoed
+        self._run(mocker, payload=payload)
+        with pytest.raises(MalformedResponseError):
+            lookup_tab(SSH_PREFIX, TAB_KEY)
+
+    @pytest.mark.parametrize("code", [4, 2, 127])
+    def test_old_host_exit_codes_are_unsupported(self, mocker, code):
+        """127: no remo-host at all (pre-010 host, unconfigured added host)."""
+        from remo_cli.core.remo_host_client import TabLookupUnsupported, lookup_tab
+
+        self._run(mocker, returncode=code, stderr=b"unsupported subcommand: sessions lookup")
+        with pytest.raises(TabLookupUnsupported):
+            lookup_tab(SSH_PREFIX, TAB_KEY)
+
+    def test_other_exit_codes_stay_command_errors(self, mocker):
+        from remo_cli.core.remo_host_client import lookup_tab
+
+        self._run(mocker, returncode=3)
+        with pytest.raises(RemoHostCommandError):
+            lookup_tab(SSH_PREFIX, TAB_KEY)
+
+    def test_timeout_is_transport_error(self, mocker):
+        from remo_cli.core.remo_host_client import lookup_tab
+
+        mocker.patch(
+            "remo_cli.core.remo_host_client.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd="ssh", timeout=5.0),
+        )
+        with pytest.raises(SshTransportError):
+            lookup_tab(SSH_PREFIX, TAB_KEY, timeout=5.0)
+
+    def test_invalid_key_raises_before_any_subprocess(self, mocker):
+        from remo_cli.core.remo_host_client import lookup_tab
+
+        mock_run = mocker.patch("remo_cli.core.remo_host_client.subprocess.run")
+        with pytest.raises(ValueError):
+            lookup_tab(SSH_PREFIX, "../../etc/passwd")
+        mock_run.assert_not_called()

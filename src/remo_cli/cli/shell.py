@@ -86,21 +86,97 @@ def shell(
             "could use it. Drop one or the other."
         )
         raise SystemExit(2)
-    from remo_cli.core.ssh import check_remote_version, resolve_remo_host, shell_connect  # noqa: PLC0415
-    from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
-    from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415
-    from remo_cli.providers.aws import auto_start_aws_if_stopped  # noqa: PLC0415
+    from remo_cli.core.ssh import resolve_remo_host  # noqa: PLC0415
 
     host = resolve_remo_host(name)
+    # --detach is not an interactive attach, so it neither records nor
+    # forwards a tab key (spec 028 R11).
+    tab_key = None if detach else remember_tab(host.name, project)
+    connect_to_host(
+        host,
+        tunnels=tunnels,
+        no_open=no_open,
+        no_update_check=no_update_check,
+        project=project,
+        exec_cmd=exec_cmd,
+        detach=detach,
+        tab_key=tab_key,
+    )
 
-    # Auto-start stopped AWS instances before connecting
+
+def remember_tab(host_name: str, project: str | None) -> str | None:
+    """Record this terminal tab's host/project and return its forwardable key.
+
+    ``None`` when the terminal exposes no tab identity (FR-003). A store that
+    cannot be written degrades to one warning line: the key is still returned
+    so the host can record, and the connection is never blocked (R5).
+    """
+    import os  # noqa: PLC0415
+
+    from remo_cli.core import tab_records  # noqa: PLC0415
+    from remo_cli.core.output import print_warning  # noqa: PLC0415
+    from remo_cli.core.tab_identity import derive_tab_key, detect_tab_identity  # noqa: PLC0415
+
+    identity = detect_tab_identity(os.environ)
+    if identity is None:
+        return None
+    try:
+        key = derive_tab_key(identity, tab_records.get_secret())
+    except tab_records.TabRecordError as e:
+        print_warning(f"Could not remember this tab for 'remo resume': {e}")
+        return None
+    try:
+        tab_records.record(key, host_name, project)
+    except tab_records.TabRecordError as e:
+        print_warning(f"Could not remember this tab for 'remo resume': {e}")
+    return key
+
+
+def auto_start_host(host):  # noqa: ANN001, ANN201
+    """Start a stopped instance before anything talks to it; return the
+    refreshed host (new IP). A no-op for every host that needs no start.
+
+    Shared by ``connect_to_host`` and ``remo resume``, which must start the
+    instance *before* its host lookup or the lookup hits a stopped box / stale
+    IP and falls back instead of resuming (spec 028 FR-014).
+    """
     from remo_cli.core.errors import ProviderError  # noqa: PLC0415
+    from remo_cli.core.output import print_error  # noqa: PLC0415
+    from remo_cli.providers.aws import auto_start_aws_if_stopped  # noqa: PLC0415
 
     try:
-        host = auto_start_aws_if_stopped(host)
+        return auto_start_aws_if_stopped(host)
     except ProviderError as e:
         print_error(str(e))
         raise SystemExit(e.exit_code) from e
+
+
+def connect_to_host(
+    host,  # noqa: ANN001
+    *,
+    tunnels: tuple[str, ...] | list[str],
+    no_open: bool,
+    no_update_check: bool,
+    project: str | None = None,
+    exec_cmd: str | None = None,
+    detach: bool = False,
+    tab_key: str | None = None,
+    auto_started: bool = False,
+) -> None:
+    """Everything `remo shell` does once the host is resolved.
+
+    Extracted so `remo resume` makes the *same* pre-connect checks (AWS
+    auto-start, version check / upgrade offer) before it connects (spec 028
+    FR-014) — one code path, no drift. ``auto_started`` says the caller has
+    already run :func:`auto_start_host` on *host* (resume does, before its
+    lookup), so the instance-state query is not repeated.
+    """
+    from remo_cli.core.ssh import check_remote_version, shell_connect  # noqa: PLC0415
+    from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
+    from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415
+
+    if not auto_started:
+        host = auto_start_host(host)
 
     # Pre-shell remote version check.
     #
@@ -142,14 +218,14 @@ def shell(
                 # No marker file on remote
                 should_update = confirm(
                     f"Instance '{host.name}' has no version info. "
-                    f"Run `{_upgrade_command_hint(host)}`?",
+                    f"Run `{upgrade_command_hint(host)}`?",
                     default=True,
                 )
             elif version_is_newer(local_version, remote_version):
                 # Remote is behind local
                 should_update = confirm(
                     f"Instance '{host.name}' tools are v{remote_version}, "
-                    f"local is v{local_version}. Run `{_upgrade_command_hint(host)}`?",
+                    f"local is v{local_version}. Run `{upgrade_command_hint(host)}`?",
                     default=True,
                 )
             elif version_is_newer(remote_version, local_version):
@@ -183,10 +259,11 @@ def shell(
         project=project,
         detach=detach,
         exec_cmd=exec_cmd,
+        tab_key=tab_key,
     )
 
 
-def _upgrade_command_hint(host) -> str:  # noqa: ANN001
+def upgrade_command_hint(host) -> str:  # noqa: ANN001
     """Render the exact command that accepting the prompt will run.
 
     ``remo configure <name>`` for an added (type="ssh") host, and
@@ -244,7 +321,7 @@ def _run_tools_upgrade(host) -> None:  # noqa: ANN001
     Two paths onto the same shared ``tasks/configure_dev_tools.yml`` role list:
     ``providers.added.configure()`` for an added (type="ssh") host, and the
     provider's own ``update_entry()`` for a managed one. Must stay in step with
-    :func:`_upgrade_command_hint`, which promises the user exactly one of them.
+    :func:`upgrade_command_hint`, which promises the user exactly one of them.
 
     Raises :class:`~remo_cli.core.errors.ProviderError` on failure (including
     an unrecognized provider type — no more silent no-op).

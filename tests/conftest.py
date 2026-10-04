@@ -7,6 +7,17 @@ import tempfile
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_tab_identity(monkeypatch):
+    """A developer's own terminal (tmux, kitty, iTerm...) must not leak into
+    `remo shell` / `remo resume` tests (spec 028): with a tab variable set they
+    would read and write the real ``REMO_HOME`` tab records."""
+    from remo_cli.core.tab_identity import TAB_VARIABLES
+
+    for variable in (*TAB_VARIABLES, "TMUX", "REMO_TAB_KEY"):
+        monkeypatch.delenv(variable, raising=False)
+
+
 @pytest.fixture
 def tmp_config_dir(tmp_path):
     """Provide a temporary config directory and set REMO_HOME to it."""

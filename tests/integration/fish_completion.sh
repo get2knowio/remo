@@ -154,7 +154,7 @@ blue "Running completions in fish ..."
 
 # Top-level: the case the user hits first, and the one that regressed.
 check "top-level subcommands" "remo " \
-    add aws completion cp hetzner incus proxmox remove shell web
+    add aws completion cp hetzner incus proxmox remove resume shell web
 
 # One level down, through the descriptor-generated provider factory.
 check "incus subcommands" "remo incus " \
