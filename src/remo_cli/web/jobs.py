@@ -40,12 +40,12 @@ import logging
 import os
 import re
 import subprocess
-import tempfile
 import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from remo_cli.core.atomic_file import atomic_write_json
 from remo_cli.web.config import WebSettings
 
 logger = logging.getLogger("remo_cli.web.jobs")
@@ -246,16 +246,7 @@ class CliJobRunner:
 
     def _write_record(self, record: dict[str, Any]) -> None:
         path = self._dir / f"{record['job_id']}.json"
-        fd, tmp_str = tempfile.mkstemp(dir=self._dir, prefix=".job_tmp_")
-        tmp = Path(tmp_str)
-        try:
-            with os.fdopen(fd, "w") as fh:
-                json.dump(record, fh)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, path)
-        except Exception:
-            tmp.unlink(missing_ok=True)
-            raise
+        atomic_write_json(path, record, mode=0o600, prefix=".job_tmp_")
 
     def _finalize_if_done(self, record: dict[str, Any]) -> dict[str, Any]:
         """Poll-path finalization: exit file wins; a gone pid without one fails."""

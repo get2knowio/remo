@@ -11,18 +11,15 @@ web boundary translate the error taxonomy below into user-facing behavior.
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import json
 import os
-import tempfile
-import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from remo_cli.core.atomic_file import advisory_lock, atomic_write_text
 from remo_cli.core.config import (
     get_known_hosts_path,
     get_known_hosts_path_readonly,
@@ -579,16 +576,10 @@ def _write_v2_file(path: Path, hosts: list[KnownHost], unknown_raw: list[dict[st
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
+    # Kept as a module-level seam: tests (and test_setup_api's flaky-write
+    # fixture) patch this name to simulate a crash mid-write.
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".registry_tmp_")
-    tmp_path = Path(tmp_name)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_text(path, text, prefix=".registry_tmp_")
 
 
 def _non_clobbering_backup_path() -> Path:
@@ -713,43 +704,25 @@ def _warn_lock_unavailable_once() -> None:
 
 
 @contextmanager
-def registry_lock(timeout_s: float = 5.0) -> Any:
+def registry_lock(timeout_s: float = 5.0) -> Iterator[None]:
     """Advisory lock on the sidecar ``registry.lock`` file (FR-017/FR-019).
 
     ``fcntl.flock(LOCK_EX | LOCK_NB)`` with a 50ms retry loop up to
     *timeout_s*, then :class:`RegistryBusyError`. Degrades to an unlocked
     proceed (with a one-time warning) when the filesystem does not support
-    ``flock`` (e.g. some network filesystems).
+    ``flock`` (e.g. some network filesystems). The mechanics live in
+    :func:`remo_cli.core.atomic_file.advisory_lock` (#244).
     """
-    lock_path = get_registry_lock_path()
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
-    acquired = False
-    try:
-        deadline = time.monotonic() + timeout_s
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                break
-            except OSError as e:
-                if e.errno in (errno.ENOLCK, errno.EOPNOTSUPP):
-                    _warn_lock_unavailable_once()
-                    break
-                if time.monotonic() >= deadline:
-                    raise RegistryBusyError(
-                        "registry is busy — another remo process is writing; "
-                        "retry in a moment"
-                    ) from None
-                time.sleep(0.05)
+    with advisory_lock(
+        get_registry_lock_path(),
+        timeout_s=timeout_s,
+        file_mode=0o644,
+        busy_error=lambda: RegistryBusyError(
+            "registry is busy — another remo process is writing; retry in a moment"
+        ),
+        on_unsupported=_warn_lock_unavailable_once,
+    ):
         yield
-    finally:
-        if acquired:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
-        os.close(fd)
 
 
 # ---------------------------------------------------------------------------

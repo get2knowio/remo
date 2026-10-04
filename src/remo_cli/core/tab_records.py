@@ -5,26 +5,19 @@ secret, 0600), ``tab-records.json`` and a ``tab-records.lock`` sidecar. A
 missing or malformed records file reads as empty — resume must never be worse
 than ``remo shell`` — while write failures surface as :class:`TabRecordError`
 so callers can warn and carry on connecting.
-
-The atomic-write and flock helpers are private copies of a pattern five other
-modules already carry (see the consolidation follow-up filed with spec 028).
 """
 
 from __future__ import annotations
 
-import errno
-import fcntl
 import json
-import os
 import secrets
-import tempfile
-import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from remo_cli.core.atomic_file import advisory_lock, atomic_write_json, atomic_write_text
 from remo_cli.core.config import get_remo_home
 
 RETENTION_DAYS = 30
@@ -56,54 +49,25 @@ def _lock_path() -> Path:
     return get_remo_home() / "tab-records.lock"
 
 
-def _atomic_write_text(path: Path, text: str, *, mode: int | None = None) -> None:
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(text)
-        if mode is not None:
-            os.chmod(tmp, mode)
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-
 @contextmanager
 def _lock() -> Iterator[None]:
-    try:
-        path = _lock_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
-    except OSError as e:
-        raise TabRecordError(f"cannot open the tab record lock: {e}") from e
-    acquired = False
-    try:
-        deadline = time.monotonic() + _LOCK_TIMEOUT_S
-        while True:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                acquired = True
-                break
-            except OSError as e:
-                if e.errno in (errno.ENOLCK, errno.EOPNOTSUPP):
-                    break  # filesystem without flock: proceed unlocked
-                if time.monotonic() >= deadline:
-                    raise TabRecordError(
+    # Only a failure to open the sidecar gets the "lock" message; OSErrors from
+    # the guarded block keep flowing to the caller's own translation.
+    with ExitStack() as stack:
+        try:
+            stack.enter_context(
+                advisory_lock(
+                    _lock_path(),
+                    timeout_s=_LOCK_TIMEOUT_S,
+                    file_mode=0o600,
+                    busy_error=lambda: TabRecordError(
                         "tab records are busy — another remo process is writing"
-                    ) from None
-                time.sleep(0.05)
+                    ),
+                )
+            )
+        except OSError as e:
+            raise TabRecordError(f"cannot open the tab record lock: {e}") from e
         yield
-    finally:
-        if acquired:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            except OSError:
-                pass
-        os.close(fd)
 
 
 def get_secret() -> bytes:
@@ -133,7 +97,7 @@ def _write_new_secret() -> bytes:
     secret = secrets.token_bytes(32)
     path = _secret_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_text(path, secret.hex(), mode=0o600)
+    atomic_write_text(path, secret.hex(), mode=0o600)
     return secret
 
 
@@ -198,7 +162,7 @@ def _write_all(records: dict[str, TabRecord]) -> None:
     }
     path = _records_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    _atomic_write_text(path, json.dumps(payload, indent=2) + "\n")
+    atomic_write_json(path, payload, indent=2, trailing_newline=True)
 
 
 def load(key: str) -> TabRecord | None:
