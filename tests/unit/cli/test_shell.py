@@ -631,7 +631,13 @@ class TestShellTabRecording:
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=hetzner_host)
         mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=hetzner_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
-        connect = mocker.patch("remo_cli.core.ssh.shell_connect")
+
+        def _attempt(*args, on_connect=None, **kwargs):
+            # The real shell_connect calls on_connect just before ssh runs.
+            if on_connect is not None:
+                on_connect()
+
+        connect = mocker.patch("remo_cli.core.ssh.shell_connect", side_effect=_attempt)
         identity = detect_tab_identity({"KITTY_WINDOW_ID": "7"})
         key = derive_tab_key(identity, tab_records.get_secret())
         return key, connect
@@ -709,3 +715,125 @@ class TestShellTabRecording:
         decide.assert_not_called()
         live.assert_not_called()
         assert connect.call_args.kwargs["project"] is None
+
+
+class TestTabRecordedOnlyOnAttempt:
+    """Issue #248: the tab's record is written only once ssh is actually about
+    to run. Every pre-connect refusal leaves the PREVIOUS record intact."""
+
+    @pytest.fixture
+    def tab(self, monkeypatch, tmp_path, mocker, hetzner_host):
+        from remo_cli.core import tab_records
+        from remo_cli.core.tab_identity import derive_tab_key, detect_tab_identity
+
+        monkeypatch.setenv("REMO_HOME", str(tmp_path / "remo"))
+        monkeypatch.setenv("KITTY_WINDOW_ID", "7")
+        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=hetzner_host)
+        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=hetzner_host)
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "x"])
+        mocker.patch("remo_cli.core.ssh.reset_terminal")
+        # CliRunner's stdin has no fileno; the tty save/restore is not under test.
+        mocker.patch("remo_cli.core.ssh.sys")
+        mocker.patch("remo_cli.core.ssh.termios.tcgetattr", return_value=None)
+        run = mocker.patch("remo_cli.core.ssh.subprocess.run")
+        key = derive_tab_key(
+            detect_tab_identity({"KITTY_WINDOW_ID": "7"}), tab_records.get_secret()
+        )
+        tab_records.record(key, "previous-host", "previous-project")
+        return key, run
+
+    @staticmethod
+    def _unchanged(key):
+        from remo_cli.core import tab_records
+
+        rec = tab_records.load(key)
+        assert rec is not None
+        assert (rec.host, rec.project) == ("previous-host", "previous-project")
+
+    def test_invalid_tunnel_spec_keeps_previous_record(self, runner, tab):
+        key, run = tab
+        result = runner.invoke(shell, ["-p", "A", "-L", "not-a-port"])
+        assert result.exit_code != 0
+        assert "Invalid tunnel specification" in result.output
+        run.assert_not_called()
+        self._unchanged(key)
+
+    def test_local_port_in_use_keeps_previous_record(self, runner, tab, mocker):
+        key, run = tab
+        mocker.patch("remo_cli.core.ssh.shutil.which", return_value="/usr/bin/ss")
+        run.return_value = mocker.Mock(stdout="LISTEN 0 4096 *:8080")
+        result = runner.invoke(shell, ["-p", "A", "-L", "8080"])
+        assert result.exit_code != 0
+        assert "already in use" in result.output
+        self._unchanged(key)
+
+    def test_auto_start_failure_keeps_previous_record(self, runner, tab, mocker):
+        from remo_cli.core.errors import OperationFailedError
+
+        key, run = tab
+        mocker.patch(
+            "remo_cli.providers.aws.auto_start_aws_if_stopped",
+            side_effect=OperationFailedError("cannot start"),
+        )
+        result = runner.invoke(shell, ["-p", "A"])
+        assert result.exit_code != 0
+        run.assert_not_called()
+        self._unchanged(key)
+
+    def test_declining_connect_anyway_keeps_previous_record(self, runner, tab, mocker):
+        from remo_cli.core.errors import OperationFailedError
+
+        key, run = tab
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
+        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch(
+            "remo_cli.cli.shell._run_tools_upgrade", side_effect=OperationFailedError("boom")
+        )
+        # yes to the upgrade, no to "Connect anyway?"
+        mocker.patch("remo_cli.core.output.confirm", side_effect=[True, False])
+        result = runner.invoke(shell, ["-p", "A"])
+        assert result.exit_code != 0
+        run.assert_not_called()
+        self._unchanged(key)
+
+    def test_declining_the_upgrade_still_connects_and_records(self, runner, tab, mocker):
+        """Declining the upgrade does not abort, so the connection happens."""
+        from remo_cli.core import tab_records
+
+        key, run = tab
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
+        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.output.confirm", return_value=False)
+        result = runner.invoke(shell, ["-p", "A"])
+        assert result.exit_code == 0, result.output
+        run.assert_called_once()
+        rec = tab_records.load(key)
+        assert rec is not None and (rec.host, rec.project) == ("webserver", "A")
+
+    def test_normal_connect_records_before_ssh_and_forwards_key(self, runner, tab):
+        from remo_cli.core import tab_records
+
+        key, run = tab
+        seen = {}
+
+        def _ssh(cmd, env=None):
+            rec = tab_records.load(key)
+            seen["record"] = (rec.host, rec.project) if rec else None
+            seen["env_key"] = (env or {}).get("REMO_TAB_KEY")
+
+        run.side_effect = _ssh
+        result = runner.invoke(shell, ["-p", "A"])
+        assert result.exit_code == 0, result.output
+        assert seen == {"record": ("webserver", "A"), "env_key": key}
+
+    def test_store_failure_at_connect_warns_once_and_still_connects(self, runner, tab, mocker):
+        from remo_cli.core.tab_records import TabRecordError
+
+        key, run = tab
+        mocker.patch("remo_cli.core.tab_records.record", side_effect=TabRecordError("disk full"))
+        result = runner.invoke(shell, ["-p", "A"])
+        assert result.exit_code == 0
+        assert result.output.count("Could not remember this tab") == 1
+        run.assert_called_once()
+        assert run.call_args.kwargs["env"]["REMO_TAB_KEY"] == key

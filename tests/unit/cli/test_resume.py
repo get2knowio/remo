@@ -6,6 +6,7 @@ import pytest
 from click.testing import CliRunner
 
 from remo_cli.cli.resume import resume
+from remo_cli.cli.shell import connect_to_host as _real_connect_to_host
 from remo_cli.core import tab_records
 from remo_cli.core.remo_host_client import TabLookup, ZellijState
 from remo_cli.core.tab_identity import derive_tab_key, detect_tab_identity
@@ -43,7 +44,13 @@ def world(monkeypatch, tmp_path, mocker, host_h, host_i):
     w = World()
     w.key = key
     w.hosts = [host_h, host_i]
-    w.connect = mocker.patch("remo_cli.cli.shell.connect_to_host")
+
+    def _attempt(*args, on_connect=None, **kwargs):
+        # A successful connect reaches ssh, where on_connect runs (#248).
+        if on_connect is not None:
+            on_connect()
+
+    w.connect = mocker.patch("remo_cli.cli.shell.connect_to_host", side_effect=_attempt)
     w.autostart = mocker.patch(
         "remo_cli.cli.shell.auto_start_host", side_effect=lambda h: h
     )
@@ -178,6 +185,64 @@ class TestRecordRefresh:
         assert "disk on fire" not in result.output
         assert len(lines(result)) == 1
         assert world.connect.call_args.kwargs["project"] == "A"
+
+
+class TestRecordRefreshOnlyOnAttempt:
+    """Issue #248: resume's silent refresh happens only once ssh is about to
+    run — a declined prompt or a refused -L leaves the previous record."""
+
+    @staticmethod
+    def _use_real_connect(mocker):
+        mocker.patch("remo_cli.cli.shell.connect_to_host", new=_real_connect_to_host)
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "x"])
+        mocker.patch("remo_cli.core.ssh.reset_terminal")
+        # CliRunner's stdin has no fileno; the tty save/restore is not under test.
+        mocker.patch("remo_cli.core.ssh.sys")
+        mocker.patch("remo_cli.core.ssh.termios.tcgetattr", return_value=None)
+        return mocker.patch("remo_cli.core.ssh.subprocess.run")
+
+    def test_declined_connect_anyway_keeps_previous_record(self, runner, world, mocker):
+        from remo_cli.core.errors import OperationFailedError
+
+        run = self._use_real_connect(mocker)
+        tab_records.record(world.key, "H", "old")
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
+        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch(
+            "remo_cli.cli.shell._run_tools_upgrade", side_effect=OperationFailedError("boom")
+        )
+        mocker.patch("remo_cli.core.output.confirm", side_effect=[True, False])
+        result = runner.invoke(resume, [])
+        assert result.exit_code != 0
+        run.assert_not_called()
+        after = tab_records.load(world.key)
+        assert after is not None and (after.host, after.project) == ("H", "old")
+
+    def test_invalid_tunnel_keeps_previous_record(self, runner, world, mocker):
+        run = self._use_real_connect(mocker)
+        tab_records.record(world.key, "H", "old")
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        result = runner.invoke(resume, ["-L", "nope"])
+        assert result.exit_code != 0
+        run.assert_not_called()
+        after = tab_records.load(world.key)
+        assert after is not None and (after.host, after.project) == ("H", "old")
+
+    def test_attach_refreshes_before_ssh_and_forwards_key(self, runner, world, mocker):
+        run = self._use_real_connect(mocker)
+        tab_records.record(world.key, "H", "old")
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        seen = {}
+
+        def _ssh(cmd, env=None):
+            rec = tab_records.load(world.key)
+            seen["record"] = (rec.host, rec.project) if rec else None
+            seen["env_key"] = (env or {}).get("REMO_TAB_KEY")
+
+        run.side_effect = _ssh
+        result = runner.invoke(resume, [])
+        assert result.exit_code == 0, result.output
+        assert seen == {"record": ("H", "A"), "env_key": world.key}
 
 
 class TestFallbacks:

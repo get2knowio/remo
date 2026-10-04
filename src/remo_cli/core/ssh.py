@@ -19,6 +19,8 @@ from remo_cli.core.validation import validate_port, validate_project_name
 from remo_cli.models.host import KnownHost
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from remo_cli.core.provider_registry import SshProxyPlan
 
 
@@ -525,6 +527,7 @@ def shell_connect(
     detach: bool = False,
     exec_cmd: str | None = None,
     tab_key: str | None = None,
+    on_connect: Callable[[], None] | None = None,
 ) -> None:
     """Open an SSH session to *host* with optional port tunnels.
 
@@ -551,6 +554,12 @@ def shell_connect(
         The per-tab resume key (spec 028). When set it is forwarded to the
         host as ``REMO_TAB_KEY`` via ``SendEnv`` — the same mechanism as the
         timezone — for this one connection only.
+    on_connect:
+        Called once, after every check that can refuse the connection (tunnel
+        specs, local port availability, project name) has passed and
+        immediately before ssh runs. The CLI records the tab's resume record
+        here, so a connection that never happened cannot overwrite a good
+        record (issue #248). Never called when this function raises first.
     """
     use_project_launch = bool(project)
 
@@ -634,6 +643,11 @@ def shell_connect(
         # (T059) before shlex.quote(), so a malicious/malformed name is
         # rejected here with a clear SystemExit rather than reaching ssh.
         ssh_cmd.append(build_project_launch_remote_cmd(project, detach, exec_cmd))
+
+    # Every refusal above has had its chance; the connection is now being
+    # attempted (issue #248).
+    if on_connect is not None:
+        on_connect()
 
     # ------------------------------------------------------------------
     # Auto-open browser for first tunnel
