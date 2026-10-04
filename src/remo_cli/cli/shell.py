@@ -304,55 +304,15 @@ def connect_to_host(
 
 
 def upgrade_command_hint(host) -> str:  # noqa: ANN001
-    """Render the exact command that accepting the prompt will run.
+    """Render the exact command that accepting the prompt will run (SC-003).
 
-    ``remo configure <name>`` for an added (type="ssh") host, and
-    `remo <type> upgrade <name>` for a provider one.
-
-    Names the precise command the accepted prompt runs (SC-003) so the
-    remedy is always executable and truthful.
-
-    Host-scoped providers need the host-user flag spelled out too: accepting
-    the prompt runs ``update_entry``, which reads the host SSH user off the
-    registry entry, but passing ``--host`` on the command line short-circuits
-    that registry lookup and would silently fall back to the provider default
-    (``""``/``root``). The flag and the attribute both come from the
-    descriptor's ``registry_fields`` entry whose JSON key ends in ``_user``
-    (``instance_id``/``host_user`` for Incus, ``region``/``host_user`` for
-    Proxmox) — no provider literals here.
+    Kept under this name because ``cli/resume.py`` imports it; the spelling
+    itself lives in :func:`remo_cli.core.known_hosts.upgrade_command_for` so
+    the web console and the configure guard name the same command (#243).
     """
-    from remo_cli.core.provider_registry import (  # noqa: PLC0415
-        NameFormat,
-        get_descriptor,
-        is_provider_type,
-    )
+    from remo_cli.core.known_hosts import upgrade_command_for  # noqa: PLC0415
 
-    if host.type == "ssh":
-        # Added host: `remo configure` is its upgrade verb — the same shared
-        # role list, reached through ssh_configure.yml. There is no `remo ssh`
-        # command group, so the provider spelling below would name a command
-        # that cannot be run.
-        return f"remo configure {host.name}"
-
-    if not is_provider_type(host.type):
-        # Unrecognized registry type: keep the provider spelling so the message
-        # names the type that is actually wrong. _run_tools_upgrade() refuses
-        # it with a PreconditionError rather than running anything.
-        return f"remo {host.type} upgrade {host.name}"
-
-    descriptor = get_descriptor(host.type)
-    if descriptor.name_format is NameFormat.HOST_SCOPED and "/" in host.name:
-        host_part, _, short_name = host.name.partition("/")
-        cmd = f"remo {host.type} upgrade {short_name} --host {host_part}"
-        for attr, json_key in descriptor.registry_fields:
-            if json_key.endswith("_user"):
-                user_value = getattr(host, attr, "")
-                if user_value:
-                    flag = "--" + json_key.replace("_", "-")
-                    cmd += f" {flag} {user_value}"
-                break
-        return cmd
-    return f"remo {host.type} upgrade {host.name}"
+    return upgrade_command_for(host)
 
 
 def _run_tools_upgrade(host) -> None:  # noqa: ANN001
