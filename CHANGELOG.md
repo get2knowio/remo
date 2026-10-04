@@ -1,5 +1,13 @@
 # Changelog
 
+## [4.4.2](https://github.com/get2knowio/remo/compare/v4.4.1...v4.4.2) (2026-10-04)
+
+
+### Bug Fixes
+
+* **ansible:** pin zellij's socket directory so every entry point sees one namespace ([#240](https://github.com/get2knowio/remo/issues/240)) ([bc533b3](https://github.com/get2knowio/remo/commit/bc533b3ff7d6c42e9a7a306e715cdc77c5c02642))
+* **ansible:** stop every devcontainer for a project, not a newline-joined one ([#239](https://github.com/get2knowio/remo/issues/239)) ([24b9edd](https://github.com/get2knowio/remo/commit/24b9eddb7954acfb2741c1de9e89ebe2e2bf3ac5))
+
 ## [4.4.1](https://github.com/get2knowio/remo/compare/v4.4.0...v4.4.1) (2026-09-30)
 
 
