@@ -115,7 +115,11 @@ def test_create_yes_is_rejected_as_unknown_option() -> None:
             runner = CliRunner()
             result = runner.invoke(group, ["create", "--yes"])
             assert result.exit_code == 2, result.output
-            assert "No such option: --yes" in result.output
+            # Click 8.5 reworded this ("No such option '--yes'. Did you
+            # mean …?"), so match the parts that carry meaning, not the
+            # punctuation between them.
+            assert "No such option" in result.output
+            assert "--yes" in result.output
             assert received == {}, "create() must not run when parsing fails"
 
             # The happy path still has to work, and its kwargs still have to
