@@ -40,12 +40,12 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@vitejs/plugin-react": "^6",
-    "@vitest/coverage-v8": "^4",
+    "@vitest/coverage-v8": "^4.1.12",
     "jsdom": "^29.1.1",
     "openapi-typescript": "7.13.0",
     "typescript": "^5",
     "vite": "^8",
-    "vitest": "^4"
+    "vitest": "^4.1.12"
   },
   "overrides": {
     "js-yaml": "^4.3.1"
