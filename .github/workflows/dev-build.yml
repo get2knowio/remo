@@ -151,7 +151,7 @@ jobs:
 
       - name: Download the built artifact
         # NOTE: SHA-pin alongside upload-artifact above.
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           name: remo-wheel
           path: dist
