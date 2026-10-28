@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.5.0](https://github.com/get2knowio/remo/compare/v4.4.2...v4.5.0) (2026-10-28)
+
+
+### Features
+
+* **cli:** `remo resume` puts each terminal tab back in its own session (spec 028) ([#249](https://github.com/get2knowio/remo/issues/249)) ([a90ea9b](https://github.com/get2knowio/remo/commit/a90ea9b2dc430c74b508ed9213620ba040bd60df))
+
+
+### Bug Fixes
+
+* **ansible:** defer a zellij upgrade while sessions are live ([#242](https://github.com/get2knowio/remo/issues/242)) ([46617a3](https://github.com/get2knowio/remo/commit/46617a368598f4efcd42efa4f73f8edaa54c338f))
+
 ## [4.4.2](https://github.com/get2knowio/remo/compare/v4.4.1...v4.4.2) (2026-10-04)
 
 
