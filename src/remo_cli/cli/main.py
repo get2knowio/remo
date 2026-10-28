@@ -291,6 +291,7 @@ def _register_commands() -> None:
     # Import lazily to avoid circular imports and to keep startup fast
     # when only --version or --help is requested.
     from remo_cli.cli.shell import shell  # noqa: F811
+    from remo_cli.cli.resume import resume  # noqa: F811
     from remo_cli.cli.cp import cp  # noqa: F811
     from remo_cli.cli.added import add, configure, remove  # noqa: F811
     from remo_cli.cli.providers.factory import build_provider_group  # noqa: F811
@@ -300,6 +301,7 @@ def _register_commands() -> None:
     from remo_cli.core.provider_registry import all_descriptors  # noqa: F811
 
     cli.add_command(shell)
+    cli.add_command(resume)
     cli.add_command(cp)
     cli.add_command(add)
     cli.add_command(remove)

@@ -159,4 +159,12 @@ if zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -q "^$PRO
     zellij delete-session "$PROJECT" 2>/dev/null || true
 fi
 
+# Remember which project this terminal tab attached, so `remo resume` can put
+# the tab back (spec 028). REMO_TAB_KEY only arrives from a `remo` CLI tab —
+# the web console and SSM connector never set it — and a failed record must
+# never keep the user out of their session.
+if [ -n "${REMO_TAB_KEY:-}" ]; then
+    "$HOME/.local/bin/remo-host" sessions record --key "$REMO_TAB_KEY" --project "$PROJECT" >/dev/null 2>&1 || true
+fi
+
 exec zellij attach --create "$PROJECT"

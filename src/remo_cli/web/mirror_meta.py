@@ -26,12 +26,11 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
+from remo_cli.core.atomic_file import atomic_write_json
 from remo_cli.web.config import WebSettings
 
 logger = logging.getLogger("remo_cli.web.mirror_meta")
@@ -97,12 +96,4 @@ def _write_doc(path: Path, doc: dict[str, Any]) -> None:
     """Atomic write via same-directory temp file + `os.replace`."""
     dir_ = path.parent
     dir_.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, tmp_path_str = tempfile.mkstemp(dir=dir_, prefix=".mirror_meta_tmp_")
-    tmp_path = Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w") as fh:
-            json.dump(doc, fh)
-        os.replace(tmp_path, path)
-    except Exception:
-        tmp_path.unlink(missing_ok=True)
-        raise
+    atomic_write_json(path, doc, prefix=".mirror_meta_tmp_")

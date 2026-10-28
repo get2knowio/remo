@@ -38,6 +38,7 @@ production hosts never set them:
 | `REMO_HOST_PROC_ROOT` | `/proc` | `host stats` |
 | `REMO_HOST_SYS_ROOT` | `/sys` | `host stats` (hwmon/thermal) |
 | `REMO_HOST_JOBS_DIR` | `~/.local/state/remo/jobs` | detached jobs (`projects clone`/`rebuild`, `jobs status`) |
+| `REMO_HOST_TABS_DIR` | `~/.local/state/remo/tabs` | per-tab resume records (`sessions record`/`lookup`) |
 
 ## `remo-host capabilities --json`
 
@@ -47,7 +48,7 @@ Stdout:
   "protocol_version": 1,
   "host_tools_version": "2.1.0",
   "projects_root": "/home/remo/projects",
-  "operations": ["capabilities", "sessions.list", "sessions.attach", "host.stats",
+  "operations": ["capabilities", "sessions.list", "sessions.attach", "sessions.lookup", "host.stats",
                  "projects.clone", "projects.delete", "projects.rebuild", "jobs.status"],
   "zellij": true,
   "docker": true
@@ -114,6 +115,25 @@ Interactive (TTY required). Validates `<name>`:
 On success, `exec ~/.local/bin/project-launch --project "<name>"` so the resulting Zellij/devcontainer
 session is byte-for-byte the CLI's `remo shell -p <name>` path (SC-002). No JSON on this verb; it
 becomes an interactive terminal stream.
+
+## `remo-host sessions lookup --key <key> --json`
+
+Added by spec 028 (`remo resume`), additive under protocol version 1 and advertised as the
+`sessions.lookup` operation. Reports which project a terminal tab last attached. `<key>` is the
+workstation's salted digest of the tab's identity (`^[0-9a-f]{32}$`; an invalid key exits 3, a
+missing `--json` or `--key` exits 2). Single-line stdout:
+
+```json
+{"protocol_version":1,"key":"<key>","project":"my-api","recorded_at":1790000000,"zellij_state":"active"}
+```
+
+`project`, `recorded_at` and `zellij_state` are all `null` when no (parseable) record exists.
+`zellij_state` uses exactly the definition `sessions list` uses. A host that predates this verb
+answers with exit 4 (`unsupported subcommand`), which clients MUST read as "host not upgraded",
+not as an error. The internal `sessions record --key K --project NAME` writes the record
+(`<REMO_HOST_TABS_DIR>/<key>`, `NAME<TAB><epoch>`); `project-menu` and `project-launch` call it only
+when `REMO_TAB_KEY` is set, and it is deliberately not advertised. Full contract:
+[`specs/028-tab-resume/contracts/remo-host-sessions-lookup.md`](../../028-tab-resume/contracts/remo-host-sessions-lookup.md).
 
 ## `remo-host host stats --json`
 

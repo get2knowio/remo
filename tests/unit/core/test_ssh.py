@@ -485,3 +485,56 @@ class TestCheckRemoteVersion:
         assert version is None
         assert err is not None
         assert "No ssh" in err
+
+
+# ---------------------------------------------------------------------------
+# shell_connect tab-key forwarding (spec 028, contracts/ssh-env-forwarding.md)
+# ---------------------------------------------------------------------------
+
+
+class TestShellConnectTabKey:
+    @pytest.fixture
+    def run(self, mocker, _suppress_tz):
+        import termios
+
+        mocker.patch("remo_cli.core.ssh.termios.tcgetattr", side_effect=termios.error)
+        mocker.patch("remo_cli.core.ssh.sys.stdin", MagicMock(fileno=lambda: 0))
+        mocker.patch("remo_cli.core.ssh.reset_terminal")
+        mocker.patch("remo_cli.core.ssh.shutil.which", return_value=None)
+        return mocker.patch("remo_cli.core.ssh.subprocess.run")
+
+    def test_tab_key_adds_sendenv_and_env(self, run, hetzner_host, monkeypatch):
+        from remo_cli.core.ssh import shell_connect
+
+        monkeypatch.delenv("REMO_TAB_KEY", raising=False)
+        shell_connect(hetzner_host, [], True, tab_key="0" * 32)
+
+        argv = run.call_args.args[0]
+        assert "SendEnv=REMO_TAB_KEY" in argv
+        assert argv[argv.index("SendEnv=REMO_TAB_KEY") - 1] == "-o"
+        assert run.call_args.kwargs["env"]["REMO_TAB_KEY"] == "0" * 32
+        import os
+
+        assert "REMO_TAB_KEY" not in os.environ
+
+    def test_no_tab_key_is_identical_to_today(self, run, hetzner_host, monkeypatch):
+        from remo_cli.core.ssh import shell_connect
+
+        monkeypatch.delenv("REMO_TAB_KEY", raising=False)
+        shell_connect(hetzner_host, [], True)
+
+        argv = run.call_args.args[0]
+        assert not any("REMO_TAB_KEY" in a for a in argv)
+        assert "env" not in run.call_args.kwargs
+
+    def test_works_with_project_and_tunnel(self, run, hetzner_host):
+        from remo_cli.core.ssh import shell_connect
+
+        shell_connect(hetzner_host, ["8080:80"], True, project="A", tab_key="f" * 32)
+
+        argv = run.call_args.args[0]
+        assert "SendEnv=REMO_TAB_KEY" in argv
+        assert "-L" in argv and "8080:localhost:80" in argv
+        assert "-tt" in argv
+        assert any("project-launch" in a and "A" in a for a in argv)
+        assert run.call_args.kwargs["env"]["REMO_TAB_KEY"] == "f" * 32

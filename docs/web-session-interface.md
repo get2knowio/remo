@@ -72,7 +72,9 @@ session-target IDs. Three protocol layers make this work, each documented in ful
 - **`remo-host` protocol** ([`remo-host-protocol.md`](../specs/010-web-session-interface/contracts/remo-host-protocol.md)) —
   a versioned, non-daemon command installed at `~/.local/bin/remo-host` on every instance (via the
   same `user_setup` Ansible role that installs `project-menu`/`project-launch`). It exposes
-  `capabilities --json`, `sessions list --json`, and `sessions attach --project <name>`. It listens on
+  `capabilities --json`, `sessions list --json`, `sessions attach --project <name>`, and
+  `sessions lookup --key <key> --json` (which project a terminal tab last attached, for `remo resume`;
+  advertised as the `sessions.lookup` operation). It listens on
   no port and never accepts an arbitrary shell command — only these explicit, validated verbs.
 - **REST API** ([`rest-api.md`](../specs/010-web-session-interface/contracts/rest-api.md)) — `GET
   /api/v1/health`, `GET /api/v1/ready`, `GET /api/v1/hosts`, `GET /api/v1/sessions`, `POST

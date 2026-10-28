@@ -8,6 +8,7 @@
 #   remo-host capabilities --json
 #   remo-host sessions list --json
 #   remo-host sessions attach --project NAME
+#   remo-host sessions lookup --key KEY --json
 #   remo-host host stats --json
 #   remo-host projects clone --repo OWNER/REPO|URL [--name NAME] --json
 #   remo-host projects delete --project NAME --json
@@ -16,7 +17,10 @@
 #
 # JSON commands print ONLY the JSON payload to stdout; all diagnostics go
 # to stderr. `sessions attach` is interactive: it validates NAME then
-# execs project-launch, becoming the terminal stream. `projects clone` and
+# execs project-launch, becoming the terminal stream. `sessions lookup` reports
+# which project a terminal tab last attached (spec 028); the internal
+# `sessions record --key KEY --project NAME` writes that record and is called
+# only by project-menu/project-launch. `projects clone` and
 # `projects rebuild` start a detached background job and print a job
 # reference; poll it with `jobs status`.
 #
@@ -64,6 +68,7 @@ esac
 PROC_ROOT="${REMO_HOST_PROC_ROOT:-/proc}"
 SYS_ROOT="${REMO_HOST_SYS_ROOT:-/sys}"
 JOBS_DIR="${REMO_HOST_JOBS_DIR:-$HOME/.local/state/remo/jobs}"
+TABS_DIR="${REMO_HOST_TABS_DIR:-$HOME/.local/state/remo/tabs}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -121,7 +126,7 @@ cmd_capabilities() {
         rebuild_op=',"projects.rebuild"'
     fi
 
-    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach","host.stats","projects.clone","projects.delete"%s,"jobs.status"],"zellij":%s,"docker":%s}\n' \
+    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach","sessions.lookup","host.stats","projects.clone","projects.delete"%s,"jobs.status"],"zellij":%s,"docker":%s}\n' \
         "$PROTOCOL_VERSION" \
         "$(json_escape "$version")" \
         "$(json_escape "$PROJECTS_DIR")" \
@@ -138,9 +143,16 @@ cmd_capabilities() {
 # anything mutating — so git ahead/behind reflect the last-known upstream and
 # may be stale until something else fetches.
 # ---------------------------------------------------------------------------
-cmd_sessions_list() {
-    local -A zellij_sessions=()
+# One definition of "is this project's zellij session live" for `sessions list`
+# and `sessions lookup` (spec 028): listed and not EXITED, in the pinned
+# XDG_RUNTIME_DIR namespace. The listing is read once and cached so `sessions
+# list` does not spawn zellij per project.
+declare -A ZELLIJ_STATES=()
+ZELLIJ_STATES_LOADED=false
 
+load_zellij_states() {
+    ZELLIJ_STATES_LOADED=true
+    ZELLIJ_STATES=()
     if has_zellij; then
         local line sess_name
         while IFS= read -r line; do
@@ -148,12 +160,27 @@ cmd_sessions_list() {
             sess_name="$(printf '%s' "$line" | awk '{print $1}')"
             [[ -z "$sess_name" ]] && continue
             if printf '%s' "$line" | grep -q 'EXITED'; then
-                zellij_sessions["$sess_name"]="exited"
+                ZELLIJ_STATES["$sess_name"]="exited"
             else
-                zellij_sessions["$sess_name"]="active"
+                ZELLIJ_STATES["$sess_name"]="active"
             fi
         done < <(zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
     fi
+}
+
+# Sets ZELLIJ_STATE to active|exited|absent. Assigns rather than prints so
+# callers need no $(...) subshell: no fork per project in `sessions list`, and
+# the cache loaded here survives to the next call.
+ZELLIJ_STATE=""
+zellij_state_for() {
+    if [[ "$ZELLIJ_STATES_LOADED" != true ]]; then
+        load_zellij_states
+    fi
+    ZELLIJ_STATE="${ZELLIJ_STATES[$1]:-absent}"
+}
+
+cmd_sessions_list() {
+    load_zellij_states
 
     local projects_json="" first=true
     local dir name has_dc zellij_state devcontainer_running container_id entry
@@ -169,7 +196,8 @@ cmd_sessions_list() {
                 has_dc="true"
             fi
 
-            zellij_state="${zellij_sessions[$name]:-absent}"
+            zellij_state_for "$name"
+            zellij_state="$ZELLIJ_STATE"
 
             devcontainer_running="unknown"
             if [[ "$has_dc" == "true" ]] && has_docker; then
@@ -302,6 +330,120 @@ cmd_sessions_attach() {
     validate_project_name "$name" || exit 3
 
     exec "$HOME/.local/bin/project-launch" --project "$name"
+}
+
+# ---------------------------------------------------------------------------
+# sessions record / sessions lookup (spec 028)
+#
+# A "tab key" is the workstation's salted digest of a terminal tab's identity
+# (`remo resume`); it arrives as REMO_TAB_KEY over ssh. One file per key under
+# TABS_DIR holds `<project>\t<epoch>`, so concurrent tabs never contend.
+# ---------------------------------------------------------------------------
+
+# 32 lowercase hex characters — the key's entire input validation, which makes
+# it safe as a filename with no escaping. LC_ALL=C keeps [a-f] from matching
+# uppercase in locales with collation-order ranges.
+validate_tab_key() {
+    local LC_ALL=C
+    local key="$1" ctx="${2:-sessions record}"
+    if [[ ! "$key" =~ ^[0-9a-f]{32}$ ]]; then
+        echo "remo-host: $ctx: invalid --key (expected 32 lowercase hex characters)" >&2
+        return 1
+    fi
+    return 0
+}
+
+prune_tab_records() {
+    find "$TABS_DIR" -maxdepth 1 -type f -mtime +30 -delete 2>/dev/null || true
+    # Keep the newest 500 (dotfiles — in-flight temp files — are not listed).
+    local stale
+    while IFS= read -r stale; do
+        [[ -n "$stale" ]] && rm -f "$TABS_DIR/$stale"
+    done < <(ls -t "$TABS_DIR" 2>/dev/null | tail -n +501)
+    return 0
+}
+
+cmd_sessions_record() {
+    local key="" project="" key_given=false project_given=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --key)
+                [[ $# -ge 2 ]] || { echo "remo-host: sessions record: --key needs a value" >&2; exit 2; }
+                key="$2"; key_given=true; shift 2 ;;
+            --project)
+                [[ $# -ge 2 ]] || { echo "remo-host: sessions record: --project needs a value" >&2; exit 2; }
+                project="$2"; project_given=true; shift 2 ;;
+            *)
+                echo "remo-host: sessions record: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    if ! $key_given || ! $project_given; then
+        echo "remo-host: sessions record: --key KEY and --project NAME are required" >&2
+        exit 2
+    fi
+
+    validate_tab_key "$key" || exit 3
+    validate_project_name "$project" "sessions record" || exit 3
+
+    mkdir -p -m 0700 "$TABS_DIR"
+    local tmp
+    tmp="$(mktemp "$TABS_DIR/.tmp.XXXXXX")"
+    printf '%s\t%s\n' "$project" "$(date +%s)" >"$tmp"
+    mv -f "$tmp" "$TABS_DIR/$key"
+    prune_tab_records
+}
+
+cmd_sessions_lookup() {
+    local key="" key_given=false json_given=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --key)
+                [[ $# -ge 2 ]] || { echo "remo-host: sessions lookup: --key needs a value" >&2; exit 2; }
+                key="$2"; key_given=true; shift 2 ;;
+            --json)
+                json_given=true; shift ;;
+            *)
+                echo "remo-host: sessions lookup: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    if ! $json_given; then
+        echo "remo-host: sessions lookup: --json is required" >&2
+        exit 2
+    fi
+    if ! $key_given; then
+        echo "remo-host: sessions lookup: --key KEY is required" >&2
+        exit 2
+    fi
+    validate_tab_key "$key" "sessions lookup" || exit 3
+
+    local project="" epoch="" file="$TABS_DIR/$key"
+    if [[ -f "$file" ]]; then
+        IFS=$'\t' read -r project epoch <"$file" || true
+        # An unparseable record is "no record", never an error. No leading
+        # zeros: printf %d would read "010" as octal and fail on "08".
+        if [[ -z "$project" || "$project" == */* || "$project" == .* || ! "$epoch" =~ ^(0|[1-9][0-9]*)$ ]]; then
+            project=""
+            epoch=""
+        fi
+    fi
+
+    if [[ -z "$project" ]]; then
+        printf '{"protocol_version":%d,"key":"%s","project":null,"recorded_at":null,"zellij_state":null}\n' \
+            "$PROTOCOL_VERSION" "$key"
+        return 0
+    fi
+
+    zellij_state_for "$project"
+    printf '{"protocol_version":%d,"key":"%s","project":"%s","recorded_at":%d,"zellij_state":"%s"}\n' \
+        "$PROTOCOL_VERSION" "$key" "$(json_escape "$project")" "$epoch" "$ZELLIJ_STATE"
 }
 
 # ---------------------------------------------------------------------------
@@ -867,8 +1009,16 @@ case "${1:-}" in
                 shift
                 cmd_sessions_attach "$@"
                 ;;
+            record)
+                shift
+                cmd_sessions_record "$@"
+                ;;
+            lookup)
+                shift
+                cmd_sessions_lookup "$@"
+                ;;
             "")
-                echo "remo-host: usage: remo-host sessions {list|attach} ..." >&2
+                echo "remo-host: usage: remo-host sessions {list|attach|lookup} ..." >&2
                 exit 2
                 ;;
             *)
@@ -941,7 +1091,7 @@ case "${1:-}" in
         esac
         ;;
     -h|--help)
-        sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     "")

@@ -11,6 +11,7 @@ from remo_cli.core.known_hosts import (
     remove_known_host,
     resolve_remo_host_by_name,
     save_known_host,
+    upgrade_command_for,
 )
 from remo_cli.models.host import KnownHost
 
@@ -496,3 +497,47 @@ class TestResolveRemoHostByName:
         save_known_host(_make_host(type_="aws", name="org/machine", host="1.2.3.4"))
         with pytest.raises(SystemExit):
             resolve_remo_host_by_name("machine")
+
+
+# -----------------------------------------------------------------------
+# upgrade_command_for() — the one upgrade-command spelling (#243)
+# -----------------------------------------------------------------------
+
+
+class TestUpgradeCommandFor:
+    """shell, resume, the web console and the configure guard share this."""
+
+    def test_added_ssh_host_uses_configure(self):
+        host = _make_host(type_="ssh", name="mbp", host="mbp.local")
+        assert upgrade_command_for(host) == "remo configure mbp"
+
+    def test_flat_provider_uses_its_upgrade_verb(self):
+        host = _make_host(type_="hetzner", name="web1", host="1.2.3.4")
+        assert upgrade_command_for(host) == "remo hetzner upgrade web1"
+
+    def test_host_scoped_without_host_user_names_the_host(self):
+        host = _make_host(type_="incus", name="node1/dev", instance_id="")
+        assert upgrade_command_for(host) == "remo incus upgrade dev --host node1"
+
+    def test_host_scoped_with_host_user_spells_the_user_flag(self):
+        # Incus keeps host_user in instance_id; the flag comes from the JSON key.
+        host = _make_host(type_="incus", name="node1/dev", instance_id="admin")
+        assert (
+            upgrade_command_for(host)
+            == "remo incus upgrade dev --host node1 --host-user admin"
+        )
+
+    def test_host_user_attribute_follows_the_descriptor(self):
+        # Proxmox keeps host_user in region (instance_id is the vmid), so the
+        # attribute is read off registry_fields, not hardcoded.
+        host = _make_host(
+            type_="proxmox", name="pve/box", instance_id="101", region="ops"
+        )
+        assert (
+            upgrade_command_for(host)
+            == "remo proxmox upgrade box --host pve --host-user ops"
+        )
+
+    def test_unknown_type_keeps_the_provider_spelling(self):
+        host = _make_host(type_="nosuchprovider", name="a/b")
+        assert upgrade_command_for(host) == "remo nosuchprovider upgrade a/b"

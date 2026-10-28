@@ -28,6 +28,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from remo_cli.core.config import ADDED_HOST_TYPE
+from remo_cli.core.known_hosts import upgrade_command_for
 from remo_cli.core.registry import RegistryError, read_registry
 from remo_cli.core.remo_host_client import (
     IncompatibleProtocolError,
@@ -269,17 +270,16 @@ def configure_remediation(host: KnownHost) -> str:
     The verb differs by how the host got here, and the wrong one is worse than
     vague: a provider host routed through the generic play would be configured
     with the wrong one (no SSM ProxyCommand for AWS, no cloud-key bootstrap for
-    Hetzner), and an added host has no provider verb at all.
+    Hetzner), and an added host has no provider verb at all. The command itself
+    is the one shared spelling (``core.known_hosts.upgrade_command_for``, #243),
+    so the console names the same runnable command ``remo shell`` does —
+    including ``--host`` for a host-scoped provider, without which the CLI
+    cannot resolve a bare container name.
     """
+    command = upgrade_command_for(host)
     if host.type == ADDED_HOST_TYPE:
-        return f"Install the Remo host tools with: remo configure {host.name}"
-    # Host-scoped providers register as "node/container"; their CLI takes the
-    # container part alone.
-    short_name = host.name.split("/", maxsplit=1)[-1]
-    return (
-        f"Update this instance's Remo host tools with: "
-        f"remo {host.type} upgrade {short_name}"
-    )
+        return f"Install the Remo host tools with: {command}"
+    return f"Update this instance's Remo host tools with: {command}"
 
 
 def _looks_like_missing_remo_host(exc: RemoHostCommandError) -> bool:

@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from remo_cli.core.errors import PreconditionError
+from remo_cli.core.tab_identity import TAB_KEY_RE
 from remo_cli.models.capability import RemoteCapability
 from remo_cli.models.host_job import JobRef, JobState, JobStatus
 from remo_cli.models.host_stats import DiskUsage, HostStats, TempReading
@@ -54,6 +55,8 @@ __all__ = [
     "RemoHostExitReason",
     "RemoteCapability",
     "SshTransportError",
+    "TabLookup",
+    "TabLookupUnsupported",
     "TempReading",
     "ZellijState",
     "build_remo_host_argv",
@@ -63,6 +66,7 @@ __all__ = [
     "get_host_stats",
     "get_job_status",
     "list_sessions",
+    "lookup_tab",
     "run_remo_host_json",
     "start_project_clone",
     "start_project_rebuild",
@@ -199,6 +203,10 @@ class SshTransportError(RemoHostClientError):
         super().__init__(message)
 
 
+class TabLookupUnsupported(RemoHostClientError):
+    """The host predates `sessions lookup` — it has not been upgraded (spec 028)."""
+
+
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -220,6 +228,15 @@ class ProjectEntry:
     git_behind: int = 0
 
 
+@dataclass(frozen=True)
+class TabLookup:
+    """Host's answer to `sessions lookup`; all-None means "no record for this tab"."""
+
+    project: str | None
+    recorded_at: int | None
+    zellij_state: ZellijState | None
+
+
 # ---------------------------------------------------------------------------
 # argv / shell-string construction
 # ---------------------------------------------------------------------------
@@ -239,6 +256,13 @@ def _reject_unsupported_flags(verb: str, **flags: object) -> None:
         )
 
 
+def _validate_tab_key(key: str) -> str:
+    # The key becomes a host-side filename; the host validates again (FR-008).
+    if not TAB_KEY_RE.match(key):
+        raise ValueError("key must be 32 lowercase hex characters")
+    return key
+
+
 def _require_flag(verb: str, flag_name: str, value: str | None) -> str:
     if not value:
         raise ValueError(f"{flag_name} is required for the {verb!r} verb")
@@ -254,11 +278,13 @@ def build_remo_host_argv(
     name: str | None = None,
     job: str | None = None,
     no_cache: bool = False,
+    key: str | None = None,
 ) -> list[str]:
     """Build the `remo-host` argv for *verb* as a clean list (no shell quoting).
 
     Supported verbs: ``"capabilities"``, ``"sessions list"``,
-    ``"sessions attach"``, ``"host stats"``, ``"jobs status"``,
+    ``"sessions attach"``, ``"sessions lookup"`` (takes *key*, spec 028),
+    ``"host stats"``, ``"jobs status"``,
     ``"projects clone"``, ``"projects delete"``, ``"projects rebuild"``
     (contracts/remo-host-protocol.md). *project* is required for
     ``"sessions attach"``/``"projects delete"``/``"projects rebuild"`` and
@@ -276,6 +302,17 @@ def build_remo_host_argv(
     invocation should use :func:`build_remo_host_shell_cmd` instead.
     """
     argv = ["remo-host", *verb.split()]
+
+    if verb == "sessions lookup":
+        _reject_unsupported_flags(
+            verb, project=project, repo=repo, name=name, job=job, no_cache=no_cache
+        )
+        argv += ["--key", _validate_tab_key(_require_flag(verb, "key", key))]
+        if json:
+            argv.append("--json")
+        return argv
+
+    _reject_unsupported_flags(verb, key=key)
 
     if verb == "sessions attach":
         _reject_unsupported_flags(verb, repo=repo, name=name, job=job, no_cache=no_cache)
@@ -423,6 +460,7 @@ def run_remo_host_json(
     name: str | None = None,
     job: str | None = None,
     no_cache: bool = False,
+    key: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     payload_cap: int = DEFAULT_PAYLOAD_CAP,
     supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
@@ -453,6 +491,7 @@ def run_remo_host_json(
             name=name,
             job=job,
             no_cache=no_cache,
+            key=key,
         ),
     ]
     result = _invoke(argv, timeout=timeout)
@@ -557,6 +596,63 @@ def list_sessions(
             continue
 
     return entries
+
+
+#: usage error / unsupported subcommand (old remo-host) / command not found (no remo-host).
+_NOT_UPGRADED_EXIT_CODES = frozenset({2, 4, 127})
+
+
+def lookup_tab(
+    ssh_argv_prefix: list[str],
+    key: str,
+    *,
+    timeout: float = 5.0,
+    payload_cap: int = DEFAULT_PAYLOAD_CAP,
+    supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
+) -> TabLookup:
+    """Run `remo-host sessions lookup --key K --json` (spec 028).
+
+    Called directly with no capabilities round-trip: an old host answers an
+    unknown `sessions` subcommand with exit 4 (or a usage exit 2), and a host
+    that has no `remo-host` at all (configured before it existed, or an added
+    host never `remo configure`d) makes the remote shell exit 127. All three
+    are the "host not upgraded" signal and raise :class:`TabLookupUnsupported`.
+    """
+    try:
+        payload = run_remo_host_json(
+            ssh_argv_prefix,
+            "sessions lookup",
+            key=key,
+            timeout=timeout,
+            payload_cap=payload_cap,
+            supported_range=supported_range,
+        )
+    except RemoHostCommandError as e:
+        if e.returncode in _NOT_UPGRADED_EXIT_CODES:
+            raise TabLookupUnsupported(str(e)) from e
+        raise
+
+    # The host must answer for the key it was asked about; an answer for any
+    # other key could name another tab's project (SC-003).
+    if payload.get("key") != key:
+        raise MalformedResponseError("sessions lookup answered for a different key")
+    project = payload.get("project")
+    if project is None:
+        return TabLookup(None, None, None)
+    recorded_at = payload.get("recorded_at")
+    raw_state = payload.get("zellij_state")
+    if (
+        not isinstance(project, str)
+        or isinstance(recorded_at, bool)
+        or not isinstance(recorded_at, int)
+        or not isinstance(raw_state, str)
+    ):
+        raise MalformedResponseError("sessions lookup response has the wrong field types")
+    try:
+        state = ZellijState(raw_state)
+    except ValueError as e:
+        raise MalformedResponseError(f"unknown zellij_state {raw_state!r}") from e
+    return TabLookup(project, recorded_at, state)
 
 
 # ---------------------------------------------------------------------------

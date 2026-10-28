@@ -75,6 +75,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from remo_cli.core import registry
+from remo_cli.core.atomic_file import atomic_write_json
 from remo_cli.core.config import (
     DEFAULT_SSH_PORT,
     get_known_hosts_path_readonly,
@@ -1187,45 +1188,38 @@ def save_push_cache(cache: PushCache) -> Path:
     """
     path = push_cache_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(
-        {
-            "cache_version": PUSH_CACHE_VERSION,
-            "push_cache": {
-                deployment_id: {
-                    "mirror_generation": deployment.mirror_generation,
-                    "instances": {
-                        name: {
-                            "fingerprint": c.fingerprint,
-                            "host_keys": c.host_keys,
-                            "host": c.host,
-                            "user": c.user,
-                            "access": c.access,
-                            "type": c.type,
-                            "port": c.port,
-                            "identity": c.identity,
-                            "entry": c.entry,
-                        }
-                        for name, c in deployment.instances.items()
-                    },
-                }
-                for deployment_id, deployment in cache.items()
+    doc = {
+        "cache_version": PUSH_CACHE_VERSION,
+        "push_cache": {
+            deployment_id: {
+                "mirror_generation": deployment.mirror_generation,
+                "instances": {
+                    name: {
+                        "fingerprint": c.fingerprint,
+                        "host_keys": c.host_keys,
+                        "host": c.host,
+                        "user": c.user,
+                        "access": c.access,
+                        "type": c.type,
+                        "port": c.port,
+                        "identity": c.identity,
+                        "entry": c.entry,
+                    }
+                    for name, c in deployment.instances.items()
+                },
             }
+            for deployment_id, deployment in cache.items()
         },
+    }
+    atomic_write_json(
+        path,
+        doc,
         indent=2,
+        trailing_newline=True,
+        mode=0o600,
+        prefix=".web-service.",
+        suffix=".json.tmp",
     )
-    fd, tmp_path = tempfile.mkstemp(prefix=".web-service.", suffix=".json.tmp", dir=path.parent)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w") as fh:
-            fh.write(payload + "\n")
-        os.replace(tmp_path, path)
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
-    os.chmod(path, 0o600)
     return path
 
 
