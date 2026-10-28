@@ -430,6 +430,13 @@ offers to run it for you when the host is behind, exactly as it does for
 provider hosts. A host you added but never configured is left alone: no marker,
 no prompt, straight into a login shell.
 
+A zellij upgrade is **deferred while sessions are live**. zellij keeps sessions
+per version, so replacing the binary under a running session would leave it
+alive but invisible — the next attach would start a fresh session instead. When
+the installed zellij has live sessions, configure/upgrade keeps it, prints a
+`WARNING zellij upgrade … DEFERRED` line naming them, and carries on with
+everything else; close those sessions and re-run with `--only zellij` to finish.
+
 #### Example: an OrbStack VM
 
 [`docs/examples/orbstack-cloud-init.yaml`](docs/examples/orbstack-cloud-init.yaml)
