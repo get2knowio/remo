@@ -72,7 +72,7 @@ jobs:
       # but this job runs immediately after that refresh on every push to main,
       # so the commit is simply re-made. `tests/unit/test_lockfile_version.py`
       # is the backstop that keeps a drifted lockfile from merging at all.
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         if: ${{ steps.release.outputs.pr }}
 
       # `pr` is passed through as raw JSON and parsed in the shell rather than

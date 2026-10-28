@@ -112,6 +112,12 @@ testpaths = ["tests"]
 src = ["src"]
 line-length = 100
 
+[tool.ruff.lint]
+# Pinned to ruff's pre-0.16 default set: 0.16 widened the implicit default
+# (228 new findings), and a tool bump must not silently change what the gate
+# checks. Adopting more rules is a deliberate, separate change.
+select = ["E4", "E7", "E9", "F"]
+
 [tool.mypy]
 python_version = "3.11"
 files = ["src"]

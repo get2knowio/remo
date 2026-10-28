@@ -1,0 +1,56 @@
+---
+# Defer a zellij upgrade while sessions are live.
+#
+# zellij namespaces its session sockets BY VERSION
+# ($XDG_RUNTIME_DIR/zellij/<version>/...). Upgrading the binary leaves every
+# running session alive on the old binary but invisible to the new one, so the
+# next `zellij attach --create NAME` (project-launch, the project menu, the web
+# console's `remo-host sessions attach`) silently starts a FRESH session — the
+# user sees their work vanish. A configure or upgrade run must never do that by
+# surprise, so when the installed version has live sessions the upgrade is
+# skipped and the run says why, by task NAME (core/ansible_runner.py's filter
+# shows task names and suppresses debug bodies).
+#
+# Inputs:  zellij_installed_version, zellij_target_version, remo_user
+# Output:  zellij_upgrade_deferred (bool), zellij_live_sessions (list)
+#
+# The probe lists the sessions the INSTALLED binary can see, in both
+# namespaces a session may live in: /run/user/$UID (the login-session dir the
+# remo host scripts pin) and the /tmp/zellij-$UID fallback used whenever
+# XDG_RUNTIME_DIR is unset. EXITED sessions are skipped — nothing is running in
+# them. A probe that cannot run reports nothing and the upgrade proceeds: a
+# broken zellij must stay upgradable.
+
+- name: Look for live zellij sessions the upgrade would hide
+  ansible.builtin.shell: |
+    PATH="$PATH:/usr/local/bin:/usr/bin"
+    command -v zellij >/dev/null 2>&1 || exit 0
+    uid="$(id -u)"
+    {
+        if [ -d "/run/user/$uid" ]; then
+            XDG_RUNTIME_DIR="/run/user/$uid" zellij list-sessions --no-formatting 2>/dev/null
+        fi
+        ( unset XDG_RUNTIME_DIR; zellij list-sessions --no-formatting 2>/dev/null )
+    } | grep -F '[Created' | grep -vF 'EXITED' | awk '{print $1}' | sort -u
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ remo_user }}"
+  register: zellij_live_probe
+  changed_when: false
+  failed_when: false
+
+- name: Decide whether the zellij upgrade must wait
+  ansible.builtin.set_fact:
+    zellij_live_sessions: "{{ (zellij_live_probe.stdout | default('')).splitlines() | map('trim') | select | list }}"
+    zellij_upgrade_deferred: "{{ ((zellij_live_probe.stdout | default('')) | trim | length) > 0 }}"
+
+- name: >-
+    WARNING zellij upgrade {{ zellij_installed_version }} to {{ zellij_target_version }} DEFERRED -
+    {{ zellij_live_sessions | length }} live session(s) would be hidden by it
+    ({{ zellij_live_sessions | join(', ') }}). Close them, then re-run with --only zellij
+  ansible.builtin.debug:
+    msg: >-
+      zellij {{ zellij_installed_version }} kept; live sessions:
+      {{ zellij_live_sessions | join(', ') }}
+  when: zellij_upgrade_deferred | bool
