@@ -548,3 +548,36 @@ def build_provider_group(descriptor: ProviderDescriptor) -> click.Group:
         group.add_command(_build_host_group(descriptor))
     group.add_command(_build_snapshot_group(descriptor))
     return group
+
+
+class _DeprecatedAliasGroup(click.Group):
+    """``remo <alias> ...``: warns on stderr, then runs ``remo <type> ...``."""
+
+    def __init__(self, alias: str, type_name: str, commands: dict[str, click.Command]) -> None:
+        super().__init__(
+            alias,
+            commands=commands,
+            hidden=True,
+            help=f"Deprecated alias of `remo {type_name}`.",
+        )
+        self._type_name = type_name
+
+    def invoke(self, ctx: click.Context) -> Any:
+        click.echo(
+            f"Warning: `remo {self.name}` is deprecated and will be removed in a future "
+            f"release; use `remo {self._type_name}`.",
+            err=True,
+        )
+        return super().invoke(ctx)
+
+
+def build_deprecated_alias_groups(descriptor: ProviderDescriptor) -> list[click.Group]:
+    """One hidden group per ``descriptor.deprecated_cli_aliases`` entry (#258),
+    each with the full verb set of :func:`build_provider_group`."""
+    return [
+        _DeprecatedAliasGroup(
+            alias, descriptor.type_name, dict(build_provider_group(descriptor).commands)
+        )
+        for alias in descriptor.deprecated_cli_aliases
+    ]
+

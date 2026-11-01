@@ -171,6 +171,15 @@ class ProviderDescriptor:
     # written back; the next write emits the current key, so the lazy
     # migration keeps working with no type literal in core/registry.py.
     registry_legacy_keys: tuple[tuple[str, str], ...] = ()
+    # Earlier spellings of type_name (a renamed provider: AWS's "aws" is now
+    # "ec2", #258). core/registry.py reads an entry of a legacy type -- v2
+    # file, legacy known_hosts line, push-cache merge base -- as this type,
+    # and the next write emits type_name, so the rename migrates once.
+    legacy_type_names: tuple[str, ...] = ()
+    # Hidden `remo <alias> ...` groups that warn and then behave exactly
+    # like `remo <type_name> ...` -- a renamed provider's old CLI spelling,
+    # kept for a release so scripts get a warning rather than an error.
+    deprecated_cli_aliases: tuple[str, ...] = ()
     # True when `remo <type> sync` scopes by region rather than by host or
     # project (AWS): drives core/reconcile.SyncScope's region matching (027).
     region_scoped_sync: bool = False
@@ -253,6 +262,22 @@ def register(descriptor: ProviderDescriptor, *, source: str = BUILTIN_SOURCE) ->
     """
     if descriptor.type_name in _REGISTRY:
         raise ValueError(f"provider type already registered: {descriptor.type_name!r}")
+    claimed = {
+        name: d.type_name
+        for d in _REGISTRY.values()
+        for name in (d.type_name, *d.legacy_type_names, *d.deprecated_cli_aliases)
+    }
+    for name in (*descriptor.legacy_type_names, *descriptor.deprecated_cli_aliases):
+        if name in claimed or name == descriptor.type_name:
+            raise ValueError(
+                f"{descriptor.type_name}: legacy name {name!r} is already claimed"
+                f" by {claimed.get(name, descriptor.type_name)!r}"
+            )
+    if descriptor.type_name in claimed:
+        raise ValueError(
+            f"provider type {descriptor.type_name!r} is already a legacy name of"
+            f" {claimed[descriptor.type_name]!r}"
+        )
     _REGISTRY[descriptor.type_name] = descriptor
     _SOURCES[descriptor.type_name] = source
 
@@ -346,6 +371,18 @@ def is_provider_type(type_name: str) -> bool:
     """``False`` for ``"ssh"``/unknown types (the ssh pseudo-type is never registered)."""
     _ensure_discovered()
     return type_name in _REGISTRY
+
+
+def canonical_type_name(type_name: str) -> str:
+    """*type_name*, or the registered type that lists it in
+    ``legacy_type_names`` (#258). Unknown names come back unchanged."""
+    _ensure_discovered()
+    if type_name in _REGISTRY:
+        return type_name
+    for descriptor in _REGISTRY.values():
+        if type_name in descriptor.legacy_type_names:
+            return descriptor.type_name
+    return type_name
 
 
 @contextmanager

@@ -49,6 +49,26 @@ def is_known_type(type_: str) -> bool:
     return is_provider_type(type_)
 
 
+def canonicalize_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """*entry* with a renamed provider's legacy ``type`` (and its nested
+    object's key) rewritten to the current type name (descriptor
+    ``legacy_type_names``, #258). Returned unchanged -- the same object --
+    when nothing is renamed, so a second pass is a no-op (Principle VII)."""
+    type_ = entry.get("type")
+    if not isinstance(type_, str) or type_ == SSH_PSEUDO_TYPE:
+        return entry
+    from remo_cli.core.provider_registry import canonical_type_name  # noqa: PLC0415
+
+    canonical = canonical_type_name(type_)
+    if canonical == type_:
+        return entry
+    renamed = {key: value for key, value in entry.items() if key != type_}
+    renamed["type"] = canonical
+    if type_ in entry and canonical not in renamed:
+        renamed[canonical] = entry[type_]
+    return renamed
+
+
 def _mode_field_aware(type_: str) -> bool:
     """True when *type_*'s descriptor declares ``ConnectionSpec.mode_field_aware``
     (027 FR-008) — the descriptor-driven replacement for the old aws literal in
@@ -241,7 +261,9 @@ def entry_to_known_host(entry: dict[str, Any]) -> KnownHost | None:
 
     Returns ``None`` if the entry's shape does not match the contract (the
     caller turns this into a tolerant-read warning, never an exception).
+    A renamed provider's legacy type is read as the current one.
     """
+    entry = canonicalize_entry(entry)
     type_ = entry.get("type")
     name = entry.get("name")
     host = entry.get("host")
@@ -306,6 +328,10 @@ def legacy_fields_to_entry(
     without knowing the type. Shared by CLI migration and setup-API v1
     payload mapping (research R8/R9) — the single legacy->v2 mapper.
     """
+    if type_ != SSH_PSEUDO_TYPE:
+        from remo_cli.core.provider_registry import canonical_type_name  # noqa: PLC0415
+
+        type_ = canonical_type_name(type_)
     if not is_known_type(type_):
         entry: dict[str, Any] = {
             "type": type_,
@@ -466,7 +492,7 @@ def _parse_legacy_lines(lines: list[str]) -> _LegacyParseResult:
         entry = legacy_fields_to_entry(
             kh.type, kh.name, kh.host, kh.user, kh.instance_id, kh.access_mode, kh.region
         )
-        if is_known_type(kh.type):
+        if is_known_type(entry["type"]):
             known_host = entry_to_known_host(entry)
             if known_host is None:
                 skipped_lines.append(line)
@@ -537,6 +563,7 @@ def _read_v2_file(path: Path) -> _ParsedDocument:
         if not isinstance(raw_entry, dict):
             warnings.append(f"skipped malformed entry at index {i}: not an object")
             continue
+        raw_entry = canonicalize_entry(raw_entry)
         type_ = raw_entry.get("type")
         if not isinstance(type_, str) or not type_:
             warnings.append(f"skipped entry at index {i}: missing or invalid 'type'")
