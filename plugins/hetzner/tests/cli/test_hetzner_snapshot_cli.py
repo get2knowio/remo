@@ -18,7 +18,6 @@ from remo_cli.cli.providers.factory import build_provider_group
 from remo_cli.core.errors import OperationFailedError
 from remo_cli.core.provider_registry import get_descriptor
 from remo_cli.models.host import KnownHost
-from tests.conftest import seed_registry
 
 hetzner = build_provider_group(get_descriptor("hetzner"))
 
@@ -29,7 +28,7 @@ def runner():
 
 
 @pytest.fixture
-def hetzner_entry(tmp_config_dir):
+def hetzner_entry(tmp_config_dir, seed_registry):
     """Seed a registry entry so `dev1` resolves for snapshot commands."""
     entry = KnownHost(type="hetzner", name="dev1", host="198.51.100.9", user="remo")
     seed_registry(tmp_config_dir, [entry])
@@ -161,7 +160,7 @@ class TestDestroyCLI:
         assert "Aborted." in result.output
         run_playbook.assert_not_called()
 
-    def test_added_ssh_host_guard_blocks(self, runner, tmp_config_dir):
+    def test_added_ssh_host_guard_blocks(self, runner, tmp_config_dir, seed_registry):
         seed_registry(
             tmp_config_dir,
             [KnownHost(type="ssh", name="dev1", host="5.6.7.8", user="remo")],

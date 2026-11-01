@@ -1,12 +1,14 @@
 """Fixtures for the remo-provider-hetzner suite.
 
 This suite runs on its own (``pytest plugins/hetzner/tests``), against an
-installed remo-cli, so it cannot lean on remo's ``tests/conftest.py``; the two
-fixtures it needs are restated here.
+installed remo-cli, so it cannot lean on remo's ``tests/conftest.py``; the
+fixtures it needs are restated here (a plugin test must never import
+from remo's `tests` package, which is not installed with remo-cli).
 """
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -34,3 +36,17 @@ def tmp_config_dir(tmp_path):
         os.environ.pop("REMO_HOME", None)
     else:
         os.environ["REMO_HOME"] = old_home
+
+
+@pytest.fixture
+def seed_registry():
+    """Write a v2 registry.json from ``KnownHost`` objects, through the real
+    ``known_host_to_entry`` serializer (remo's tests/conftest.seed_registry)."""
+
+    def _seed(config_dir, hosts: list) -> None:
+        from remo_cli.core.registry import known_host_to_entry
+
+        doc = {"version": 2, "hosts": [known_host_to_entry(h) for h in hosts]}
+        (config_dir / "registry.json").write_text(json.dumps(doc, indent=2) + "\n")
+
+    return _seed
