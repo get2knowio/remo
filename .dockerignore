@@ -34,5 +34,6 @@ vault.yml
 .idea
 .vscode
 tests
+plugins/*/tests
 LICENSE
 CLAUDE.md

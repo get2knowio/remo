@@ -85,8 +85,8 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── output.py          # Colored output, confirm(), Column/render_host_table (shared list-table renderer)
 │   ├── validation.py      # Name, port, region, tool validation
 │   ├── registry.py        # Registry v2 accessor: parse/serialize/validate/lock/migrate (registry.json + legacy known_hosts); parse AND serialize driven by descriptor.registry_fields (+ registry_legacy_keys), access-mode rules by ConnectionSpec.mode_field_aware, is_known_type() = ssh pseudo-type or any registered provider incl. plugins (KNOWN_TYPES literal gone, 027); an entry of an uninstalled type is preserved verbatim and warned, never dropped
-│   ├── known_hosts.py     # Thin delegates onto registry.py (public API unchanged: get/save/remove/clear_known_hosts*); HOST_SCOPED short-name matching and display_name_for() driven by descriptor.name_format (models/host.py's display_name is a lazy shim onto it, 027); upgrade_command_for() is the one descriptor-driven "how to upgrade this host" spelling shared by remo shell/resume, the web console remediation and the configure guard (#243)
-│   ├── ssh.py             # build_ssh_base_cmd(), SSH options, terminal reset, timezone; SSM ProxyCommand construction lives behind descriptor.connection.proxy_hook (AWS: providers/aws.py:ssh_proxy_hook), not hardcoded here; shell_connect(tab_key=) forwards REMO_TAB_KEY via SendEnv (028)
+│   ├── known_hosts.py     # Thin delegates onto registry.py (public API unchanged: get/save/remove/clear_known_hosts*); HOST_SCOPED short-name matching and display_name_for() driven by descriptor.name_format (models/host.py's display_name is a lazy shim onto it, 027); upgrade_command_for() is the one descriptor-driven "how to upgrade this host" spelling shared by remo shell/resume, the web console remediation and the configure guard (#243); no_hosts_message() lists one `remo <type> create` per installed provider; names no provider type (literal-gated since #221)
+│   ├── ssh.py             # build_ssh_base_cmd(), SSH options, terminal reset, timezone; SSM ProxyCommand construction lives behind descriptor.connection.proxy_hook (AWS: providers/aws.py:ssh_proxy_hook), not hardcoded here; run_pre_connect_hook() runs descriptor.connection.pre_connect_hook before remo shell/resume connect (AWS: start a stopped instance) (#258); shell_connect(tab_key=) forwards REMO_TAB_KEY via SendEnv (028)
 │   ├── attach.py          # build_attach_argv() — host-agnostic "ssh -tt … remo-host sessions attach" builder shared by web/terminal.py (now a thin wrapper) and the SSM connector launcher; no remo_cli.web import (025)
 │   ├── connector.py       # SSM connector contract: TargetV1 codec, exposure gate (default deny), ErrorCode/format_error_line, ConnectorState, document loader (ships core/remo_attach_document.json), connector_attach_argv() (025)
 │   ├── tab_identity.py    # Tab identity precedence (TMUX_PANE > WEZTERM_PANE > KITTY_WINDOW_ID > ITERM_SESSION_ID > TERM_SESSION_ID > WT_SESSION), derive_tab_key() HMAC → 32 hex, TAB_KEY_RE; pure, stdlib only (028)
@@ -178,8 +178,9 @@ plugins/                   # First-party provider plugins: uv workspace members,
     └── tests/             # the plugin's own suite (unit/, cli/, ansible/) — run with the plugin installed
 
 docker/                    # remo-web container packaging (010-web-session-interface, US4)
-├── Dockerfile               # multi-stage: frontend build -> wheel build -> slim Python runtime
-├── entrypoint.sh             # `remo web check` gate, then `exec remo web serve`
+├── Dockerfile               # multi-stage: frontend build -> wheel build (remo-cli + every plugins/* wheel) -> slim Python runtime
+├── bake_collections.py      # build-time: installs remo's + each installed plugin's Galaxy collections, writes their markers to /app/collections-seed
+├── entrypoint.sh             # seeds the baked collections markers, `remo web check` gate, then `exec remo web serve`
 └── compose.example.yml       # Home-lab Compose example (RO mounts, tmpfs, hardening flags)
 
 ansible/                   # Ansible playbooks (invoked by Python via subprocess)
@@ -384,7 +385,10 @@ allowlists: no `sys.exit` in `providers/`, and no `cli/` reach-ins to a
 Provider-varying behavior lives behind a `ProviderDescriptor` field or hook —
 never a `host.type` string literal in `core/`. AWS's SSM `ProxyCommand` is the
 worked example: it sits in `providers/aws.py:ssh_proxy_hook`, reached via
-`descriptor.connection.proxy_hook`.
+`descriptor.connection.proxy_hook`; starting a stopped instance before
+`remo shell`/`remo resume` connect is `descriptor.connection.pre_connect_hook`
+(`providers/aws.py:auto_start_aws_if_stopped`). Both are public plugin API
+(`docs/provider-plugins.md#connection-hooks`).
 
 Failures raise the `core/errors.py` taxonomy (`MissingDependencyError`,
 `PreconditionError`, `OperationFailedError`, `UserAbortedError`).

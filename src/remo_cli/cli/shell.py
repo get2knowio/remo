@@ -170,7 +170,8 @@ def tab_recorder(
 
 def auto_start_host(host):  # noqa: ANN001, ANN201
     """Start a stopped instance before anything talks to it; return the
-    refreshed host (new IP). A no-op for every host that needs no start.
+    refreshed host (new IP). The provider decides, through its
+    ``ConnectionSpec.pre_connect_hook``; a no-op for a provider without one.
 
     Shared by ``connect_to_host`` and ``remo resume``, which must start the
     instance *before* its host lookup or the lookup hits a stopped box / stale
@@ -178,10 +179,10 @@ def auto_start_host(host):  # noqa: ANN001, ANN201
     """
     from remo_cli.core.errors import ProviderError  # noqa: PLC0415
     from remo_cli.core.output import print_error  # noqa: PLC0415
-    from remo_cli.providers.aws import auto_start_aws_if_stopped  # noqa: PLC0415
+    from remo_cli.core.ssh import run_pre_connect_hook  # noqa: PLC0415
 
     try:
-        return auto_start_aws_if_stopped(host)
+        return run_pre_connect_hook(host)
     except ProviderError as e:
         print_error(str(e))
         raise SystemExit(e.exit_code) from e
@@ -202,7 +203,7 @@ def connect_to_host(
 ) -> None:
     """Everything `remo shell` does once the host is resolved.
 
-    Extracted so `remo resume` makes the *same* pre-connect checks (AWS
+    Extracted so `remo resume` makes the *same* pre-connect checks (instance
     auto-start, version check / upgrade offer) before it connects (spec 028
     FR-014) — one code path, no drift. ``auto_started`` says the caller has
     already run :func:`auto_start_host` on *host* (resume does, before its

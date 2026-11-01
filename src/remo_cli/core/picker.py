@@ -22,12 +22,9 @@ def pick_environment(
         SystemExit: If *hosts* is empty, or if the user cancels the prompt.
     """
     if not hosts:
-        raise SystemExit(
-            "No remo environments registered.\n"
-            "Create one with:\n"
-            "  remo aws create\n"
-            "  remo incus create <name>"
-        )
+        from remo_cli.core.known_hosts import no_hosts_message  # noqa: PLC0415
+
+        raise SystemExit(no_hosts_message())
 
     if len(hosts) == 1:
         return hosts[0]

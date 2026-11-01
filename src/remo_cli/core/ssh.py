@@ -9,10 +9,14 @@ import subprocess
 import sys
 import termios
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from remo_cli.core.config import DEFAULT_SSH_PORT
-from remo_cli.core.known_hosts import get_known_hosts, resolve_remo_host_by_name
+from remo_cli.core.known_hosts import (
+    get_known_hosts,
+    no_hosts_message,
+    resolve_remo_host_by_name,
+)
 from remo_cli.core.output import print_info
 from remo_cli.core.picker import pick_environment
 from remo_cli.core.validation import validate_port, validate_project_name
@@ -24,12 +28,12 @@ if TYPE_CHECKING:
     from remo_cli.core.provider_registry import SshProxyPlan
 
 
-def _resolve_ssh_proxy_plan(host: KnownHost) -> SshProxyPlan | None:
-    """Resolve *host*'s provider-declared ``ConnectionSpec.proxy_hook`` (018
-    T046). Returns ``None`` for the ``ssh`` pseudo-type (short-circuits
-    before any registry lookup), an unregistered/unknown type, a provider
-    with no hook, or a hook that itself returns ``None`` (e.g. an AWS host
-    in direct rather than SSM access mode)."""
+def _connection_hook(host: KnownHost, field: str) -> Callable[[KnownHost], Any] | None:
+    """Import *host*'s provider-declared ``ConnectionSpec.<field>`` hook.
+
+    ``None`` for the ``ssh`` pseudo-type (short-circuits before any registry
+    lookup), an unregistered/unknown type, or a provider with no such hook.
+    """
     if host.type == "ssh":
         return None
 
@@ -40,13 +44,29 @@ def _resolve_ssh_proxy_plan(host: KnownHost) -> SshProxyPlan | None:
     if not is_provider_type(host.type):
         return None
 
-    hook_path = get_descriptor(host.type).connection.proxy_hook
+    hook_path = getattr(get_descriptor(host.type).connection, field)
     if not hook_path:
         return None
 
     module_path, _, func_name = hook_path.rpartition(".")
-    hook = getattr(importlib.import_module(module_path), func_name)
-    return hook(host)  # type: ignore[no-any-return]
+    return getattr(importlib.import_module(module_path), func_name)  # type: ignore[no-any-return]
+
+
+def _resolve_ssh_proxy_plan(host: KnownHost) -> SshProxyPlan | None:
+    """Resolve *host*'s provider-declared ``ConnectionSpec.proxy_hook`` (018
+    T046). ``None`` when there is no hook, or the hook itself returns ``None``
+    (e.g. an AWS host in direct rather than SSM access mode)."""
+    hook = _connection_hook(host, "proxy_hook")
+    return hook(host) if hook is not None else None
+
+
+def run_pre_connect_hook(host: KnownHost) -> KnownHost:
+    """Run *host*'s ``ConnectionSpec.pre_connect_hook`` and return the entry
+    to connect to (the provider may have started the instance and refreshed
+    its address). *host* unchanged when its provider declares no hook.
+    Provider errors propagate (core/errors.py taxonomy)."""
+    hook = _connection_hook(host, "pre_connect_hook")
+    return hook(host) if hook is not None else host
 
 
 def resolve_ssh_control_dir(control_dir: str | None = None) -> str:
@@ -297,13 +317,7 @@ def resolve_remo_host(name: str | None = None) -> KnownHost:
     hosts = get_known_hosts()
 
     if not hosts:
-        raise SystemExit(
-            "Error: No remo environments registered.\n"
-            "\n"
-            "Create one with:\n"
-            "  remo aws create\n"
-            "  remo incus create <name>"
-        )
+        raise SystemExit(f"Error: {no_hosts_message()}")
 
     if len(hosts) == 1:
         return hosts[0]

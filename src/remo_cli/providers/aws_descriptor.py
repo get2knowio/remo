@@ -50,10 +50,12 @@ DESCRIPTOR = ProviderDescriptor(
     default_instance_name=LOGIN_USER,
     name_format=NameFormat.FLAT,
     registry_fields=(("instance_id", "instance_id"), ("region", "region")),
-    # Placeholder: AWS reaches instances over SSM, not direct SSH; the
-    # ProxyCommand-building proxy_hook is wired in T046.
+    # SSM-mode hosts are reached through an `aws ssm start-session`
+    # ProxyCommand; a stopped instance is started before connecting.
     connection=ConnectionSpec(
-        mode_field_aware=True, proxy_hook="remo_cli.providers.aws.ssh_proxy_hook"
+        mode_field_aware=True,
+        proxy_hook="remo_cli.providers.aws.ssh_proxy_hook",
+        pre_connect_hook="remo_cli.providers.aws.auto_start_aws_if_stopped",
     ),
     implementation="remo_cli.providers.aws",
     sdk_extra="aws",

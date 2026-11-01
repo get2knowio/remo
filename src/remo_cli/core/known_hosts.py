@@ -7,7 +7,6 @@ parsing, serialization, validation, locking, and migration.
 
 from __future__ import annotations
 
-import os
 import sys
 
 from remo_cli.core.registry import (
@@ -212,24 +211,15 @@ def clear_known_hosts_by_prefix(type: str, prefix: str) -> None:
     mutate_registry(_filter)
 
 
-def get_aws_region(name: str) -> str:
-    """Return the AWS region for the named host.
+def no_hosts_message() -> str:
+    """The "nothing registered yet" hint shared by `remo shell` and the picker:
+    one create command per installed provider (plugins included), then `remo add`."""
+    from remo_cli.core.provider_registry import all_descriptors  # noqa: PLC0415
 
-    Resolution order:
-    1. ``region`` field of the matching AWS entry in the registry (if non-empty)
-    2. ``AWS_REGION`` environment variable
-    3. ``AWS_DEFAULT_REGION`` environment variable
-    4. Hard-coded fallback ``"us-west-2"``
-    """
-    for host in get_known_hosts(type_filter="aws"):
-        if host.name == name and host.region:
-            return host.region
-
-    return (
-        os.environ.get("AWS_REGION")
-        or os.environ.get("AWS_DEFAULT_REGION")
-        or "us-west-2"
-    )
+    lines = ["No remo environments registered.", "", "Create one with:"]
+    lines += [f"  remo {d.type_name} create" for d in all_descriptors()]
+    lines.append("  remo add NAME [user@]host[:port]")
+    return "\n".join(lines)
 
 
 def guard_not_added_ssh_host(name: str, provider: str) -> None:

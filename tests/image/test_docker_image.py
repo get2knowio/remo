@@ -125,6 +125,23 @@ def test_dockerfile_installs_remo_cli_with_web_extra():
     assert "[web]" in text
 
 
+def test_dockerfile_builds_and_installs_every_first_party_plugin():
+    """The console lists a registry entry only when its type's provider is
+    installed, so the image must carry every plugins/* distribution (#258)."""
+    text = DOCKERFILE.read_text()
+    assert "COPY plugins/ plugins/" in text
+    assert "pip wheel --no-deps --wheel-dir /build/wheels . plugins/*/" in text
+    assert "grep -v '/remo_cli-'" in text  # the plugin wheels, installed by path
+    assert sorted(p.name for p in (REPO_ROOT / "plugins").iterdir() if p.is_dir())
+
+
+def test_entrypoint_seeds_every_baked_collections_marker():
+    dockerfile = DOCKERFILE.read_text()
+    entrypoint = ENTRYPOINT.read_text()
+    assert "bake_collections.py /app/collections-seed" in dockerfile
+    assert "for baked in /app/collections-seed/*.lock; do" in entrypoint
+
+
 def test_dockerfile_sets_frontend_dist_dir_override():
     text = DOCKERFILE.read_text()
     assert "ENV REMO_WEB_FRONTEND_DIST_DIR=" in text
@@ -609,6 +626,28 @@ def test_amd64_aws_cli_and_ssm_plugin_present_and_arch_correct(amd64_image):
     assert result.returncode == 0, result.stderr
     assert "aws-cli" in result.stdout
     assert result.stdout.strip().splitlines()[-1] == "amd64"
+
+
+@requires_image_build
+def test_amd64_image_loads_first_party_plugins_with_baked_collections(amd64_image):
+    """Each plugin is discovered, and its collections marker is seeded, so a
+    console-triggered configure never reaches Galaxy (#258)."""
+    plugins = sorted(p.name for p in (REPO_ROOT / "plugins").iterdir() if p.is_dir())
+    result = subprocess.run(
+        [
+            "docker", "run", "--rm", "--entrypoint", "sh", amd64_image, "-c",
+            "remo providers && ls /app/collections-seed",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    for plugin in plugins:
+        assert f"remo-provider-{plugin}" in result.stdout, result.stdout
+    markers = [line for line in result.stdout.splitlines() if line.endswith(".lock")]
+    assert "collections.lock" in markers
+    assert len(markers) == 1 + len(plugins), result.stdout
 
 
 _EM_AARCH64 = 183  # ELF e_machine value for AArch64 (EM_AARCH64)
@@ -1213,12 +1252,20 @@ def _curl_in_container(name: str, url: str, expect_status: str | None = None) ->
     mirrors exactly what the compose healthcheck does, and avoids relying on
     host->container port publishing (a separate concern from readiness)."""
     fmt = "\\n%{http_code}"
-    result = subprocess.run(
-        ["docker", "exec", name, "curl", "-s", "-w", fmt, url],
-        capture_output=True,
-        text=True,
-        timeout=15,
-    )
+    # The fixed grace in _wait_for_running is shorter than uvicorn's startup
+    # on a slow host (~3 s measured): retry while nothing is listening yet
+    # (curl exit 7, "couldn't connect"), bounded, never on any other outcome.
+    deadline = time.time() + 20.0
+    while True:
+        result = subprocess.run(
+            ["docker", "exec", name, "curl", "-s", "-w", fmt, url],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if result.returncode != 7 or time.time() >= deadline:
+            break
+        time.sleep(0.5)
     body, _, status = result.stdout.rpartition("\n")
     if expect_status is not None:
         assert status.strip() == expect_status, result.stdout + result.stderr

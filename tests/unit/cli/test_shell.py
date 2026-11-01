@@ -31,7 +31,7 @@ def fixture_host():
 def _patch_shell_deps(mocker, fixture_host):
     """Patch all common dependencies for shell command tests."""
     mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=fixture_host)
-    mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=fixture_host)
+    mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", return_value=fixture_host)
     mocker.patch("remo_cli.core.ssh.shell_connect")
 
 
@@ -173,7 +173,7 @@ class TestShellVersionCheck:
             type="incus", name="lab1/dev1", host="192.168.1.50", user="remo"
         )
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=incus_host)
-        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=incus_host)
+        mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", return_value=incus_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
@@ -198,7 +198,7 @@ class TestShellVersionCheck:
             instance_id="paul",  # incus stores the Incus-host SSH user here
         )
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=incus_host)
-        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=incus_host)
+        mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", return_value=incus_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
@@ -240,8 +240,8 @@ class TestShellVersionCheck:
         mock_check.assert_not_called()
 
 
-class TestShellAutoStartAwsFailure:
-    """auto_start_aws_if_stopped raising ProviderError (018) exits with its
+class TestShellPreConnectHookFailure:
+    """A pre-connect hook raising ProviderError (018) exits with its
     exit_code and prints the message, instead of an uncaught SystemExit."""
 
     def test_precondition_error_exits_with_message(self, runner, mocker, fixture_host):
@@ -249,7 +249,7 @@ class TestShellAutoStartAwsFailure:
 
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=fixture_host)
         mocker.patch(
-            "remo_cli.providers.aws.auto_start_aws_if_stopped",
+            "remo_cli.core.ssh.run_pre_connect_hook",
             side_effect=PreconditionError("Instance i-123 is currently stopping."),
         )
         mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -265,7 +265,7 @@ class TestShellAutoStartAwsFailure:
         auto_started=True; connect_to_host must not query EC2 again."""
         from remo_cli.cli.shell import connect_to_host
 
-        mock_start = mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped")
+        mock_start = mocker.patch("remo_cli.core.ssh.run_pre_connect_hook")
         mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
         connect_to_host(
             fixture_host, tunnels=(), no_open=True, no_update_check=True, auto_started=True
@@ -575,7 +575,7 @@ class TestShellFlowCharacterization:
             order.append("connect")
 
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", side_effect=_resolve)
-        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", side_effect=_autostart)
+        mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", side_effect=_autostart)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", side_effect=_check)
         connect = mocker.patch("remo_cli.core.ssh.shell_connect", side_effect=_connect)
@@ -632,7 +632,7 @@ class TestShellTabRecording:
         monkeypatch.setenv("REMO_HOME", str(tmp_path / "remo"))
         monkeypatch.setenv("KITTY_WINDOW_ID", "7")
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=fixture_host)
-        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=fixture_host)
+        mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", return_value=fixture_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
 
         def _attempt(*args, on_connect=None, **kwargs):
@@ -732,7 +732,7 @@ class TestTabRecordedOnlyOnAttempt:
         monkeypatch.setenv("REMO_HOME", str(tmp_path / "remo"))
         monkeypatch.setenv("KITTY_WINDOW_ID", "7")
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=fixture_host)
-        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=fixture_host)
+        mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", return_value=fixture_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
         mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "x"])
         mocker.patch("remo_cli.core.ssh.reset_terminal")
@@ -776,7 +776,7 @@ class TestTabRecordedOnlyOnAttempt:
 
         key, run = tab
         mocker.patch(
-            "remo_cli.providers.aws.auto_start_aws_if_stopped",
+            "remo_cli.core.ssh.run_pre_connect_hook",
             side_effect=OperationFailedError("cannot start"),
         )
         result = runner.invoke(shell, ["-p", "A"])

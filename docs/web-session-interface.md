@@ -328,7 +328,10 @@ The service does not reimplement any of this: the Docker image ships the **full 
 so a service restart mid-play neither kills the play nor loses its outcome; the console polls
 `GET /api/v1/registry/jobs/{id}` for the state + live log tail). Galaxy collections are baked into
 the image and the entrypoint seeds the `collections.lock` marker, so a console-triggered configure
-needs no outbound Galaxy access.
+needs no outbound Galaxy access. The image also installs every first-party provider plugin
+(`plugins/*`, e.g. `remo-provider-hetzner`) with its collections baked under its own marker: the
+service lists a registry entry only when its type's provider is installed, so without them those
+hosts would be missing from the console.
 
 **Trust bootstrap** for a brand-new host (the deploy-key pattern — the service's only credential is
 its own `web-identity/` keypair, which the new host has never seen):
