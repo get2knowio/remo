@@ -16,7 +16,7 @@ import pytest
 from remo_cli.core.errors import OperationFailedError
 from remo_cli.core.reconcile import ProbeError, SyncScope, build_plan
 from remo_cli.models.host import KnownHost
-from remo_cli.providers import hetzner as providers_hetzner
+import remo_provider_hetzner.provider as providers_hetzner
 
 
 @pytest.fixture

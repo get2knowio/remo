@@ -302,7 +302,6 @@ def resolve_remo_host(name: str | None = None) -> KnownHost:
             "\n"
             "Create one with:\n"
             "  remo aws create\n"
-            "  remo hetzner create\n"
             "  remo incus create <name>"
         )
 

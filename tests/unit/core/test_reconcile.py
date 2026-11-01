@@ -2,6 +2,7 @@
 
 Covers, per Constitution Principle II (enumerate branches, don't sample):
 - SyncScope predicates/describe()/validation for all four provider shapes
+  (the flat project-wide shape via a test-local descriptor)
   (T012).
 - merge_entry's field-by-field precedence rules (T012).
 - build_plan's full classification matrix, one test per row, plus
@@ -33,6 +34,12 @@ from remo_cli.core.reconcile import (
     render_plan,
     run_sync,
 )
+from remo_cli.core.provider_registry import (
+    ConnectionSpec,
+    NameFormat,
+    ProviderDescriptor,
+    temporary_registration,
+)
 from remo_cli.core.registry import read_registry
 from remo_cli.models.host import KnownHost
 from tests.conftest import seed_registry
@@ -41,6 +48,30 @@ from tests.conftest import seed_registry
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+#: A flat, project-wide provider shape: FLAT names, no nested registry
+#: fields, a managed marker (so `tag` exists), no region scoping and no
+#: sync_scope_description. No built-in provider has this shape since Hetzner
+#: moved to the remo-provider-hetzner plugin, and core tests must pass without
+#: that plugin installed, so the shape is registered test-locally.
+FLAT = "flatcloud"
+
+_FLAT_DESCRIPTOR = ProviderDescriptor(
+    type_name=FLAT,
+    display_name="FlatCloud",
+    default_instance_name="flat1",
+    name_format=NameFormat.FLAT,
+    registry_fields=(),
+    connection=ConnectionSpec(),
+    implementation="flatcloud_provider.provider",
+    supports_managed_marker=True,
+)
+
+
+@pytest.fixture(autouse=True)
+def _flat_provider():
+    with temporary_registration(_FLAT_DESCRIPTOR):
+        yield
 
 
 def _kh(
@@ -155,21 +186,24 @@ class TestSyncScopeAws:
         assert scope.in_removal_scope(entry) is False
 
     def test_non_aws_type_never_matches_aws_scope(self):
+        # "hetzner" is a plugin type (remo-provider-hetzner) that core does
+        # not need installed: an entry of a type that may be uninstalled is
+        # still just data to a scope predicate, and must never match.
         scope = SyncScope(type="aws", region="us-west-2")
         entry = _kh("hetzner", "devbox", region="us-west-2")
         assert scope.in_update_scope(entry) is False
         assert scope.in_removal_scope(entry) is False
 
 
-class TestSyncScopeHetzner:
+class TestSyncScopeFlat:
     def test_matches_unconditionally_regardless_of_host_or_region_fields(self):
-        scope = SyncScope(type="hetzner")
-        entry = _kh("hetzner", "web1")
+        scope = SyncScope(type=FLAT)
+        entry = _kh(FLAT, "web1")
         assert scope.in_update_scope(entry) is True
         assert scope.in_removal_scope(entry) is True
 
-    def test_non_hetzner_type_never_matches(self):
-        scope = SyncScope(type="hetzner")
+    def test_other_type_never_matches(self):
+        scope = SyncScope(type=FLAT)
         entry = _kh("aws", "web1", region="us-west-2")
         assert scope.in_update_scope(entry) is False
         assert scope.in_removal_scope(entry) is False
@@ -191,8 +225,10 @@ class TestSyncScopeDescribe:
             == "proxmox node pve1 (this node only)"
         )
 
-    def test_hetzner(self):
-        assert SyncScope(type="hetzner").describe() == "hetzner (all servers in project)"
+    def test_flat_without_description_falls_back_to_display_name(self):
+        # No sync_scope_description declared: describe() derives the text
+        # from the lowercased display_name.
+        assert SyncScope(type=FLAT).describe() == "flatcloud (all servers in project)"
 
 
 class TestSyncScopeValidation:
@@ -205,20 +241,20 @@ class TestSyncScopeValidation:
         with pytest.raises(ScopeError):
             SyncScope(type="aws", region="")
 
-    def test_hetzner_non_empty_host_raises_scope_error(self):
+    def test_flat_non_empty_host_raises_scope_error(self):
         with pytest.raises(ScopeError):
-            SyncScope(type="hetzner", host="node1")
+            SyncScope(type=FLAT, host="node1")
 
-    def test_hetzner_non_empty_region_raises_scope_error(self):
+    def test_flat_non_empty_region_raises_scope_error(self):
         with pytest.raises(ScopeError):
-            SyncScope(type="hetzner", region="us-west-2")
+            SyncScope(type=FLAT, region="us-west-2")
 
     def test_unknown_type_raises_scope_error(self):
         with pytest.raises(ScopeError):
             SyncScope(type="digitalocean")
 
     def test_frozen_scope_cannot_be_mutated(self):
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
         with pytest.raises(Exception):
             scope.type = "aws"  # type: ignore[misc]
 
@@ -260,8 +296,8 @@ class TestMergeEntry:
         assert merged.host == "203.0.113.7"
 
     def test_user_always_preserved_from_existing(self):
-        existing = _kh("hetzner", "web1", user="remo")
-        discovered = _kh("hetzner", "web1", user="somebody-else")
+        existing = _kh(FLAT, "web1", user="remo")
+        discovered = _kh(FLAT, "web1", user="somebody-else")
         merged = merge_entry(existing, discovered)
         assert merged.user == "remo"
 
@@ -513,8 +549,8 @@ class TestBuildPlanClassification:
         assert plan.skipped_unmarked == ["gamma"]
 
     def test_is_noop_and_has_removals_derived_properties(self):
-        scope = SyncScope(type="hetzner")
-        existing = _kh("hetzner", "web1", host="1.1.1.1")
+        scope = SyncScope(type=FLAT)
+        existing = _kh(FLAT, "web1", host="1.1.1.1")
         noop_plan = build_plan(
             [existing], _probe([_dh(existing, marked=True)]), scope, include_all=False
         )
@@ -556,15 +592,15 @@ class TestRenderPlanMarkPermanentlyRemedy:
         assert "Mark permanently: remo incus tag <n> --host <h>" in out
 
     def test_flat_type_gets_tag_without_host_flag(self, capsys):
-        scope = SyncScope(type="hetzner")
-        existing = _kh("hetzner", "web1", host="1.2.3.4")
-        discovered_entry = _kh("hetzner", "web1", host="1.2.3.4")
+        scope = SyncScope(type=FLAT)
+        existing = _kh(FLAT, "web1", host="1.2.3.4")
+        discovered_entry = _kh(FLAT, "web1", host="1.2.3.4")
         plan = build_plan(
             [existing], _probe([_dh(discovered_entry, marked=False)]), scope, include_all=False
         )
         render_plan(plan, dry_run=False)
         out = capsys.readouterr().out
-        assert "Mark permanently: remo hetzner tag <n>" in out
+        assert f"Mark permanently: remo {FLAT} tag <n>" in out
         assert "--host" not in out
 
     def test_marker_less_type_gets_no_tag_remedy(self, capsys):
@@ -591,14 +627,14 @@ class TestRenderPlanMarkPermanentlyRemedy:
 
 class TestGateConsent:
     def _plan_with_removals(self, count: int = 1):
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
         from remo_cli.core.reconcile import ReconcilePlan
 
-        removed = [_kh("hetzner", f"gone{i}") for i in range(count)]
+        removed = [_kh(FLAT, f"gone{i}") for i in range(count)]
         return ReconcilePlan(scope=scope, removed=removed)
 
     def _plan_without_removals(self):
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
         from remo_cli.core.reconcile import ReconcilePlan
 
         return ReconcilePlan(scope=scope)
@@ -639,34 +675,34 @@ class TestGateConsent:
 
 class TestRunSyncExitCodes:
     def test_probe_error_returns_failure_and_does_not_write(self, tmp_config_dir, capsys):
-        seed_registry(tmp_config_dir, [_kh("hetzner", "web1", host="1.1.1.1")])
+        seed_registry(tmp_config_dir, [_kh(FLAT, "web1", host="1.1.1.1")])
         expected = read_registry().hosts
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
 
         from remo_cli.core.reconcile import ProbeError
 
         def failing_probe():
-            raise ProbeError("could not reach hetzner API")
+            raise ProbeError("could not reach flatcloud API")
 
         rc = run_sync(scope, failing_probe)
         assert rc == 1
         assert rc != 2
         assert read_registry().hosts == expected
-        assert "could not reach hetzner API" in capsys.readouterr().err
+        assert "could not reach flatcloud API" in capsys.readouterr().err
 
     def test_ambiguous_plan_returns_failure(self, tmp_config_dir):
         seed_registry(tmp_config_dir, [])
-        scope = SyncScope(type="hetzner")
-        dup_a = _dh(_kh("hetzner", "dup", host="1.1.1.1"))
-        dup_b = _dh(_kh("hetzner", "dup", host="2.2.2.2"))
+        scope = SyncScope(type=FLAT)
+        dup_a = _dh(_kh(FLAT, "dup", host="1.1.1.1"))
+        dup_b = _dh(_kh(FLAT, "dup", host="2.2.2.2"))
         rc = run_sync(scope, lambda: _probe([dup_a, dup_b]))
         assert rc == 1
         assert rc != 2
 
     def test_dry_run_returns_ok_and_does_not_write(self, tmp_config_dir, monkeypatch):
-        seed_registry(tmp_config_dir, [_kh("hetzner", "gone", host="1.1.1.1")])
+        seed_registry(tmp_config_dir, [_kh(FLAT, "gone", host="1.1.1.1")])
         expected = read_registry().hosts
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
         monkeypatch.setattr(sys, "stdin", FakeStdin(is_tty=True))
 
         rc = run_sync(scope, lambda: _probe([], complete=True), dry_run=True)
@@ -674,9 +710,9 @@ class TestRunSyncExitCodes:
         assert read_registry().hosts == expected
 
     def test_declined_returns_aborted_and_does_not_write(self, tmp_config_dir, monkeypatch):
-        seed_registry(tmp_config_dir, [_kh("hetzner", "gone", host="1.1.1.1")])
+        seed_registry(tmp_config_dir, [_kh(FLAT, "gone", host="1.1.1.1")])
         expected = read_registry().hosts
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
         monkeypatch.setattr(sys, "stdin", FakeStdin(is_tty=True))
         monkeypatch.setattr("remo_cli.core.reconcile.confirm", lambda *a, **k: False)
 
@@ -686,9 +722,9 @@ class TestRunSyncExitCodes:
         assert read_registry().hosts == expected
 
     def test_non_interactive_returns_aborted_and_does_not_write(self, tmp_config_dir, monkeypatch):
-        seed_registry(tmp_config_dir, [_kh("hetzner", "gone", host="1.1.1.1")])
+        seed_registry(tmp_config_dir, [_kh(FLAT, "gone", host="1.1.1.1")])
         expected = read_registry().hosts
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
         monkeypatch.setattr(sys, "stdin", FakeStdin(is_tty=False))
 
         rc = run_sync(scope, lambda: _probe([], complete=True))
@@ -697,24 +733,24 @@ class TestRunSyncExitCodes:
         assert read_registry().hosts == expected
 
     def test_applied_returns_ok_and_writes_once(self, tmp_config_dir, monkeypatch):
-        existing = _kh("hetzner", "gone", host="1.1.1.1")
+        existing = _kh(FLAT, "gone", host="1.1.1.1")
         seed_registry(tmp_config_dir, [existing])
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
 
         rc = run_sync(scope, lambda: _probe([], complete=True), auto_confirm=True)
         assert rc == 0
         assert read_registry().hosts == []
 
     def test_conflict_returns_failure(self, tmp_config_dir, monkeypatch):
-        existing = _kh("hetzner", "gone", host="1.1.1.1")
+        existing = _kh(FLAT, "gone", host="1.1.1.1")
         seed_registry(tmp_config_dir, [existing])
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
         monkeypatch.setattr(sys, "stdin", FakeStdin(is_tty=True))
 
         def sneaky_confirm(*_a, **_k):
             # Simulate a concurrent change to the same scope landing between
             # plan-build and write: rewrite the registry mid-prompt.
-            seed_registry(tmp_config_dir, [_kh("hetzner", "gone", host="9.9.9.9")])
+            seed_registry(tmp_config_dir, [_kh(FLAT, "gone", host="9.9.9.9")])
             return True
 
         monkeypatch.setattr("remo_cli.core.reconcile.confirm", sneaky_confirm)
@@ -730,30 +766,30 @@ class TestRunSyncExitCodes:
         from remo_cli.core.reconcile import ProbeError
 
         seed_registry(tmp_config_dir, [])
-        codes.append(run_sync(SyncScope(type="hetzner"), lambda: (_ for _ in ()).throw(ProbeError("x"))))
+        codes.append(run_sync(SyncScope(type=FLAT), lambda: (_ for _ in ()).throw(ProbeError("x"))))
 
         # ambiguous
-        dup_a = _dh(_kh("hetzner", "dup"))
-        dup_b = _dh(_kh("hetzner", "dup", host="2.2.2.2"))
-        codes.append(run_sync(SyncScope(type="hetzner"), lambda: _probe([dup_a, dup_b])))
+        dup_a = _dh(_kh(FLAT, "dup"))
+        dup_b = _dh(_kh(FLAT, "dup", host="2.2.2.2"))
+        codes.append(run_sync(SyncScope(type=FLAT), lambda: _probe([dup_a, dup_b])))
 
         # dry-run
         codes.append(
-            run_sync(SyncScope(type="hetzner"), lambda: _probe([], complete=True), dry_run=True)
+            run_sync(SyncScope(type=FLAT), lambda: _probe([], complete=True), dry_run=True)
         )
 
         # declined / non-interactive / applied all need a removal candidate
-        seed_registry(tmp_config_dir, [_kh("hetzner", "gone", host="1.1.1.1")])
+        seed_registry(tmp_config_dir, [_kh(FLAT, "gone", host="1.1.1.1")])
         monkeypatch.setattr(sys, "stdin", FakeStdin(is_tty=True))
         monkeypatch.setattr("remo_cli.core.reconcile.confirm", lambda *a, **k: False)
-        codes.append(run_sync(SyncScope(type="hetzner"), lambda: _probe([], complete=True)))
+        codes.append(run_sync(SyncScope(type=FLAT), lambda: _probe([], complete=True)))
 
         monkeypatch.setattr(sys, "stdin", FakeStdin(is_tty=False))
-        codes.append(run_sync(SyncScope(type="hetzner"), lambda: _probe([], complete=True)))
+        codes.append(run_sync(SyncScope(type=FLAT), lambda: _probe([], complete=True)))
 
-        seed_registry(tmp_config_dir, [_kh("hetzner", "gone", host="1.1.1.1")])
+        seed_registry(tmp_config_dir, [_kh(FLAT, "gone", host="1.1.1.1")])
         codes.append(
-            run_sync(SyncScope(type="hetzner"), lambda: _probe([], complete=True), auto_confirm=True)
+            run_sync(SyncScope(type=FLAT), lambda: _probe([], complete=True), auto_confirm=True)
         )
 
         assert 2 not in codes
@@ -792,9 +828,9 @@ class TestApplyPlan:
     def test_no_op_plan_does_not_write(self, tmp_config_dir, monkeypatch):
         import remo_cli.core.reconcile as reconcile_module
 
-        existing = _kh("hetzner", "web1", host="1.1.1.1")
+        existing = _kh(FLAT, "web1", host="1.1.1.1")
         seed_registry(tmp_config_dir, [existing])
-        scope = SyncScope(type="hetzner")
+        scope = SyncScope(type=FLAT)
         plan = build_plan([existing], _probe([_dh(existing, marked=True)]), scope, include_all=False)
         assert plan.is_noop is True
 

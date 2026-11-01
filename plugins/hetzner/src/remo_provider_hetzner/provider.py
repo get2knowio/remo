@@ -15,6 +15,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 from remo_cli.core.ansible_runner import build_configure_extra_vars, run_playbook
 from remo_cli.core.errors import (
@@ -47,6 +48,10 @@ from remo_cli.core.snapshot import validate_name as validate_snapshot_name
 from remo_cli.core.validation import parse_volume_size, validate_name
 from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
+
+# This distribution's own playbooks, roles, group_vars and Galaxy requirements
+# (core/ansible_runner.run_playbook's ``playbook_dir``).
+PLAYBOOK_DIR = Path(__file__).resolve().parent / "ansible"
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +127,7 @@ def create(
 
     extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
-    rc = run_playbook("hetzner_site.yml", extra_vars, verbose=verbose)
+    rc = run_playbook("hetzner_site.yml", extra_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR)
 
     if rc != 0:
         raise OperationFailedError(f"Failed to create Hetzner VM (playbook rc={rc}).")
@@ -177,7 +182,7 @@ def teardown(entry: KnownHost, *, verbose: bool = False, remove_volume: bool = F
         "-e", f"remove_volume={'true' if remove_volume else 'false'}",
     ]
 
-    rc = run_playbook("hetzner_teardown.yml", extra_vars, verbose=verbose)
+    rc = run_playbook("hetzner_teardown.yml", extra_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR)
 
     if rc != 0:
         raise OperationFailedError(f"Failed to destroy Hetzner VM '{server_name}' (playbook rc={rc}).")
@@ -215,7 +220,7 @@ def upgrade(
     ]
     extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
-    rc = run_playbook("hetzner_configure.yml", extra_vars, verbose=verbose)
+    rc = run_playbook("hetzner_configure.yml", extra_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR)
     if rc != 0:
         raise OperationFailedError(f"Failed to update tools on '{server_name}' (playbook rc={rc}).")
 
@@ -249,7 +254,7 @@ def resize(
         "-e", f"hetzner_server_name={server_name}",
         "-e", f"volume_size={volume_size}",
     ]
-    rc = run_playbook("hetzner_resize.yml", resize_vars, verbose=verbose)
+    rc = run_playbook("hetzner_resize.yml", resize_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR)
     if rc != 0:
         raise OperationFailedError(
             f"Failed to resize Hetzner volume for '{server_name}' (playbook rc={rc})."

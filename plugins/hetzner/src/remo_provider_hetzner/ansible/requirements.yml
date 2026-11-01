@@ -1,0 +1,8 @@
+---
+# Installed by remo's ansible_runner under this plugin's own marker, the first
+# time one of these playbooks runs and again whenever this file changes. remo's
+# own ansible/requirements.yml (ansible.posix, community.general, ...) is always
+# installed first, so only what this plugin adds is listed here.
+collections:
+  - name: hetzner.hcloud
+    version: ">=6.7.0"

@@ -52,7 +52,9 @@ def _when(task: dict[str, Any]) -> list[str]:
 
 def test_resolver_runs_first_in_configure_dev_tools() -> None:
     first = CONFIGURE_TASKS[0]
-    assert first["ansible.builtin.include_tasks"] == "tasks/resolve_devcontainer_runtime.yml"
+    assert first["ansible.builtin.include_tasks"] == (
+        "{{ remo_core_ansible_dir | default(playbook_dir) }}/tasks/resolve_devcontainer_runtime.yml"
+    )
 
 
 def test_runtime_roles_are_gated_on_effective_runtime_and_toggle() -> None:

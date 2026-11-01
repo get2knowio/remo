@@ -133,5 +133,6 @@ class TestPathFilters:
         """The exclusion must stay surgical. Provider logic, shared core, the
         Ansible layer and dependency changes all affect provisioning."""
         paths = _trigger_paths(event)
-        for required in ("src/remo_cli/**", "ansible/**", "pyproject.toml", "uv.lock"):
+        # plugins/** carries first-party provider plugins (Hetzner) and their playbooks.
+        for required in ("src/remo_cli/**", "ansible/**", "plugins/**", "pyproject.toml", "uv.lock"):
             assert required in paths, f"{required} no longer triggers smoke tests"

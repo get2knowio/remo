@@ -22,6 +22,7 @@ on:
       - 'src/remo_cli/**'
       - '!src/remo_cli/web/**'
       - 'ansible/**'
+      - 'plugins/**'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/smoke-test.yml'
@@ -31,6 +32,7 @@ on:
       - 'src/remo_cli/**'
       - '!src/remo_cli/web/**'
       - 'ansible/**'
+      - 'plugins/**'
       - 'pyproject.toml'
       - 'uv.lock'
   schedule:
@@ -252,7 +254,9 @@ jobs:
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
       - name: Install remo
-        run: uv sync
+        # Hetzner is a plugin now (plugins/hetzner): opt in exactly as a user
+        # would, via the remo-cli[hetzner] extra.
+        run: uv sync --extra hetzner
 
       - name: Write SSH keys from secrets
         run: |

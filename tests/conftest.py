@@ -76,7 +76,6 @@ LEGACY_FIXTURE_LINES: dict[str, str] = {
     "aws": legacy_line(
         "aws", "buildbox", "203.0.113.7", "remo", "i-0abc123def456", "ssm", "us-east-1"
     ),
-    "hetzner": legacy_line("hetzner", "dev1", "198.51.100.9", "remo"),
     "ssh": legacy_line(
         "ssh", "nas", "nas.lan", "admin", "2222", "direct", "/home/paul/.ssh/id_nas"
     ),

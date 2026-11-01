@@ -40,7 +40,7 @@ class TestCliHelp:
     def test_help_lists_subcommands(self):
         """All registered subcommands must appear in the help text."""
         result = _invoke("--help")
-        expected = ["shell", "cp", "incus", "hetzner", "aws"]
+        expected = ["shell", "cp", "incus", "aws"]
         for name in expected:
             assert name in result.output, f"Subcommand '{name}' missing from --help output"
 
@@ -90,7 +90,6 @@ class TestSubcommandRegistration:
         "configure",
         "incus",
         "proxmox",
-        "hetzner",
         "aws",
         "completion",
         "web",
@@ -150,31 +149,6 @@ class TestAwsGroup:
         for name in expected:
             assert name in result.output, f"AWS subcommand '{name}' missing from help output"
         assert "tag" not in result.output
-        assert "host" not in result.output
-
-
-# ---------------------------------------------------------------------------
-# Provider group: Hetzner
-# ---------------------------------------------------------------------------
-
-
-class TestHetznerGroup:
-    """Verify the ``remo hetzner`` subcommand group."""
-
-    def test_hetzner_help_exits_zero(self):
-        result = _invoke("hetzner", "--help")
-        assert result.exit_code == 0
-
-    def test_hetzner_help_shows_description(self):
-        result = _invoke("hetzner", "--help")
-        assert "Hetzner" in result.output
-
-    def test_hetzner_subcommands(self):
-        """All Hetzner subcommands must appear in ``remo hetzner --help``."""
-        result = _invoke("hetzner", "--help")
-        expected = ["create", "destroy", "upgrade", "resize", "tag", "list", "sync"]
-        for name in expected:
-            assert name in result.output, f"Hetzner subcommand '{name}' missing from help output"
         assert "host" not in result.output
 
 

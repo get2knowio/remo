@@ -30,8 +30,11 @@ jobs:
 
       - name: Install Ansible and dependencies
         run: |
-          uv pip install --system ansible requests python-dateutil
+          # hcloud: the hetzner.hcloud collection imports it under this same
+          # interpreter (plugins/hetzner/pyproject.toml).
+          uv pip install --system ansible requests python-dateutil hcloud
           ansible-galaxy collection install -r ansible/requirements.yml
+          ansible-galaxy collection install -r plugins/hetzner/src/remo_provider_hetzner/ansible/requirements.yml
 
       - name: Set up SSH key
         run: |
@@ -46,5 +49,9 @@ jobs:
           HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
           ANSIBLE_HOST_KEY_CHECKING: 'false'
         run: |
+          # The playbooks ship in the remo-provider-hetzner plugin; run from
+          # remo's ansible/ (its ansible.cfg and shared roles) and tell the
+          # play where remo's shared tasks and defaults are, exactly as
+          # core/ansible_runner.run_playbook(playbook_dir=...) does.
           cd ansible
-          ansible-playbook hetzner_site.yml
+          ansible-playbook ../plugins/hetzner/src/remo_provider_hetzner/ansible/hetzner_site.yml -e "{\"remo_core_ansible_dir\": \"$PWD\"}"

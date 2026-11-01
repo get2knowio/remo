@@ -44,6 +44,9 @@ build/
 # Python virtual environment
 venv/
 .venv/
+# Second environment with the first-party provider plugins installed
+# (core tests run in .venv without them; see plugins/).
+.venv-hetzner/
 env/
 
 # Node.js / frontend (frontend/)

@@ -4,6 +4,9 @@
 
 - name: Provision Hetzner Cloud Server
   hosts: localhost
+  vars_files:
+    # remo's shared defaults (remo_user, nodejs_version, ...); see group_vars/all.yml.
+    - "{{ remo_core_ansible_dir }}/group_vars/all.yml"
   gather_facts: false
   tasks:
     - name: Include Hetzner server role

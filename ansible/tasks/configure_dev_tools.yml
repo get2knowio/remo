@@ -15,8 +15,12 @@
 
 # Decide the devcontainer runtime BEFORE anything that renders it (user_setup
 # bakes it into the launcher scripts) — spec 026, contracts/runtime-resolution.md.
+# Not `tasks/...`: a relative include resolves against the PLAYBOOK's
+# directory, which for a provider plugin's playbook is the plugin's own tree.
+# remo_core_ansible_dir is set for plugin playbooks (core/ansible_runner);
+# every core playbook lives in ansible/, so playbook_dir is the same place.
 - name: Resolve the devcontainer runtime for this host
-  ansible.builtin.include_tasks: tasks/resolve_devcontainer_runtime.yml
+  ansible.builtin.include_tasks: "{{ remo_core_ansible_dir | default(playbook_dir) }}/tasks/resolve_devcontainer_runtime.yml"
 
 - name: Install base utilities
   ansible.builtin.apt:

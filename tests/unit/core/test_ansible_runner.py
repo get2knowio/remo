@@ -378,3 +378,135 @@ class TestFilterLine:
         _filter_line("TASK [Display status message] **********", pending)
 
         assert pending[0] == ""
+
+
+# ---------------------------------------------------------------------------
+# run_playbook(playbook_dir=...) — a provider plugin's own playbooks
+# ---------------------------------------------------------------------------
+
+
+class TestRunPlaybookPluginDir:
+    """A plugin's playbook runs by absolute path from remo's ansible/ (so
+    remo's ansible.cfg and shared roles apply) and is told where remo's tree
+    is; its requirements.yml is installed under its own marker."""
+
+    @pytest.fixture
+    def plugin_dir(self, tmp_path):
+        d = tmp_path / "plugin" / "ansible"
+        d.mkdir(parents=True)
+        return d
+
+    @pytest.fixture
+    def mock_run(self, mocker):
+        mocker.patch("remo_cli.core.ansible_runner.is_verbose", return_value=True)
+        mocker.patch(
+            "remo_cli.core.ansible_runner._find_co_installed",
+            side_effect=lambda name: f"/bin/{name}",
+        )
+        run = mocker.patch("remo_cli.core.ansible_runner.subprocess.run")
+        run.return_value = MagicMock(returncode=0, stderr="")
+        return run
+
+    def _playbook_calls(self, mock_run):
+        return [c for c in mock_run.call_args_list if c[0][0][0] == "/bin/ansible-playbook"]
+
+    def _galaxy_calls(self, mock_run):
+        return [c for c in mock_run.call_args_list if c[0][0][0] == "/bin/ansible-galaxy"]
+
+    def test_runs_plugin_playbook_by_absolute_path_from_core_dir(
+        self, mock_ansible_dir, plugin_dir, mock_run, tmp_config_dir
+    ):
+        import json
+
+        from remo_cli.core.ansible_runner import run_playbook
+
+        rc = run_playbook(
+            "acme_site.yml", ["-e", "k=v"], playbook_dir=plugin_dir, verbose=True
+        )
+
+        assert rc == 0
+        [call] = self._playbook_calls(mock_run)
+        cmd = call[0][0]
+        assert cmd[1] == str(plugin_dir / "acme_site.yml")
+        assert cmd[2] == "-e"
+        assert json.loads(cmd[3]) == {"remo_core_ansible_dir": str(mock_ansible_dir)}
+        assert cmd[4:] == ["-e", "k=v"]
+        assert call[1]["cwd"] == str(mock_ansible_dir)
+
+    def test_core_playbook_gets_no_core_dir_var(self, mock_ansible_dir, mock_run, tmp_config_dir):
+        from remo_cli.core.ansible_runner import run_playbook
+
+        run_playbook("incus_site.yml", verbose=True)
+
+        [call] = self._playbook_calls(mock_run)
+        assert call[0][0] == ["/bin/ansible-playbook", "incus_site.yml"]
+
+    def test_plugin_requirements_installed_once_under_own_marker(
+        self, mock_ansible_dir, plugin_dir, mock_run, tmp_config_dir
+    ):
+        from remo_cli.core.ansible_runner import _plugin_marker_name, run_playbook
+
+        (mock_ansible_dir / "requirements.yml").write_text("collections: []\n")
+        (plugin_dir / "requirements.yml").write_text("collections: [{name: acme.cloud}]\n")
+
+        run_playbook("acme_site.yml", playbook_dir=plugin_dir, verbose=True)
+        run_playbook("acme_site.yml", playbook_dir=plugin_dir, verbose=True)
+
+        installed = [c[0][0][-1] for c in self._galaxy_calls(mock_run)]
+        # Each requirements file exactly once across two runs (idempotent).
+        assert installed == [
+            str(mock_ansible_dir / "requirements.yml"),
+            str(plugin_dir / "requirements.yml"),
+        ]
+        assert (tmp_config_dir / "collections.lock").is_file()
+        assert (tmp_config_dir / _plugin_marker_name(plugin_dir)).is_file()
+
+    def test_changed_plugin_requirements_reinstall_without_touching_core(
+        self, mock_ansible_dir, plugin_dir, mock_run, tmp_config_dir
+    ):
+        from remo_cli.core.ansible_runner import run_playbook
+
+        (mock_ansible_dir / "requirements.yml").write_text("collections: []\n")
+        reqs = plugin_dir / "requirements.yml"
+        reqs.write_text("collections: [{name: acme.cloud}]\n")
+        run_playbook("acme_site.yml", playbook_dir=plugin_dir, verbose=True)
+
+        reqs.write_text("collections: [{name: acme.cloud, version: '>=2'}]\n")
+        run_playbook("acme_site.yml", playbook_dir=plugin_dir, verbose=True)
+
+        installed = [c[0][0][-1] for c in self._galaxy_calls(mock_run)]
+        assert installed == [
+            str(mock_ansible_dir / "requirements.yml"),
+            str(reqs),
+            str(reqs),
+        ]
+
+    def test_plugin_without_requirements_installs_nothing_extra(
+        self, mock_ansible_dir, plugin_dir, mock_run, tmp_config_dir
+    ):
+        from remo_cli.core.ansible_runner import run_playbook
+
+        run_playbook("acme_site.yml", playbook_dir=plugin_dir, verbose=True)
+
+        assert self._galaxy_calls(mock_run) == []
+        assert len(self._playbook_calls(mock_run)) == 1
+
+    def test_plugin_requirements_failure_exits_before_playbook(
+        self, mock_ansible_dir, plugin_dir, mock_run, tmp_config_dir
+    ):
+        from remo_cli.core.ansible_runner import run_playbook
+
+        (plugin_dir / "requirements.yml").write_text("collections: [{name: acme.cloud}]\n")
+        mock_run.return_value = MagicMock(returncode=1, stderr="galaxy down")
+
+        with pytest.raises(SystemExit):
+            run_playbook("acme_site.yml", playbook_dir=plugin_dir, verbose=True)
+
+        assert self._playbook_calls(mock_run) == []
+
+    def test_marker_names_differ_per_plugin_dir(self, tmp_path):
+        from remo_cli.core.ansible_runner import _plugin_marker_name
+
+        a, b = tmp_path / "a", tmp_path / "b"
+        assert _plugin_marker_name(a) != _plugin_marker_name(b)
+        assert _plugin_marker_name(a) != "collections.lock"

@@ -7,7 +7,7 @@ a name must fail with a
 clear "manually-registered SSH host" message pointing at ``remo remove`` — never
 an opaque error or a silent mis-target.
 
-All provider I/O (subprocess/SSH/boto3/Hetzner API) is mocked so the tests never
+All provider I/O (subprocess/SSH/boto3) is mocked so the tests never
 touch the network; in practice the guard exits before any of it runs.
 """
 
@@ -23,7 +23,6 @@ from remo_cli.core.known_hosts import (
 )
 from remo_cli.models.host import KnownHost
 from remo_cli.providers import aws as providers_aws
-from remo_cli.providers import hetzner as providers_hetzner
 from remo_cli.providers import incus as providers_incus
 from remo_cli.providers import proxmox as providers_proxmox
 
@@ -139,32 +138,9 @@ LIFECYCLE_OPS = [
             instance_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
         ),
     ),
-    # hetzner.destroy: the guard moved to the shared core/lifecycle.run_destroy
-    # template (018-provider-abstraction T038); providers_hetzner.teardown()
-    # itself performs destruction only (R-A3) and no longer guards. Coverage
-    # for the hetzner destroy guard now lives at the CLI layer:
-    # tests/unit/cli/providers/test_hetzner_snapshot.py::TestDestroyCLI.
-    ("hetzner.upgrade", lambda: providers_hetzner.upgrade(name=ADDED_NAME)),
-    ("hetzner.resize", lambda: providers_hetzner.resize(name=ADDED_NAME, volume_size="20")),
-    ("hetzner.tag", lambda: providers_hetzner.tag(name=ADDED_NAME)),
-    (
-        "hetzner.snapshot_create",
-        lambda: providers_hetzner.snapshot_create_legacy(
-            server_name=ADDED_NAME, snap_name="snap1"
-        ),
-    ),
-    (
-        "hetzner.snapshot_restore",
-        lambda: providers_hetzner.snapshot_restore_legacy(
-            server_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
-        ),
-    ),
-    (
-        "hetzner.snapshot_delete",
-        lambda: providers_hetzner.snapshot_delete_legacy(
-            server_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
-        ),
-    ),
+    # hetzner.*: Hetzner is now the out-of-tree `remo-provider-hetzner`
+    # plugin; its lifecycle-op guard coverage moved with it, to
+    # plugins/hetzner/tests/unit/test_core_added_provider_guard.py.
 ]
 
 
@@ -239,7 +215,7 @@ def test_configure_guard_returns_the_added_entry(added_ssh_host):
 def test_configure_guard_names_the_providers_own_upgrade_verb(tmp_config_dir):
     save_known_host(
         KnownHost(
-            type="hetzner",
+            type="aws",
             name="web1",
             host="1.2.3.4",
             user="remo",
@@ -247,7 +223,7 @@ def test_configure_guard_names_the_providers_own_upgrade_verb(tmp_config_dir):
             access_mode="direct",
         )
     )
-    with pytest.raises(PreconditionError, match="remo hetzner upgrade web1"):
+    with pytest.raises(PreconditionError, match="remo aws upgrade web1"):
         guard_added_ssh_host_only("web1")
 
 

@@ -27,6 +27,9 @@ uv tool install remo-cli      # recommended
 pipx install remo-cli         # equivalent
 ```
 
+Using Hetzner Cloud? Its provider is a separate plugin, pulled in by an extra:
+`uv tool install "remo-cli[hetzner]"` (see [docs/hetzner.md](docs/hetzner.md)).
+
 Plain `pip install remo-cli` works inside a virtualenv, but not against a system
 Python on distributions that mark it externally-managed (PEP 668 — Ubuntu 24.04,
 Debian 12, Fedora 38+), where it refuses outright. `uv tool` and `pipx` both
@@ -374,7 +377,9 @@ they continue to incur storage costs on AWS/Hetzner).
 
 ## Provider plugins
 
-The four providers above are built in, but the provider mechanism is open:
+Incus, Proxmox and AWS are built in. Hetzner is a first-party plugin,
+`remo-provider-hetzner`, installed with `uv tool install "remo-cli[hetzner]"`
+(see [docs/hetzner.md](docs/hetzner.md)). The provider mechanism is open:
 any installed Python distribution can contribute a provider through the
 `remo.providers` entry-point group, with no change to remo. `remo providers`
 lists what was discovered (and why a broken plugin was skipped);

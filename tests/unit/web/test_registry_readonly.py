@@ -19,6 +19,7 @@ from remo_cli.web.state import ConfigurationState, detect_state
 from tests.conftest import (
     LEGACY_FIXTURE_LINES,
     build_v2_host_entry,
+    legacy_line,
     write_legacy_registry,
     write_v2_registry,
 )
@@ -28,8 +29,15 @@ skip_if_root = pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses permi
 # The two "legacy access-mode variant" fixture entries exist to pin the
 # migration mapper's type-first rule (research R5) and are covered there
 # (test_registry_migration.py); the readonly parity/no-side-effects tests
-# here only need the five ordinary types.
-_STANDARD_LEGACY_TYPES = ("incus", "proxmox", "aws", "hetzner", "ssh")
+# here only need the five ordinary types. The flat, no-extra-field shape is
+# carried by the always-installed `fixture` plugin provider
+# (tests/fixtures/remo_fixture_provider), so it is spelled here rather than
+# taken from the shared fixture table.
+_STANDARD_LEGACY_TYPES = ("incus", "proxmox", "aws", "fixture", "ssh")
+_LEGACY_LINES = {
+    **LEGACY_FIXTURE_LINES,
+    "fixture": legacy_line("fixture", "dev1", "198.51.100.9", "remo"),
+}
 
 
 def _host_key(h) -> tuple:
@@ -61,7 +69,7 @@ class TestReadonlyNoSideEffects:
         config_dir.mkdir()
         monkeypatch.setenv("REMO_HOME", str(config_dir))
 
-        lines = [LEGACY_FIXTURE_LINES[t] for t in _STANDARD_LEGACY_TYPES]
+        lines = [_LEGACY_LINES[t] for t in _STANDARD_LEGACY_TYPES]
         write_legacy_registry(config_dir, lines)
 
         names_before = _snapshot_names(config_dir)
@@ -128,7 +136,7 @@ class TestCliVsWebParity:
     def test_legacy_fixture_parses_identically_readonly_and_migrating(
         self, tmp_path, monkeypatch
     ):
-        lines = [LEGACY_FIXTURE_LINES[t] for t in _STANDARD_LEGACY_TYPES]
+        lines = [_LEGACY_LINES[t] for t in _STANDARD_LEGACY_TYPES]
 
         # "Web" read: readonly=True, in its own REMO_HOME -- never migrates.
         web_dir = tmp_path / "web-remo"

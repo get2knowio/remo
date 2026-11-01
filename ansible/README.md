@@ -4,14 +4,11 @@ This directory contains the Ansible automation for provisioning and configuring 
 
 ## Playbooks
 
-### Hetzner Cloud
-
-| Playbook | Description |
-|----------|-------------|
-| `hetzner_site.yml` | Complete workflow: provision + configure |
-| `hetzner_provision.yml` | Create server |
-| `hetzner_configure.yml` | Install dev tools on existing server |
-| `hetzner_teardown.yml` | Destroy server and optionally the volume |
+Hetzner's playbooks and its `hetzner_server` role are no longer here: they ship
+inside the `remo-provider-hetzner` plugin (`plugins/hetzner/src/remo_provider_hetzner/ansible/`),
+which runs them through `core/ansible_runner.run_playbook(playbook_dir=...)` from this
+directory, so this `ansible.cfg`, these shared roles, `tasks/` and `group_vars/all.yml`
+still apply to them. See [docs/provider-plugins.md](../docs/provider-plugins.md#shipping-ansible-playbooks).
 
 ### Incus Containers
 
@@ -25,7 +22,7 @@ This directory contains the Ansible automation for provisioning and configuring 
 
 ### Shared Configuration
 
-Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task file (`tasks/configure_dev_tools.yml`) to install:
+Every configure playbook (including the Hetzner plugin's, via `remo_core_ansible_dir`) uses the same shared task file (`tasks/configure_dev_tools.yml`) to install:
 - Docker (with docker-compose plugin)
 - Node.js LTS
 - a devcontainer runtime: deacon (default for new hosts) or @devcontainers/cli (the reference CLI — kept on legacy hosts, nested-overlayfs hosts, and by explicit request; see `tasks/resolve_devcontainer_runtime.yml`)
@@ -34,16 +31,6 @@ Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task 
 - Zellij terminal multiplexer
 
 ## Running Playbooks
-
-### Hetzner
-
-```bash
-./run.sh hetzner_site.yml                    # Full provision + configure
-./run.sh hetzner_provision.yml               # Just create server
-./run.sh hetzner_configure.yml               # Configure existing server
-./run.sh hetzner_teardown.yml                # Destroy server (keep volume)
-./run.sh hetzner_teardown.yml -e remove_volume=true  # Destroy everything
-```
 
 ### Incus
 
@@ -66,7 +53,6 @@ Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task 
 
 | Role | Description |
 |------|-------------|
-| `hetzner_server` | Creates Hetzner Cloud server, firewall, volume, and SSH key |
 | `incus_bootstrap` | Installs and configures Incus with storage and networking |
 | `incus_container` | Creates and configures an Incus container |
 | `incus_container_teardown` | Destroys an Incus container |
@@ -80,16 +66,6 @@ Both `hetzner_configure.yml` and `incus_configure.yml` use the same shared task 
 | `zellij` | Installs and configures Zellij terminal multiplexer |
 
 ## Configuration
-
-### Environment Variables (Hetzner)
-
-Set these as environment variables:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `HETZNER_API_TOKEN` | Yes | Hetzner Cloud API token |
-| `SSH_PRIVATE_KEY_PATH` | No | Path to SSH private key (default: `~/.ssh/id_rsa`) |
-| `SSH_PUBLIC_KEY_PATH` | No | Path to SSH public key (default: `~/.ssh/id_rsa.pub`) |
 
 ### Incus Variables
 
@@ -105,10 +81,6 @@ Set these as environment variables:
 
 ```
 ansible/
-├── hetzner_site.yml          # Hetzner: full workflow
-├── hetzner_provision.yml     # Hetzner: create server
-├── hetzner_configure.yml     # Hetzner: install dev tools
-├── hetzner_teardown.yml      # Hetzner: destroy server
 ├── incus_site.yml            # Incus: full workflow
 ├── incus_provision.yml       # Incus: create container
 ├── incus_configure.yml       # Incus: install dev tools
@@ -117,7 +89,6 @@ ansible/
 ├── tasks/
 │   └── configure_dev_tools.yml  # Shared dev tools configuration
 ├── roles/
-│   ├── hetzner_server/
 │   ├── incus_bootstrap/
 │   ├── incus_container/
 │   ├── incus_container_teardown/
@@ -136,7 +107,7 @@ ansible/
 
 ## Adding New Dev Tools
 
-To add a new tool to both Hetzner and Incus environments:
+To add a new tool to every environment (the Hetzner plugin included):
 
 1. Create the role in `roles/mytool/tasks/main.yml`
 

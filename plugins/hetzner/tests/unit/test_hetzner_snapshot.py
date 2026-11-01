@@ -8,7 +8,7 @@ import pytest
 
 from remo_cli.core.errors import UserAbortedError
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
-from remo_cli.providers import hetzner as providers_hetzner
+import remo_provider_hetzner.provider as providers_hetzner
 
 
 SERVER_RESPONSE = {
@@ -50,7 +50,7 @@ def api(mocker):
     """Patch the _hetzner_api transport. Returns the mock so tests set
     return-value or side-effect per call."""
     return mocker.patch(
-        "remo_cli.providers.hetzner._hetzner_api", autospec=True
+        "remo_provider_hetzner.provider._hetzner_api", autospec=True
     )
 
 
@@ -175,7 +175,7 @@ class TestSnapshotRestore:
             SERVER_RESPONSE,
             {"images": [_img()]},
         ]
-        mocker.patch("remo_cli.providers.hetzner.confirm", return_value=False)
+        mocker.patch("remo_provider_hetzner.provider.confirm", return_value=False)
         with pytest.raises(UserAbortedError):
             providers_hetzner.snapshot_restore_legacy(
                 server_name="dev1", snap_name="pre-x", auto_confirm=False
@@ -191,7 +191,7 @@ class TestSnapshotRestore:
             {"action": {"id": 7}},   # POST rebuild
         ]
         mocker.patch(
-            "remo_cli.providers.hetzner._wait_for_action", return_value=True
+            "remo_provider_hetzner.provider._wait_for_action", return_value=True
         )
         rc = providers_hetzner.snapshot_restore_legacy(
             server_name="dev1", snap_name="pre-x", auto_confirm=True
@@ -211,7 +211,7 @@ class TestSnapshotRestore:
             {"action": {"id": 7}},
         ]
         mocker.patch(
-            "remo_cli.providers.hetzner._wait_for_action", return_value=False
+            "remo_provider_hetzner.provider._wait_for_action", return_value=False
         )
         rc = providers_hetzner.snapshot_restore_legacy(
             server_name="dev1", snap_name="pre-x", auto_confirm=True
@@ -267,7 +267,7 @@ class TestSnapshotDelete:
             SERVER_RESPONSE,
             {"images": [_img()]},
         ]
-        mocker.patch("remo_cli.providers.hetzner.confirm", return_value=False)
+        mocker.patch("remo_provider_hetzner.provider.confirm", return_value=False)
         with pytest.raises(UserAbortedError):
             providers_hetzner.snapshot_delete_legacy(
                 server_name="dev1", snap_name="pre-x", auto_confirm=False
@@ -302,7 +302,7 @@ class TestTeardown:
     def test_builds_expected_extra_vars(self, mocker):
         from remo_cli.models.host import KnownHost
 
-        spy = mocker.patch("remo_cli.providers.hetzner.run_playbook", return_value=0)
+        spy = mocker.patch("remo_provider_hetzner.provider.run_playbook", return_value=0)
         entry = KnownHost(type="hetzner", name="dev1", host="5.6.7.8", user="remo")
 
         providers_hetzner.teardown(entry, verbose=True, remove_volume=True)
@@ -314,12 +314,14 @@ class TestTeardown:
                 "-e", "remove_volume=true",
             ],
             verbose=True,
+            # The plugin's own playbooks, never remo's ansible/ directory.
+            playbook_dir=providers_hetzner.PLAYBOOK_DIR,
         )
 
     def test_remove_volume_false_by_default(self, mocker):
         from remo_cli.models.host import KnownHost
 
-        spy = mocker.patch("remo_cli.providers.hetzner.run_playbook", return_value=0)
+        spy = mocker.patch("remo_provider_hetzner.provider.run_playbook", return_value=0)
         entry = KnownHost(type="hetzner", name="dev1", host="5.6.7.8", user="remo")
 
         providers_hetzner.teardown(entry)
@@ -331,13 +333,15 @@ class TestTeardown:
                 "-e", "remove_volume=false",
             ],
             verbose=False,
+            # The plugin's own playbooks, never remo's ansible/ directory.
+            playbook_dir=providers_hetzner.PLAYBOOK_DIR,
         )
 
     def test_nonzero_rc_raises_operation_failed_error(self, mocker):
         from remo_cli.core.errors import OperationFailedError
         from remo_cli.models.host import KnownHost
 
-        mocker.patch("remo_cli.providers.hetzner.run_playbook", return_value=1)
+        mocker.patch("remo_provider_hetzner.provider.run_playbook", return_value=1)
         entry = KnownHost(type="hetzner", name="dev1", host="5.6.7.8", user="remo")
 
         with pytest.raises(OperationFailedError, match="playbook rc=1"):

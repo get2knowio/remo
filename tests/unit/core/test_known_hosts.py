@@ -84,23 +84,23 @@ class TestSaveKnownHost:
     def test_preserves_other_entries(self, tmp_config_dir):
         """Other entries are preserved when one is replaced."""
         save_known_host(_make_host(type_="incus", name="host1/c1", host="10.0.0.1"))
-        save_known_host(_make_host(type_="hetzner", name="web1", host="5.6.7.8"))
+        save_known_host(_make_host(type_="aws", name="web1", host="5.6.7.8"))
         save_known_host(_make_host(type_="incus", name="host1/c1", host="10.0.0.99"))
         hosts = get_known_hosts()
         assert len(hosts) == 2
         incus_hosts = [h for h in hosts if h.type == "incus"]
-        hetzner_hosts = [h for h in hosts if h.type == "hetzner"]
+        aws_hosts = [h for h in hosts if h.type == "aws"]
         assert len(incus_hosts) == 1
         assert incus_hosts[0].host == "10.0.0.99"
-        assert len(hetzner_hosts) == 1
-        assert hetzner_hosts[0].host == "5.6.7.8"
+        assert len(aws_hosts) == 1
+        assert aws_hosts[0].host == "5.6.7.8"
 
     def test_preserves_unparseable_lines(self, tmp_config_dir):
         """Unparseable legacy lines are never dropped: they survive verbatim in
         the renamed migration backup (known_hosts.v1.bak), not the new
         registry.json (data-model.md §4 rule 4 / §6 S1->S2)."""
         _write_registry(tmp_config_dir, "# comment line\nbadline\nincus:h/c:10.0.0.1:remo\n")
-        save_known_host(_make_host(type_="hetzner", name="web1", host="5.5.5.5"))
+        save_known_host(_make_host(type_="aws", name="web1", host="5.5.5.5"))
         raw = get_registry_backup_path().read_text()
         assert "# comment line" in raw
         assert "badline" in raw
@@ -111,7 +111,7 @@ class TestSaveKnownHost:
         """Empty lines in the legacy file survive verbatim in the migration
         backup (the rename is a byte-for-byte copy of the original file)."""
         _write_registry(tmp_config_dir, "incus:h/c:10.0.0.1:remo\n\n\n")
-        save_known_host(_make_host(type_="hetzner", name="web1", host="5.5.5.5"))
+        save_known_host(_make_host(type_="aws", name="web1", host="5.5.5.5"))
         raw = get_registry_backup_path().read_text()
         # There should still be empty lines present in the backup.
         lines = raw.split("\n")
@@ -130,11 +130,11 @@ class TestRemoveKnownHost:
     def test_removes_matching_entry(self, tmp_config_dir):
         """Removes the entry with matching (type, name)."""
         save_known_host(_make_host(type_="incus", name="host1/c1"))
-        save_known_host(_make_host(type_="hetzner", name="web1"))
+        save_known_host(_make_host(type_="aws", name="web1"))
         remove_known_host("incus", "host1/c1")
         hosts = get_known_hosts()
         assert len(hosts) == 1
-        assert hosts[0].type == "hetzner"
+        assert hosts[0].type == "aws"
 
     def test_no_op_if_not_found(self, tmp_config_dir):
         """Does nothing if no entry matches the given (type, name)."""
@@ -155,7 +155,7 @@ class TestRemoveKnownHost:
         """Other entries are preserved after removal."""
         save_known_host(_make_host(type_="incus", name="host1/c1"))
         save_known_host(_make_host(type_="incus", name="host1/c2"))
-        save_known_host(_make_host(type_="hetzner", name="web1"))
+        save_known_host(_make_host(type_="aws", name="web1"))
         remove_known_host("incus", "host1/c1")
         hosts = get_known_hosts()
         assert len(hosts) == 2
@@ -174,7 +174,7 @@ class TestGetKnownHosts:
     def test_returns_all_hosts(self, tmp_config_dir):
         """Returns all registered hosts when no filter is applied."""
         save_known_host(_make_host(type_="incus", name="host1/c1"))
-        save_known_host(_make_host(type_="hetzner", name="web1"))
+        save_known_host(_make_host(type_="ssh", name="web1"))
         save_known_host(_make_host(type_="aws", name="devbox"))
         hosts = get_known_hosts()
         assert len(hosts) == 3
@@ -183,7 +183,7 @@ class TestGetKnownHosts:
         """Returns only hosts matching the specified type."""
         save_known_host(_make_host(type_="incus", name="host1/c1"))
         save_known_host(_make_host(type_="incus", name="host2/c2"))
-        save_known_host(_make_host(type_="hetzner", name="web1"))
+        save_known_host(_make_host(type_="aws", name="web1"))
         hosts = get_known_hosts(type_filter="incus")
         assert len(hosts) == 2
         assert all(h.type == "incus" for h in hosts)
@@ -231,21 +231,21 @@ class TestClearKnownHostsByType:
         """Removes all entries matching the given type."""
         save_known_host(_make_host(type_="incus", name="host1/c1"))
         save_known_host(_make_host(type_="incus", name="host2/c2"))
-        save_known_host(_make_host(type_="hetzner", name="web1"))
+        save_known_host(_make_host(type_="aws", name="web1"))
         clear_known_hosts_by_type("incus")
         hosts = get_known_hosts()
         assert len(hosts) == 1
-        assert hosts[0].type == "hetzner"
+        assert hosts[0].type == "aws"
 
     def test_preserves_other_types(self, tmp_config_dir):
         """Entries of other types are preserved."""
         save_known_host(_make_host(type_="incus", name="host1/c1"))
-        save_known_host(_make_host(type_="hetzner", name="web1"))
+        save_known_host(_make_host(type_="ssh", name="web1"))
         save_known_host(_make_host(type_="aws", name="devbox"))
         clear_known_hosts_by_type("incus")
         hosts = get_known_hosts()
         types = {h.type for h in hosts}
-        assert types == {"hetzner", "aws"}
+        assert types == {"ssh", "aws"}
 
     def test_no_op_if_file_missing(self, tmp_config_dir):
         """Does nothing if the registry file does not exist."""
@@ -257,8 +257,8 @@ class TestClearKnownHostsByType:
 
     def test_no_op_if_type_not_present(self, tmp_config_dir):
         """Does nothing if no entries of the given type exist."""
-        save_known_host(_make_host(type_="hetzner", name="web1"))
-        clear_known_hosts_by_type("aws")
+        save_known_host(_make_host(type_="aws", name="web1"))
+        clear_known_hosts_by_type("proxmox")
         hosts = get_known_hosts()
         assert len(hosts) == 1
 
@@ -284,11 +284,11 @@ class TestClearKnownHostsByPrefix:
     def test_preserves_other_types(self, tmp_config_dir):
         """Entries of other types are preserved even if name matches prefix."""
         save_known_host(_make_host(type_="incus", name="myhost/c1"))
-        save_known_host(_make_host(type_="hetzner", name="myhost-web"))
+        save_known_host(_make_host(type_="aws", name="myhost-web"))
         clear_known_hosts_by_prefix("incus", "myhost/")
         hosts = get_known_hosts()
         assert len(hosts) == 1
-        assert hosts[0].type == "hetzner"
+        assert hosts[0].type == "aws"
 
     def test_no_op_if_file_missing(self, tmp_config_dir):
         """Does nothing if the registry file does not exist."""
@@ -419,10 +419,10 @@ class TestResolveRemoHostByName:
 
     def test_exact_match(self, tmp_config_dir):
         """Finds a host by exact name match."""
-        save_known_host(_make_host(type_="hetzner", name="webserver", host="5.6.7.8"))
+        save_known_host(_make_host(type_="aws", name="webserver", host="5.6.7.8"))
         result = resolve_remo_host_by_name("webserver")
         assert result.name == "webserver"
-        assert result.type == "hetzner"
+        assert result.type == "aws"
 
     def test_exact_match_incus_full_name(self, tmp_config_dir):
         """Finds an incus host by full 'host/container' name."""
@@ -440,17 +440,17 @@ class TestResolveRemoHostByName:
 
     def test_exact_match_takes_priority_over_short_name(self, tmp_config_dir):
         """Exact name match takes priority over incus short-name match."""
-        save_known_host(_make_host(type_="hetzner", name="dev", host="5.5.5.5"))
+        save_known_host(_make_host(type_="aws", name="dev", host="5.5.5.5"))
         save_known_host(_make_host(type_="incus", name="myhost/dev", host="10.0.0.1"))
         result = resolve_remo_host_by_name("dev")
-        # The exact match (hetzner 'dev') should win over the incus short name.
-        assert result.type == "hetzner"
+        # The exact match (aws 'dev') should win over the incus short name.
+        assert result.type == "aws"
         assert result.name == "dev"
 
     def test_system_exit_when_not_found_with_available(self, tmp_config_dir):
         """Raises SystemExit with helpful message listing available environments."""
         save_known_host(_make_host(type_="incus", name="myhost/dev"))
-        save_known_host(_make_host(type_="hetzner", name="webserver"))
+        save_known_host(_make_host(type_="aws", name="webserver"))
         with pytest.raises(SystemExit) as exc_info:
             resolve_remo_host_by_name("nonexistent")
         error_msg = str(exc_info.value)
@@ -512,8 +512,8 @@ class TestUpgradeCommandFor:
         assert upgrade_command_for(host) == "remo configure mbp"
 
     def test_flat_provider_uses_its_upgrade_verb(self):
-        host = _make_host(type_="hetzner", name="web1", host="1.2.3.4")
-        assert upgrade_command_for(host) == "remo hetzner upgrade web1"
+        host = _make_host(type_="aws", name="web1", host="1.2.3.4")
+        assert upgrade_command_for(host) == "remo aws upgrade web1"
 
     def test_host_scoped_without_host_user_names_the_host(self):
         host = _make_host(type_="incus", name="node1/dev", instance_id="")

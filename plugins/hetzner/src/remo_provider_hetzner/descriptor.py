@@ -1,8 +1,8 @@
 """Hetzner provider descriptor — pure metadata, no hcloud import (FR-024).
 
-Registered by ``providers/builtin.py``. Must stay importable with the
-``hetzner`` extra (hcloud) absent; this module imports nothing beyond
-``core/provider_registry.py``.
+The object of this distribution's ``remo.providers`` entry point
+(docs/provider-plugins.md). Imported at discovery time on every remo start,
+so it imports nothing beyond ``remo_cli.core.provider_registry``.
 """
 
 from __future__ import annotations
@@ -15,6 +15,9 @@ from remo_cli.core.provider_registry import (
     OptionSpec,
     ProviderDescriptor,
 )
+
+#: The provider API this plugin was built against (core/provider_registry.PROVIDER_API_VERSION).
+REMO_PROVIDER_API_VERSION = 1
 
 # Provider-local extras (not in the shared catalog — only Hetzner uses these).
 _SERVER_TYPE = OptionSpec(
@@ -34,8 +37,10 @@ DESCRIPTOR = ProviderDescriptor(
     name_format=NameFormat.FLAT,
     registry_fields=(),  # hetzner has no nested registry fields today
     connection=ConnectionSpec(),
-    implementation="remo_cli.providers.hetzner",
-    sdk_extra="hetzner",
+    implementation="remo_provider_hetzner.provider",
+    # No optional SDK: hcloud is a hard dependency of this distribution, and
+    # its only consumer is the hetzner.hcloud Ansible collection.
+    sdk_extra=None,
     create_options=(
         _SERVER_TYPE,
         LOCATION,

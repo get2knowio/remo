@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "remo-provider-hetzner"
+version = "0.1.0"
+description = "Hetzner Cloud provider plugin for remo"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    # The real floor is the first remo-cli release whose
+    # core.ansible_runner.run_playbook takes ``playbook_dir`` (4.5.0). It is
+    # spelled >=4.4.2 only because that is still the workspace root's
+    # version until release-please bumps it; tighten it when this
+    # distribution gets its own release lane.
+    "remo-cli>=4.4.2",
+    # Never imported by this package's Python code. Its consumer is the
+    # hetzner.hcloud Ansible collection, whose modules `import hcloud` under
+    # `ansible_python_interpreter: {{ ansible_playbook_python }}` — i.e. the
+    # same environment remo runs in. The create path's role pip-installs it as
+    # a fallback, but teardown and resize have no such preflight, so it must be
+    # present up front.
+    "hcloud",
+]
+
+[project.entry-points."remo.providers"]
+hetzner = "remo_provider_hetzner.descriptor:DESCRIPTOR"
+
+[tool.hatch.build.targets.wheel]
+# ansible/ (playbooks, roles, group_vars, requirements.yml) ships inside the
+# package; provider.PLAYBOOK_DIR resolves it next to the module.
+packages = ["src/remo_provider_hetzner"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.uv.sources]
+remo-cli = { workspace = true }
