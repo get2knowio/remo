@@ -126,6 +126,13 @@ What your playbooks must do, because Ansible resolves relative paths and
   `vars_files` outranks `group_vars`, so a name you share with remo's file
   would silently take remo's value.
 
+For remo's own maintainers, the other half of the contract: a shared task file
+in remo's `ansible/tasks/` that includes another must spell it
+`"{{ remo_core_ansible_dir | default(playbook_dir) }}/tasks/x.yml"`, never
+`tasks/x.yml` — a relative include resolves against the plugin's playbook
+directory and fails only at run time (`--syntax-check` does not follow dynamic
+includes). `tests/ansible/test_shared_tasks_location_independent.py` enforces it.
+
 The Hetzner provider (`plugins/hetzner` in remo's repository) is the
 complete, production example, including tests that pin this contract
 (`tests/ansible/test_playbook_layout.py`).
