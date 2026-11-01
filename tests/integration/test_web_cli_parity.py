@@ -575,8 +575,6 @@ class TestOutOfDateNudge:
             ("incus", "destroy", []),
             ("proxmox", "create", ["--host", "pve1"]),
             ("proxmox", "destroy", []),
-            ("hetzner", "create", []),
-            ("hetzner", "destroy", []),
             ("aws", "create", []),
             ("aws", "destroy", []),
         ],
@@ -669,8 +667,10 @@ class TestOutOfDateNudge:
 
     # -- sync (run_sync apply path) ----------------------------------------
 
+    # The always-installed `fixture` plugin provider (FLAT, unscoped sync) --
+    # the sync engine's nudge is provider-neutral, so any flat type will do.
     def _probe_adds_one(self) -> ProbeResult:
-        host = KnownHost(type="hetzner", name="newsrv", host="1.2.3.4", user="remo")
+        host = KnownHost(type="fixture", name="newsrv", host="1.2.3.4", user="remo")
         return ProbeResult(hosts=[DiscoveredHost(entry=host, marked=True)], complete=True)
 
     def _probe_empty(self) -> ProbeResult:
@@ -678,23 +678,23 @@ class TestOutOfDateNudge:
 
     def test_sync_apply_nudges_with_cache(self, tmp_config_dir, capsys):
         _seed_push_cache()
-        rc = run_sync(SyncScope(type="hetzner"), self._probe_adds_one, auto_confirm=True)
+        rc = run_sync(SyncScope(type="fixture"), self._probe_adds_one, auto_confirm=True)
         assert rc == 0
         assert _NUDGE in capsys.readouterr().out
 
     def test_sync_dry_run_never_nudges(self, tmp_config_dir, capsys):
         _seed_push_cache()
-        rc = run_sync(SyncScope(type="hetzner"), self._probe_adds_one, dry_run=True)
+        rc = run_sync(SyncScope(type="fixture"), self._probe_adds_one, dry_run=True)
         assert rc == 0
         assert _NUDGE not in capsys.readouterr().out
 
     def test_sync_noop_never_nudges(self, tmp_config_dir, capsys):
         _seed_push_cache()
-        rc = run_sync(SyncScope(type="hetzner"), self._probe_empty, auto_confirm=True)
+        rc = run_sync(SyncScope(type="fixture"), self._probe_empty, auto_confirm=True)
         assert rc == 0
         assert _NUDGE not in capsys.readouterr().out
 
     def test_sync_apply_absent_without_cache(self, tmp_config_dir, capsys):
-        rc = run_sync(SyncScope(type="hetzner"), self._probe_adds_one, auto_confirm=True)
+        rc = run_sync(SyncScope(type="fixture"), self._probe_adds_one, auto_confirm=True)
         assert rc == 0
         assert _NUDGE not in capsys.readouterr().out

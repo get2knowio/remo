@@ -142,9 +142,9 @@ class TestRefusals:
         run_playbook.assert_not_called()
 
     def test_provider_host_names_that_providers_upgrade_verb(self, run_playbook):
-        _register(name="web1", type_="hetzner")
+        _register(name="web1", type_="aws")
 
-        with pytest.raises(PreconditionError, match="remo hetzner upgrade web1"):
+        with pytest.raises(PreconditionError, match="remo aws upgrade web1"):
             providers_added.configure(name="web1", assume_yes=True)
         run_playbook.assert_not_called()
 

@@ -207,36 +207,6 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "snapshot delete": ["INSTANCE", "SNAP_NAME", "--yes", "-y", "--region"],
         "snapshot list": ["INSTANCE?", "--region"],
     },
-    "hetzner": {
-        "create": [
-            "--name",
-            "--type",
-            "--location",
-            "--volume-size",
-            "--only",
-            "--skip",
-            "-v",
-            "--verbose",
-        ],
-        "destroy": [
-            "--name",
-            "--remove-volume",
-            "--yes",
-            "-y",
-            "-v",
-            "--verbose",
-        ],
-        "upgrade": ["NAME", "--only", "--skip", "-v", "--verbose"],
-        "resize": ["NAME", "--volume-size", "-v", "--verbose"],
-        "tag": ["NAME"],
-        "list": [],
-        "info": ["--name"],
-        "sync": ["--all", "--yes", "-y", "--dry-run"],
-        "snapshot create": ["INSTANCE", "--name", "--description"],
-        "snapshot restore": ["INSTANCE", "SNAP_NAME", "--yes", "-y"],
-        "snapshot delete": ["INSTANCE", "SNAP_NAME", "--yes", "-y"],
-        "snapshot list": ["INSTANCE?"],
-    },
 }
 
 # Default instance name shown/used in `create --help` for each provider (FR-011).
@@ -245,11 +215,10 @@ DEFAULT_INSTANCE_NAMES: dict[str, str | None] = {
     "incus": "dev1",
     "proxmox": "dev1",
     "aws": None,
-    "hetzner": "remo",
 }
 
-# Providers whose destroy/sync accept --yes/-y for auto-confirmation (all
-# four, uniformly) — recorded explicitly for FR-012 cross-checks. `create`
+# Providers whose destroy/sync accept --yes/-y for auto-confirmation (every
+# built-in, uniformly; Hetzner's baseline moved to plugins/hetzner/tests/cli/) — recorded explicitly for FR-012 cross-checks. `create`
 # was removed from this list in 019-hygiene-deps-docs US5: the flag never
 # had any effect there and has been removed from create entirely.
 CONFIRMABLE_COMMANDS: dict[str, list[str]] = {
@@ -263,5 +232,4 @@ CONFIRMABLE_COMMANDS: dict[str, list[str]] = {
         "snapshot restore",
         "snapshot delete",
     ],
-    "hetzner": ["destroy", "sync", "snapshot restore", "snapshot delete"],
 }

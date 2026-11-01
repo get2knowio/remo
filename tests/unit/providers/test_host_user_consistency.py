@@ -16,6 +16,8 @@ in the `region` slot (`proxmox.host_user` in registry.json):
 
 Also covers the audit #107 asked for: the Incus and Hetzner probes had the same
 undeclared shape, and the registry read that keeps pre-rename files working.
+(Hetzner is now the out-of-tree `remo-provider-hetzner` plugin; its half of the
+audit lives in plugins/hetzner/tests/unit/test_core_host_user_consistency.py.)
 """
 
 from __future__ import annotations
@@ -28,7 +30,6 @@ import pytest
 from remo_cli.core.reconcile import SyncScope, merge_entry
 from remo_cli.core.registry import read_registry
 from remo_cli.models.host import KnownHost
-from remo_cli.providers import hetzner as providers_hetzner
 from remo_cli.providers import incus as providers_incus
 from remo_cli.providers import proxmox as providers_proxmox
 
@@ -142,27 +143,6 @@ class TestProbeDeclaresWhatItObserved:
         )
 
         assert "instance_id" in (result.hosts[0].observed or frozenset())
-
-    def test_hetzner_observes_only_the_address(self, mocker):
-        mocker.patch(
-            "remo_cli.providers.hetzner._hetzner_api_paged",
-            return_value=(
-                [
-                    {
-                        "name": "dev1",
-                        "public_net": {"ipv4": {"ip": "1.2.3.4"}},
-                        "labels": {"remo": "true"},
-                        "status": "running",
-                    }
-                ],
-                True,
-            ),
-        )
-        result = providers_hetzner._probe(
-            SyncScope(type="hetzner", host="", region=""), include_all=False
-        )
-
-        assert result.hosts[0].observed == frozenset({"host"})
 
 
 class TestHandEditedHostUserSurvivesSync:
@@ -280,7 +260,7 @@ class TestDiscoveredHostObservedIsDeclaredEverywhere:
 
         from remo_cli.providers import aws as providers_aws
 
-        for module in (providers_proxmox, providers_incus, providers_hetzner, providers_aws):
+        for module in (providers_proxmox, providers_incus, providers_aws):
             source = inspect.getsource(module._probe)
             assert "DiscoveredHost(" in source
             assert "observed=" in source, (

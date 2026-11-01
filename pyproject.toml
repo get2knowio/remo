@@ -35,16 +35,6 @@ dependencies = [
     # which import it under ansible_playbook_python (pinned to this same
     # environment). It stays unconditional per FR-004 pending issue #94.
     "boto3",
-    # hcloud is never imported anywhere in src/remo_cli/ — its real consumer
-    # is the hetzner.hcloud Ansible collection (pinned >=6.7.0 in
-    # ansible/requirements.yml), whose modules `import hcloud` under the
-    # `ansible_python_interpreter: {{ ansible_playbook_python }}` set by
-    # ansible/hetzner_site.yml and ansible/hetzner_teardown.yml — i.e. the
-    # CLI's own Python environment. roles/hetzner_server/tasks/main.yml
-    # pip-installs it as a fallback, but only on the create path; the
-    # teardown and resize playbooks have no such preflight, so it must be
-    # present up front. See issue #94.
-    "hcloud",
     "ansible-core>=2.18.0,<2.20.0",
 ]
 
@@ -66,6 +56,12 @@ dev = [
     # httpx2 is absent.
     "httpx2",
 ]
+# The Hetzner provider is its own distribution (plugins/hetzner, a uv
+# workspace member) found through the `remo.providers` entry point; this extra
+# only makes `remo-cli[hetzner]` the one-word way to install it.
+hetzner = [
+    "remo-provider-hetzner",
+]
 web = [
     "fastapi",
     "uvicorn[standard]",
@@ -84,8 +80,15 @@ remo = "remo_cli.cli.main:main"
 # dependency that Dependabot would have waited on.
 exclude-newer = "7 days"
 
+# First-party provider plugins live here as separate distributions: one lock,
+# one PR for a cross-cutting change, but each its own wheel, entry point and
+# test suite (docs/provider-plugins.md).
+[tool.uv.workspace]
+members = ["plugins/*"]
+
 [tool.uv.sources]
 remo-fixture-provider = { path = "tests/fixtures/remo_fixture_provider", editable = true }
+remo-provider-hetzner = { workspace = true }
 
 # PEP 735 dependency group, NOT an extra: `uv sync` installs the `dev` group by
 # default (so CI's `uv sync --all-extras` gets it), while nothing here reaches

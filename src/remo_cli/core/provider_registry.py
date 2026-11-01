@@ -245,8 +245,8 @@ def register(descriptor: ProviderDescriptor, *, source: str = BUILTIN_SOURCE) ->
 def _ensure_discovered() -> None:
     """Lazily register every provider, exactly once per process (027 FR-002).
 
-    Order is fixed: providers/builtin.py first (incus, proxmox, aws, hetzner —
-    unchanged since 018), then ``remo.providers`` entry points sorted by name
+    Order is fixed: providers/builtin.py first (incus, proxmox, aws; Hetzner
+    left the built-ins for the remo-provider-hetzner plugin), then ``remo.providers`` entry points sorted by name
     (core/provider_plugins.py), unless ``REMO_DISABLE_PROVIDER_PLUGINS`` is
     set. Both steps import by dotted name at call time, so core/ keeps its
     static one-way layering (Principle I) and knows no provider's name.
@@ -289,12 +289,11 @@ def get_provider(type_name: str) -> ModuleType:
         module = importlib.import_module(descriptor.implementation)
     except ImportError as exc:
         if descriptor.sdk_extra:
-            # NOTE: descriptor.sdk_extra values (e.g. "aws", "hetzner") name
-            # extras that do not currently exist in pyproject.toml's
-            # [project.optional-dependencies] — boto3/hcloud are still
-            # unconditional runtime dependencies (see pyproject.toml, issue
-            # #94). This message is aspirational until #94 introduces those
-            # extras; descriptor.sdk_extra itself is left unchanged.
+            # NOTE: the built-in sdk_extra value ("aws") names an extra that
+            # does not exist in pyproject.toml's [project.optional-dependencies]
+            # — boto3 is still an unconditional runtime dependency (see
+            # pyproject.toml, issue #94). This message is aspirational until #94
+            # introduces that extra; descriptor.sdk_extra itself is left unchanged.
             raise MissingDependencyError(
                 f"{descriptor.display_name} support requires the '{descriptor.sdk_extra}' extra. "
                 f"Install it with: uv sync --extra {descriptor.sdk_extra} "

@@ -13,7 +13,7 @@ import pytest
 from remo_cli.core.errors import PreconditionError
 from remo_cli.core.known_hosts import save_known_host
 from remo_cli.models.host import KnownHost
-from remo_cli.providers import hetzner as providers_hetzner
+import remo_provider_hetzner.provider as providers_hetzner
 
 
 @pytest.fixture(autouse=True)

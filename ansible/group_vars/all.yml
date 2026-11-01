@@ -1,16 +1,4 @@
 ---
-# Hetzner Cloud Configuration
-hetzner_api_token: "{{ lookup('env', 'HETZNER_API_TOKEN') }}"
-hetzner_server_name: "remo"
-hetzner_server_type: "cx23"  # Smallest shared vCPU (2 vCPU, 4GB RAM) - cheapest option
-hetzner_image: "ubuntu-24.04"
-hetzner_location: "hel1"  # Falkenstein datacenter
-hetzner_ssh_key_name: "remote-coding-key"
-
-# Volume settings for persistent home directory
-hetzner_volume_name: "{{ hetzner_server_name }}-home"
-hetzner_volume_size: 20  # GB (minimum 10)
-
 # AWS Configuration
 aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
 aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"

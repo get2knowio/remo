@@ -1,7 +1,8 @@
 """Provider save-path fixture tests (T016).
 
 Pins the EXACT KnownHost field usage of each provider's save call site
-(providers/incus.py, proxmox.py, aws.py, hetzner.py, added.py) and proves
+(providers/incus.py, proxmox.py, aws.py, added.py; Hetzner's lives in
+plugins/hetzner/tests/unit/test_core_provider_registry_entries.py) and proves
 the legacy<->v2 mapping round-trips it losslessly two ways:
 
 1. Straight to v2 (known_host_to_entry -> entry_to_known_host) — what
@@ -114,53 +115,6 @@ class TestAwsSaveShape:
     def test_legacy_round_trip(self):
         host = self._make()
         assert _legacy_round_trip(host) == host
-
-
-class TestHetznerSaveShape:
-    """providers/hetzner.py create()/sync(): instance_id, access_mode, and
-    region all default — access_mode is "" at construction, not "direct"
-    explicitly. known_host_to_entry serializes "" as "access": "direct"
-    (`host.access_mode or "direct"`), and a v2/legacy round-trip normalizes
-    the in-memory value to the explicit "direct" (data-model.md §3: the
-    legacy implicit-empty convention no longer leaks upward after a v2/
-    accessor load) — so this is the one shape that is NOT byte-for-field
-    identical post-round-trip, by design."""
-
-    def _make(self) -> KnownHost:
-        return KnownHost(
-            type="hetzner",
-            name="dev1",
-            host="198.51.100.9",
-            user="remo",
-        )
-
-    def _normalized(self) -> KnownHost:
-        return KnownHost(
-            type="hetzner",
-            name="dev1",
-            host="198.51.100.9",
-            user="remo",
-            instance_id="",
-            access_mode="direct",
-            region="",
-        )
-
-    def test_constructed_with_empty_access_mode(self):
-        host = self._make()
-        assert host.access_mode == ""
-        assert host.instance_id == ""
-        assert host.region == ""
-
-    def test_v2_entry_serializes_empty_access_mode_as_direct(self):
-        entry = known_host_to_entry(self._make())
-        assert entry["access"] == "direct"
-        assert "hetzner" not in entry
-
-    def test_v2_round_trip_normalizes_access_mode_to_direct(self):
-        assert _v2_round_trip(self._make()) == self._normalized()
-
-    def test_legacy_round_trip_normalizes_access_mode_to_direct(self):
-        assert _legacy_round_trip(self._make()) == self._normalized()
 
 
 class TestSshAddedSaveShape:

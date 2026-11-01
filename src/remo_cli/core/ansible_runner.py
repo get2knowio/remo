@@ -7,6 +7,7 @@ shows only PLAY and TASK names, or verbose pass-through mode.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import signal
@@ -35,21 +36,33 @@ def _find_co_installed(name: str) -> str:
     return name
 
 
-def _ensure_collections() -> None:
-    """Install Ansible Galaxy collections if requirements.yml has changed.
+def _plugin_marker_name(playbook_dir: Path) -> str:
+    # One marker per plugin playbook directory, so a plugin's requirements
+    # changing never re-triggers remo's own install (or another plugin's).
+    digest = hashlib.sha256(str(playbook_dir.resolve()).encode()).hexdigest()[:16]
+    return f"collections-{digest}.lock"
 
-    Uses a SHA-256 hash of requirements.yml stored in REMO_HOME as a marker
-    so the install only runs once (or again when requirements change).
+
+def _ensure_collections(
+    requirements_file: Path | None = None, marker_name: str = "collections.lock"
+) -> None:
+    """Install Ansible Galaxy collections if a requirements.yml has changed.
+
+    Uses a SHA-256 hash of the requirements file stored in REMO_HOME as a
+    marker so the install only runs once (or again when requirements change).
     Collections are installed to Ansible's default user location
-    (``~/.ansible/collections/``).
+    (``~/.ansible/collections/``). With no arguments this is remo's own
+    ``ansible/requirements.yml`` under the ``collections.lock`` marker that
+    the Docker image seeds; a provider plugin's playbook directory gets its
+    own marker (see :func:`run_playbook`).
     """
-    ansible_dir = get_ansible_dir()
-    requirements_file = ansible_dir / "requirements.yml"
+    if requirements_file is None:
+        requirements_file = get_ansible_dir() / "requirements.yml"
     if not requirements_file.is_file():
         return
 
     remo_home = get_remo_home()
-    marker_file = remo_home / "collections.lock"
+    marker_file = remo_home / marker_name
 
     current_hash = hashlib.sha256(requirements_file.read_bytes()).hexdigest()
     if marker_file.is_file() and marker_file.read_text().strip() == current_hash:
@@ -158,12 +171,17 @@ def build_configure_extra_vars(tools_only: tuple[str, ...], tools_skip: tuple[st
     return extra_vars
 
 
-def run_resize_playbook(playbook: str, extra_vars: list[str], verbose: bool = False) -> None:
+def run_resize_playbook(
+    playbook: str,
+    extra_vars: list[str],
+    verbose: bool = False,
+    playbook_dir: Path | None = None,
+) -> None:
     """Run a resize playbook; raise on failure (FR-016; replaces the
     Incus/Proxmox private ``_run_resize_playbook`` copies)."""
     from remo_cli.core.errors import OperationFailedError  # noqa: PLC0415
 
-    rc = run_playbook(playbook, extra_vars, verbose=verbose)
+    rc = run_playbook(playbook, extra_vars, verbose=verbose, playbook_dir=playbook_dir)
     if rc != 0:
         raise OperationFailedError(f"Resize failed (playbook rc={rc}).")
 
@@ -173,13 +191,15 @@ def run_playbook(
     extra_vars: list[str] | None = None,
     inventory: str | None = None,
     verbose: bool = False,
+    playbook_dir: Path | None = None,
 ) -> int:
     """Run an Ansible playbook.
 
     Parameters
     ----------
     playbook:
-        Name of the playbook file (relative to the ansible/ directory).
+        Name of the playbook file, relative to *playbook_dir* (default: remo's
+        own ansible/ directory).
     extra_vars:
         Additional arguments to pass verbatim to ansible-playbook (e.g.
         ``["-e", "key=value", "-e", "other=val"]``).
@@ -189,6 +209,15 @@ def run_playbook(
         When ``True`` (or when the ``REMO_VERBOSE`` env var is ``"1"``),
         ansible-playbook output passes through directly rather than being
         filtered.
+    playbook_dir:
+        A provider plugin's own playbook directory (docs/provider-plugins.md).
+        Its ``requirements.yml``, if any, is installed under its own marker.
+        The run still happens from remo's ansible/ directory, so remo's
+        ``ansible.cfg`` and shared roles apply; roles next to the plugin's
+        playbook are found by Ansible itself. Relative paths in the plugin's
+        playbooks do NOT resolve against remo's tree, so the play receives
+        ``remo_core_ansible_dir`` to reach remo's shared ``tasks/`` and its
+        ``group_vars/all.yml`` defaults (via ``vars_files``).
 
     Returns
     -------
@@ -196,11 +225,23 @@ def run_playbook(
         The exit code of ansible-playbook (0 on success).
     """
     _ensure_collections()
+    if playbook_dir is not None:
+        _ensure_collections(
+            playbook_dir / "requirements.yml", _plugin_marker_name(playbook_dir)
+        )
 
     ansible_dir = get_ansible_dir()
     ansible_cmd = _find_co_installed("ansible-playbook")
 
     cmd: list[str] = [ansible_cmd, playbook]
+    if playbook_dir is not None:
+        cmd = [
+            ansible_cmd,
+            str(playbook_dir / playbook),
+            # JSON form: a path containing spaces would split a key=value pair.
+            "-e",
+            json.dumps({"remo_core_ansible_dir": str(ansible_dir)}),
+        ]
     if extra_vars:
         cmd.extend(extra_vars)
     if inventory is not None:

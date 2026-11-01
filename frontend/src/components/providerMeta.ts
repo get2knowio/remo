@@ -21,13 +21,24 @@ export interface ProviderMeta {
 // first-party provider can't silently fall through to the "unknown" fallback.
 const PROVIDERS: Record<KnownProviderType, ProviderMeta> = {
   aws: { label: "AWS", color: "var(--prov-aws)" },
-  hetzner: { label: "Hetzner", color: "var(--prov-hetzner)" },
   proxmox: { label: "Proxmox", color: "var(--prov-proxmox)" },
   incus: { label: "Incus", color: "var(--prov-incus)" },
 };
 
+// Console-owned (hand-written, not generated): first-party providers that ship
+// as `remo.providers` plugins. They are deliberately absent from the generated
+// KnownProviderType -- installing a plugin must never change the artifacts --
+// so their wire type is an off-union string, and this map keeps their
+// presentation from collapsing into the "unknown" fallback.
+const PLUGIN_PROVIDERS: Readonly<Record<string, ProviderMeta>> = {
+  hetzner: { label: "Hetzner", color: "var(--prov-hetzner)" },
+};
+
 export function providerMeta(type: string): ProviderMeta {
-  return PROVIDERS[type as KnownProviderType] ?? { label: type || "?", color: "var(--prov-unknown)" };
+  return (
+    PROVIDERS[type as KnownProviderType] ??
+    PLUGIN_PROVIDERS[type] ?? { label: type || "?", color: "var(--prov-unknown)" }
+  );
 }
 
 export interface StatusMeta {

@@ -8,8 +8,10 @@ atomic `mutate_registry()` write, and exit codes -- runs for real through
 
 This module is shared across providers. Each provider's functions are
 grouped under a `Test<Provider>...` class and its test names are prefixed
-accordingly (e.g. `test_incus_...`), so later phases (AWS, Proxmox, Hetzner)
+accordingly (e.g. `test_incus_...`), so later phases (AWS, Proxmox)
 can append their own classes as siblings without touching this one.
+Hetzner's adoption-durability case moved with the provider to
+`plugins/hetzner/tests/unit/test_core_sync_reconcile.py`.
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ import pytest
 
 from remo_cli.core import reconcile
 from remo_cli.models.host import KnownHost
-from remo_cli.providers import hetzner as providers_hetzner
 from remo_cli.providers import incus as providers_incus
 
 from tests.conftest import seed_registry
@@ -176,66 +177,6 @@ class TestIncusSyncSafetyMatrix:
 
         assert rc == reconcile.EXIT_OK
         assert _registry_bytes(tmp_config_dir) == before
-
-
-# ---------------------------------------------------------------------------
-# Hetzner (016-sync-reconcile User Story 5 -- adoption durability; T062)
-#
-# Regression guard for the marker-semantics change: an entry adopted via
-# `--all` is unmarked (no `remo` label) by definition. It must survive a
-# subsequent *plain* sync purely by being present -- reported as
-# `retained_unmarked`, never proposed for removal -- with no confirmation
-# prompt attempted, since nothing needs removing.
-# ---------------------------------------------------------------------------
-
-
-def _hetzner_page(name: str, ip: str = "9.9.9.9") -> dict:
-    return {
-        "servers": [
-            {
-                "id": 1,
-                "name": name,
-                "status": "running",
-                "labels": {},
-                "public_net": {"ipv4": {"ip": ip}},
-            }
-        ],
-        "meta": {"pagination": {"next_page": None}},
-    }
-
-
-class TestHetznerAdoptionDurability:
-    def test_all_adopted_entry_is_retained_unmarked_by_a_subsequent_plain_sync(
-        self, tmp_config_dir, mocker, capsys
-    ):
-        seed_registry(tmp_config_dir, [])
-
-        # First sync: --all adopts the unmarked, unlabelled server.
-        mocker.patch.object(
-            providers_hetzner, "_hetzner_api", side_effect=[_hetzner_page("dev1")]
-        )
-        rc = providers_hetzner.sync(include_all=True, auto_confirm=True)
-        assert rc == reconcile.EXIT_OK
-        assert [h.name for h in read_registry_hosts(tmp_config_dir)] == ["dev1"]
-
-        # Second sync: plain (no --all). The server is still unlabelled, but
-        # it must be retained -- not dropped -- because it is still present.
-        mocker.patch.object(
-            providers_hetzner, "_hetzner_api", side_effect=[_hetzner_page("dev1")]
-        )
-        confirm_spy = mocker.patch("remo_cli.core.reconcile.confirm")
-        mocker.patch("sys.stdin.isatty", return_value=True)
-
-        rc = providers_hetzner.sync(include_all=False, auto_confirm=False)
-
-        assert rc == reconcile.EXIT_OK
-        confirm_spy.assert_not_called()
-        assert [h.name for h in read_registry_hosts(tmp_config_dir)] == ["dev1"]
-
-        out = capsys.readouterr().out
-        assert "retained" in out
-        assert "not remo-marked" in out
-        assert "dev1" in out
 
 
 def read_registry_hosts(config_dir) -> list[KnownHost]:

@@ -38,4 +38,11 @@ describe("providerMeta", () => {
   it("still maps a known provider to its dedicated presentation", () => {
     expect(providerMeta("aws")).toEqual({ label: "AWS", color: "var(--prov-aws)" });
   });
+
+  it("keeps a first-party plugin's presentation although it is off the generated union", () => {
+    // Hetzner ships as a remo.providers plugin, so the generated
+    // KnownProviderType deliberately omits it; the hand-written plugin map
+    // must keep it from collapsing into the unknown fallback.
+    expect(providerMeta("hetzner")).toEqual({ label: "Hetzner", color: "var(--prov-hetzner)" });
+  });
 });

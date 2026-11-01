@@ -55,10 +55,10 @@ SCOPED_OFF_PLAYBOOKS = [
     "ssh_configure.yml",
 ]
 #: Playbooks that must keep it on: the key only exists under root/ubuntu there.
+#: Hetzner's playbooks ship in the `remo-provider-hetzner` plugin; their half of
+#: this assertion is plugins/hetzner/tests/ansible/test_authorized_keys_bootstrap.py.
 SCOPED_ON_PLAYBOOKS = [
-    "hetzner_configure.yml",
     "aws_configure.yml",
-    "hetzner_site.yml",
     "aws_site.yml",
 ]
 

@@ -38,7 +38,7 @@ def hetzner_entry(tmp_config_dir):
 
 class TestSnapshotCreateCLI:
     def test_default_name(self, runner, mocker, hetzner_entry):
-        spy = mocker.patch("remo_cli.providers.hetzner.snapshot_create")
+        spy = mocker.patch("remo_provider_hetzner.provider.snapshot_create")
         result = runner.invoke(hetzner, ["snapshot", "create", "dev1"])
         assert result.exit_code == 0, result.output
         entry, snap_name = spy.call_args.args
@@ -46,7 +46,7 @@ class TestSnapshotCreateCLI:
         assert entry.name == "dev1"
 
     def test_explicit_name_and_description(self, runner, mocker, hetzner_entry):
-        spy = mocker.patch("remo_cli.providers.hetzner.snapshot_create")
+        spy = mocker.patch("remo_provider_hetzner.provider.snapshot_create")
         result = runner.invoke(
             hetzner,
             ["snapshot", "create", "dev1", "--name", "pre-x", "--description", "x"],
@@ -57,7 +57,7 @@ class TestSnapshotCreateCLI:
         assert spy.call_args.kwargs["description"] == "x"
 
     def test_invalid_name(self, runner, mocker, hetzner_entry):
-        spy = mocker.patch("remo_cli.providers.hetzner.snapshot_create")
+        spy = mocker.patch("remo_provider_hetzner.provider.snapshot_create")
         result = runner.invoke(
             hetzner, ["snapshot", "create", "dev1", "--name", "bad name!"]
         )
@@ -67,7 +67,7 @@ class TestSnapshotCreateCLI:
 
 class TestSnapshotRestoreCLI:
     def test_yes_short_flag(self, runner, mocker, hetzner_entry):
-        spy = mocker.patch("remo_cli.providers.hetzner.snapshot_restore")
+        spy = mocker.patch("remo_provider_hetzner.provider.snapshot_restore")
         result = runner.invoke(hetzner, ["snapshot", "restore", "dev1", "pre-x", "-y"])
         assert result.exit_code == 0, result.output
         entry, snap_name = spy.call_args.args
@@ -75,7 +75,7 @@ class TestSnapshotRestoreCLI:
         assert snap_name == "pre-x"
 
     def test_declining_confirmation_aborts_with_exit_3(self, runner, mocker, hetzner_entry):
-        spy = mocker.patch("remo_cli.providers.hetzner.snapshot_restore")
+        spy = mocker.patch("remo_provider_hetzner.provider.snapshot_restore")
         result = runner.invoke(hetzner, ["snapshot", "restore", "dev1", "pre-x"])
         assert result.exit_code == 3
         assert "Aborted." in result.output
@@ -89,7 +89,7 @@ class TestSnapshotListCLI:
         from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
         mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_list",
+            "remo_provider_hetzner.provider.snapshot_list",
             return_value=[
                 Snapshot(
                     provider="hetzner",
@@ -110,14 +110,14 @@ class TestSnapshotListCLI:
         assert "STATUS" in result.output
 
     def test_empty(self, runner, mocker, hetzner_entry):
-        mocker.patch("remo_cli.providers.hetzner.snapshot_list", return_value=[])
+        mocker.patch("remo_provider_hetzner.provider.snapshot_list", return_value=[])
         result = runner.invoke(hetzner, ["snapshot", "list", "dev1"])
         assert result.exit_code == 0, result.output
         assert "No snapshots found for instance 'dev1'" in result.output
 
     def test_provider_failure(self, runner, mocker, hetzner_entry):
         mocker.patch(
-            "remo_cli.providers.hetzner.snapshot_list",
+            "remo_provider_hetzner.provider.snapshot_list",
             side_effect=OperationFailedError("No Hetzner server found named 'dev1'"),
         )
         result = runner.invoke(hetzner, ["snapshot", "list", "dev1"])
@@ -136,9 +136,9 @@ class TestDestroyCLI:
     """
 
     def test_full_flow_confirms_and_tears_down(self, runner, mocker, hetzner_entry):
-        mocker.patch("remo_cli.providers.hetzner.snapshot_list_legacy", return_value=[])
+        mocker.patch("remo_provider_hetzner.provider.snapshot_list_legacy", return_value=[])
         run_playbook = mocker.patch(
-            "remo_cli.providers.hetzner.run_playbook", return_value=0
+            "remo_provider_hetzner.provider.run_playbook", return_value=0
         )
         mocker.patch("remo_cli.core.lifecycle.confirm", return_value=True)
         remove_known_host = mocker.patch("remo_cli.core.lifecycle.remove_known_host")
@@ -151,8 +151,8 @@ class TestDestroyCLI:
         remove_known_host.assert_called_once_with("hetzner", "dev1")
 
     def test_declining_confirmation_aborts_with_exit_3(self, runner, mocker, hetzner_entry):
-        mocker.patch("remo_cli.providers.hetzner.snapshot_list_legacy", return_value=[])
-        run_playbook = mocker.patch("remo_cli.providers.hetzner.run_playbook")
+        mocker.patch("remo_provider_hetzner.provider.snapshot_list_legacy", return_value=[])
+        run_playbook = mocker.patch("remo_provider_hetzner.provider.run_playbook")
         mocker.patch("remo_cli.core.lifecycle.confirm", return_value=False)
 
         result = runner.invoke(hetzner, ["destroy", "--name", "dev1"])
@@ -176,7 +176,7 @@ class TestDestroyCLI:
 
 class TestSnapshotDeleteCLI:
     def test_yes_bypasses(self, runner, mocker, hetzner_entry):
-        spy = mocker.patch("remo_cli.providers.hetzner.snapshot_delete")
+        spy = mocker.patch("remo_provider_hetzner.provider.snapshot_delete")
         result = runner.invoke(hetzner, ["snapshot", "delete", "dev1", "pre-x", "-y"])
         assert result.exit_code == 0, result.output
         entry, snap_name = spy.call_args.args
@@ -184,7 +184,7 @@ class TestSnapshotDeleteCLI:
         assert snap_name == "pre-x"
 
     def test_declining_confirmation_aborts_with_exit_3(self, runner, mocker, hetzner_entry):
-        spy = mocker.patch("remo_cli.providers.hetzner.snapshot_delete")
+        spy = mocker.patch("remo_provider_hetzner.provider.snapshot_delete")
         result = runner.invoke(hetzner, ["snapshot", "delete", "dev1", "pre-x"])
         assert result.exit_code == 3
         assert "Aborted." in result.output

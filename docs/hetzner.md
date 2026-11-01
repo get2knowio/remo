@@ -10,9 +10,13 @@ Spin up a cloud VM with full dev tooling and persistent storage.
 
 ## Quick Start
 
+Hetzner support is the `remo-provider-hetzner` plugin, installed with remo's
+`hetzner` extra (remo 4.5.0+; before that it was built in):
+
 ```bash
-# Install remo
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+# Install remo with the Hetzner provider
+uv tool install "remo-cli[hetzner]"
+# (already installed? add it: uv tool install --force "remo-cli[hetzner]")
 
 # Set your Hetzner API token
 export HETZNER_API_TOKEN=your-hetzner-api-token
@@ -23,6 +27,11 @@ remo hetzner create
 # Connect
 remo shell
 ```
+
+`remo providers` should list `hetzner` with source `remo-provider-hetzner`. If
+you upgrade remo without the extra, `remo hetzner` disappears but your
+registered Hetzner servers are kept untouched in the registry (with a warning)
+until the plugin is installed again.
 
 ## Configuration
 

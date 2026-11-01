@@ -26,7 +26,8 @@ from tests.conftest import build_v2_host_entry, write_v2_registry
 
 
 def _all_type_hosts() -> list[KnownHost]:
-    """One host per known type, exercising every nested field shape."""
+    """One host per built-in type (plus ``ssh``) and a field-less host,
+    exercising every nested field shape."""
     return [
         KnownHost(
             type="incus",
@@ -54,8 +55,11 @@ def _all_type_hosts() -> list[KnownHost]:
             access_mode="ssm",
             region="us-east-1",
         ),
+        # A host with no nested-field values at all (the shape a flat,
+        # field-less provider such as the hetzner plugin writes): no nested
+        # object is emitted, and none is needed to read it back.
         KnownHost(
-            type="hetzner",
+            type="aws",
             name="dev1",
             host="198.51.100.9",
             user="remo",
@@ -208,7 +212,7 @@ class TestTolerantReadWarnings:
                 # "user" missing
                 "access": "direct",
             },
-            build_v2_host_entry("hetzner", "web1", "5.6.7.8", "remo"),
+            build_v2_host_entry("aws", "web1", "5.6.7.8", "remo"),
         ]
         write_v2_registry(tmp_config_dir, entries)
 
@@ -255,7 +259,7 @@ class TestValidationRuleRejections:
                 type="incus", name="dup", host="1.1.1.1", user="remo", access_mode="direct"
             ),
             KnownHost(
-                type="hetzner", name="dup", host="2.2.2.2", user="remo", access_mode="direct"
+                type="aws", name="dup", host="2.2.2.2", user="remo", access_mode="direct"
             ),
         ]
         validate_hosts(hosts)  # must not raise
@@ -334,7 +338,7 @@ class TestValidationRuleRejections:
     def test_mutate_registry_rejects_before_write_disk_unchanged(self, tmp_config_dir):
         good = [
             KnownHost(
-                type="hetzner", name="web1", host="5.5.5.5", user="remo", access_mode="direct"
+                type="aws", name="web1", host="5.5.5.5", user="remo", access_mode="direct"
             )
         ]
         replace_registry(good, allow_empty=True)
@@ -356,7 +360,7 @@ class TestIPv6AndColonValueFidelity:
 
     def test_ipv6_host_round_trips(self, tmp_config_dir):
         host = KnownHost(
-            type="hetzner", name="v6box", host="2001:db8::7", user="remo", access_mode="direct"
+            type="aws", name="v6box", host="2001:db8::7", user="remo", access_mode="direct"
         )
         replace_registry([host], allow_empty=True)
 
@@ -422,7 +426,7 @@ class TestIPv6AndColonValueFidelity:
     def test_boundary_length_name_round_trips(self, tmp_config_dir):
         name = "a" * 63
         host = KnownHost(
-            type="hetzner", name=name, host="1.2.3.4", user="remo", access_mode="direct"
+            type="aws", name=name, host="1.2.3.4", user="remo", access_mode="direct"
         )
         replace_registry([host], allow_empty=True)
 
@@ -432,17 +436,18 @@ class TestIPv6AndColonValueFidelity:
 
 
 class TestEmptyAccessModeAccepted:
-    """Several providers (hetzner.py's create()/sync()) construct a fresh
-    KnownHost with access_mode left at its dataclass default (""), then pass it
-    straight to save_known_host() -> mutate_registry() -> validate_hosts().
-    An empty access_mode has always meant "direct" (matches
-    known_host_to_entry()'s own `host.access_mode or "direct"` normalization),
-    so validate_hosts() must accept it rather than requiring every call site to
-    set access_mode explicitly."""
+    """A provider may construct a fresh KnownHost with access_mode left at its
+    dataclass default ("") and pass it straight to save_known_host() ->
+    mutate_registry() -> validate_hosts() (the hetzner plugin's create()/sync()
+    do exactly that; its own suite pins that shape). An empty access_mode has
+    always meant "direct" (matches known_host_to_entry()'s own
+    `host.access_mode or "direct"` normalization), so validate_hosts() must
+    accept it rather than requiring every call site to set access_mode
+    explicitly."""
 
-    def test_replace_registry_accepts_the_real_hetzner_write_shape(self, tmp_config_dir):
-        host = KnownHost(type="hetzner", name="dev1", host="198.51.100.9", user="remo")
-        assert host.access_mode == ""  # the exact shape providers/hetzner.py constructs
+    def test_replace_registry_accepts_an_empty_access_mode(self, tmp_config_dir):
+        host = KnownHost(type="incus", name="nuc/dev1", host="198.51.100.9", user="remo")
+        assert host.access_mode == ""  # the dataclass default, never set
 
         replace_registry([host], allow_empty=True)  # must not raise
         reloaded = read_registry().hosts

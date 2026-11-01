@@ -34,7 +34,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from remo_cli.core.errors import OperationFailedError, PreconditionError
-from remo_cli.providers import hetzner as providers_hetzner
+import remo_provider_hetzner.provider as providers_hetzner
 
 
 def _fake_response(payload: dict) -> MagicMock:
@@ -54,7 +54,7 @@ def _fake_response(payload: dict) -> MagicMock:
 class TestQueryHetznerServerIp:
     def test_returns_empty_string_when_token_missing(self, monkeypatch, mocker):
         monkeypatch.delenv("HETZNER_API_TOKEN", raising=False)
-        urlopen = mocker.patch("remo_cli.providers.hetzner.urllib.request.urlopen")
+        urlopen = mocker.patch("remo_provider_hetzner.provider.urllib.request.urlopen")
 
         result = providers_hetzner._query_hetzner_server_ip("dev1")
 
@@ -64,7 +64,7 @@ class TestQueryHetznerServerIp:
     def test_returns_empty_string_on_transport_error(self, monkeypatch, mocker):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             side_effect=urllib.error.URLError("boom"),
         )
 
@@ -80,7 +80,7 @@ class TestQueryHetznerServerIp:
             ]
         }
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             return_value=_fake_response(payload),
         )
 
@@ -91,7 +91,7 @@ class TestQueryHetznerServerIp:
     def test_uses_15s_timeout(self, monkeypatch, mocker):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         urlopen = mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             return_value=_fake_response({"servers": []}),
         )
 
@@ -111,7 +111,7 @@ class TestQueryHetznerServerIp:
         resp.__exit__.return_value = False
         resp.read.return_value = b"<html>502 Bad Gateway</html>"
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen", return_value=resp
+            "remo_provider_hetzner.provider.urllib.request.urlopen", return_value=resp
         )
 
         assert providers_hetzner._query_hetzner_server_ip("dev1") == ""
@@ -124,7 +124,7 @@ class TestQueryHetznerServerIp:
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         payload = {"servers": [{"public_net": {"ipv4": None, "ipv6": {"ip": "2a01::/64"}}}]}
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             return_value=_fake_response(payload),
         )
 
@@ -154,7 +154,7 @@ class TestInfoServerLookup:
     def test_raises_precondition_error_when_no_server_found(self, monkeypatch, mocker):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             return_value=_fake_response({"servers": []}),
         )
 
@@ -166,7 +166,7 @@ class TestInfoServerLookup:
     def test_defaults_server_name_to_remo_in_not_found_message(self, monkeypatch, mocker):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             return_value=_fake_response({"servers": []}),
         )
 
@@ -188,7 +188,7 @@ class TestInfoServerLookup:
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         err = urllib.error.URLError("boom")
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             side_effect=err,
         )
 
@@ -203,7 +203,7 @@ class TestInfoServerLookup:
     def test_uses_15s_timeout_for_server_lookup(self, monkeypatch, mocker):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         urlopen = mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             return_value=_fake_response({"servers": []}),
         )
 
@@ -236,7 +236,7 @@ class TestInfoVolumeLookup:
     def test_volume_lookup_transport_failure_does_not_raise(self, monkeypatch, mocker, capsys):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             side_effect=[
                 _fake_response(self._server_payload()),
                 urllib.error.URLError("volume boom"),
@@ -252,7 +252,7 @@ class TestInfoVolumeLookup:
     def test_volume_lookup_uses_15s_timeout(self, monkeypatch, mocker):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         urlopen = mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             side_effect=[
                 _fake_response(self._server_payload()),
                 urllib.error.URLError("volume boom"),
@@ -267,7 +267,7 @@ class TestInfoVolumeLookup:
     def test_volume_lookup_success_reports_size(self, monkeypatch, mocker, capsys):
         monkeypatch.setenv("HETZNER_API_TOKEN", "faketoken")
         mocker.patch(
-            "remo_cli.providers.hetzner.urllib.request.urlopen",
+            "remo_provider_hetzner.provider.urllib.request.urlopen",
             side_effect=[
                 _fake_response(self._server_payload()),
                 _fake_response({"volumes": [{"size": 50}]}),

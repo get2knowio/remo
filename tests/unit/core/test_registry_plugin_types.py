@@ -49,7 +49,7 @@ def _plugin(type_name: str = "acme", *, mode_field_aware: bool = False, legacy: 
 class TestKnownTypeGate:
     def test_ssh_pseudo_type_and_builtins_are_known(self) -> None:
         assert is_known_type("ssh")
-        for name in ("incus", "proxmox", "aws", "hetzner"):
+        for name in ("incus", "proxmox", "aws"):
             assert is_known_type(name)
 
     def test_unregistered_type_is_unknown_until_registered(self) -> None:

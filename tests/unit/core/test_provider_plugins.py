@@ -129,9 +129,10 @@ def test_descriptor_entry_point_is_registered_after_builtins(
     )
 
     names = [d.type_name for d in all_descriptors()]
+    builtins = [d.type_name for d in builtin_descriptors()]
 
-    assert names[:4] == [d.type_name for d in builtin_descriptors()]
-    assert names[4:] == ["acme"]
+    assert names[: len(builtins)] == builtins
+    assert names[len(builtins) :] == ["acme"]
     assert is_provider_type("acme")
     assert descriptor_source("acme") == "acme-provider 2.0"
     assert descriptor_source("incus") == "builtin"
@@ -170,7 +171,7 @@ def test_plugins_load_in_entry_point_name_order(
             _EntryPoint(name, f"{name}_provider.descriptor", _Dist(f"{name}-provider", "1"), _descriptor(name))
         )
 
-    plugin_names = [d.type_name for d in all_descriptors()][4:]
+    plugin_names = [d.type_name for d in all_descriptors()][len(builtin_descriptors()) :]
 
     assert plugin_names == ["alpha", "mid", "zeta"]
 

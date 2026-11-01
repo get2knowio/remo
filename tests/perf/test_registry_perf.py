@@ -12,7 +12,7 @@ import time
 from remo_cli.core.registry import mutate_registry, read_registry, validate_hosts
 from remo_cli.models.host import KnownHost
 
-_TYPES = ("incus", "proxmox", "aws", "hetzner", "ssh")
+_TYPES = ("incus", "proxmox", "aws", "flat", "ssh")
 
 
 def _generate_hosts(count: int) -> list[KnownHost]:
@@ -42,10 +42,12 @@ def _generate_hosts(count: int) -> list[KnownHost]:
                     region="us-east-1",
                 )
             )
-        elif type_ == "hetzner":
+        elif type_ == "flat":
+            # The field-less shape (no nested object), as a flat provider with
+            # no registry_fields writes it; carried on a built-in type.
             hosts.append(
                 KnownHost(
-                    type=type_, name=f"web{i}", host=f"198.51.100.{i % 256}",
+                    type="aws", name=f"web{i}", host=f"198.51.100.{i % 256}",
                     user="remo", access_mode="direct",
                 )
             )

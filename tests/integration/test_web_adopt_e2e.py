@@ -93,8 +93,11 @@ _SSM = KnownHost(
     access_mode="ssm",
     region="us-east-1",
 )
+#: A third provider type, from the always-installed `fixture` plugin
+#: distribution (tests/fixtures/remo_fixture_provider): a flat, direct-access
+#: entry with nothing provider-specific about it.
 _UNREACHABLE = KnownHost(
-    type="hetzner", name="ghost", host=_UNREACHABLE_ADDR, user="remo"
+    type="fixture", name="ghost", host=_UNREACHABLE_ADDR, user="remo"
 )
 _HOSTS = [_DIRECT, _SSM, _UNREACHABLE]
 
@@ -430,7 +433,7 @@ def test_full_adopt_then_idempotent_rerun(
     assert {
         "instance incus/webbox",
         "instance aws/ssmbox",
-        "instance hetzner/ghost",
+        "instance fixture/ghost",
     } <= verify_names
     config_lines = [e for e in verify_results if e["name"] == "configuration"]
     assert config_lines and config_lines[0]["passed"]

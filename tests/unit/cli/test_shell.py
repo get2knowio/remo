@@ -15,9 +15,12 @@ def runner():
 
 
 @pytest.fixture
-def hetzner_host():
+def fixture_host():
+    # A flat-named, non-AWS provider host: the always-installed fixture plugin
+    # (tests/fixtures/remo_fixture_provider), so the flow is exercised through
+    # the same registry dispatch an out-of-tree provider gets.
     return KnownHost(
-        type="hetzner",
+        type="fixture",
         name="webserver",
         host="5.6.7.8",
         user="remo",
@@ -25,10 +28,10 @@ def hetzner_host():
 
 
 @pytest.fixture
-def _patch_shell_deps(mocker, hetzner_host):
+def _patch_shell_deps(mocker, fixture_host):
     """Patch all common dependencies for shell command tests."""
-    mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=hetzner_host)
-    mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=hetzner_host)
+    mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=fixture_host)
+    mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=fixture_host)
     mocker.patch("remo_cli.core.ssh.shell_connect")
 
 
@@ -73,7 +76,7 @@ class TestShellVersionCheck:
         prompt = mock_confirm.call_args[0][0]
         assert "v0.8.0" in prompt
         assert "v0.9.0" in prompt
-        assert "remo hetzner upgrade webserver" in prompt
+        assert "remo fixture upgrade webserver" in prompt
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_remote_behind_update_accepted(self, runner, mocker):
@@ -81,7 +84,7 @@ class TestShellVersionCheck:
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
         mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
         mocker.patch("remo_cli.core.output.confirm", return_value=True)
-        mock_update_entry = mocker.patch("remo_cli.providers.hetzner.update_entry")
+        mock_update_entry = mocker.patch("remo_fixture_provider.provider.update_entry")
 
         result = runner.invoke(shell, [])
 
@@ -100,7 +103,7 @@ class TestShellVersionCheck:
             "remo_cli.core.output.confirm", side_effect=[True, True]
         )
         mocker.patch(
-            "remo_cli.providers.hetzner.update_entry",
+            "remo_fixture_provider.provider.update_entry",
             side_effect=OperationFailedError("playbook rc=2"),
         )
         mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -122,7 +125,7 @@ class TestShellVersionCheck:
         # First confirm() = "Update?" → True; second = "Connect anyway?" → False
         mocker.patch("remo_cli.core.output.confirm", side_effect=[True, False])
         mocker.patch(
-            "remo_cli.providers.hetzner.update_entry",
+            "remo_fixture_provider.provider.update_entry",
             side_effect=OperationFailedError("playbook rc=2"),
         )
         mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -160,7 +163,7 @@ class TestShellVersionCheck:
         mock_confirm.assert_called_once()
         prompt = mock_confirm.call_args[0][0]
         assert "no version info" in prompt
-        assert "remo hetzner upgrade webserver" in prompt
+        assert "remo fixture upgrade webserver" in prompt
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_prompt_names_host_scoped_upgrade_command(self, runner, mocker):
@@ -241,10 +244,10 @@ class TestShellAutoStartAwsFailure:
     """auto_start_aws_if_stopped raising ProviderError (018) exits with its
     exit_code and prints the message, instead of an uncaught SystemExit."""
 
-    def test_precondition_error_exits_with_message(self, runner, mocker, hetzner_host):
+    def test_precondition_error_exits_with_message(self, runner, mocker, fixture_host):
         from remo_cli.core.errors import PreconditionError
 
-        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=hetzner_host)
+        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=fixture_host)
         mocker.patch(
             "remo_cli.providers.aws.auto_start_aws_if_stopped",
             side_effect=PreconditionError("Instance i-123 is currently stopping."),
@@ -257,7 +260,7 @@ class TestShellAutoStartAwsFailure:
         assert "Instance i-123 is currently stopping." in result.output
         mock_shell_connect.assert_not_called()
 
-    def test_auto_started_caller_skips_the_second_state_query(self, mocker, hetzner_host):
+    def test_auto_started_caller_skips_the_second_state_query(self, mocker, fixture_host):
         """`remo resume` starts the instance before its lookup and passes
         auto_started=True; connect_to_host must not query EC2 again."""
         from remo_cli.cli.shell import connect_to_host
@@ -265,10 +268,10 @@ class TestShellAutoStartAwsFailure:
         mock_start = mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped")
         mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
         connect_to_host(
-            hetzner_host, tunnels=(), no_open=True, no_update_check=True, auto_started=True
+            fixture_host, tunnels=(), no_open=True, no_update_check=True, auto_started=True
         )
         mock_start.assert_not_called()
-        assert mock_sc.call_args.args[0] is hetzner_host
+        assert mock_sc.call_args.args[0] is fixture_host
 
 
 class TestShellProjectLaunchFlags:
@@ -458,11 +461,11 @@ class TestRunProviderUpgrade:
 
         mock_update_entry.assert_called_once_with(host)
 
-    def test_hetzner_update(self, mocker):
+    def test_plugin_provider_update(self, mocker):
         from remo_cli.cli.shell import _run_tools_upgrade
 
-        host = KnownHost(type="hetzner", name="webserver", host="5.6.7.8", user="remo")
-        mock_update_entry = mocker.patch("remo_cli.providers.hetzner.update_entry")
+        host = KnownHost(type="fixture", name="webserver", host="5.6.7.8", user="remo")
+        mock_update_entry = mocker.patch("remo_fixture_provider.provider.update_entry")
 
         _run_tools_upgrade(host)
 
@@ -552,13 +555,13 @@ class TestShellFlowCharacterization:
     into connect_to_host(), so the refactor cannot change behaviour."""
 
     @pytest.fixture
-    def calls(self, mocker, hetzner_host):
+    def calls(self, mocker, fixture_host):
         order: list[str] = []
-        started_host = KnownHost(type="hetzner", name="webserver", host="9.9.9.9", user="remo")
+        started_host = KnownHost(type="fixture", name="webserver", host="9.9.9.9", user="remo")
 
         def _resolve(name):
             order.append(f"resolve:{name}")
-            return hetzner_host
+            return fixture_host
 
         def _autostart(host):
             order.append("autostart")
@@ -622,14 +625,14 @@ class TestShellTabRecording:
     never resumes by itself (FR-012a)."""
 
     @pytest.fixture
-    def tab(self, monkeypatch, tmp_path, mocker, hetzner_host):
+    def tab(self, monkeypatch, tmp_path, mocker, fixture_host):
         from remo_cli.core import tab_records
         from remo_cli.core.tab_identity import derive_tab_key, detect_tab_identity
 
         monkeypatch.setenv("REMO_HOME", str(tmp_path / "remo"))
         monkeypatch.setenv("KITTY_WINDOW_ID", "7")
-        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=hetzner_host)
-        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=hetzner_host)
+        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=fixture_host)
+        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=fixture_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
 
         def _attempt(*args, on_connect=None, **kwargs):
@@ -722,14 +725,14 @@ class TestTabRecordedOnlyOnAttempt:
     to run. Every pre-connect refusal leaves the PREVIOUS record intact."""
 
     @pytest.fixture
-    def tab(self, monkeypatch, tmp_path, mocker, hetzner_host):
+    def tab(self, monkeypatch, tmp_path, mocker, fixture_host):
         from remo_cli.core import tab_records
         from remo_cli.core.tab_identity import derive_tab_key, detect_tab_identity
 
         monkeypatch.setenv("REMO_HOME", str(tmp_path / "remo"))
         monkeypatch.setenv("KITTY_WINDOW_ID", "7")
-        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=hetzner_host)
-        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=hetzner_host)
+        mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=fixture_host)
+        mocker.patch("remo_cli.providers.aws.auto_start_aws_if_stopped", return_value=fixture_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
         mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "x"])
         mocker.patch("remo_cli.core.ssh.reset_terminal")

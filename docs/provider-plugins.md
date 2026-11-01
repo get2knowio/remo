@@ -93,9 +93,46 @@ acme = "acme_provider.descriptor:DESCRIPTOR"
 
 The object may also be a zero-argument callable that returns the descriptor.
 
+### 4. Shipping Ansible playbooks
+
+A provider that provisions or configures hosts ships its own playbooks inside
+its package and runs them with
+`remo_cli.core.ansible_runner.run_playbook(name, extra_vars, playbook_dir=DIR)`:
+
+```python
+PLAYBOOK_DIR = Path(__file__).resolve().parent / "ansible"
+rc = run_playbook("acme_site.yml", extra_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR)
+```
+
+What remo does with `playbook_dir`:
+
+- Installs `DIR/requirements.yml` (if present) once, and again whenever it
+  changes, under a marker of its own — after remo's own requirements, so list
+  only the collections you add.
+- Runs `ansible-playbook DIR/<name>` **from remo's `ansible/` directory**, so
+  remo's `ansible.cfg` applies and remo's shared roles (`user_setup`, `docker`,
+  `zellij`, …) resolve by name. Roles in `DIR/roles/` resolve too (Ansible looks
+  next to the playbook).
+- Passes `remo_core_ansible_dir` (an extra var) pointing at remo's `ansible/`.
+
+What your playbooks must do, because Ansible resolves relative paths and
+`group_vars/` against the playbook's own directory, not remo's:
+
+- Reach remo's shared tasks absolutely:
+  `include_tasks: "{{ remo_core_ansible_dir }}/tasks/configure_dev_tools.yml"`.
+- Load remo's shared defaults (`remo_user`, `nodejs_version`, …) in every play:
+  `vars_files: ["{{ remo_core_ansible_dir }}/group_vars/all.yml"]`.
+- Put your own defaults in `DIR/group_vars/all.yml`, namespaced (`acme_*`).
+  `vars_files` outranks `group_vars`, so a name you share with remo's file
+  would silently take remo's value.
+
+The Hetzner provider (`plugins/hetzner` in remo's repository) is the
+complete, production example, including tests that pin this contract
+(`tests/ansible/test_playbook_layout.py`).
+
 ## Discovery rules
 
-- Built-ins register first (incus, proxmox, aws, hetzner), then entry points
+- Built-ins register first (incus, proxmox, aws), then entry points
   in **entry-point-name order**, once per process.
 - A plugin that fails to load (import error, wrong object type, descriptor
   validation error) is **skipped with one warning** naming the distribution
@@ -120,6 +157,16 @@ The console's OpenAPI contract enumerates only the built-in types
 plain string and the console presents them through its runtime fallback. That
 is by design (spec 020 FR-004a): installing a plugin must never change the
 generated artifacts.
+
+## First-party plugins
+
+Hetzner ships this way: `plugins/hetzner` is the `remo-provider-hetzner`
+distribution, a uv workspace member of remo's repository with its own
+version, wheel, entry point and test suite, installed by `remo-cli[hetzner]`.
+It gets nothing a third-party plugin cannot: it is discovered through the same
+entry point, its type is an off-union string to the web console (the console
+keeps its colour through a hand-written map), and `REMO_DISABLE_PROVIDER_PLUGINS=1`
+hides it like any other plugin.
 
 ## Testing your plugin
 

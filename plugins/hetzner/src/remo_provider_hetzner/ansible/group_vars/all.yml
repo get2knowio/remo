@@ -1,0 +1,18 @@
+---
+# remo-provider-hetzner's own defaults. Loaded by Ansible because this
+# group_vars/ sits next to the plugin's playbooks; remo's shared defaults
+# (remo_user, nodejs_version, ...) come from remo's group_vars/all.yml, which
+# every play here loads with `vars_files: "{{ remo_core_ansible_dir }}/..."`.
+# That puts remo's file at play-vars precedence, above this one — so nothing
+# in this file may share a name with it (everything here is `hetzner_`).
+# Hetzner Cloud Configuration
+hetzner_api_token: "{{ lookup('env', 'HETZNER_API_TOKEN') }}"
+hetzner_server_name: "remo"
+hetzner_server_type: "cx23"  # Smallest shared vCPU (2 vCPU, 4GB RAM) - cheapest option
+hetzner_image: "ubuntu-24.04"
+hetzner_location: "hel1"  # Falkenstein datacenter
+hetzner_ssh_key_name: "remote-coding-key"
+
+# Volume settings for persistent home directory
+hetzner_volume_name: "{{ hetzner_server_name }}-home"
+hetzner_volume_size: 20  # GB (minimum 10)

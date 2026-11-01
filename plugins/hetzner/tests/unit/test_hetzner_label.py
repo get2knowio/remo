@@ -14,7 +14,7 @@ import pytest
 
 from remo_cli.core.errors import OperationFailedError, PreconditionError
 from remo_cli.models.host import KnownHost
-from remo_cli.providers import hetzner as providers_hetzner
+import remo_provider_hetzner.provider as providers_hetzner
 
 
 def _server(server_id: int = 42, name: str = "dev1", labels: dict | None = None) -> dict:

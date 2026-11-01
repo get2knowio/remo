@@ -26,7 +26,6 @@ def pick_environment(
             "No remo environments registered.\n"
             "Create one with:\n"
             "  remo aws create\n"
-            "  remo hetzner create\n"
             "  remo incus create <name>"
         )
 

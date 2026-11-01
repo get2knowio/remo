@@ -1,7 +1,8 @@
 """Migration matrix tests (T015): legacy known_hosts -> registry.json v2.
 
-Covers the full state-transition matrix from data-model.md §6 (S0-S5): all
-5 types across their 4/6/7-field legacy variants, garbage/unknown lines,
+Covers the full state-transition matrix from data-model.md §6 (S0-S5): every
+built-in type (plus ``ssh``) across its 4/6/7-field legacy variants, a line
+of an uninstalled plugin type, garbage/unknown lines,
 empty vs missing legacy files, pre-existing backup suffixing, interrupted
 (S3) and divergent (S4) both-present resolution, idempotent completed
 migration, and the two legacy access-mode variants from research R5.
@@ -12,7 +13,7 @@ from __future__ import annotations
 import json
 
 from remo_cli.core.config import get_registry_backup_path, get_registry_path
-from remo_cli.core.registry import migrate_if_needed, read_registry
+from remo_cli.core.registry import migrate_if_needed, read_registry, replace_registry
 from tests.conftest import (
     LEGACY_FIXTURE_LINES,
     build_v2_host_entry,
@@ -31,8 +32,12 @@ def _entry(doc: dict, type_: str, name: str) -> dict:
 
 
 class TestFieldVariantMigrationMatrix:
-    """All 5 types x their 4/6/7-field legacy variants map to the right
-    nested v2 fields (contracts/registry-file-v2.md's per-type table)."""
+    """Every built-in type (plus the ``ssh`` pseudo-type) x its 4/6/7-field
+    legacy variants maps to the right nested v2 fields
+    (contracts/registry-file-v2.md's per-type table). Hetzner is a plugin
+    now: its variants are pinned by the plugin's own test suite, and a
+    line of a provider that is not installed by TestUninstalledProviderLine
+    below."""
 
     def test_all_types_and_field_variants(self, tmp_config_dir):
         lines = [
@@ -48,11 +53,6 @@ class TestFieldVariantMigrationMatrix:
             legacy_line("aws", "a1", "3.3.3.1", "remo"),
             legacy_line("aws", "a2", "3.3.3.2", "remo", "i-002", "ssm"),
             legacy_line("aws", "a3", "3.3.3.3", "remo", "i-003", "ssm", "us-west-2"),
-            # hetzner: no nested fields, ever.
-            legacy_line("hetzner", "h1", "4.4.4.1", "remo"),
-            legacy_line(
-                "hetzner", "h2", "4.4.4.2", "remo", "ignored_id", "direct", "ignored_region"
-            ),
             # ssh: instance_id -> ssh.port (int), region -> ssh.identity_file.
             legacy_line("ssh", "s1", "nas1.lan", "admin"),
             legacy_line("ssh", "s2", "nas2.lan", "admin", "2022", "direct"),
@@ -100,12 +100,6 @@ class TestFieldVariantMigrationMatrix:
         assert e["access"] == "ssm"
         assert e["aws"] == {"instance_id": "i-003", "region": "us-west-2"}
 
-        e = _entry(doc, "hetzner", "h1")
-        assert "hetzner" not in e
-
-        e = _entry(doc, "hetzner", "h2")
-        assert "hetzner" not in e  # extra fields silently ignored, no error
-
         e = _entry(doc, "ssh", "s1")
         assert "ssh" not in e
 
@@ -118,7 +112,7 @@ class TestFieldVariantMigrationMatrix:
 
 class TestGarbageAndUnknownLines:
     def test_garbage_line_not_migrated_and_preserved_in_backup(self, tmp_config_dir):
-        lines = [legacy_line("hetzner", "web1", "5.5.5.5", "remo"), "this line is garbage"]
+        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo"), "this line is garbage"]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -133,7 +127,7 @@ class TestGarbageAndUnknownLines:
         assert view.hosts[0].name == "web1"
 
     def test_short_line_not_migrated(self, tmp_config_dir):
-        lines = [legacy_line("hetzner", "web1", "5.5.5.5", "remo"), "a:b:c"]
+        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo"), "a:b:c"]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -144,7 +138,7 @@ class TestGarbageAndUnknownLines:
         assert "a:b:c" in backup_text
 
     def test_unknown_type_line_preserved_not_dropped(self, tmp_config_dir):
-        lines = [legacy_line("hetzner", "web1", "5.5.5.5", "remo"), "docker:mybox:1.2.3.4:remo"]
+        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo"), "docker:mybox:1.2.3.4:remo"]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -161,6 +155,50 @@ class TestGarbageAndUnknownLines:
         assert docker_entries[0]["host"] == "1.2.3.4"
 
 
+class TestUninstalledProviderLine:
+    """A legacy line whose provider is a plugin that is not installed here
+    (e.g. a hetzner line on a machine without remo-provider-hetzner; a
+    made-up type stands in so the test holds with any plugin set) still migrates without
+    losing a byte: the v2 entry is preserved verbatim, warned about, and
+    survives a later write that never saw it as a KnownHost (spec 027)."""
+
+    def test_plugin_line_without_the_plugin_is_preserved(self, tmp_config_dir):
+        lines = [
+            legacy_line("vultr", "h1", "4.4.4.1", "remo"),
+            legacy_line(
+                "vultr", "h2", "4.4.4.2", "remo", "ignored_id", "direct", "ignored_region"
+            ),
+            legacy_line("incus", "h/c1", "1.1.1.1", "remo"),
+        ]
+        write_legacy_registry(tmp_config_dir, lines)
+
+        report = migrate_if_needed()
+
+        assert report is not None
+        assert report.migrated_count == len(lines)  # nothing dropped
+        assert report.skipped_lines == []
+        doc = _registry_doc(tmp_config_dir)
+        assert _entry(doc, "vultr", "h1") == {
+            "type": "vultr", "name": "h1", "host": "4.4.4.1", "user": "remo", "access": "direct",
+        }
+        # The trailing fields have no known home without the provider, so they
+        # ride along verbatim rather than being guessed at or discarded.
+        assert _entry(doc, "vultr", "h2")["_legacy_fields"] == [
+            "ignored_id", "direct", "ignored_region",
+        ]
+        assert lines[1] in get_registry_backup_path().read_text()
+
+        view = read_registry()
+        assert [h.name for h in view.hosts] == ["h/c1"]
+        assert view.unknown_entries == 2
+        assert any("'vultr'" in w and "no installed provider" in w and "'h1'" in w for w in view.warnings)
+
+        before = [e for e in doc["hosts"] if e["type"] == "vultr"]
+        replace_registry(view.hosts)
+        after = [e for e in _registry_doc(tmp_config_dir)["hosts"] if e["type"] == "vultr"]
+        assert after == before
+
+
 class TestTolerantMigration:
     """A legacy entry that parses but fails v2 validation is skipped and
     reported, never fatal (FR-009/FR-014) — migrating one bad entry must not
@@ -169,13 +207,13 @@ class TestTolerantMigration:
 
     def test_validation_failing_entry_skipped_not_fatal(self, tmp_config_dir):
         bad = legacy_line("ssh", "box", "nas.lan", "admin", "999999", "direct")  # port OOR
-        lines = [legacy_line("hetzner", "web1", "5.5.5.5", "remo"), bad]
+        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo"), bad]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
 
         assert report is not None
-        assert report.migrated_count == 1  # only the valid hetzner entry
+        assert report.migrated_count == 1  # only the valid aws entry
         assert any("ssh:box" in s and "out of range" in s for s in report.skipped_lines)
         # The bad line's original bytes are preserved verbatim in the backup.
         assert bad in get_registry_backup_path().read_text()
@@ -185,8 +223,8 @@ class TestTolerantMigration:
 
     def test_duplicate_type_name_deduped_not_fatal(self, tmp_config_dir):
         lines = [
-            legacy_line("hetzner", "dup", "5.5.5.5", "remo"),
-            legacy_line("hetzner", "dup", "6.6.6.6", "remo"),  # same (type, name)
+            legacy_line("aws", "dup", "5.5.5.5", "remo"),
+            legacy_line("aws", "dup", "6.6.6.6", "remo"),  # same (type, name)
         ]
         write_legacy_registry(tmp_config_dir, lines)
 
@@ -208,9 +246,9 @@ class TestBothPresentResilience:
     file becomes unreadable — the concurrent-migration-rename race window."""
 
     def test_readonly_both_present_ignores_unreadable_legacy(self, tmp_config_dir):
-        write_v2_registry(tmp_config_dir, [build_v2_host_entry("hetzner", "web1", "5.5.5.5", "remo")])
+        write_v2_registry(tmp_config_dir, [build_v2_host_entry("aws", "web1", "5.5.5.5", "remo")])
         legacy = tmp_config_dir / "known_hosts"
-        legacy.write_text(legacy_line("hetzner", "web1", "5.5.5.5", "remo") + "\n")
+        legacy.write_text(legacy_line("aws", "web1", "5.5.5.5", "remo") + "\n")
         legacy.chmod(0o000)
         try:
             view = read_registry(readonly=True)
@@ -219,9 +257,9 @@ class TestBothPresentResilience:
         assert [h.name for h in view.hosts] == ["web1"]
 
     def test_nonreadonly_both_present_degrades_on_unreadable_legacy(self, tmp_config_dir):
-        write_v2_registry(tmp_config_dir, [build_v2_host_entry("hetzner", "web1", "5.5.5.5", "remo")])
+        write_v2_registry(tmp_config_dir, [build_v2_host_entry("aws", "web1", "5.5.5.5", "remo")])
         legacy = tmp_config_dir / "known_hosts"
-        legacy.write_text(legacy_line("hetzner", "web1", "5.5.5.5", "remo") + "\n")
+        legacy.write_text(legacy_line("aws", "web1", "5.5.5.5", "remo") + "\n")
         legacy.chmod(0o000)
         try:
             view = read_registry(readonly=False)  # must not raise RegistryReadError
@@ -263,7 +301,7 @@ class TestPreExistingBackupSuffixing:
         pre_existing = tmp_config_dir / "known_hosts.v1.bak"
         pre_existing.write_text("PRE-EXISTING BACKUP CONTENT\n")
 
-        lines = [legacy_line("hetzner", "web1", "5.5.5.5", "remo")]
+        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo")]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -280,9 +318,9 @@ class TestInterruptedMigrationConvergence:
     rename. read_registry() must silently complete the rename."""
 
     def test_equivalent_both_present_completes_rename_silently(self, tmp_config_dir):
-        lines = [legacy_line("hetzner", "web1", "5.5.5.5", "remo")]
+        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo")]
         write_legacy_registry(tmp_config_dir, lines)
-        entry = build_v2_host_entry("hetzner", "web1", "5.5.5.5", "remo", access="direct")
+        entry = build_v2_host_entry("aws", "web1", "5.5.5.5", "remo", access="direct")
         write_v2_registry(tmp_config_dir, [entry])
 
         view = read_registry(readonly=False)
@@ -301,11 +339,11 @@ class TestDivergentBothPresent:
 
     def test_divergent_warns_v2_wins_never_merges(self, tmp_config_dir):
         write_legacy_registry(
-            tmp_config_dir, [legacy_line("hetzner", "web1", "5.5.5.5", "remo")]
+            tmp_config_dir, [legacy_line("aws", "web1", "5.5.5.5", "remo")]
         )
         write_v2_registry(
             tmp_config_dir,
-            [build_v2_host_entry("hetzner", "web1", "9.9.9.9", "remo", access="direct")],
+            [build_v2_host_entry("aws", "web1", "9.9.9.9", "remo", access="direct")],
         )
 
         view = read_registry(readonly=False)
@@ -320,7 +358,7 @@ class TestDivergentBothPresent:
 class TestCompletedMigrationNeverReruns:
     def test_second_call_is_a_true_no_op(self, tmp_config_dir):
         write_legacy_registry(
-            tmp_config_dir, [legacy_line("hetzner", "web1", "5.5.5.5", "remo")]
+            tmp_config_dir, [legacy_line("aws", "web1", "5.5.5.5", "remo")]
         )
         report1 = migrate_if_needed()
         assert report1 is not None

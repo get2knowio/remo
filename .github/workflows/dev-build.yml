@@ -40,6 +40,9 @@ name: dev-build
 #   uv tool install --force "remo-cli[web] @ ./dl/remo_cli-<version>-py3-none-any.whl"
 #   # GitHub pre-release (no gh auth)
 #   uv tool install --force "remo-cli[web] @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_cli-<version>-py3-none-any.whl"
+#   # ...with the Hetzner provider plugin, attached to the same pre-release
+#   uv tool install --force "remo-cli[web,hetzner] @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_cli-<version>-py3-none-any.whl" \
+#     --with "remo-provider-hetzner @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_provider_hetzner-<plugin-version>-py3-none-any.whl"
 #   # revert to the released build
 #   uv tool install remo-cli --force
 
@@ -124,8 +127,15 @@ jobs:
           sed -i -E "0,/^version = \".*\"/s//version = \"${VERSION}\"/" pyproject.toml
           grep -m1 '^version = ' pyproject.toml
 
-      - name: Build wheel + sdist
-        run: uv build
+      # Every workspace member: remo-cli plus the first-party provider plugins
+      # (plugins/*). The plugins keep their own version; only remo-cli's is
+      # stamped above.
+      - name: Build wheels + sdists
+        run: uv build --all-packages
+
+      # #222: provider discovery proven on these exact artifacts.
+      - name: Verify provider-plugin discovery on the built wheels
+        run: scripts/check_plugin_wheels.sh dist
 
       - name: Upload artifact
         # NOTE: SHA-pin to match the repo's action-pinning convention once the
@@ -169,7 +179,10 @@ jobs:
             v*) echo "::error::refusing to create tag '$TAG' — it would trigger release.yml"; exit 1 ;;
           esac
           ls -la dist/
-          WHEEL_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}/remo_cli-${VERSION}-py3-none-any.whl"
+          RELEASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          WHEEL_URL="${RELEASE_URL}/remo_cli-${VERSION}-py3-none-any.whl"
+          HETZNER_WHEEL="$(basename "$(ls dist/remo_provider_hetzner-*.whl)")"
+          HETZNER_URL="${RELEASE_URL}/${HETZNER_WHEEL}"
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           # Quoted heredoc: the notes contain backticks, which an unquoted one
           # would run as command substitution. Placeholders are filled in after.
@@ -182,6 +195,13 @@ jobs:
           uv tool install --force "remo-cli[web] @ __WHEEL_URL__"
           ```
 
+          With the Hetzner provider (a separate plugin distribution since 4.5.0):
+
+          ```bash
+          uv tool install --force "remo-cli[web,hetzner] @ __WHEEL_URL__" \
+            --with "remo-provider-hetzner @ __HETZNER_URL__"
+          ```
+
           Revert to the released build:
 
           ```bash
@@ -192,6 +212,7 @@ jobs:
           NOTES
           sed -i \
             -e "s|__WHEEL_URL__|${WHEEL_URL}|" \
+            -e "s|__HETZNER_URL__|${HETZNER_URL}|" \
             -e "s|__SHA__|${GITHUB_SHA}|" \
             -e "s|__RUN_URL__|${RUN_URL}|" \
             /tmp/notes.md
