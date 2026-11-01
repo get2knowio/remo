@@ -90,4 +90,11 @@ def test_syntax_check_from_remos_ansible_dir(playbook: str) -> None:
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
+    hint = ""
+    if "couldn't resolve module/action" in result.stdout + result.stderr:
+        hint = (
+            "\n\nThe Galaxy collections are not installed. Run:\n"
+            f"  ansible-galaxy collection install -r {core / 'requirements.yml'}\n"
+            f"  ansible-galaxy collection install -r {PLAYBOOK_DIR / 'requirements.yml'}"
+        )
+    assert result.returncode == 0, result.stdout + result.stderr + hint

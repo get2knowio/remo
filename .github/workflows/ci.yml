@@ -57,6 +57,13 @@ jobs:
       - name: Install remo with the hetzner extra
         run: uv sync --all-extras --python ${{ matrix.python-version }}
 
+      # --syntax-check resolves every module name, so the playbook-layout
+      # tests need the collections remo would install on first use.
+      - name: Install the Galaxy collections remo + the plugin require
+        run: |
+          uv run --no-sync ansible-galaxy collection install -r ansible/requirements.yml
+          uv run --no-sync ansible-galaxy collection install -r plugins/hetzner/src/remo_provider_hetzner/ansible/requirements.yml
+
       - name: Run the plugin's tests
         run: uv run --no-sync --python ${{ matrix.python-version }} pytest plugins/hetzner/tests --tb=short -q
 
