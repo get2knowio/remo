@@ -2,7 +2,7 @@
 
 from remo_cli.core.known_hosts import save_known_host
 from remo_cli.models.host import KnownHost
-from remo_cli.providers.aws import get_aws_region
+from remo_provider_ec2.provider import get_aws_region
 
 
 def _make_host(type_="incus", name="myhost/dev", host="10.0.0.1", user="remo", **kwargs):
@@ -24,7 +24,7 @@ class TestGetAwsRegion:
         monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
         save_known_host(
             _make_host(
-                type_="aws",
+                type_="ec2",
                 name="devbox",
                 host="1.2.3.4",
                 instance_id="i-abc",
@@ -40,7 +40,7 @@ class TestGetAwsRegion:
         monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
         save_known_host(
             _make_host(
-                type_="aws",
+                type_="ec2",
                 name="devbox",
                 host="1.2.3.4",
                 instance_id="i-abc",
@@ -56,7 +56,7 @@ class TestGetAwsRegion:
         monkeypatch.setenv("AWS_DEFAULT_REGION", "sa-east-1")
         save_known_host(
             _make_host(
-                type_="aws",
+                type_="ec2",
                 name="devbox",
                 host="1.2.3.4",
                 instance_id="i-abc",
@@ -77,7 +77,7 @@ class TestGetAwsRegion:
         monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
         save_known_host(
             _make_host(
-                type_="aws",
+                type_="ec2",
                 name="other-box",
                 host="1.2.3.4",
                 instance_id="i-abc",

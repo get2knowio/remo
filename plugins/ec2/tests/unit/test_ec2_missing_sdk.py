@@ -1,14 +1,10 @@
-"""T036: the optional-SDK-absent experience (contracts/errors.md).
+"""T036: the SDK-absent experience (contracts/errors.md), moved from remo's
+tests/unit/providers/test_missing_sdk.py with the provider (#258).
 
-AWS lazy-imports `boto3` only inside functions (never at module level) so
-CLI startup stays fast (SC-008); when it's missing, every AWS command must
+EC2 lazy-imports `boto3` only inside functions (never at module level) so
+CLI startup stays fast (SC-008); when it's missing, every EC2 command must
 raise `MissingDependencyError` naming the extra to install, translate to
 exit code 1 at the CLI boundary, and never leak a raw traceback.
-
-Hetzner has no optional-SDK import in practice today — it talks to the
-Hetzner Cloud HTTP API directly via `urllib.request`, not the `hcloud`
-package (the descriptor's `sdk_extra="hetzner"` is declared for
-future-proofing only) — so there is no missing-SDK path to test for it.
 """
 
 from __future__ import annotations
@@ -30,23 +26,22 @@ def boto3_absent(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_require_boto3_raises_missing_dependency_error(boto3_absent) -> None:
-    from remo_cli.providers.aws import _require_boto3
+    from remo_provider_ec2.provider import _require_boto3
 
     with pytest.raises(MissingDependencyError) as exc_info:
         _require_boto3()
     message = str(exc_info.value)
     assert "boto3" in message
-    # The remediation must not point at `uv sync --extra aws`: pyproject.toml
-    # declares no `aws` extra, so that command fails with an unknown-extra
-    # error. Until issue #94 introduces real optional extras, a reinstall is
-    # the only advice that actually works.
+    # The remediation names the extra that really exists since #258
+    # (`remo-cli[ec2]`), never the old built-in's nonexistent `aws` extra.
     assert "--extra aws" not in message
-    assert "uv sync" in message
+    assert "uv sync --extra ec2" in message
+    assert "remo-cli[ec2]" in message
 
 
 @pytest.mark.parametrize("verb, argv", [("sync", ["sync", "--region", "us-west-2"])])
 def test_cli_command_exits_1_with_clear_message_no_traceback(boto3_absent, verb, argv) -> None:
-    group = build_provider_group(get_descriptor("aws"))
+    group = build_provider_group(get_descriptor("ec2"))
     result = CliRunner().invoke(group, argv)
 
     assert result.exit_code == 1

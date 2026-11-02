@@ -56,6 +56,10 @@ from remo_cli.core import web_adopt
 from remo_cli.core.known_hosts import save_known_host
 from remo_cli.models.host import KnownHost
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 # ---------------------------------------------------------------------------
 # Collection-time gating (same technique as the other integration suites:
 # a skipif computed once at import, no pyproject marker machinery).
@@ -85,8 +89,8 @@ _UNREACHABLE_ADDR = "unreachable.invalid"
 
 _DIRECT = KnownHost(type="incus", name="webbox", host=_DIRECT_ADDR, user="remo")
 _SSM = KnownHost(
-    type="aws",
-    name="ssmbox",
+    type="cloudvm",
+    name="cloudvm",
     host="10.0.0.5",
     user="remo",
     instance_id="i-0123456789abcdef0",
@@ -141,11 +145,19 @@ _NEW_CANNED_HOST_KEY_LINES = [
 # Live service (uvicorn subprocess with its own REMO_HOME/HOME)
 # ---------------------------------------------------------------------------
 
-_SERVER_BOOTSTRAP = """\
+#: The service process registers the same SSM-routed test provider the
+#: workstation side does (the ssm_provider fixture), so `cloudvm` entries are a
+#: known type on both ends of the push (AWS is the ec2 plugin since #258).
+_SERVER_BOOTSTRAP = f"""\
 import sys
+sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r})
 import uvicorn
+from remo_cli.core.provider_registry import register
 from remo_cli.web.app import create_app
 from remo_cli.web.config import WebSettings
+from tests.ssm_provider import SSM_DESCRIPTOR
+
+register(SSM_DESCRIPTOR)
 
 uvicorn.run(
     create_app(WebSettings()),
@@ -403,7 +415,7 @@ def test_full_adopt_then_idempotent_rerun(
     outcomes = {o.host.name: o.outcome for o in result.outcomes}
     assert outcomes == {
         "webbox": web_adopt.OUTCOME_ADOPTED,
-        "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
+        "cloudvm": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
         "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
     }
     # 017 US5: the PUT returns the mirror generation it just wrote (starts at 1).
@@ -432,7 +444,7 @@ def test_full_adopt_then_idempotent_rerun(
     verify_names = {entry["name"] for entry in verify_results}
     assert {
         "instance incus/webbox",
-        "instance aws/ssmbox",
+        "instance cloudvm/cloudvm",
         "instance fixture/ghost",
     } <= verify_names
     config_lines = [e for e in verify_results if e["name"] == "configuration"]
@@ -470,7 +482,7 @@ def test_full_adopt_then_idempotent_rerun(
 
     assert {o.host.name: o.outcome for o in rerun.outcomes} == {
         "webbox": web_adopt.OUTCOME_UNCHANGED,
-        "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
+        "cloudvm": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
         "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
     }
     assert rerun.deployment_id == result.deployment_id
@@ -600,7 +612,7 @@ def test_push_after_adopt_processes_only_the_new_instance(
     result = web_adopt.run_push(service.url, service.mint(), interactive=False)
     assert {o.host.name: o.outcome for o in result.outcomes} == {
         "webbox": web_adopt.OUTCOME_ADOPTED,
-        "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
+        "cloudvm": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
         "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
     }
 
@@ -616,17 +628,17 @@ def test_push_after_adopt_processes_only_the_new_instance(
     assert set(saved["push_cache"]) == {dep}
     assert set(saved["push_cache"][dep]) == {"mirror_generation", "instances"}
     assert saved["push_cache"][dep]["mirror_generation"] == 1
-    # webbox (direct, adopted), ssmbox (SSM, skipped_by_design) AND — since
+    # webbox (direct, adopted), cloudvm (SSM, skipped_by_design) AND — since
     # 023 — ghost (direct, unreachable) are all cached: ghost's entry was
     # mirrored by the PUT, so it is a correct sync merge base, but it carries
     # EMPTY host_keys so the push fast-path never skips it (retried in full).
-    assert set(saved["push_cache"][dep]["instances"]) == {"webbox", "ssmbox", "ghost"}
+    assert set(saved["push_cache"][dep]["instances"]) == {"webbox", "cloudvm", "ghost"}
     assert saved["push_cache"][dep]["instances"]["ghost"]["host_keys"] == []
     assert (
         saved["push_cache"][dep]["instances"]["webbox"]["host_keys"] == _CANNED_HOST_KEY_LINES
     )
-    assert saved["push_cache"][dep]["instances"]["ssmbox"]["host_keys"] == []
-    assert saved["push_cache"][dep]["instances"]["ssmbox"]["access"] == "ssm"
+    assert saved["push_cache"][dep]["instances"]["cloudvm"]["host_keys"] == []
+    assert saved["push_cache"][dep]["instances"]["cloudvm"]["access"] == "ssm"
     # The retained connection tuple is non-secret and present (017 US3).
     assert saved["push_cache"][dep]["instances"]["webbox"]["host"] == _DIRECT_ADDR
 
@@ -645,7 +657,7 @@ def test_push_after_adopt_processes_only_the_new_instance(
 
     assert {o.host.name: o.outcome for o in push.outcomes} == {
         "webbox": web_adopt.OUTCOME_UNCHANGED,
-        "ssmbox": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
+        "cloudvm": web_adopt.OUTCOME_SKIPPED_BY_DESIGN,
         "ghost": web_adopt.OUTCOME_SKIPPED_UNREACHABLE,
         "newbox": web_adopt.OUTCOME_ADOPTED,
     }
@@ -699,7 +711,7 @@ def test_push_after_adopt_processes_only_the_new_instance(
     # would skip newbox too.
     resaved = json.loads(cache_path.read_text())
     resaved_instances = resaved["push_cache"][dep]["instances"]
-    assert set(resaved_instances) == {"webbox", "newbox", "ssmbox", "ghost"}
+    assert set(resaved_instances) == {"webbox", "newbox", "cloudvm", "ghost"}
     assert resaved_instances["newbox"]["host_keys"] == _NEW_CANNED_HOST_KEY_LINES
     assert resaved_instances["webbox"] == saved["push_cache"][dep]["instances"]["webbox"]
     # Generation advanced to the value the second PUT returned.

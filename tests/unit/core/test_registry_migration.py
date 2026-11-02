@@ -21,6 +21,11 @@ from tests.conftest import (
     write_legacy_registry,
     write_v2_registry,
 )
+import pytest
+
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
 
 
 def _registry_doc(config_dir) -> dict:
@@ -50,9 +55,9 @@ class TestFieldVariantMigrationMatrix:
             legacy_line("proxmox", "p/c2", "2.2.2.2", "remo", "104", "direct"),
             legacy_line("proxmox", "p/c3", "2.2.2.3", "remo", "105", "direct", "root"),
             # aws: instance_id -> aws.instance_id, region -> aws.region.
-            legacy_line("aws", "a1", "3.3.3.1", "remo"),
-            legacy_line("aws", "a2", "3.3.3.2", "remo", "i-002", "ssm"),
-            legacy_line("aws", "a3", "3.3.3.3", "remo", "i-003", "ssm", "us-west-2"),
+            legacy_line("cloudvm", "a1", "3.3.3.1", "remo"),
+            legacy_line("cloudvm", "a2", "3.3.3.2", "remo", "i-002", "ssm"),
+            legacy_line("cloudvm", "a3", "3.3.3.3", "remo", "i-003", "ssm", "us-west-2"),
             # ssh: instance_id -> ssh.port (int), region -> ssh.identity_file.
             legacy_line("ssh", "s1", "nas1.lan", "admin"),
             legacy_line("ssh", "s2", "nas2.lan", "admin", "2022", "direct"),
@@ -88,17 +93,17 @@ class TestFieldVariantMigrationMatrix:
         e = _entry(doc, "proxmox", "p/c3")
         assert e["proxmox"] == {"vmid": "105", "host_user": "root"}
 
-        e = _entry(doc, "aws", "a1")
+        e = _entry(doc, "cloudvm", "a1")
         assert e["access"] == "direct"
-        assert "aws" not in e
+        assert "cloudvm" not in e
 
-        e = _entry(doc, "aws", "a2")
+        e = _entry(doc, "cloudvm", "a2")
         assert e["access"] == "ssm"
-        assert e["aws"] == {"instance_id": "i-002"}
+        assert e["cloudvm"] == {"instance_id": "i-002"}
 
-        e = _entry(doc, "aws", "a3")
+        e = _entry(doc, "cloudvm", "a3")
         assert e["access"] == "ssm"
-        assert e["aws"] == {"instance_id": "i-003", "region": "us-west-2"}
+        assert e["cloudvm"] == {"instance_id": "i-003", "region": "us-west-2"}
 
         e = _entry(doc, "ssh", "s1")
         assert "ssh" not in e
@@ -112,7 +117,7 @@ class TestFieldVariantMigrationMatrix:
 
 class TestGarbageAndUnknownLines:
     def test_garbage_line_not_migrated_and_preserved_in_backup(self, tmp_config_dir):
-        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo"), "this line is garbage"]
+        lines = [legacy_line("cloudvm", "web1", "5.5.5.5", "remo"), "this line is garbage"]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -127,7 +132,7 @@ class TestGarbageAndUnknownLines:
         assert view.hosts[0].name == "web1"
 
     def test_short_line_not_migrated(self, tmp_config_dir):
-        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo"), "a:b:c"]
+        lines = [legacy_line("cloudvm", "web1", "5.5.5.5", "remo"), "a:b:c"]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -138,7 +143,7 @@ class TestGarbageAndUnknownLines:
         assert "a:b:c" in backup_text
 
     def test_unknown_type_line_preserved_not_dropped(self, tmp_config_dir):
-        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo"), "docker:mybox:1.2.3.4:remo"]
+        lines = [legacy_line("cloudvm", "web1", "5.5.5.5", "remo"), "docker:mybox:1.2.3.4:remo"]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -207,7 +212,7 @@ class TestTolerantMigration:
 
     def test_validation_failing_entry_skipped_not_fatal(self, tmp_config_dir):
         bad = legacy_line("ssh", "box", "nas.lan", "admin", "999999", "direct")  # port OOR
-        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo"), bad]
+        lines = [legacy_line("cloudvm", "web1", "5.5.5.5", "remo"), bad]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -223,8 +228,8 @@ class TestTolerantMigration:
 
     def test_duplicate_type_name_deduped_not_fatal(self, tmp_config_dir):
         lines = [
-            legacy_line("aws", "dup", "5.5.5.5", "remo"),
-            legacy_line("aws", "dup", "6.6.6.6", "remo"),  # same (type, name)
+            legacy_line("cloudvm", "dup", "5.5.5.5", "remo"),
+            legacy_line("cloudvm", "dup", "6.6.6.6", "remo"),  # same (type, name)
         ]
         write_legacy_registry(tmp_config_dir, lines)
 
@@ -246,9 +251,9 @@ class TestBothPresentResilience:
     file becomes unreadable — the concurrent-migration-rename race window."""
 
     def test_readonly_both_present_ignores_unreadable_legacy(self, tmp_config_dir):
-        write_v2_registry(tmp_config_dir, [build_v2_host_entry("aws", "web1", "5.5.5.5", "remo")])
+        write_v2_registry(tmp_config_dir, [build_v2_host_entry("cloudvm", "web1", "5.5.5.5", "remo")])
         legacy = tmp_config_dir / "known_hosts"
-        legacy.write_text(legacy_line("aws", "web1", "5.5.5.5", "remo") + "\n")
+        legacy.write_text(legacy_line("cloudvm", "web1", "5.5.5.5", "remo") + "\n")
         legacy.chmod(0o000)
         try:
             view = read_registry(readonly=True)
@@ -257,9 +262,9 @@ class TestBothPresentResilience:
         assert [h.name for h in view.hosts] == ["web1"]
 
     def test_nonreadonly_both_present_degrades_on_unreadable_legacy(self, tmp_config_dir):
-        write_v2_registry(tmp_config_dir, [build_v2_host_entry("aws", "web1", "5.5.5.5", "remo")])
+        write_v2_registry(tmp_config_dir, [build_v2_host_entry("cloudvm", "web1", "5.5.5.5", "remo")])
         legacy = tmp_config_dir / "known_hosts"
-        legacy.write_text(legacy_line("aws", "web1", "5.5.5.5", "remo") + "\n")
+        legacy.write_text(legacy_line("cloudvm", "web1", "5.5.5.5", "remo") + "\n")
         legacy.chmod(0o000)
         try:
             view = read_registry(readonly=False)  # must not raise RegistryReadError
@@ -301,7 +306,7 @@ class TestPreExistingBackupSuffixing:
         pre_existing = tmp_config_dir / "known_hosts.v1.bak"
         pre_existing.write_text("PRE-EXISTING BACKUP CONTENT\n")
 
-        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo")]
+        lines = [legacy_line("cloudvm", "web1", "5.5.5.5", "remo")]
         write_legacy_registry(tmp_config_dir, lines)
 
         report = migrate_if_needed()
@@ -318,9 +323,9 @@ class TestInterruptedMigrationConvergence:
     rename. read_registry() must silently complete the rename."""
 
     def test_equivalent_both_present_completes_rename_silently(self, tmp_config_dir):
-        lines = [legacy_line("aws", "web1", "5.5.5.5", "remo")]
+        lines = [legacy_line("cloudvm", "web1", "5.5.5.5", "remo")]
         write_legacy_registry(tmp_config_dir, lines)
-        entry = build_v2_host_entry("aws", "web1", "5.5.5.5", "remo", access="direct")
+        entry = build_v2_host_entry("cloudvm", "web1", "5.5.5.5", "remo", access="direct")
         write_v2_registry(tmp_config_dir, [entry])
 
         view = read_registry(readonly=False)
@@ -339,11 +344,11 @@ class TestDivergentBothPresent:
 
     def test_divergent_warns_v2_wins_never_merges(self, tmp_config_dir):
         write_legacy_registry(
-            tmp_config_dir, [legacy_line("aws", "web1", "5.5.5.5", "remo")]
+            tmp_config_dir, [legacy_line("cloudvm", "web1", "5.5.5.5", "remo")]
         )
         write_v2_registry(
             tmp_config_dir,
-            [build_v2_host_entry("aws", "web1", "9.9.9.9", "remo", access="direct")],
+            [build_v2_host_entry("cloudvm", "web1", "9.9.9.9", "remo", access="direct")],
         )
 
         view = read_registry(readonly=False)
@@ -358,7 +363,7 @@ class TestDivergentBothPresent:
 class TestCompletedMigrationNeverReruns:
     def test_second_call_is_a_true_no_op(self, tmp_config_dir):
         write_legacy_registry(
-            tmp_config_dir, [legacy_line("aws", "web1", "5.5.5.5", "remo")]
+            tmp_config_dir, [legacy_line("cloudvm", "web1", "5.5.5.5", "remo")]
         )
         report1 = migrate_if_needed()
         assert report1 is not None

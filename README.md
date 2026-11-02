@@ -27,8 +27,10 @@ uv tool install remo-cli      # recommended
 pipx install remo-cli         # equivalent
 ```
 
-Using Hetzner Cloud? Its provider is a separate plugin, pulled in by an extra:
-`uv tool install "remo-cli[hetzner]"` (see [docs/hetzner.md](docs/hetzner.md)).
+Using a cloud provider? Each is a separate plugin, pulled in by an extra:
+`uv tool install "remo-cli[ec2]"` for AWS EC2 ([docs/ec2.md](docs/ec2.md)),
+`uv tool install "remo-cli[hetzner]"` for Hetzner Cloud
+([docs/hetzner.md](docs/hetzner.md)), or `"remo-cli[ec2,hetzner]"` for both.
 
 Plain `pip install remo-cli` works inside a virtualenv, but not against a system
 Python on distributions that mark it externally-managed (PEP 668 — Ubuntu 24.04,
@@ -168,7 +170,7 @@ To inspect the script instead of installing it, use `remo completion show <shell
 ## Quick Start
 
 ```bash
-remo hetzner create             # Provision a VM (or: remo aws create / remo incus create / remo proxmox create)
+remo hetzner create             # Provision a VM (or: remo ec2 create / remo incus create / remo proxmox create)
 remo shell                      # Connect to your environment
 ```
 
@@ -188,7 +190,7 @@ You land in an interactive project menu. Pick a project, and you're in a persist
 
 ## Choose Your Platform
 
-| | [Hetzner Cloud](docs/hetzner.md) | [AWS](docs/aws.md) | [Incus](docs/incus.md) | [Proxmox](docs/proxmox.md) |
+| | [Hetzner Cloud](docs/hetzner.md) | [AWS EC2](docs/ec2.md) | [Incus](docs/incus.md) | [Proxmox](docs/proxmox.md) |
 |---|---|---|---|---|
 | **Type** | Cloud VM | Cloud VM | Local container | Local container |
 | **Location** | EU/US datacenters | Global regions | Your hardware | Your hardware |
@@ -377,9 +379,13 @@ they continue to incur storage costs on AWS/Hetzner).
 
 ## Provider plugins
 
-Incus, Proxmox and AWS are built in. Hetzner is a first-party plugin,
-`remo-provider-hetzner`, installed with `uv tool install "remo-cli[hetzner]"`
-(see [docs/hetzner.md](docs/hetzner.md)). The provider mechanism is open:
+Incus and Proxmox are built in. AWS EC2 and Hetzner are first-party plugins,
+`remo-provider-ec2` and `remo-provider-hetzner`, installed with
+`uv tool install "remo-cli[ec2]"` / `"remo-cli[hetzner]"` (see
+[docs/ec2.md](docs/ec2.md), [docs/hetzner.md](docs/hetzner.md)). EC2 was the
+built-in `aws` provider until 4.5.0: existing `aws` registry entries migrate to
+`ec2` automatically once the plugin is installed, and `remo aws …` still works
+for now, with a deprecation warning. The provider mechanism is open:
 any installed Python distribution can contribute a provider through the
 `remo.providers` entry-point group, with no change to remo. `remo providers`
 lists what was discovered (and why a broken plugin was skipped);
@@ -412,7 +418,7 @@ default SSH user is `remo` (reported back to you); the default port is `22`.
   non-zero. Without `--verify` there is no network round-trip at all.
 - **Re-running `add`** with an existing added-host name and a changed target
   updates it in place (confirm unless `--yes`) — it never creates a duplicate.
-  It refuses to overwrite a provider-managed entry (incus/proxmox/aws/hetzner)
+  It refuses to overwrite a provider-managed entry (incus/proxmox/ec2/hetzner)
   of the same name.
 - **IPv6:** un-bracketed IPv6 literals are rejected — use a hostname or an
   `~/.ssh/config` alias instead (bracketed `[::1]:22` is not supported in this
@@ -621,21 +627,21 @@ remo hetzner upgrade NAME           # Update dev tools
 remo hetzner resize NAME --volume-size 100   # Grow persistent volume + FS
 remo hetzner destroy [--yes]        # Tear down (keeps volume)
 
-# AWS (SSM access — no inbound ports)
-remo aws create                     # Provision EC2 via SSM
-remo aws create --spot              # Use spot instance (~70% savings)
-remo aws list                       # List registered instances
-remo aws sync                       # Reconcile registry with existing instances
-remo aws sync --all                 # Also adopt untagged remo-* named instances
-remo aws sync --yes                 # Skip the removal confirmation
-remo aws sync --dry-run             # Preview the plan, change nothing
-remo aws upgrade NAME               # Update dev tools
-remo aws resize NAME --volume-size 100   # Grow EBS volume + FS in place
-remo aws stop [--yes]               # Stop instance (pause billing)
-remo aws start                      # Start a stopped instance
-remo aws reboot                     # Reboot instance
-remo aws destroy [--yes]            # Tear down (keeps storage)
-remo aws info [--name N]            # Show type, cores, memory, EBS size
+# AWS EC2 (SSM access — no inbound ports; the remo-cli[ec2] plugin)
+remo ec2 create                     # Provision EC2 via SSM
+remo ec2 create --spot              # Use spot instance (~70% savings)
+remo ec2 list                       # List registered instances
+remo ec2 sync                       # Reconcile registry with existing instances
+remo ec2 sync --all                 # Also adopt untagged remo-* named instances
+remo ec2 sync --yes                 # Skip the removal confirmation
+remo ec2 sync --dry-run             # Preview the plan, change nothing
+remo ec2 upgrade NAME               # Update dev tools
+remo ec2 resize NAME --volume-size 100   # Grow EBS volume + FS in place
+remo ec2 stop [--yes]               # Stop instance (pause billing)
+remo ec2 start                      # Start a stopped instance
+remo ec2 reboot                     # Reboot instance
+remo ec2 destroy [--yes]            # Tear down (keeps storage)
+remo ec2 info [--name N]            # Show type, cores, memory, EBS size
 
 # Incus Containers
 remo incus create --name <n> [--host H]  # Create container
@@ -689,7 +695,7 @@ remo completion show bash           # Print the activation script (also: zsh, fi
 
 See platform-specific docs for full options:
 - [Hetzner Cloud](docs/hetzner.md)
-- [AWS](docs/aws.md)
+- [AWS EC2](docs/ec2.md)
 - [Incus Containers](docs/incus.md)
 - [Proxmox VE LXC Containers](docs/proxmox.md)
 
@@ -763,7 +769,7 @@ discovery states, terminal limits, troubleshooting, and upgrade notes:
 
 **Installed remo on a new machine with existing instances?**
 ```bash
-remo aws sync                          # Reconcile registry with AWS instances tagged 'remo'
+remo ec2 sync                          # Reconcile registry with AWS instances tagged 'remo'
 remo hetzner sync                      # Reconcile registry with Hetzner VMs labelled 'remo'
 remo incus sync                        # Reconcile registry with remo-managed Incus containers
 remo proxmox sync --host <node>        # Reconcile registry with remo-managed Proxmox LXC containers
@@ -785,7 +791,7 @@ at the provider is what protects it, independently of the marker. To adopt
 unmarked containers/instances into the registry, use `sync --all` (per-run,
 prints what it widened to) or, on Incus/Proxmox/Hetzner, `remo <provider> tag
 <name>` (marks one permanently, and for Hetzner also backfills the label on
-the server itself). AWS has no `tag` command, so `sync --all` is the only way
+the server itself). EC2 has no `tag` command, so `sync --all` is the only way
 to bring an unmarked instance under management there. Containers/instances
 that predate this marker convention are unmarked; a default `sync` retains
 them, names them, and prints both remedies rather than dropping or silently
@@ -805,7 +811,7 @@ command.
 **Platform-specific issues?**
 See troubleshooting sections in:
 - [Hetzner troubleshooting](docs/hetzner.md#troubleshooting)
-- [AWS troubleshooting](docs/aws.md#troubleshooting)
+- [AWS EC2 troubleshooting](docs/ec2.md#troubleshooting)
 - [Incus troubleshooting](docs/incus.md#troubleshooting)
 - [Proxmox troubleshooting](docs/proxmox.md#troubleshooting)
 

@@ -154,26 +154,28 @@ blue "Running completions in fish ..."
 
 # Top-level: the case the user hits first, and the one that regressed.
 check "top-level subcommands" "remo " \
-    add aws completion cp incus proxmox remove resume shell web
+    add completion cp incus proxmox remove resume shell web
 
 # One level down, through the descriptor-generated provider factory.
 check "incus subcommands" "remo incus " \
     create destroy upgrade resize tag list sync info host
 
-# `tag` is generated only when the provider supports a managed marker, so AWS
-# must NOT offer it — a completion that suggests a nonexistent command is the
-# same broken-remedy class of bug as a printed one.
+# `tag` is generated only when the provider supports a managed marker, so a
+# provider without one must NOT offer it — a completion that suggests a
+# nonexistent command is the same broken-remedy class of bug as a printed one.
+# The always-installed `fixture` plugin provider declares no marker (AWS, the
+# old example here, is the out-of-tree ec2 plugin since #258).
 #
 # Anchored on a positive first: a bare "no tag here" assertion also passes when
 # completion is broken outright (a directory listing contains no `tag` either),
 # which would make this check quietly worthless exactly when it matters.
-check "aws subcommands present" "remo aws " create destroy upgrade resize
-aws_out="$(fish_run "complete -C 'remo aws '" 2>/dev/null)"
-if grep -qE '^tag(\s|$)' <<<"$aws_out"; then
-    red "FAIL: 'remo aws' offers 'tag', which AWS does not implement"
+check "fixture subcommands present" "remo fixture " create destroy upgrade resize
+fixture_out="$(fish_run "complete -C 'remo fixture '" 2>/dev/null)"
+if grep -qE '^tag(\s|$)' <<<"$fixture_out"; then
+    red "FAIL: 'remo fixture' offers 'tag', which the fixture provider does not implement"
     FAILURES=$((FAILURES + 1))
 else
-    green "PASS: 'remo aws' correctly omits 'tag'"
+    green "PASS: 'remo fixture' correctly omits 'tag'"
 fi
 
 # No candidates match. Click emits a bare newline here (verified), and on the

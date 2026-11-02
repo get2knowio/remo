@@ -30,11 +30,6 @@ classifiers = [
 dependencies = [
     "click>=8.1",
     "InquirerPy>=0.3.4",
-    # boto3 has two consumers: the CLI's own lazy `import boto3` in
-    # providers/aws.py, AND the amazon.aws/community.aws Ansible collections,
-    # which import it under ansible_playbook_python (pinned to this same
-    # environment). It stays unconditional per FR-004 pending issue #94.
-    "boto3",
     "ansible-core>=2.18.0,<2.20.0",
 ]
 
@@ -61,6 +56,11 @@ dev = [
 # only makes `remo-cli[hetzner]` the one-word way to install it.
 hetzner = [
     "remo-provider-hetzner",
+]
+# The EC2 provider (type `ec2`, formerly the built-in `aws`) is likewise its own
+# distribution (plugins/ec2); boto3 is its dependency, not remo-cli's (#258).
+ec2 = [
+    "remo-provider-ec2",
 ]
 web = [
     "fastapi",
@@ -89,6 +89,7 @@ members = ["plugins/*"]
 [tool.uv.sources]
 remo-fixture-provider = { path = "tests/fixtures/remo_fixture_provider", editable = true }
 remo-provider-hetzner = { workspace = true }
+remo-provider-ec2 = { workspace = true }
 
 # PEP 735 dependency group, NOT an extra: `uv sync` installs the `dev` group by
 # default (so CI's `uv sync --all-extras` gets it), while nothing here reaches

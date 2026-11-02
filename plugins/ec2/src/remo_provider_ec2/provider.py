@@ -1,4 +1,8 @@
-"""AWS EC2 provider business logic for remo.
+"""AWS EC2 provider business logic for remo (the ``ec2`` provider type).
+
+Ships as the remo-provider-ec2 plugin (#258); the type was ``aws`` while it was
+built into remo-cli, and the descriptor's ``legacy_type_names`` migrates those
+registry entries.
 
 Manages the lifecycle of AWS EC2 instances: create, destroy, and update
 (re-configure dev tools).  Also provides IAM instance profile selection for
@@ -15,6 +19,7 @@ import json
 import os
 import shutil
 import time
+from pathlib import Path
 
 from remo_cli.core.ansible_runner import build_configure_extra_vars, run_playbook
 from remo_cli.core.errors import (
@@ -56,6 +61,11 @@ from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
 
+#: This package's playbooks, roles, group_vars and requirements.yml, run by
+#: core/ansible_runner.run_playbook(playbook_dir=) from remo's own ansible/.
+PLAYBOOK_DIR = Path(__file__).resolve().parent / "ansible"
+
+
 def get_aws_region(name: str) -> str:
     """Return the AWS region for the named host.
 
@@ -66,9 +76,9 @@ def get_aws_region(name: str) -> str:
     4. Hard-coded fallback ``"us-west-2"``
 
     Lives with the provider, not in core/known_hosts.py (#221): core names no
-    provider type.
+    provider type. Reads ``ec2`` entries, which include migrated ``aws`` ones.
     """
-    for host in get_known_hosts(type_filter="aws"):
+    for host in get_known_hosts(type_filter="ec2"):
         if host.name == name and host.region:
             return host.region
 
@@ -85,7 +95,7 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
     The descriptor's ``ConnectionSpec.pre_connect_hook``: `remo shell` and
     `remo resume` call it for every AWS host before connecting.
 
-    Only acts when ``host.type == "aws"`` and ``host.instance_id`` is set.
+    Only acts when ``host.type == "ec2"`` and ``host.instance_id`` is set.
     Queries the EC2 instance state via boto3.  If the instance is stopped it
     is started, and the function waits for the instance to be running and the
     SSM agent to come online.  The known-hosts registry is updated with the
@@ -107,7 +117,7 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
     PreconditionError
         If the instance is in the ``"stopping"`` state.
     """
-    if host.type != "aws" or not host.instance_id:
+    if host.type != "ec2" or not host.instance_id:
         return host
 
     # Lazy import so boto3 is only required when actually needed
@@ -174,7 +184,7 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
 
         # Update known_hosts with new IP
         updated_host = KnownHost(
-            type="aws",
+            type="ec2",
             name=host.name,
             host=new_ip or host.instance_id,
             user=host.user,
@@ -185,7 +195,7 @@ def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
         save_known_host(updated_host)
 
         # Re-read from registry and return the updated entry
-        for h in get_known_hosts(type_filter="aws"):
+        for h in get_known_hosts(type_filter="ec2"):
             if h.name == host.name:
                 return h
 
@@ -214,21 +224,15 @@ def _require_boto3():  # noqa: ANN202
 
         return boto3
     except ImportError:
-        # NOTE: currently unreachable — boto3 is an unconditional dependency
-        # (see pyproject.toml), so this ImportError branch cannot fire in
-        # practice. A future optional-boto3 change (issue #94) would re-arm
-        # it; see also the silent-return missing-boto3 path above (~line 88),
-        # which mirrors legacy bash behavior and is the other such site.
-        # The remediation names a plain reinstall, not `uv sync --extra aws`:
-        # there is no `aws` extra in pyproject.toml today, so that command
-        # would fail with an unknown-extra error and strand the user. The
-        # branch is unreachable on a *clean* install, but a partially
-        # installed or corrupted boto3/botocore still lands here.
+        # Unreachable on a clean install: boto3 is a hard dependency of this
+        # distribution (plugins/ec2/pyproject.toml), so a partially installed
+        # or corrupted boto3/botocore is what lands here. See also the
+        # silent-return missing-boto3 path in auto_start_aws_if_stopped.
         raise MissingDependencyError(
-            "boto3 could not be imported, but it is an unconditional "
-            "dependency of remo-cli — this usually means a broken or partial "
-            "install. Reinstall with: uv sync "
-            "(or: pip install --force-reinstall remo-cli)."
+            "boto3 could not be imported, but it is a dependency of "
+            "remo-provider-ec2 — this usually means a broken or partial "
+            "install. Reinstall with: uv sync --extra ec2 "
+            "(or: pip install --force-reinstall 'remo-cli[ec2]')."
         ) from None
 
 
@@ -488,7 +492,9 @@ def create(
 
     extra_vars.extend(build_configure_extra_vars(tools_only, tools_skip))
 
-    rc = run_playbook("aws_site.yml", extra_vars, verbose=verbose)
+    rc = run_playbook(
+        "aws_site.yml", extra_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR
+    )
 
     if rc != 0:
         raise OperationFailedError(
@@ -505,7 +511,7 @@ def create(
         if instance_ip or instance_id:
             save_known_host(
                 KnownHost(
-                    type="aws",
+                    type="ec2",
                     name=resource_name,
                     host=instance_ip or instance_id,
                     user="remo",
@@ -516,7 +522,7 @@ def create(
             )
     else:
         print_warning(
-            "Could not detect instance IP. Run 'remo aws info' to register the host."
+            "Could not detect instance IP. Run 'remo ec2 info' to register the host."
         )
 
     # Print post-create summary.
@@ -609,7 +615,9 @@ def teardown(
         "-e", f"aws_region={region}",
     ]
 
-    rc = run_playbook("aws_teardown.yml", extra_vars, verbose=verbose)
+    rc = run_playbook(
+        "aws_teardown.yml", extra_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR
+    )
 
     if rc != 0:
         raise OperationFailedError(
@@ -632,14 +640,14 @@ def _refresh_registered_instance(name: str) -> tuple[str, str, str]:
         validate_name(name, "instance name")
 
     resource_name = name or os.environ.get("USER", "remo")
-    guard_not_added_ssh_host(resource_name, "aws")  # FR-012
+    guard_not_added_ssh_host(resource_name, "ec2")  # FR-012
     region = get_aws_region(resource_name)
 
     instance = _get_running_instance(resource_name, region)
     if not instance:
         raise PreconditionError(
             f"Could not find running AWS instance for '{resource_name}'. "
-            f"Run 'remo aws info --name {resource_name}' to check instance status."
+            f"Run 'remo ec2 info --name {resource_name}' to check instance status."
         )
 
     instance_ip = instance.get("PublicIpAddress", "")
@@ -647,7 +655,7 @@ def _refresh_registered_instance(name: str) -> tuple[str, str, str]:
 
     save_known_host(
         KnownHost(
-            type="aws",
+            type="ec2",
             name=resource_name,
             host=instance_ip or instance_id,
             user="remo",
@@ -685,7 +693,9 @@ def upgrade(
 
     print_info(f"Updating AWS instance {instance_id} via SSM...")
 
-    rc = run_playbook("aws_configure.yml", extra_vars, verbose=verbose)
+    rc = run_playbook(
+        "aws_configure.yml", extra_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR
+    )
     if rc != 0:
         raise OperationFailedError(
             f"AWS instance update failed (ansible-playbook rc={rc})."
@@ -712,7 +722,9 @@ def resize(
         "-e", f"aws_region={region}",
         "-e", f"volume_size={volume_size}",
     ]
-    rc = run_playbook("aws_resize.yml", resize_vars, verbose=verbose)
+    rc = run_playbook(
+        "aws_resize.yml", resize_vars, verbose=verbose, playbook_dir=PLAYBOOK_DIR
+    )
     if rc != 0:
         raise OperationFailedError(
             f"AWS EBS volume resize failed (ansible-playbook rc={rc})."
@@ -762,14 +774,14 @@ _LIST_COLUMNS = (
 
 def list_hosts() -> None:
     """Print a formatted table of all registered AWS instances."""
-    hosts = get_known_hosts(type_filter="aws")
+    hosts = get_known_hosts(type_filter="ec2")
     render_host_table(
         hosts,
         _LIST_COLUMNS,
         empty_message=(
             "No AWS instances registered.\n"
-            "Hint: Use 'remo aws create' to create a new instance,\n"
-            "      or 'remo aws sync' to import existing instances."
+            "Hint: Use 'remo ec2 create' to create a new instance,\n"
+            "      or 'remo ec2 sync' to import existing instances."
         ),
     )
 
@@ -859,7 +871,7 @@ def _probe(scope: SyncScope, include_all: bool) -> ProbeResult:
         marked = tags.get("remo") == "true"
         state = instance.get("State", {}).get("Name", "")
         entry = KnownHost(
-            type="aws",
+            type="ec2",
             name=name,
             # Never fall back to the instance id (FR-018): a stopped
             # instance reports no PublicIpAddress, and an empty host here
@@ -916,7 +928,7 @@ def sync(
     code.
     """
     _require_boto3()
-    scope = SyncScope(type="aws", region=_effective_region(region))
+    scope = SyncScope(type="ec2", region=_effective_region(region))
     return run_sync(
         scope,
         lambda: _probe(scope, include_all=include_all),
@@ -1052,7 +1064,7 @@ def start(name: str = "") -> None:
     # Update known_hosts with new IP.
     save_known_host(
         KnownHost(
-            type="aws",
+            type="ec2",
             name=resource_name,
             host=new_ip or instance_id,
             user="remo",
@@ -1193,14 +1205,14 @@ def info(name: str = "") -> None:
     print("")
 
     # Register in known_hosts if not already present.
-    existing_hosts = get_known_hosts(type_filter="aws")
+    existing_hosts = get_known_hosts(type_filter="ec2")
     already_registered = any(h.name == resource_name for h in existing_hosts)
 
     if not already_registered and state == "running":
         ip = instance.get("PublicIpAddress", "")
         save_known_host(
             KnownHost(
-                type="aws",
+                type="ec2",
                 name=resource_name,
                 host=ip or instance_id,
                 user="remo",
@@ -1301,7 +1313,7 @@ def _list_snapshots_for_volume(
             created_at = datetime.fromtimestamp(0, tz=timezone.utc)
         snapshots.append(
             Snapshot(
-                provider="aws",
+                provider="ec2",
                 instance_name=instance_name,
                 name=user_name,
                 backend_id=snap.get("SnapshotId", ""),
@@ -1325,7 +1337,7 @@ def snapshot_create_legacy(
     Returns 0 after the provider accepts the request (no polling — per
     FR-004 / Q1).
     """
-    guard_not_added_ssh_host(instance_name, "aws")  # FR-012
+    guard_not_added_ssh_host(instance_name, "ec2")  # FR-012
     validate_snapshot_name(snap_name)
 
     region = get_aws_region(instance_name) if not region else region
@@ -1379,7 +1391,7 @@ def snapshot_create_legacy(
     print_info(
         f"Snapshot '{snap_name}' creation started for {instance_name} "
         f"({snap_id}). This will take several minutes. "
-        f"Run `remo aws snapshot list {instance_name}` to check status."
+        f"Run `remo ec2 snapshot list {instance_name}` to check status."
     )
     return 0
 
@@ -1431,7 +1443,7 @@ def snapshot_restore_legacy(
       8. Start instance → wait running.
       9. Tag old volume ``remo-restore-orphan=<timestamp>`` and keep it (FR-030).
     """
-    guard_not_added_ssh_host(instance_name, "aws")  # FR-012
+    guard_not_added_ssh_host(instance_name, "ec2")  # FR-012
     region = get_aws_region(instance_name) if not region else region
 
     # We need the instance even if it's stopped; describe directly.
@@ -1473,7 +1485,7 @@ def snapshot_restore_legacy(
     if target.status is SnapshotStatus.PENDING:
         print_error(
             f"Snapshot '{snap_name}' is still pending; "
-            f"check `remo aws snapshot list {instance_name}` for status."
+            f"check `remo ec2 snapshot list {instance_name}` for status."
         )
         return 1
     if target.status is not SnapshotStatus.AVAILABLE:
@@ -1627,7 +1639,7 @@ def snapshot_delete_legacy(
     auto_confirm: bool = False,
 ) -> int:
     """Delete a remo-managed AWS snapshot by its user-facing name."""
-    guard_not_added_ssh_host(instance_name, "aws")  # FR-012
+    guard_not_added_ssh_host(instance_name, "ec2")  # FR-012
     region = get_aws_region(instance_name) if not region else region
     session = _boto3_session(region)
     ec2 = session.client("ec2")
@@ -1666,7 +1678,7 @@ def snapshot_delete_legacy(
     if target.status is SnapshotStatus.PENDING:
         print_error(
             f"Snapshot '{snap_name}' is still pending; "
-            f"check `remo aws snapshot list {instance_name}` for status."
+            f"check `remo ec2 snapshot list {instance_name}` for status."
         )
         return 1
 

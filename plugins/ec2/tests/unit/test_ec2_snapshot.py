@@ -1,4 +1,4 @@
-"""Tests for AWS snapshot business-logic (providers/aws.py snapshot_*)."""
+"""Tests for AWS snapshot business-logic (remo_provider_ec2/provider.py snapshot_*)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from remo_cli.models.snapshot import SnapshotStatus
-from remo_cli.providers import aws as providers_aws
+import remo_provider_ec2.provider as providers_aws
 
 
 def _instance_describe_response(
@@ -91,12 +91,12 @@ def ec2(mocker):
     page list (sync tests configure `.paginate.return_value` per-test); no
     test in this module calls it, so the default is a harmless no-op.
     """
-    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-east-1")
+    mocker.patch("remo_provider_ec2.provider.get_aws_region", return_value="us-east-1")
     ec2_client = MagicMock()
     ec2_client.get_paginator.return_value.paginate.return_value = []
     session = MagicMock()
     session.client.return_value = ec2_client
-    mocker.patch("remo_cli.providers.aws._boto3_session", return_value=session)
+    mocker.patch("remo_provider_ec2.provider._boto3_session", return_value=session)
     return ec2_client
 
 
@@ -143,7 +143,7 @@ class TestListSnapshotsForVolume:
 class TestSnapshotCreate:
     def test_happy_path_async_hint(self, mocker, ec2, capsys):
         mocker.patch(
-            "remo_cli.providers.aws._get_running_instance",
+            "remo_provider_ec2.provider._get_running_instance",
             return_value={"InstanceId": "i-abc"},
         )
         ec2.describe_instances.return_value = _instance_describe_response()
@@ -169,7 +169,7 @@ class TestSnapshotCreate:
 
     def test_no_running_instance_returns_1(self, mocker, ec2, capsys):
         mocker.patch(
-            "remo_cli.providers.aws._get_running_instance", return_value=None
+            "remo_provider_ec2.provider._get_running_instance", return_value=None
         )
         rc = providers_aws.snapshot_create_legacy(
             instance_name="dev1", snap_name="pre-x"
@@ -181,7 +181,7 @@ class TestSnapshotCreate:
 
     def test_duplicate_name(self, mocker, ec2, capsys):
         mocker.patch(
-            "remo_cli.providers.aws._get_running_instance",
+            "remo_provider_ec2.provider._get_running_instance",
             return_value={"InstanceId": "i-abc"},
         )
         ec2.describe_instances.return_value = _instance_describe_response()
@@ -250,7 +250,7 @@ def _setup_restore_mocks(
 
     ec2.create_volume.return_value = {"VolumeId": "vol-new"}
     # Speed up polling
-    mocker.patch("remo_cli.providers.aws.time.sleep", return_value=None)
+    mocker.patch("remo_provider_ec2.provider.time.sleep", return_value=None)
 
 
 class TestSnapshotRestore:
@@ -276,7 +276,7 @@ class TestSnapshotRestore:
 
     def test_confirm_decline(self, ec2, mocker):
         _setup_restore_mocks(ec2, mocker)
-        mocker.patch("remo_cli.providers.aws.confirm", return_value=False)
+        mocker.patch("remo_provider_ec2.provider.confirm", return_value=False)
         rc = providers_aws.snapshot_restore_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=False
         )
@@ -349,7 +349,7 @@ class TestSnapshotDelete:
         ec2.describe_instances.return_value = _instance_describe_response()
         ec2.describe_volumes.return_value = _volume_describe_response()
         ec2.describe_snapshots.return_value = _snapshot_describe_response()
-        mocker.patch("remo_cli.providers.aws.confirm", return_value=False)
+        mocker.patch("remo_provider_ec2.provider.confirm", return_value=False)
         rc = providers_aws.snapshot_delete_legacy(
             instance_name="dev1", snap_name="pre-x", auto_confirm=False
         )
@@ -384,9 +384,9 @@ class TestTeardown:
     def test_builds_expected_extra_vars(self, mocker):
         from remo_cli.models.host import KnownHost
 
-        spy = mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        spy = mocker.patch("remo_provider_ec2.provider.run_playbook", return_value=0)
         entry = KnownHost(
-            type="aws", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
+            type="ec2", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
         )
 
         providers_aws.teardown(entry, verbose=True, remove_storage=True)
@@ -399,14 +399,15 @@ class TestTeardown:
                 "-e", "aws_region=us-east-1",
             ],
             verbose=True,
+            playbook_dir=providers_aws.PLAYBOOK_DIR,
         )
 
     def test_remove_storage_false_by_default(self, mocker):
         from remo_cli.models.host import KnownHost
 
-        spy = mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        spy = mocker.patch("remo_provider_ec2.provider.run_playbook", return_value=0)
         entry = KnownHost(
-            type="aws", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
+            type="ec2", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
         )
 
         providers_aws.teardown(entry)
@@ -419,14 +420,15 @@ class TestTeardown:
                 "-e", "aws_region=us-east-1",
             ],
             verbose=False,
+            playbook_dir=providers_aws.PLAYBOOK_DIR,
         )
 
     def test_remove_storage_warns(self, mocker, capsys):
         from remo_cli.models.host import KnownHost
 
-        mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        mocker.patch("remo_provider_ec2.provider.run_playbook", return_value=0)
         entry = KnownHost(
-            type="aws", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
+            type="ec2", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
         )
 
         providers_aws.teardown(entry, remove_storage=True)
@@ -440,9 +442,9 @@ class TestTeardown:
         from remo_cli.models.host import KnownHost
 
         monkeypatch.setenv("AWS_REGION", "eu-central-1")
-        spy = mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+        spy = mocker.patch("remo_provider_ec2.provider.run_playbook", return_value=0)
         entry = KnownHost(
-            type="aws", name="dev1", host="1.2.3.4", user="remo", region=""
+            type="ec2", name="dev1", host="1.2.3.4", user="remo", region=""
         )
 
         providers_aws.teardown(entry)
@@ -455,15 +457,16 @@ class TestTeardown:
                 "-e", "aws_region=eu-central-1",
             ],
             verbose=False,
+            playbook_dir=providers_aws.PLAYBOOK_DIR,
         )
 
     def test_nonzero_rc_raises_operation_failed_error(self, mocker):
         from remo_cli.core.errors import OperationFailedError
         from remo_cli.models.host import KnownHost
 
-        mocker.patch("remo_cli.providers.aws.run_playbook", return_value=1)
+        mocker.patch("remo_provider_ec2.provider.run_playbook", return_value=1)
         entry = KnownHost(
-            type="aws", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
+            type="ec2", name="dev1", host="1.2.3.4", user="remo", region="us-east-1"
         )
 
         with pytest.raises(OperationFailedError, match="rc=1"):

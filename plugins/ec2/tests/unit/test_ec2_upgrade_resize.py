@@ -1,4 +1,4 @@
-"""Tests for the split `upgrade()`/`resize()` verbs on providers/aws.py (021).
+"""Tests for the split `upgrade()`/`resize()` verbs on remo_provider_ec2/provider.py (021).
 
 `update()` (three-intent: IP refresh + optional EBS resize + configure play)
 is gone, replaced by two single-intent functions:
@@ -18,7 +18,7 @@ import pytest
 from remo_cli.core.errors import PreconditionError
 from remo_cli.core.known_hosts import save_known_host
 from remo_cli.models.host import KnownHost
-from remo_cli.providers import aws as providers_aws
+import remo_provider_ec2.provider as providers_aws
 
 
 RUNNING_INSTANCE = {
@@ -35,13 +35,13 @@ def _no_network(mocker, tmp_config_dir):
 
 def test_upgrade_runs_configure_play_only(mocker):
     mocker.patch(
-        "remo_cli.providers.aws._get_running_instance", return_value=RUNNING_INSTANCE
+        "remo_provider_ec2.provider._get_running_instance", return_value=RUNNING_INSTANCE
     )
-    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
-    save_known_host_spy = mocker.patch("remo_cli.providers.aws.save_known_host")
-    run_playbook = mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+    mocker.patch("remo_provider_ec2.provider.get_aws_region", return_value="us-west-2")
+    save_known_host_spy = mocker.patch("remo_provider_ec2.provider.save_known_host")
+    run_playbook = mocker.patch("remo_provider_ec2.provider.run_playbook", return_value=0)
     mocker.patch(
-        "remo_cli.providers.aws.build_configure_extra_vars", return_value=[]
+        "remo_provider_ec2.provider.build_configure_extra_vars", return_value=[]
     )
 
     providers_aws.upgrade(name="dev1")
@@ -54,11 +54,11 @@ def test_upgrade_runs_configure_play_only(mocker):
 
 def test_resize_runs_resize_play_only(mocker):
     mocker.patch(
-        "remo_cli.providers.aws._get_running_instance", return_value=RUNNING_INSTANCE
+        "remo_provider_ec2.provider._get_running_instance", return_value=RUNNING_INSTANCE
     )
-    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
-    save_known_host_spy = mocker.patch("remo_cli.providers.aws.save_known_host")
-    run_playbook = mocker.patch("remo_cli.providers.aws.run_playbook", return_value=0)
+    mocker.patch("remo_provider_ec2.provider.get_aws_region", return_value="us-west-2")
+    save_known_host_spy = mocker.patch("remo_provider_ec2.provider.save_known_host")
+    run_playbook = mocker.patch("remo_provider_ec2.provider.run_playbook", return_value=0)
 
     providers_aws.resize(name="dev1", volume_size="100")
 
@@ -69,16 +69,16 @@ def test_resize_runs_resize_play_only(mocker):
 
 
 def test_upgrade_raises_precondition_error_when_no_running_instance(mocker):
-    mocker.patch("remo_cli.providers.aws._get_running_instance", return_value=None)
-    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
+    mocker.patch("remo_provider_ec2.provider._get_running_instance", return_value=None)
+    mocker.patch("remo_provider_ec2.provider.get_aws_region", return_value="us-west-2")
 
     with pytest.raises(PreconditionError):
         providers_aws.upgrade(name="dev1")
 
 
 def test_resize_raises_precondition_error_when_no_running_instance(mocker):
-    mocker.patch("remo_cli.providers.aws._get_running_instance", return_value=None)
-    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
+    mocker.patch("remo_provider_ec2.provider._get_running_instance", return_value=None)
+    mocker.patch("remo_provider_ec2.provider.get_aws_region", return_value="us-west-2")
 
     with pytest.raises(PreconditionError):
         providers_aws.resize(name="dev1", volume_size="100")

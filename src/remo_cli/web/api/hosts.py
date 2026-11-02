@@ -65,7 +65,6 @@ class KnownProviderType(str, Enum):
     """
 
     INCUS = "incus"
-    AWS = "aws"
     PROXMOX = "proxmox"
 
 

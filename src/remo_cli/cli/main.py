@@ -294,7 +294,10 @@ def _register_commands() -> None:
     from remo_cli.cli.resume import resume  # noqa: F811
     from remo_cli.cli.cp import cp  # noqa: F811
     from remo_cli.cli.added import add, configure, remove  # noqa: F811
-    from remo_cli.cli.providers.factory import build_provider_group  # noqa: F811
+    from remo_cli.cli.providers.factory import (  # noqa: F811
+        build_deprecated_alias_groups,
+        build_provider_group,
+    )
     from remo_cli.cli.web import web  # noqa: F811
     from remo_cli.cli.connector import connector  # noqa: F811
     from remo_cli.cli.plugins import providers  # noqa: F811
@@ -310,6 +313,8 @@ def _register_commands() -> None:
     # order (027) — all_descriptors() already returns them in that order.
     for descriptor in all_descriptors():
         cli.add_command(build_provider_group(descriptor))
+        for alias_group in build_deprecated_alias_groups(descriptor):
+            cli.add_command(alias_group)
     cli.add_command(web)
     cli.add_command(connector)
     cli.add_command(providers)

@@ -326,7 +326,7 @@ def render_plan(
         print_info(f"  - removed    {len(plan.removed)}   {names}")
 
     # The `tag` command is generated only for providers that can write a
-    # managed marker (descriptor.supports_managed_marker) -- `remo aws tag`
+    # managed marker (descriptor.supports_managed_marker) -- `remo ec2 tag`
     # does not exist, so the remedy must stay silent there rather than name a
     # command Click would reject (SC-003: every printed remedy is executable).
     # Of the marker-supporting providers only the host-scoped ones (incus,

@@ -44,6 +44,10 @@ from remo_cli.core.registry import read_registry
 from remo_cli.models.host import KnownHost
 from tests.conftest import seed_registry
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -166,22 +170,22 @@ class TestSyncScopeIncusProxmox:
 
 class TestSyncScopeAws:
     def test_exact_region_match_is_in_both_scopes(self):
-        scope = SyncScope(type="aws", region="us-west-2")
-        entry = _kh("aws", "devbox", region="us-west-2")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        entry = _kh("cloudvm", "devbox", region="us-west-2")
         assert scope.in_update_scope(entry) is True
         assert scope.in_removal_scope(entry) is True
 
     def test_different_region_is_in_neither_scope(self):
-        scope = SyncScope(type="aws", region="us-west-2")
-        entry = _kh("aws", "devbox", region="eu-central-1")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        entry = _kh("cloudvm", "devbox", region="eu-central-1")
         assert scope.in_update_scope(entry) is False
         assert scope.in_removal_scope(entry) is False
 
     def test_empty_region_matches_update_scope_but_never_removal_scope(self):
         # The legacy/region-less asymmetry: a region-less AWS entry can be
         # matched (and thus self-heal its region) but can never be removed.
-        scope = SyncScope(type="aws", region="us-west-2")
-        entry = _kh("aws", "legacybox", region="")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        entry = _kh("cloudvm", "legacybox", region="")
         assert scope.in_update_scope(entry) is True
         assert scope.in_removal_scope(entry) is False
 
@@ -189,7 +193,7 @@ class TestSyncScopeAws:
         # "hetzner" is a plugin type (remo-provider-hetzner) that core does
         # not need installed: an entry of a type that may be uninstalled is
         # still just data to a scope predicate, and must never match.
-        scope = SyncScope(type="aws", region="us-west-2")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
         entry = _kh("hetzner", "devbox", region="us-west-2")
         assert scope.in_update_scope(entry) is False
         assert scope.in_removal_scope(entry) is False
@@ -204,14 +208,14 @@ class TestSyncScopeFlat:
 
     def test_other_type_never_matches(self):
         scope = SyncScope(type=FLAT)
-        entry = _kh("aws", "web1", region="us-west-2")
+        entry = _kh("cloudvm", "web1", region="us-west-2")
         assert scope.in_update_scope(entry) is False
         assert scope.in_removal_scope(entry) is False
 
 
 class TestSyncScopeDescribe:
     def test_aws(self):
-        assert SyncScope(type="aws", region="us-west-2").describe() == "aws region us-west-2"
+        assert SyncScope(type="cloudvm", region="us-west-2").describe() == "cloudvm region us-west-2"
 
     def test_incus(self):
         assert (
@@ -239,7 +243,7 @@ class TestSyncScopeValidation:
 
     def test_aws_empty_region_raises_scope_error(self):
         with pytest.raises(ScopeError):
-            SyncScope(type="aws", region="")
+            SyncScope(type="cloudvm", region="")
 
     def test_flat_non_empty_host_raises_scope_error(self):
         with pytest.raises(ScopeError):
@@ -256,7 +260,7 @@ class TestSyncScopeValidation:
     def test_frozen_scope_cannot_be_mutated(self):
         scope = SyncScope(type=FLAT)
         with pytest.raises(Exception):
-            scope.type = "aws"  # type: ignore[misc]
+            scope.type = "cloudvm"  # type: ignore[misc]
 
 
 # ---------------------------------------------------------------------------
@@ -267,10 +271,10 @@ class TestSyncScopeValidation:
 class TestMergeEntry:
     def test_non_empty_discovered_values_win(self):
         existing = _kh(
-            "aws", "devbox", host="1.1.1.1", instance_id="i-old", access_mode="ssm", region="us-east-1"
+            "cloudvm", "devbox", host="1.1.1.1", instance_id="i-old", access_mode="ssm", region="us-east-1"
         )
         discovered = _kh(
-            "aws", "devbox", host="2.2.2.2", instance_id="i-new", access_mode="direct", region="us-west-2"
+            "cloudvm", "devbox", host="2.2.2.2", instance_id="i-new", access_mode="direct", region="us-west-2"
         )
         merged = merge_entry(existing, discovered)
         assert merged.host == "2.2.2.2"
@@ -280,9 +284,9 @@ class TestMergeEntry:
 
     def test_empty_discovered_values_preserve_existing(self):
         existing = _kh(
-            "aws", "devbox", host="1.1.1.1", instance_id="i-old", access_mode="ssm", region="us-east-1"
+            "cloudvm", "devbox", host="1.1.1.1", instance_id="i-old", access_mode="ssm", region="us-east-1"
         )
-        discovered = _kh("aws", "devbox", host="", instance_id="", access_mode="", region="")
+        discovered = _kh("cloudvm", "devbox", host="", instance_id="", access_mode="", region="")
         merged = merge_entry(existing, discovered)
         assert merged.host == "1.1.1.1"
         assert merged.instance_id == "i-old"
@@ -290,8 +294,8 @@ class TestMergeEntry:
         assert merged.region == "us-east-1"
 
     def test_stopped_instance_empty_host_preserves_last_known_address(self):
-        existing = _kh("aws", "devbox", host="203.0.113.7", instance_id="i-abc", region="us-west-2")
-        discovered = _kh("aws", "devbox", host="", instance_id="i-abc", region="us-west-2")
+        existing = _kh("cloudvm", "devbox", host="203.0.113.7", instance_id="i-abc", region="us-west-2")
+        discovered = _kh("cloudvm", "devbox", host="", instance_id="i-abc", region="us-west-2")
         merged = merge_entry(existing, discovered)
         assert merged.host == "203.0.113.7"
 
@@ -320,8 +324,8 @@ class TestMergeEntryObserved:
     def test_observed_none_is_legacy_semantics(self):
         """observed=None (the default) behaves exactly like today: any
         non-empty discovered value wins, regardless of field name."""
-        existing = _kh("aws", "devbox", access_mode="ssh", region="us-east-1")
-        discovered = _kh("aws", "devbox", access_mode="ssm", region="us-west-2")
+        existing = _kh("cloudvm", "devbox", access_mode="ssh", region="us-east-1")
+        discovered = _kh("cloudvm", "devbox", access_mode="ssm", region="us-west-2")
         merged = merge_entry(existing, discovered, observed=None)
         assert merged.access_mode == "ssm"
         assert merged.region == "us-west-2"
@@ -330,24 +334,24 @@ class TestMergeEntryObserved:
         """The core of #87: a field the provider filled with a default
         (not observed) must never clobber a hand-edited existing value,
         even though the discovered value is non-empty."""
-        existing = _kh("aws", "devbox", access_mode="ssh", region="us-east-1")
-        discovered = _kh("aws", "devbox", access_mode="ssm", region="us-west-2")
+        existing = _kh("cloudvm", "devbox", access_mode="ssh", region="us-east-1")
+        discovered = _kh("cloudvm", "devbox", access_mode="ssm", region="us-west-2")
         merged = merge_entry(existing, discovered, observed=frozenset({"region"}))
         assert merged.access_mode == "ssh"  # not observed -> existing wins
         assert merged.region == "us-west-2"  # observed -> discovered wins
 
     def test_observed_field_with_empty_discovered_value_preserves_existing(self):
-        existing = _kh("aws", "devbox", host="203.0.113.7")
-        discovered = _kh("aws", "devbox", host="")
+        existing = _kh("cloudvm", "devbox", host="203.0.113.7")
+        discovered = _kh("cloudvm", "devbox", host="")
         merged = merge_entry(existing, discovered, observed=frozenset({"host"}))
         assert merged.host == "203.0.113.7"
 
     def test_empty_observed_set_preserves_everything(self):
         existing = _kh(
-            "aws", "devbox", host="1.1.1.1", instance_id="i-old", access_mode="ssm", region="us-east-1"
+            "cloudvm", "devbox", host="1.1.1.1", instance_id="i-old", access_mode="ssm", region="us-east-1"
         )
         discovered = _kh(
-            "aws", "devbox", host="2.2.2.2", instance_id="i-new", access_mode="direct", region="us-west-2"
+            "cloudvm", "devbox", host="2.2.2.2", instance_id="i-new", access_mode="direct", region="us-west-2"
         )
         merged = merge_entry(existing, discovered, observed=frozenset())
         assert merged == existing
@@ -359,11 +363,11 @@ class TestBuildPlanObservedIdempotence:
         that the probe didn't actually observe (e.g. untagged instance)
         must not show up as an update, and running the same probe twice in
         a row must both yield an empty (no-op) plan."""
-        scope = SyncScope(type="aws", region="us-west-2")
-        existing = _kh("aws", "devbox", access_mode="ssh")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        existing = _kh("cloudvm", "devbox", access_mode="ssh")
         # The provider always fills access_mode with a default ("ssm") but
         # only actually observed host/instance_id this round.
-        discovered = _kh("aws", "devbox", access_mode="ssm")
+        discovered = _kh("cloudvm", "devbox", access_mode="ssm")
 
         for _ in range(2):  # same probe result, run twice -> idempotent
             plan = build_plan(
@@ -408,8 +412,8 @@ class TestBuildPlanClassification:
         # A provider with a narrower adoption convention than "every host in
         # scope" (AWS's remo-* naming, R7) reports adopted=False for a host
         # that doesn't qualify -- --all must not sweep it in regardless.
-        scope = SyncScope(type="aws", region="us-west-2")
-        entry = _kh("aws", "unrelated-prod-box", region="us-west-2")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        entry = _kh("cloudvm", "unrelated-prod-box", region="us-west-2")
         plan = build_plan(
             [], _probe([_dh(entry, marked=False, adopted=False)]), scope, include_all=True
         )
@@ -419,8 +423,8 @@ class TestBuildPlanClassification:
     def test_added_via_include_all_when_unmarked_and_adopted(self):
         # The narrower-provider counterpart to the unconditional case above:
         # adopted=True is what actually lets --all sweep an unmarked host in.
-        scope = SyncScope(type="aws", region="us-west-2")
-        entry = _kh("aws", "remo-devbox", region="us-west-2")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        entry = _kh("cloudvm", "remo-devbox", region="us-west-2")
         plan = build_plan(
             [], _probe([_dh(entry, marked=False, adopted=True)]), scope, include_all=True
         )
@@ -496,8 +500,8 @@ class TestBuildPlanClassification:
         # scope (FR-023) -- retained, and this alone must not trip
         # removals_suppressed (that flag communicates incomplete enumeration
         # only).
-        scope = SyncScope(type="aws", region="us-west-2")
-        existing = _kh("aws", "legacybox", region="")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        existing = _kh("cloudvm", "legacybox", region="")
         plan = build_plan([existing], _probe([], complete=True), scope, include_all=False)
         assert plan.removed == []
         assert plan.unchanged == [existing]
@@ -506,7 +510,7 @@ class TestBuildPlanClassification:
     def test_out_of_update_scope_entry_is_completely_invisible(self):
         scope = SyncScope(type="incus", host="node1")
         other_host_entry = _kh("incus", "node2/other")
-        other_type_entry = _kh("aws", "devbox", region="us-west-2")
+        other_type_entry = _kh("cloudvm", "devbox", region="us-west-2")
         plan = build_plan(
             [other_host_entry, other_type_entry], _probe([], complete=True), scope, include_all=False
         )
@@ -528,10 +532,10 @@ class TestBuildPlanClassification:
             )
 
     def test_states_populated_for_added_updated_unchanged_but_not_skipped(self):
-        scope = SyncScope(type="aws", region="us-west-2")
-        existing_unchanged = _kh("aws", "alpha", host="1.1.1.1", region="us-west-2")
-        added_entry = _kh("aws", "beta", host="2.2.2.2", region="us-west-2")
-        skipped_entry = _kh("aws", "gamma", host="3.3.3.3", region="us-west-2")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        existing_unchanged = _kh("cloudvm", "alpha", host="1.1.1.1", region="us-west-2")
+        added_entry = _kh("cloudvm", "beta", host="2.2.2.2", region="us-west-2")
+        skipped_entry = _kh("cloudvm", "gamma", host="3.3.3.3", region="us-west-2")
         plan = build_plan(
             [existing_unchanged],
             _probe(
@@ -607,9 +611,9 @@ class TestRenderPlanMarkPermanentlyRemedy:
         """AWS has `supports_managed_marker=False`, so no `tag` command is
         generated -- the remedy must stay silent rather than name a command
         Click would reject with "No such command 'tag'" (SC-003)."""
-        scope = SyncScope(type="aws", region="us-west-2")
-        existing = _kh("aws", "box1", host="1.2.3.4")
-        discovered_entry = _kh("aws", "box1", host="1.2.3.4")
+        scope = SyncScope(type="cloudvm", region="us-west-2")
+        existing = _kh("cloudvm", "box1", host="1.2.3.4")
+        discovered_entry = _kh("cloudvm", "box1", host="1.2.3.4")
         plan = build_plan(
             [existing], _probe([_dh(discovered_entry, marked=False)]), scope, include_all=False
         )
@@ -851,7 +855,7 @@ class TestApplyPlan:
             [
                 _kh("incus", "node1/dev1", host="1.1.1.1"),
                 _kh(
-                    "aws",
+                    "cloudvm",
                     "prodbox",
                     host="9.9.9.9",
                     instance_id="i-xyz",
@@ -874,7 +878,7 @@ class TestApplyPlan:
         apply_plan(plan)
 
         after = read_registry().hosts
-        matching = [h for h in after if h.type == "aws" and h.name == "prodbox"]
+        matching = [h for h in after if h.type == "cloudvm" and h.name == "prodbox"]
         assert matching == [out_of_scope]
 
     def test_conflict_raised_when_same_scope_changes_on_disk(self, tmp_config_dir):

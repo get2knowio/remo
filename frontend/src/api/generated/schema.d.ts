@@ -1055,7 +1055,7 @@ export interface components {
          *     referenceable OpenAPI component for the console to enumerate.
          * @enum {string}
          */
-        KnownProviderType: "incus" | "aws" | "proxmox";
+        KnownProviderType: "incus" | "proxmox";
         /**
          * LastChange
          * @description The mirror marker's `last_change` descriptor (023): which plane last

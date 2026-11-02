@@ -1,9 +1,9 @@
-"""Tests for the AWS sync-reconcile probe (providers/aws.py `_probe`).
+"""Tests for the AWS sync-reconcile probe (remo_provider_ec2/provider.py `_probe`).
 
 AWS's old `sync` did a single-shot `describe_instances` filtered on
 `tag:remo=true` AND `instance-state-name=running`, then cleared *every*
 existing AWS registry entry regardless of region before re-populating from
-that one-region query -- so a bare `remo aws sync` (defaulting to
+that one-region query -- so a bare `remo ec2 sync` (defaulting to
 `us-west-2`) destroyed every other region's entries, and a stopped instance
 (excluded by the `running` filter) was destroyed by the very next sync.
 `_probe` is the provider's only contribution to the new reconcile-based
@@ -27,7 +27,7 @@ from remo_cli.core.reconcile import (
     merge_entry,
 )
 from remo_cli.models.host import KnownHost
-from remo_cli.providers import aws as providers_aws
+import remo_provider_ec2.provider as providers_aws
 
 
 @pytest.fixture
@@ -36,13 +36,13 @@ def ec2(mocker):
     ec2_client = MagicMock()
     session = MagicMock()
     session.client.return_value = ec2_client
-    mocker.patch("remo_cli.providers.aws._boto3_session", return_value=session)
+    mocker.patch("remo_provider_ec2.provider._boto3_session", return_value=session)
     return ec2_client
 
 
 @pytest.fixture
 def scope() -> SyncScope:
-    return SyncScope(type="aws", region="us-west-2")
+    return SyncScope(type="ec2", region="us-west-2")
 
 
 def _instance(
@@ -170,7 +170,7 @@ class TestProbeClassification:
         ec2.get_paginator.return_value.paginate.return_value = [page]
         result = providers_aws._probe(scope, include_all=False)
         entry = result.hosts[0].entry
-        assert entry.type == "aws"
+        assert entry.type == "ec2"
         assert entry.name == "dev1"
         assert entry.host == "5.6.7.8"
         assert entry.user == "remo"
@@ -304,7 +304,7 @@ class TestNameDerivation:
 class TestRegionScopingAsymmetry:
     def test_region_less_entry_is_matched_and_stamped_when_discovered(self, scope):
         existing = KnownHost(
-            type="aws",
+            type="ec2",
             name="legacy",
             host="1.1.1.1",
             user="remo",
@@ -313,7 +313,7 @@ class TestRegionScopingAsymmetry:
             region="",
         )
         discovered_entry = KnownHost(
-            type="aws",
+            type="ec2",
             name="legacy",
             host="1.1.1.1",
             user="remo",
@@ -334,7 +334,7 @@ class TestRegionScopingAsymmetry:
 
     def test_region_less_entry_never_removed_even_when_absent_from_probe(self, scope):
         existing = KnownHost(
-            type="aws",
+            type="ec2",
             name="legacy",
             host="1.1.1.1",
             user="remo",
@@ -355,7 +355,7 @@ class TestRegionScopingAsymmetry:
         # is not even a candidate in this region's plan -- the direct
         # region-wipe regression guard.
         other_region = KnownHost(
-            type="aws",
+            type="ec2",
             name="eastbox",
             host="2.2.2.2",
             user="remo",
@@ -381,7 +381,7 @@ class TestRegionScopingAsymmetry:
 class TestMarkerIndependenceRegression:
     def test_untagged_but_live_instance_is_retained_not_removed(self, ec2, scope):
         existing = KnownHost(
-            type="aws",
+            type="ec2",
             name="legacy",
             host="9.9.9.9",
             user="remo",
@@ -432,7 +432,7 @@ class TestStoppedInstance:
         self, ec2, scope
     ):
         existing = KnownHost(
-            type="aws",
+            type="ec2",
             name="dev1",
             host="1.2.3.4",
             user="remo",
@@ -466,7 +466,7 @@ class TestStoppedInstance:
         # terminated payload, since AWS would never return one to us given
         # the filter.
         existing = KnownHost(
-            type="aws",
+            type="ec2",
             name="gone",
             host="1.1.1.1",
             user="remo",
@@ -524,7 +524,7 @@ class TestSyncMergeAcceptance:
         """Existing entry access_mode='ssh', instance untagged -> preserved,
         no phantom '~ updated' line (i.e. plan.updated is empty)."""
         existing = KnownHost(
-            type="aws", name="dev1", host="1.2.3.4", user="remo",
+            type="ec2", name="dev1", host="1.2.3.4", user="remo",
             instance_id="i-1", access_mode="ssh", region="us-west-2",
         )
         page = _page([_instance("i-1", tags={"remo_resource_name": "dev1", "remo": "true"})])
@@ -540,7 +540,7 @@ class TestSyncMergeAcceptance:
         """Instance tagged remo_access_mode=ssm, entry says ssh -> updates
         to ssm (observed wins)."""
         existing = KnownHost(
-            type="aws", name="dev1", host="1.2.3.4", user="remo",
+            type="ec2", name="dev1", host="1.2.3.4", user="remo",
             instance_id="i-1", access_mode="ssh", region="us-west-2",
         )
         page = _page(
@@ -578,7 +578,7 @@ class TestSyncMergeAcceptance:
         """Two consecutive syncs with no provider-side changes produce an
         empty second plan."""
         existing = KnownHost(
-            type="aws", name="dev1", host="1.2.3.4", user="remo",
+            type="ec2", name="dev1", host="1.2.3.4", user="remo",
             instance_id="i-1", access_mode="ssh", region="us-west-2",
         )
         page = _page([_instance("i-1", ip="1.2.3.4", tags={"remo_resource_name": "dev1", "remo": "true"})])
@@ -597,3 +597,15 @@ class TestSyncMergeAcceptance:
         plan2 = build_plan(registry_after, probe2, scope, include_all=False)
 
         assert plan2.is_noop
+
+
+def test_probe_declares_observed_on_every_discovered_host():
+    """Moved from remo's test_host_user_consistency.py (#258): a probe that
+    forgets `observed` opts back into the #87 bug silently (how #107 happened)."""
+    import inspect
+
+    import remo_provider_ec2.provider as provider
+
+    source = inspect.getsource(provider._probe)
+    assert "DiscoveredHost(" in source
+    assert "observed=" in source

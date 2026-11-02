@@ -15,6 +15,9 @@
 
 - name: Resize EBS volume on AWS
   hosts: localhost
+  vars_files:
+    # remo's shared defaults (remo_user, nodejs_version, ...); see group_vars/all.yml.
+    - "{{ remo_core_ansible_dir }}/group_vars/all.yml"
   gather_facts: false
   become: false
   vars:
@@ -126,6 +129,9 @@
 
 - name: Grow filesystem inside the instance
   hosts: aws_instance
+  vars_files:
+    # remo's shared defaults (remo_user, nodejs_version, ...); see group_vars/all.yml.
+    - "{{ remo_core_ansible_dir }}/group_vars/all.yml"
   become: true
   gather_facts: false
 

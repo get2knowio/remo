@@ -14,6 +14,7 @@ exclude-newer-span = "P7D"
 [manifest]
 members = [
     "remo-cli",
+    "remo-provider-ec2",
     "remo-provider-hetzner",
 ]
 
@@ -1179,7 +1180,6 @@ version = "4.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "ansible-core" },
-    { name = "boto3" },
     { name = "click" },
     { name = "inquirerpy" },
 ]
@@ -1192,6 +1192,9 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "pytest-mock" },
     { name = "ruff" },
+]
+ec2 = [
+    { name = "remo-provider-ec2" },
 ]
 hetzner = [
     { name = "remo-provider-hetzner" },
@@ -1211,7 +1214,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ansible-core", specifier = ">=2.18.0,<2.20.0" },
-    { name = "boto3" },
     { name = "click", specifier = ">=8.1" },
     { name = "fastapi", marker = "extra == 'web'" },
     { name = "httpx2", marker = "extra == 'dev'" },
@@ -1221,12 +1223,13 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pytest-asyncio", marker = "extra == 'dev'" },
     { name = "pytest-mock", marker = "extra == 'dev'" },
+    { name = "remo-provider-ec2", marker = "extra == 'ec2'", editable = "plugins/ec2" },
     { name = "remo-provider-hetzner", marker = "extra == 'hetzner'", editable = "plugins/hetzner" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'" },
     { name = "websockets", marker = "extra == 'web'" },
 ]
-provides-extras = ["dev", "hetzner", "web"]
+provides-extras = ["dev", "hetzner", "ec2", "web"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "remo-fixture-provider", editable = "tests/fixtures/remo_fixture_provider" }]
@@ -1235,6 +1238,21 @@ dev = [{ name = "remo-fixture-provider", editable = "tests/fixtures/remo_fixture
 name = "remo-fixture-provider"
 version = "0.1.0"
 source = { editable = "tests/fixtures/remo_fixture_provider" }
+
+[[package]]
+name = "remo-provider-ec2"
+version = "0.1.0"
+source = { editable = "plugins/ec2" }
+dependencies = [
+    { name = "boto3" },
+    { name = "remo-cli" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "boto3" },
+    { name = "remo-cli", editable = "." },
+]
 
 [[package]]
 name = "remo-provider-hetzner"

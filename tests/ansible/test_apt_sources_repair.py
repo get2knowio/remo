@@ -10,10 +10,10 @@ Two things have to hold, and both are tested here:
 
 1. **Ordering** — the repair is included in `pre_tasks` *ahead of* `Update apt
    cache` in every core configure/site playbook. A repair that runs after the
-   thing it unwedges is no repair at all. (Hetzner's playbooks ship in the
-   `remo-provider-hetzner` plugin and include the repair via
-   `{{ remo_core_ansible_dir }}`; their ordering is asserted by
-   plugins/hetzner/tests/ansible/test_apt_sources_repair.py.)
+   thing it unwedges is no repair at all. (Hetzner's and EC2's playbooks ship
+   in the `remo-provider-hetzner` / `remo-provider-ec2` plugins and include the
+   repair via `{{ remo_core_ansible_dir }}`; their ordering is asserted by each
+   plugin's tests/ansible/test_apt_sources_repair.py.)
 2. **Behavior** — the repair shell drops exactly the lines whose `signed-by=`
    keyring is absent and leaves everything else byte-identical, reporting
    `changed` only when it actually removed something (Principle VII).
@@ -42,11 +42,9 @@ REPAIR_TASKS = ANSIBLE_DIR / "tasks" / "repair_apt_sources.yml"
 PLAYBOOKS = [
     "proxmox_configure.yml",
     "incus_configure.yml",
-    "aws_configure.yml",
     "ssh_configure.yml",
     "proxmox_site.yml",
     "incus_site.yml",
-    "aws_site.yml",
 ]
 
 REPAIR_INCLUDE = "tasks/repair_apt_sources.yml"

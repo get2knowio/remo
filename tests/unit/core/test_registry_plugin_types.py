@@ -33,6 +33,7 @@ from remo_cli.core.registry import (
 from remo_cli.models.host import KnownHost
 
 
+
 def _plugin(type_name: str = "acme", *, mode_field_aware: bool = False, legacy: tuple = ()) -> ProviderDescriptor:
     return ProviderDescriptor(
         type_name=type_name,
@@ -49,7 +50,7 @@ def _plugin(type_name: str = "acme", *, mode_field_aware: bool = False, legacy: 
 class TestKnownTypeGate:
     def test_ssh_pseudo_type_and_builtins_are_known(self) -> None:
         assert is_known_type("ssh")
-        for name in ("incus", "proxmox", "aws"):
+        for name in ("incus", "proxmox"):
             assert is_known_type(name)
 
     def test_unregistered_type_is_unknown_until_registered(self) -> None:
@@ -120,6 +121,7 @@ class TestPluginRoundTrip:
         assert known_host_to_entry(host)["proxmox"] == {"vmid": "101", "host_user": "root"}
 
 
+@pytest.mark.usefixtures("ssm_provider")  # the aware type the messages name (tests/ssm_provider.py)
 class TestModeFieldAwarePlugin:
     def test_ssm_is_inferred_and_valid_for_an_aware_plugin(self) -> None:
         with temporary_registration(_plugin("cloudy", mode_field_aware=True)):
@@ -129,13 +131,25 @@ class TestModeFieldAwarePlugin:
 
     def test_ssm_is_rejected_for_a_non_aware_plugin_naming_the_aware_types(self) -> None:
         with temporary_registration(_plugin("plain")):
-            with pytest.raises(RegistryValidationError, match=r"access 'ssm' is only valid for type 'aws'"):
+            with pytest.raises(RegistryValidationError, match=r"access 'ssm' is only valid for type 'cloudvm'"):
                 validate_hosts([KnownHost(type="plain", name="n", host="h", user="u", access_mode="ssm")])
 
-    def test_builtin_message_is_byte_identical(self) -> None:
+    def test_builtin_message_names_the_aware_type(self) -> None:
+        # Same wording the pre-#258 built-in message had for 'aws'; the type
+        # named is whichever provider declares mode_field_aware.
         with pytest.raises(RegistryValidationError) as excinfo:
             validate_hosts([KnownHost(type="incus", name="x", host="1.1.1.1", user="remo", access_mode="ssm")])
-        assert str(excinfo.value) == "access 'ssm' is only valid for type 'aws' (entry: incus:x)"
+        assert str(excinfo.value) == "access 'ssm' is only valid for type 'cloudvm' (entry: incus:x)"
+
+
+def test_ssm_message_when_no_provider_is_mode_field_aware() -> None:
+    """Core-only remo-cli ships no SSM-routed provider (#258): the message
+    still says why, instead of naming a type that is not installed."""
+    with pytest.raises(RegistryValidationError) as excinfo:
+        validate_hosts([KnownHost(type="incus", name="x", host="1.1.1.1", user="remo", access_mode="ssm")])
+    assert str(excinfo.value) == (
+        "access 'ssm' is only valid for type (none registered) (entry: incus:x)"
+    )
 
 
 class TestUninstalledProviderType:

@@ -787,7 +787,6 @@
         "description": "The built-in provider types (data-model.md \u00a71).\n\nFixed by the built-in set, not derived from `core.provider_registry.\nall_descriptors()` at import time (FR-004a/SC-011): a third-party\nprovider install must never perturb the exported OpenAPI artifact.\n`tests/unit/test_schema_drift.py` (T-8) asserts this enum's members\nequal the built-in descriptor names, so a first-party provider addition\nfails loudly instead of silently drifting from reality.\n\nEvery field this annotates stays typed `KnownProviderType | str`\n(FR-014, SC-009): the wire value is unconstrained (any provider type\nname is valid data); this enum only makes the *known* vocabulary a\nreferenceable OpenAPI component for the console to enumerate.",
         "enum": [
           "incus",
-          "aws",
           "proxmox"
         ],
         "title": "KnownProviderType",

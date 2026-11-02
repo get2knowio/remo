@@ -24,6 +24,10 @@ from fastapi.testclient import TestClient
 from remo_cli.web import app as app_module
 from remo_cli.web import check as web_check_module
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 _ORIGIN = "http://testserver"
 _TOKEN = "unit-test-setup-token"
 _AUTH = {"Authorization": f"Bearer {_TOKEN}", "Origin": _ORIGIN}
@@ -82,7 +86,7 @@ def _payload(**overrides: Any) -> dict[str, Any]:
         "registry": [
             {"type": "incus", "name": "dev", "host": "10.0.0.5", "user": "remo"},
             {
-                "type": "aws",
+                "type": "cloudvm",
                 "name": "cloud",
                 "host": "3.4.5.6",
                 "user": "remo",
@@ -101,12 +105,12 @@ def _payload(**overrides: Any) -> dict[str, Any]:
 #: default two entries, once mapped through the v1->v2 legacy mapper.
 _EXPECTED_V2_HOSTS = [
     {
-        "type": "aws",
+        "type": "cloudvm",
         "name": "cloud",
         "host": "3.4.5.6",
         "user": "remo",
         "access": "ssm",
-        "aws": {"instance_id": "i-0abc", "region": "us-east-1"},
+        "cloudvm": {"instance_id": "i-0abc", "region": "us-east-1"},
     },
     {
         "type": "incus",
@@ -206,7 +210,7 @@ def test_status_registry_instances_counts_only_parseable_lines(state_dir):
             "incus:dev:127.0.0.1:remo",
             "",
             "not-enough-fields",
-            "aws:cloud:3.4.5.6:remo:i-1:ssm:us-east-1",
+            "cloudvm:cloud:3.4.5.6:remo:i-1:ssm:us-east-1",
         ]
     )
     with _client(state_dir) as client:
@@ -439,12 +443,12 @@ def test_put_registry_v2_payload_happy_path(state_dir):
                 "access": "direct",
             },
             {
-                "type": "aws",
+                "type": "cloudvm",
                 "name": "cloud",
                 "host": "3.4.5.6",
                 "user": "remo",
                 "access": "ssm",
-                "aws": {"instance_id": "i-0abc", "region": "us-east-1"},
+                "cloudvm": {"instance_id": "i-0abc", "region": "us-east-1"},
             },
         ],
         "host_keys": {"dev": [_VALID_KEY_LINE]},

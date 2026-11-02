@@ -4,6 +4,9 @@
 
 - name: Provision AWS EC2 Server
   hosts: localhost
+  vars_files:
+    # remo's shared defaults (remo_user, nodejs_version, ...); see group_vars/all.yml.
+    - "{{ remo_core_ansible_dir }}/group_vars/all.yml"
   gather_facts: false
   become: false
   vars:
@@ -24,6 +27,9 @@
 
 - name: Configure AWS EC2 Server
   hosts: provisioned
+  vars_files:
+    # remo's shared defaults (remo_user, nodejs_version, ...); see group_vars/all.yml.
+    - "{{ remo_core_ansible_dir }}/group_vars/all.yml"
   become: true
   gather_facts: false
   vars:
@@ -57,7 +63,7 @@
     # that no longer exists makes apt refuse to read ANY source list, which
     # would fail the cache update below and leave the host unrepairable (#120).
     - name: Repair apt sources referencing a missing keyring
-      ansible.builtin.include_tasks: tasks/repair_apt_sources.yml
+      ansible.builtin.include_tasks: "{{ remo_core_ansible_dir }}/tasks/repair_apt_sources.yml"
 
     - name: Update apt cache
       ansible.builtin.apt:
@@ -89,7 +95,7 @@
 
   tasks:
     - name: Configure dev tools
-      ansible.builtin.include_tasks: tasks/configure_dev_tools.yml
+      ansible.builtin.include_tasks: "{{ remo_core_ansible_dir }}/tasks/configure_dev_tools.yml"
 
   post_tasks:
     - name: Display completion message

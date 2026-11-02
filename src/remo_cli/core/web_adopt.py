@@ -1120,6 +1120,18 @@ def _parse_instances(raw: object) -> dict[str, CachedInstance]:
         port = entry.get("port")
         identity = entry.get("identity")
         raw_entry = entry.get("entry")
+        if isinstance(type_, str) and isinstance(raw_entry, dict):
+            # A renamed provider (#258): read the cached merge base as the
+            # current type and re-derive its fingerprint, so neither `remo
+            # web status` nor `remo web sync` reports the rename as a change.
+            # Persisted by the next cache write; a second load is a no-op.
+            renamed = registry.canonicalize_entry(raw_entry)
+            if renamed is not raw_entry:
+                raw_entry = renamed
+                type_ = renamed["type"]
+                fingerprint = hashlib.sha256(
+                    registry.canonical_entry_dict(renamed).encode("utf-8")
+                ).hexdigest()
         instances[name] = CachedInstance(
             fingerprint=fingerprint,
             host_keys=list(host_keys),

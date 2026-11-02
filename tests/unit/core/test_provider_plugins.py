@@ -260,13 +260,14 @@ def test_duplicate_of_builtin_keeps_builtin_and_names_both_distributions(
     entry_points: list[_EntryPoint], monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     _install_module(monkeypatch, "dup_provider.descriptor", REMO_PROVIDER_API_VERSION=1)
-    entry_points.append(_EntryPoint("dup", "dup_provider.descriptor", _Dist("dup-provider", "9"), _descriptor("aws")))
+    entry_points.append(_EntryPoint("dup", "dup_provider.descriptor", _Dist("dup-provider", "9"), _descriptor("incus")))
 
-    aws = provider_registry.get_descriptor("aws")
+    incus = provider_registry.get_descriptor("incus")
     [warning] = _warnings_from(capsys)
 
-    assert aws.display_name == "AWS"  # the built-in, not the plugin's "Aws"
-    assert descriptor_source("aws") == "builtin"
+    # the built-in, not the plugin's (whose implementation is incus_provider.provider)
+    assert incus.implementation == "remo_cli.providers.incus"
+    assert descriptor_source("incus") == "builtin"
     assert "dup-provider 9" in warning and "already registered by builtin" in warning
     assert plugin_load_records()[0].status == "skipped"
 

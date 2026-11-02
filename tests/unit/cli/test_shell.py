@@ -451,11 +451,11 @@ class TestRunProviderUpgrade:
     provider_registry + the Protocol's update_entry(entry) verb (018), plus the
     added-host path onto providers.added.configure() (#178)."""
 
-    def test_aws_update(self, mocker):
+    def test_builtin_provider_update(self, mocker):
         from remo_cli.cli.shell import _run_tools_upgrade
 
-        host = KnownHost(type="aws", name="devbox", host="1.2.3.4", user="remo")
-        mock_update_entry = mocker.patch("remo_cli.providers.aws.update_entry")
+        host = KnownHost(type="incus", name="nuc/devbox", host="1.2.3.4", user="remo")
+        mock_update_entry = mocker.patch("remo_cli.providers.incus.update_entry")
 
         _run_tools_upgrade(host)
 
@@ -540,9 +540,9 @@ class TestRunProviderUpgrade:
         from remo_cli.cli.shell import _run_tools_upgrade
         from remo_cli.core.errors import OperationFailedError
 
-        host = KnownHost(type="aws", name="devbox", host="1.2.3.4", user="remo")
+        host = KnownHost(type="incus", name="nuc/devbox", host="1.2.3.4", user="remo")
         mocker.patch(
-            "remo_cli.providers.aws.update_entry",
+            "remo_cli.providers.incus.update_entry",
             side_effect=OperationFailedError("boom"),
         )
 

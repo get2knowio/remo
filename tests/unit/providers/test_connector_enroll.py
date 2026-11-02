@@ -17,6 +17,10 @@ import pytest
 from remo_cli.core.errors import OperationFailedError, PreconditionError
 from remo_cli.providers import connector as connector_provider
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 REGISTRY_HOSTS = [
     {
         "type": "ssh",
@@ -34,12 +38,12 @@ REGISTRY_HOSTS = [
         "access": "direct",
     },
     {
-        "type": "aws",
+        "type": "cloudvm",
         "name": "aws1",
         "host": "3.1.4.1",
         "user": "remo",
         "access": "ssm",
-        "aws": {"instance_id": "i-0abc123def", "region": "us-west-2"},
+        "cloudvm": {"instance_id": "i-0abc123def", "region": "us-west-2"},
     },
 ]
 

@@ -11,8 +11,13 @@ import time
 
 from remo_cli.core.registry import mutate_registry, read_registry, validate_hosts
 from remo_cli.models.host import KnownHost
+import pytest
 
-_TYPES = ("incus", "proxmox", "aws", "flat", "ssh")
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
+_TYPES = ("incus", "proxmox", "cloudvm", "flat", "ssh")
 
 
 def _generate_hosts(count: int) -> list[KnownHost]:
@@ -34,7 +39,7 @@ def _generate_hosts(count: int) -> list[KnownHost]:
                     region="root",
                 )
             )
-        elif type_ == "aws":
+        elif type_ == "cloudvm":
             hosts.append(
                 KnownHost(
                     type=type_, name=f"cloud{i}", host=f"203.0.113.{i % 256}",
@@ -47,7 +52,7 @@ def _generate_hosts(count: int) -> list[KnownHost]:
             # no registry_fields writes it; carried on a built-in type.
             hosts.append(
                 KnownHost(
-                    type="aws", name=f"web{i}", host=f"198.51.100.{i % 256}",
+                    type="cloudvm", name=f"web{i}", host=f"198.51.100.{i % 256}",
                     user="remo", access_mode="direct",
                 )
             )

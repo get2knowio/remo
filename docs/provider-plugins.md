@@ -115,14 +115,14 @@ connection=ConnectionSpec(
   straight to `user@host`. Return an `SshProxyPlan(proxy_command, ssh_target,
   extra_opts=())` and every ssh argv remo builds for that host uses
   `-o ProxyCommand=<proxy_command>`, connects to `ssh_target` instead of
-  `user@host`, and appends `extra_opts`. The built-in AWS provider's
-  `ssh_proxy_hook` (an `aws ssm start-session` ProxyCommand) is the worked
-  example.
+  `user@host`, and appends `extra_opts`. The EC2 plugin's
+  `remo_provider_ec2.provider.ssh_proxy_hook` (an `aws ssm start-session`
+  ProxyCommand) is the worked example.
 - `pre_connect_hook` — `(KnownHost) -> KnownHost`. Runs before `remo shell`
   and `remo resume` talk to the host. Use it to start a stopped instance and
   return the refreshed entry (a new address); return the host unchanged when
   there is nothing to do. Raise `remo_cli.core.errors` types — a
-  `PreconditionError` is printed and becomes exit 1. AWS's
+  `PreconditionError` is printed and becomes exit 1. The EC2 plugin's
   `auto_start_aws_if_stopped` is the worked example.
 
 Both are SSH-shaped. A provider whose instances are not reachable over SSH at
@@ -172,9 +172,24 @@ The Hetzner provider (`plugins/hetzner` in remo's repository) is the
 complete, production example, including tests that pin this contract
 (`tests/ansible/test_playbook_layout.py`).
 
+### Renaming a provider
+
+A type name is stored in every registry entry, so a rename needs two
+descriptor fields (the EC2 plugin, formerly the built-in `aws`, uses both):
+
+- `legacy_type_names=("aws",)` — an entry of the old type, in `registry.json`,
+  a legacy `known_hosts` line, or the `remo web` push cache, is read as the
+  new type; the next write stores the new name, so the rename migrates once.
+- `deprecated_cli_aliases=("aws",)` — a hidden `remo aws …` group that warns
+  on stderr and then behaves exactly like `remo ec2 …`, so scripts keep
+  working for a release.
+
+Neither name may collide with a registered type or another provider's legacy
+name; registration fails if it does.
+
 ## Discovery rules
 
-- Built-ins register first (incus, proxmox, aws), then entry points
+- Built-ins register first (incus, proxmox), then entry points
   in **entry-point-name order**, once per process.
 - A plugin that fails to load (import error, wrong object type, descriptor
   validation error) is **skipped with one warning** naming the distribution
@@ -207,9 +222,11 @@ installed, or its hosts are left out of the console (the registry keeps them).
 
 ## First-party plugins
 
-Hetzner ships this way: `plugins/hetzner` is the `remo-provider-hetzner`
-distribution, a uv workspace member of remo's repository with its own
-version, wheel, entry point and test suite, installed by `remo-cli[hetzner]`.
+Hetzner and AWS EC2 ship this way: `plugins/hetzner` and `plugins/ec2` are
+the `remo-provider-hetzner` and `remo-provider-ec2` distributions, uv
+workspace members of remo's repository, each with its own version, wheel,
+entry point and test suite, installed by `remo-cli[hetzner]` /
+`remo-cli[ec2]`.
 It gets nothing a third-party plugin cannot: it is discovered through the same
 entry point, its type is an off-union string to the web console (the console
 keeps its colour through a hand-written map), and `REMO_DISABLE_PROVIDER_PLUGINS=1`

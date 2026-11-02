@@ -180,41 +180,12 @@ SURFACE: dict[str, dict[str, list[str]]] = {
         "snapshot delete": ["INSTANCE", "SNAP_NAME", "--yes", "-y"],
         "snapshot list": ["INSTANCE?"],
     },
-    "aws": {
-        "create": [
-            "--name",
-            "--type",
-            "--region",
-            "--volume-size",
-            "--spot",
-            "--iam-profile",
-            "--only",
-            "--skip",
-            "-v",
-            "--verbose",
-        ],
-        "destroy": ["--name", "--remove-storage", "--yes", "-y", "-v", "--verbose"],
-        "upgrade": ["NAME", "--only", "--skip", "-v", "--verbose"],
-        "resize": ["NAME", "--volume-size", "-v", "--verbose"],
-        "list": [],
-        "sync": ["--region", "--all", "--yes", "-y", "--dry-run"],
-        "stop": ["--name", "--yes", "-y"],
-        "start": ["--name"],
-        "reboot": ["--name", "--yes", "-y"],
-        "info": ["--name"],
-        "snapshot create": ["INSTANCE", "--name", "--description", "--region"],
-        "snapshot restore": ["INSTANCE", "SNAP_NAME", "--yes", "-y", "--region"],
-        "snapshot delete": ["INSTANCE", "SNAP_NAME", "--yes", "-y", "--region"],
-        "snapshot list": ["INSTANCE?", "--region"],
-    },
 }
 
 # Default instance name shown/used in `create --help` for each provider (FR-011).
-# aws uses the login user ($USER) rather than a literal; recorded as None here.
 DEFAULT_INSTANCE_NAMES: dict[str, str | None] = {
     "incus": "dev1",
     "proxmox": "dev1",
-    "aws": None,
 }
 
 # Providers whose destroy/sync accept --yes/-y for auto-confirmation (every
@@ -224,12 +195,4 @@ DEFAULT_INSTANCE_NAMES: dict[str, str | None] = {
 CONFIRMABLE_COMMANDS: dict[str, list[str]] = {
     "incus": ["destroy", "sync", "snapshot restore", "snapshot delete"],
     "proxmox": ["destroy", "sync", "snapshot restore", "snapshot delete"],
-    "aws": [
-        "destroy",
-        "sync",
-        "stop",
-        "reboot",
-        "snapshot restore",
-        "snapshot delete",
-    ],
 }

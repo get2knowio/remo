@@ -33,7 +33,7 @@ jobs:
       # so remo's own suite proves it needs none of them. Each plugin's suite
       # runs in its own job below, with the plugin installed.
       - name: Install dependencies
-        run: uv sync --all-extras --no-extra hetzner --python ${{ matrix.python-version }}
+        run: uv sync --all-extras --no-extra hetzner --no-extra ec2 --python ${{ matrix.python-version }}
 
       - name: Run tests
         run: uv run --no-sync --python ${{ matrix.python-version }} pytest --tb=short -q
@@ -72,6 +72,41 @@ jobs:
 
       - name: Mypy check
         run: uv run --no-sync mypy plugins/hetzner/src
+
+  plugin-ec2:
+    name: EC2 plugin (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      # The way a user gets it: remo-cli's [ec2] extra.
+      - name: Install remo with the ec2 extra
+        run: uv sync --all-extras --python ${{ matrix.python-version }}
+
+      # --syntax-check resolves every module name, so the playbook-layout
+      # tests need the collections remo would install on first use.
+      - name: Install the Galaxy collections remo + the plugin require
+        run: |
+          uv run --no-sync ansible-galaxy collection install -r ansible/requirements.yml
+          uv run --no-sync ansible-galaxy collection install -r plugins/ec2/src/remo_provider_ec2/ansible/requirements.yml
+
+      - name: Run the plugin's tests
+        run: uv run --no-sync --python ${{ matrix.python-version }} pytest plugins/ec2/tests --tb=short -q
+
+      - name: Ruff check
+        run: uv run --no-sync ruff check plugins/ec2/src
+
+      - name: Mypy check
+        run: uv run --no-sync mypy plugins/ec2/src
 
   docker-image:
     name: Docker image (amd64 + arm64)
