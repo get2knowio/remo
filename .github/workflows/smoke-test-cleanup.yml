@@ -85,8 +85,32 @@ jobs:
             aws ec2 delete-security-group --group-id "$id" 2>/dev/null || true
           done
 
+      # A smoke run that fails or times out while its snapshot is still
+      # pending can leave a billable EBS snapshot behind (the job's own
+      # teardown now waits it out; this is the safety net). Only smoke
+      # snapshots: remo-snapshot-name ci-smoke-*, completed, over an hour old.
+      - name: Delete stale CI snapshots
+        run: |
+          CUTOFF=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S 2>/dev/null || \
+                   date -u -v-1H +%Y-%m-%dT%H:%M:%S)
+          SNAP_IDS=$(aws ec2 describe-snapshots --owner-ids self \
+            --filters \
+              "Name=tag:remo,Values=true" \
+              "Name=tag:remo-snapshot-name,Values=ci-smoke-*" \
+              "Name=status,Values=completed" \
+            --query "Snapshots[?StartTime<=\`${CUTOFF}\`].SnapshotId" \
+            --output text)
+          if [ -z "$SNAP_IDS" ] || [ "$SNAP_IDS" = "None" ]; then
+            echo "No stale CI snapshots found."
+            exit 0
+          fi
+          for id in $SNAP_IDS; do
+            echo "Deleting stale CI snapshot: $id"
+            aws ec2 delete-snapshot --snapshot-id "$id" || true
+          done
+
   # ===========================================================================
-  # Hetzner — delete stale servers
+  # Hetzner — delete stale servers, SSH keys and snapshots
   # ===========================================================================
   cleanup-hetzner:
     runs-on: ubuntu-latest
@@ -122,4 +146,25 @@ jobs:
             case "$name" in ci-*) ;; *) continue ;; esac
             echo "Deleting orphaned SSH key: $name ($id)"
             hcloud ssh-key delete "$id" 2>/dev/null || true
+          done
+
+      # Same safety net as AWS: a smoke snapshot orphaned by a failed or
+      # timed-out run (e.g. run 41381962224). Only smoke snapshots
+      # (remo-snapshot-name ci-smoke-*), available, over an hour old; one
+      # still `creating` is left for the next run.
+      - name: Delete stale CI snapshots
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+        run: |
+          CUTOFF=$(date -u -d '1 hour ago' +%s)
+          hcloud image list --type snapshot --selector remo=true -o json | \
+            jq -r --argjson cutoff "$CUTOFF" '.[]
+              | select((.labels["remo-snapshot-name"] // "") | startswith("ci-smoke-"))
+              | select(.status == "available")
+              | select((.created | sub("\\+00:00$"; "Z") | fromdateiso8601) <= $cutoff)
+              | "\(.id) \(.labels["remo-snapshot-name"])"' | \
+          while read -r id name; do
+            [ -z "$id" ] && continue
+            echo "Deleting stale CI snapshot: $name ($id)"
+            hcloud image delete "$id" || true
           done
