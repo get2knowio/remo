@@ -38,7 +38,7 @@ def direct_host():
 def ssm_host():
     """An AWS host using SSM access mode."""
     return KnownHost(
-        type="aws",
+        type="cloudvm",
         name="devbox",
         host="3.14.15.92",
         user="remo",
@@ -65,8 +65,8 @@ def _no_control_dir_env(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _mock_aws_region(mocker):
-    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
+def _ssm_routed_provider(ssm_provider):
+    """The SSM fixture host's type: tests/ssm_provider.py (AWS is a plugin, #258)."""
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +252,6 @@ class TestSafeArgConstruction:
     def test_hostname_with_shell_metacharacters_stays_isolated(self, monkeypatch, mocker):
         """Even a maliciously-crafted hostname is carried as one argv element
         (never shell-interpreted), proving no shell=True string building."""
-        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         evil_host = KnownHost(
             type="hetzner",
             name="evil",

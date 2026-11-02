@@ -4,9 +4,11 @@ This directory contains the Ansible automation for provisioning and configuring 
 
 ## Playbooks
 
-Hetzner's playbooks and its `hetzner_server` role are no longer here: they ship
-inside the `remo-provider-hetzner` plugin (`plugins/hetzner/src/remo_provider_hetzner/ansible/`),
-which runs them through `core/ansible_runner.run_playbook(playbook_dir=...)` from this
+Hetzner's and AWS EC2's playbooks and roles (`hetzner_server`, `aws_server`) are
+no longer here: they ship inside the `remo-provider-hetzner` and `remo-provider-ec2`
+plugins (`plugins/hetzner/src/remo_provider_hetzner/ansible/`,
+`plugins/ec2/src/remo_provider_ec2/ansible/`, together with the `hetzner.hcloud`
+and `amazon.aws`/`community.aws` collections they need), each of which runs them through `core/ansible_runner.run_playbook(playbook_dir=...)` from this
 directory, so this `ansible.cfg`, these shared roles, `tasks/` and `group_vars/all.yml`
 still apply to them. See [docs/provider-plugins.md](../docs/provider-plugins.md#shipping-ansible-playbooks).
 
@@ -22,7 +24,7 @@ still apply to them. See [docs/provider-plugins.md](../docs/provider-plugins.md#
 
 ### Shared Configuration
 
-Every configure playbook (including the Hetzner plugin's, via `remo_core_ansible_dir`) uses the same shared task file (`tasks/configure_dev_tools.yml`) to install:
+Every configure playbook (including the Hetzner and EC2 plugins', via `remo_core_ansible_dir`) uses the same shared task file (`tasks/configure_dev_tools.yml`) to install:
 - Docker (with docker-compose plugin)
 - Node.js LTS
 - a devcontainer runtime: deacon (default for new hosts) or @devcontainers/cli (the reference CLI — kept on legacy hosts, nested-overlayfs hosts, and by explicit request; see `tasks/resolve_devcontainer_runtime.yml`)

@@ -798,7 +798,7 @@ It fires after a successful `remo <provider> create`/`destroy`, an **applied** `
 mutate the registry, but is normally the point at which a newly added host first becomes worth
 pushing). It never fires when this
 workstation has never pushed (no cache to be out of date against), on a dry-run or no-op `sync`, or
-on `remo aws stop`/`start`/`reboot` (which don't mutate the registry). The nudge is gated on cache
+on `remo ec2 stop`/`start`/`reboot` (which don't mutate the registry). The nudge is gated on cache
 existence only — a rare false positive after a no-op mutation is acceptable because `remo web status`
 is the cheap, authoritative follow-up.
 
@@ -1195,7 +1195,7 @@ the same `user_setup` Ansible role that installs `project-menu`/`project-launch`
 and the `upgrade` flow for every provider, so re-running:
 
 ```bash
-remo aws upgrade <name>        # or: remo hetzner upgrade / remo incus upgrade / remo proxmox upgrade
+remo ec2 upgrade <name>        # or: remo hetzner upgrade / remo incus upgrade / remo proxmox upgrade
 ```
 
 against the affected instance re-templates and reinstalls `remo-host` in place — no full recreate is

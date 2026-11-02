@@ -40,7 +40,7 @@ class TestCliHelp:
     def test_help_lists_subcommands(self):
         """All registered subcommands must appear in the help text."""
         result = _invoke("--help")
-        expected = ["shell", "cp", "incus", "aws"]
+        expected = ["shell", "cp", "incus", "proxmox"]
         for name in expected:
             assert name in result.output, f"Subcommand '{name}' missing from --help output"
 
@@ -90,7 +90,6 @@ class TestSubcommandRegistration:
         "configure",
         "incus",
         "proxmox",
-        "aws",
         "completion",
         "web",
         "connector",
@@ -124,32 +123,6 @@ class TestSubcommandRegistration:
             f"  Extra:   {registered - expected}\n"
             f"  Missing: {expected - registered}"
         )
-
-
-# ---------------------------------------------------------------------------
-# Provider group: AWS
-# ---------------------------------------------------------------------------
-
-
-class TestAwsGroup:
-    """Verify the ``remo aws`` subcommand group."""
-
-    def test_aws_help_exits_zero(self):
-        result = _invoke("aws", "--help")
-        assert result.exit_code == 0
-
-    def test_aws_help_shows_description(self):
-        result = _invoke("aws", "--help")
-        assert "AWS" in result.output or "EC2" in result.output
-
-    def test_aws_subcommands(self):
-        """All AWS subcommands must appear in ``remo aws --help``."""
-        result = _invoke("aws", "--help")
-        expected = ["create", "destroy", "upgrade", "resize", "list", "sync", "stop", "start", "reboot", "info"]
-        for name in expected:
-            assert name in result.output, f"AWS subcommand '{name}' missing from help output"
-        assert "tag" not in result.output
-        assert "host" not in result.output
 
 
 # ---------------------------------------------------------------------------

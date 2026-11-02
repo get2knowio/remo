@@ -1,13 +1,14 @@
-"""AWS ``ProviderDescriptor`` — pure metadata, no SDK imports (FR-024).
+"""EC2 ``ProviderDescriptor`` — pure metadata, no SDK imports (FR-024).
 
-Registers AWS's CLI surface (option specs, extra commands, deprecation
-notices) with ``core/provider_registry.py``. Deliberately does not import
-``remo_cli.providers.aws`` (the heavy implementation module, which lazily
-imports ``boto3``) or ``boto3`` itself — only the implementation's dotted
-module path is referenced here, and it is imported lazily by
-``get_provider()`` on first verb execution. This keeps the descriptor (and
-therefore ``providers/builtin.py``, and therefore every CLI entry point)
-importable with boto3 absent.
+The object of this distribution's ``remo.providers`` entry point
+(docs/provider-plugins.md). Imported at discovery time on every remo start,
+so it imports nothing beyond ``remo_cli.core.provider_registry`` — never
+``remo_provider_ec2.provider`` or ``boto3``, which ``get_provider()`` imports
+lazily on first verb execution.
+
+The type was ``aws`` while it was built into remo-cli (#258): registry entries
+of that type migrate through ``legacy_type_names``, and ``remo aws ...`` stays
+a hidden, warning alias for one release.
 """
 
 from __future__ import annotations
@@ -26,7 +27,10 @@ from remo_cli.core.provider_registry import (
     ProviderDescriptor,
 )
 
-# AWS-specific options not shared with any other provider.
+#: The provider API this plugin was built against (core/provider_registry.PROVIDER_API_VERSION).
+REMO_PROVIDER_API_VERSION = 1
+
+# EC2-specific options not shared with any other provider.
 _INSTANCE_TYPE = OptionSpec(
     name="--type", param="instance_type", default="", help="EC2 instance type."
 )
@@ -45,8 +49,10 @@ _REMOVE_STORAGE = OptionSpec(
 )
 
 DESCRIPTOR = ProviderDescriptor(
-    type_name="aws",
-    display_name="AWS",
+    type_name="ec2",
+    display_name="AWS EC2",
+    legacy_type_names=("aws",),
+    deprecated_cli_aliases=("aws",),
     default_instance_name=LOGIN_USER,
     name_format=NameFormat.FLAT,
     registry_fields=(("instance_id", "instance_id"), ("region", "region")),
@@ -54,13 +60,13 @@ DESCRIPTOR = ProviderDescriptor(
     # ProxyCommand; a stopped instance is started before connecting.
     connection=ConnectionSpec(
         mode_field_aware=True,
-        proxy_hook="remo_cli.providers.aws.ssh_proxy_hook",
-        pre_connect_hook="remo_cli.providers.aws.auto_start_aws_if_stopped",
+        proxy_hook="remo_provider_ec2.provider.ssh_proxy_hook",
+        pre_connect_hook="remo_provider_ec2.provider.auto_start_aws_if_stopped",
     ),
-    implementation="remo_cli.providers.aws",
-    sdk_extra="aws",
+    implementation="remo_provider_ec2.provider",
+    sdk_extra="ec2",
     region_scoped_sync=True,
-    sync_scope_description="aws region {region}",
+    sync_scope_description="ec2 region {region}",
     create_options=(
         _INSTANCE_TYPE,
         REGION,

@@ -20,7 +20,6 @@ export interface ProviderMeta {
 // removing (or failing to add) a key here is a compile error, so a new
 // first-party provider can't silently fall through to the "unknown" fallback.
 const PROVIDERS: Record<KnownProviderType, ProviderMeta> = {
-  aws: { label: "AWS", color: "var(--prov-aws)" },
   proxmox: { label: "Proxmox", color: "var(--prov-proxmox)" },
   incus: { label: "Incus", color: "var(--prov-incus)" },
 };
@@ -32,6 +31,11 @@ const PROVIDERS: Record<KnownProviderType, ProviderMeta> = {
 // presentation from collapsing into the "unknown" fallback.
 const PLUGIN_PROVIDERS: Readonly<Record<string, ProviderMeta>> = {
   hetzner: { label: "Hetzner", color: "var(--prov-hetzner)" },
+  ec2: { label: "AWS EC2", color: "var(--prov-aws)" },
+  // The ec2 provider's type before #258. A service whose registry has not been
+  // rewritten since (read-only mounted, or no ec2 plugin installed) still
+  // reports it.
+  aws: { label: "AWS", color: "var(--prov-aws)" },
 };
 
 export function providerMeta(type: string): ProviderMeta {

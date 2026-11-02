@@ -33,6 +33,18 @@ def tmp_config_dir(tmp_path):
 
 
 @pytest.fixture
+def ssm_provider():
+    """Register the test-only SSM-routed provider (tests/ssm_provider.py) — the
+    core suite's stand-in for a mode-field-aware, proxy-hooked provider now
+    that AWS is the remo-provider-ec2 plugin (#258)."""
+    from remo_cli.core.provider_registry import temporary_registration
+    from tests.ssm_provider import SSM_DESCRIPTOR
+
+    with temporary_registration(SSM_DESCRIPTOR):
+        yield SSM_DESCRIPTOR
+
+
+@pytest.fixture
 def mock_subprocess(mocker):
     """Mock subprocess.run for testing commands that shell out."""
     return mocker.patch("subprocess.run")
@@ -73,8 +85,10 @@ LEGACY_FIXTURE_LINES: dict[str, str] = {
     "proxmox": legacy_line(
         "proxmox", "pve1/dev2", "10.0.0.42", "remo", "104", "direct", "root"
     ),
-    "aws": legacy_line(
-        "aws", "buildbox", "203.0.113.7", "remo", "i-0abc123def456", "ssm", "us-east-1"
+    # The SSM-routed sample type (tests/ssm_provider.py, the `ssm_provider`
+    # fixture) -- the shape AWS entries had before AWS became the ec2 plugin.
+    "cloudvm": legacy_line(
+        "cloudvm", "buildbox", "203.0.113.7", "remo", "i-0abc123def456", "ssm", "us-east-1"
     ),
     "ssh": legacy_line(
         "ssh", "nas", "nas.lan", "admin", "2222", "direct", "/home/paul/.ssh/id_nas"

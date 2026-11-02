@@ -22,7 +22,6 @@ from remo_cli.core.known_hosts import (
     save_known_host,
 )
 from remo_cli.models.host import KnownHost
-from remo_cli.providers import aws as providers_aws
 from remo_cli.providers import incus as providers_incus
 from remo_cli.providers import proxmox as providers_proxmox
 
@@ -112,32 +111,9 @@ LIFECYCLE_OPS = [
             snap_name="snap1", auto_confirm=True,
         ),
     ),
-    # aws.destroy: the guard moved to the shared core/lifecycle.run_destroy
-    # template (018-provider-abstraction T038); providers_aws.teardown()
-    # itself performs destruction only (R-A3) and no longer guards. Generic
-    # guard-ordering coverage lives in tests/unit/core/test_lifecycle.py;
-    # AWS-specific wiring coverage lives at the CLI layer:
-    # tests/unit/cli/providers/test_aws_snapshot.py::TestDestroyCLI.
-    ("aws.upgrade", lambda: providers_aws.upgrade(name=ADDED_NAME)),
-    ("aws.resize", lambda: providers_aws.resize(name=ADDED_NAME, volume_size="20")),
-    (
-        "aws.snapshot_create",
-        lambda: providers_aws.snapshot_create_legacy(
-            instance_name=ADDED_NAME, snap_name="snap1"
-        ),
-    ),
-    (
-        "aws.snapshot_restore",
-        lambda: providers_aws.snapshot_restore_legacy(
-            instance_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
-        ),
-    ),
-    (
-        "aws.snapshot_delete",
-        lambda: providers_aws.snapshot_delete_legacy(
-            instance_name=ADDED_NAME, snap_name="snap1", auto_confirm=True
-        ),
-    ),
+    # aws.*: AWS is now the out-of-tree `remo-provider-ec2` plugin (type
+    # `ec2`, #258); its lifecycle-op guard coverage moved with it, to
+    # plugins/ec2/tests/unit/test_core_added_provider_guard.py.
     # hetzner.*: Hetzner is now the out-of-tree `remo-provider-hetzner`
     # plugin; its lifecycle-op guard coverage moved with it, to
     # plugins/hetzner/tests/unit/test_core_added_provider_guard.py.
@@ -163,8 +139,8 @@ def test_lifecycle_op_rejects_added_ssh_host(added_ssh_host, op):
 
 def test_guard_message_names_the_provider(added_ssh_host):
     with pytest.raises(PreconditionError) as exc:
-        guard_not_added_ssh_host(ADDED_NAME, "aws")
-    assert "no managed aws infrastructure" in str(exc.value)
+        guard_not_added_ssh_host(ADDED_NAME, "proxmox")
+    assert "no managed proxmox infrastructure" in str(exc.value)
 
 
 def test_guard_noop_when_no_ssh_host(tmp_config_dir):
@@ -215,7 +191,7 @@ def test_configure_guard_returns_the_added_entry(added_ssh_host):
 def test_configure_guard_names_the_providers_own_upgrade_verb(tmp_config_dir):
     save_known_host(
         KnownHost(
-            type="aws",
+            type="fixture",
             name="web1",
             host="1.2.3.4",
             user="remo",
@@ -223,7 +199,7 @@ def test_configure_guard_names_the_providers_own_upgrade_verb(tmp_config_dir):
             access_mode="direct",
         )
     )
-    with pytest.raises(PreconditionError, match="remo aws upgrade web1"):
+    with pytest.raises(PreconditionError, match="remo fixture upgrade web1"):
         guard_added_ssh_host_only("web1")
 
 

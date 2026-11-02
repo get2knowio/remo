@@ -81,8 +81,10 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
 
-      - name: Install remo
-        run: uv sync
+      # The ec2 provider (the former built-in `aws`) is the remo-provider-ec2
+      # plugin since #258; the job id and dispatch option keep the old name.
+      - name: Install remo with the ec2 extra
+        run: uv sync --extra ec2
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
@@ -106,7 +108,7 @@ jobs:
           chmod 644 ~/.ssh/id_rsa.pub
 
       - name: Provision
-        run: uv run remo aws create --name "$INSTANCE_NAME"
+        run: uv run remo ec2 create --name "$INSTANCE_NAME"
 
       - name: Test SSM connectivity
         run: |
@@ -116,12 +118,12 @@ jobs:
           REG=~/.config/remo/registry.json
           read -r USER INSTANCE_ID REGION < <(
             jq -r --arg n "$INSTANCE_NAME" \
-              '.hosts[] | select(.type=="aws" and .name==$n) | [.user, .aws.instance_id, .aws.region] | @tsv' \
+              '.hosts[] | select(.type=="ec2" and .name==$n) | [.user, .ec2.instance_id, .ec2.region] | @tsv' \
               "$REG"
           )
           REGION="${REGION:-us-west-2}"
           if [ -z "$INSTANCE_ID" ]; then
-            echo "No aws registry entry for '$INSTANCE_NAME' in $REG:"
+            echo "No ec2 registry entry for '$INSTANCE_NAME' in $REG:"
             cat "$REG" 2>/dev/null || echo "(registry.json not found)"
             exit 1
           fi
@@ -166,7 +168,7 @@ jobs:
 
       - name: Test info command
         run: |
-          OUT=$(uv run remo aws info --name "$INSTANCE_NAME")
+          OUT=$(uv run remo ec2 info --name "$INSTANCE_NAME")
           echo "$OUT"
           echo "$OUT" | grep -q "Instance ID:" || { echo "FAIL: missing Instance ID"; exit 1; }
           echo "$OUT" | grep -q "State:"       || { echo "FAIL: missing State"; exit 1; }
@@ -174,28 +176,28 @@ jobs:
           echo "$OUT" | grep -q "Cores:"       || { echo "FAIL: missing Cores"; exit 1; }
           echo "$OUT" | grep -q "Memory:"      || { echo "FAIL: missing Memory"; exit 1; }
           echo "$OUT" | grep -q "EBS volume:"  || { echo "FAIL: missing EBS volume"; exit 1; }
-          echo "aws info: PASS"
+          echo "ec2 info: PASS"
 
       - name: Snapshot — create (async kickoff)
         run: |
           SNAP=ci-smoke-aws
           echo "SNAP_NAME=$SNAP" >> "$GITHUB_ENV"
-          OUT=$(uv run remo aws snapshot create "$INSTANCE_NAME" --name "$SNAP" --description "smoke test")
+          OUT=$(uv run remo ec2 snapshot create "$INSTANCE_NAME" --name "$SNAP" --description "smoke test")
           echo "$OUT"
           echo "$OUT" | grep -q "creation started" || { echo "FAIL: missing async-create hint"; exit 1; }
           echo "$OUT" | grep -q "several minutes" || { echo "FAIL: missing duration hint"; exit 1; }
-          echo "aws snapshot create: PASS"
+          echo "ec2 snapshot create: PASS"
 
       - name: Snapshot — list shows pending then available
         run: |
           # Initial list: pending (or already available if AWS is fast today)
-          uv run remo aws snapshot list "$INSTANCE_NAME" | tee /tmp/list-1.txt
+          uv run remo ec2 snapshot list "$INSTANCE_NAME" | tee /tmp/list-1.txt
           grep -q "$SNAP_NAME" /tmp/list-1.txt || { echo "FAIL: snapshot missing from initial list"; exit 1; }
           grep -q "STATUS" /tmp/list-1.txt || { echo "FAIL: AWS list missing STATUS column"; exit 1; }
 
           # Poll up to 10 minutes for the snapshot to reach available state
           for attempt in $(seq 1 60); do
-            OUT=$(uv run remo aws snapshot list "$INSTANCE_NAME")
+            OUT=$(uv run remo ec2 snapshot list "$INSTANCE_NAME")
             if echo "$OUT" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" >/dev/null; then
               echo "Snapshot $SNAP_NAME is available (attempt $attempt)"
               break
@@ -203,19 +205,19 @@ jobs:
             echo "Attempt $attempt: not yet available; sleeping 10s..."
             sleep 10
           done
-          uv run remo aws snapshot list "$INSTANCE_NAME" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" \
+          uv run remo ec2 snapshot list "$INSTANCE_NAME" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" \
             || { echo "FAIL: snapshot did not reach available within 10 min"; exit 1; }
-          echo "aws snapshot list: PASS"
+          echo "ec2 snapshot list: PASS"
 
       - name: Snapshot — delete
         run: |
-          uv run remo aws snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes
+          uv run remo ec2 snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes
           # Verify it's gone from list
-          OUT=$(uv run remo aws snapshot list "$INSTANCE_NAME")
+          OUT=$(uv run remo ec2 snapshot list "$INSTANCE_NAME")
           if echo "$OUT" | grep -q "$SNAP_NAME"; then
             echo "FAIL: snapshot still present after delete"; exit 1
           fi
-          echo "aws snapshot delete: PASS"
+          echo "ec2 snapshot delete: PASS"
 
       - name: Teardown
         if: always()
@@ -223,9 +225,9 @@ jobs:
           # Best-effort cleanup of any leftover smoke snapshots (in case of
           # mid-step failure) before tearing down the instance.
           if [ -n "${SNAP_NAME:-}" ]; then
-            uv run remo aws snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes 2>/dev/null || true
+            uv run remo ec2 snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes 2>/dev/null || true
           fi
-          uv run remo aws destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
+          uv run remo ec2 destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
 
   # ===========================================================================
   # Hetzner Cloud

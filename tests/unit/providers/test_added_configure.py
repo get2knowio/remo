@@ -34,6 +34,10 @@ from remo_cli.core.known_hosts import save_known_host
 from remo_cli.models.host import KnownHost
 from remo_cli.providers import added as providers_added
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 
 @pytest.fixture(autouse=True)
 def _no_network(mocker, tmp_config_dir):
@@ -142,9 +146,9 @@ class TestRefusals:
         run_playbook.assert_not_called()
 
     def test_provider_host_names_that_providers_upgrade_verb(self, run_playbook):
-        _register(name="web1", type_="aws")
+        _register(name="web1", type_="cloudvm")
 
-        with pytest.raises(PreconditionError, match="remo aws upgrade web1"):
+        with pytest.raises(PreconditionError, match="remo cloudvm upgrade web1"):
             providers_added.configure(name="web1", assume_yes=True)
         run_playbook.assert_not_called()
 

@@ -54,13 +54,10 @@ SCOPED_OFF_PLAYBOOKS = [
     "incus_site.yml",
     "ssh_configure.yml",
 ]
-#: Playbooks that must keep it on: the key only exists under root/ubuntu there.
-#: Hetzner's playbooks ship in the `remo-provider-hetzner` plugin; their half of
-#: this assertion is plugins/hetzner/tests/ansible/test_authorized_keys_bootstrap.py.
-SCOPED_ON_PLAYBOOKS = [
-    "aws_configure.yml",
-    "aws_site.yml",
-]
+#: The playbooks that must keep it on (the key only exists under root/ubuntu
+#: there) all ship in provider plugins now -- Hetzner's and EC2's (#258) -- and
+#: their half of this assertion is each plugin's
+#: tests/ansible/test_authorized_keys_bootstrap.py.
 
 AUTHORIZED_KEYS_DEST = "/home/{{ remo_user }}/.ssh/authorized_keys"
 
@@ -168,15 +165,6 @@ class TestUserSetupScoping:
             f"{playbook} must set {BOOTSTRAP_FLAG}: false — this provider writes the "
             "key into the remo user's own authorized_keys at create time (#121)"
         )
-
-    @pytest.mark.parametrize("playbook", SCOPED_ON_PLAYBOOKS)
-    def test_cloud_providers_keep_the_bootstrap(self, playbook: str) -> None:
-        plays = yaml.safe_load((ANSIBLE_DIR / playbook).read_text())
-        for play in plays:
-            assert BOOTSTRAP_FLAG not in (play.get("vars") or {}), (
-                f"{playbook} must leave the bootstrap on: without it a first-contact "
-                "provision cannot seed the remo user and locks the operator out"
-            )
 
 
 class TestProxmoxCreatePathMerges:

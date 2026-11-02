@@ -258,9 +258,8 @@ class TestDiscoveredHostObservedIsDeclaredEverywhere:
         which is exactly how #107 happened. Guard it structurally."""
         import inspect
 
-        from remo_cli.providers import aws as providers_aws
-
-        for module in (providers_proxmox, providers_incus, providers_aws):
+        # The ec2 plugin's probe has the same guard in its own suite (#258).
+        for module in (providers_proxmox, providers_incus):
             source = inspect.getsource(module._probe)
             assert "DiscoveredHost(" in source
             assert "observed=" in source, (

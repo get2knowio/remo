@@ -41,6 +41,10 @@ from remo_cli.core.web_sync import (
 )
 from remo_cli.models.host import KnownHost
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 URL = "http://web.example:8080"
 CODE = "ephemeral-pairing-code"
 DEPLOYMENT_ID = "dep-1234abcd"
@@ -160,17 +164,17 @@ class TestCaseTable:
         assert local[0].host == "10.1.1.1" and remote[0].host == "10.2.2.2"
 
     def test_cross_type_name_collision_aborts(self):
-        two = [_host(type_="incus"), _host(type_="aws", host="5.6.7.8")]
+        two = [_host(type_="incus"), _host(type_="cloudvm", host="5.6.7.8")]
         with pytest.raises(SyncNameCollisionError, match="incus"):
             build_sync_plan({}, two, [], 0)
-        with pytest.raises(SyncNameCollisionError, match="aws"):
+        with pytest.raises(SyncNameCollisionError, match="cloudvm"):
             build_sync_plan({}, [], two, 0)
 
     def test_same_name_type_change_between_sides_is_ordinary(self):
         # A type change is just an unequal entry: remote-only change -> pull,
         # divergent changes on both sides -> conflict.
         base = _host(type_="incus")
-        remote_retyped = _host(type_="aws", host="5.6.7.8")
+        remote_retyped = _host(type_="cloudvm", host="5.6.7.8")
         plan = build_sync_plan({"dev": _entry(base)}, [base], [remote_retyped], 0)
         assert _kinds(plan) == {"dev": SyncActionKind.PULL_UPDATE}
 
@@ -286,7 +290,7 @@ class TestConsent:
     def _deletion_plan(self):
         keep = _host()
         gone_remote = _host(name="a-gone", host="10.3.3.3")
-        gone_local = _host(name="b-gone", host="10.4.4.4", type_="aws")
+        gone_local = _host(name="b-gone", host="10.4.4.4", type_="cloudvm")
         base = {
             "dev": _entry(keep),
             "a-gone": _entry(gone_remote),
@@ -413,7 +417,7 @@ def _non_tty(mocker):
 class TestDriver:
     def test_bidirectional_happy_path(self, tmp_config_dir, api_client, process_instance):
         local_only = _host(name="localbox", host="10.0.0.1")
-        remote_only = _host(name="webbox", host="10.0.0.2", type_="aws", user="remo")
+        remote_only = _host(name="webbox", host="10.0.0.2", type_="cloudvm", user="remo")
         replace_registry([local_only])
         api_client.get_registry.return_value = {
             "registry": [_entry(remote_only)],
@@ -587,7 +591,7 @@ class TestDriver:
         # as synchronized (base advanced) and classify the deletion as
         # DELETE_LOCAL — never as a local-only PUSH_ADD that resurrects it.
         keeper = _host(name="keeper", host="10.0.0.1")
-        webbox = _host(name="webbox", host="10.0.0.2", type_="aws", user="remo")
+        webbox = _host(name="webbox", host="10.0.0.2", type_="cloudvm", user="remo")
         replace_registry([keeper])
         api_client.get_registry.side_effect = [
             {
@@ -621,7 +625,7 @@ class TestDriver:
         # push cache must still record the pulled entry as this deployment's
         # merge base, or the NEXT run would classify a deployment-side
         # deletion of it as PUSH_ADD and resurrect it.
-        webbox = _host(name="webbox", host="10.0.0.2", type_="aws", user="remo")
+        webbox = _host(name="webbox", host="10.0.0.2", type_="cloudvm", user="remo")
         replace_registry([_host(name="keeper", host="10.0.0.1")])
         api_client.get_registry.return_value = {
             "registry": [_entry(webbox)],
@@ -729,7 +733,7 @@ class TestDriver:
     def test_pulled_trust_prompt_persists_only_on_accept(
         self, tmp_config_dir, api_client, process_instance, mocker
     ):
-        pulled = _host(name="webbox", host="10.0.0.2", type_="aws")
+        pulled = _host(name="webbox", host="10.0.0.2", type_="cloudvm")
         replace_registry([_host()])
         api_client.get_registry.return_value = {
             "registry": [_entry(pulled)],

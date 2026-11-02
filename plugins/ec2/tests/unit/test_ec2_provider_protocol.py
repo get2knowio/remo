@@ -1,4 +1,4 @@
-"""Tests for the entry-based Provider Protocol wrappers on providers/aws.py.
+"""Tests for the entry-based Provider Protocol wrappers on remo_provider_ec2/provider.py.
 
 Covers `update_entry` and the four public `snapshot_*(entry, ...)` functions
 added for contracts/provider-protocol.md Part A (spec 018, T016). These wrap
@@ -18,12 +18,12 @@ import pytest
 from remo_cli.core.errors import OperationFailedError
 from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
-from remo_cli.providers import aws as providers_aws
+import remo_provider_ec2.provider as providers_aws
 
 
 def _entry(**overrides: object) -> KnownHost:
     fields: dict[str, object] = dict(
-        type="aws",
+        type="ec2",
         name="dev1",
         host="1.2.3.4",
         user="remo",
@@ -37,7 +37,7 @@ def _entry(**overrides: object) -> KnownHost:
 
 def _snap(name: str = "pre-x") -> Snapshot:
     return Snapshot(
-        provider="aws",
+        provider="ec2",
         instance_name="dev1",
         name=name,
         backend_id=f"snap-{name}",
@@ -50,14 +50,14 @@ def _snap(name: str = "pre-x") -> Snapshot:
 
 class TestUpdateEntry:
     def test_success_returns_none(self, mocker):
-        spy = mocker.patch("remo_cli.providers.aws.upgrade", return_value=None)
+        spy = mocker.patch("remo_provider_ec2.provider.upgrade", return_value=None)
         result = providers_aws.update_entry(_entry(), verbose=True)
         assert result is None
         spy.assert_called_once_with(name="dev1", verbose=True)
 
     def test_failure_propagates_operation_failed_error(self, mocker):
         mocker.patch(
-            "remo_cli.providers.aws.upgrade",
+            "remo_provider_ec2.provider.upgrade",
             side_effect=OperationFailedError("playbook rc=1"),
         )
         with pytest.raises(OperationFailedError):
@@ -67,7 +67,7 @@ class TestUpdateEntry:
 class TestSnapshotCreateEntry:
     def test_success_returns_none(self, mocker):
         spy = mocker.patch(
-            "remo_cli.providers.aws.snapshot_create_legacy", return_value=0
+            "remo_provider_ec2.provider.snapshot_create_legacy", return_value=0
         )
         result = providers_aws.snapshot_create(
             _entry(), "snap1", description="before x"
@@ -82,7 +82,7 @@ class TestSnapshotCreateEntry:
 
     def test_failure_raises_operation_failed_error(self, mocker):
         mocker.patch(
-            "remo_cli.providers.aws.snapshot_create_legacy", return_value=1
+            "remo_provider_ec2.provider.snapshot_create_legacy", return_value=1
         )
         with pytest.raises(OperationFailedError):
             providers_aws.snapshot_create(_entry(), "snap1")
@@ -91,7 +91,7 @@ class TestSnapshotCreateEntry:
 class TestSnapshotRestoreEntry:
     def test_success_returns_none_and_auto_confirms(self, mocker):
         spy = mocker.patch(
-            "remo_cli.providers.aws.snapshot_restore_legacy", return_value=0
+            "remo_provider_ec2.provider.snapshot_restore_legacy", return_value=0
         )
         result = providers_aws.snapshot_restore(_entry(), "snap1")
         assert result is None
@@ -104,7 +104,7 @@ class TestSnapshotRestoreEntry:
 
     def test_failure_raises_operation_failed_error(self, mocker):
         mocker.patch(
-            "remo_cli.providers.aws.snapshot_restore_legacy", return_value=1
+            "remo_provider_ec2.provider.snapshot_restore_legacy", return_value=1
         )
         with pytest.raises(OperationFailedError):
             providers_aws.snapshot_restore(_entry(), "snap1")
@@ -113,7 +113,7 @@ class TestSnapshotRestoreEntry:
 class TestSnapshotDeleteEntry:
     def test_success_returns_none_and_auto_confirms(self, mocker):
         spy = mocker.patch(
-            "remo_cli.providers.aws.snapshot_delete_legacy", return_value=0
+            "remo_provider_ec2.provider.snapshot_delete_legacy", return_value=0
         )
         result = providers_aws.snapshot_delete(_entry(), "snap1")
         assert result is None
@@ -126,7 +126,7 @@ class TestSnapshotDeleteEntry:
 
     def test_failure_raises_operation_failed_error(self, mocker):
         mocker.patch(
-            "remo_cli.providers.aws.snapshot_delete_legacy", return_value=1
+            "remo_provider_ec2.provider.snapshot_delete_legacy", return_value=1
         )
         with pytest.raises(OperationFailedError):
             providers_aws.snapshot_delete(_entry(), "snap1")
@@ -136,7 +136,7 @@ class TestSnapshotListEntry:
     def test_success_returns_list(self, mocker):
         snaps = [_snap("a"), _snap("b")]
         spy = mocker.patch(
-            "remo_cli.providers.aws.snapshot_list_legacy", return_value=snaps
+            "remo_provider_ec2.provider.snapshot_list_legacy", return_value=snaps
         )
         result = providers_aws.snapshot_list(_entry())
         assert result == snaps
@@ -144,7 +144,7 @@ class TestSnapshotListEntry:
 
     def test_runtime_error_raises_operation_failed_error(self, mocker):
         mocker.patch(
-            "remo_cli.providers.aws.snapshot_list_legacy",
+            "remo_provider_ec2.provider.snapshot_list_legacy",
             side_effect=RuntimeError("no instance found"),
         )
         with pytest.raises(OperationFailedError):

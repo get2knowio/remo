@@ -43,6 +43,9 @@ name: dev-build
 #   # ...with the Hetzner provider plugin, attached to the same pre-release
 #   uv tool install --force "remo-cli[web,hetzner] @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_cli-<version>-py3-none-any.whl" \
 #     --with "remo-provider-hetzner @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_provider_hetzner-<plugin-version>-py3-none-any.whl"
+#   # ...with the EC2 provider plugin (the former built-in `aws`), likewise
+#   uv tool install --force "remo-cli[web,ec2] @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_cli-<version>-py3-none-any.whl" \
+#     --with "remo-provider-ec2 @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_provider_ec2-<plugin-version>-py3-none-any.whl"
 #   # revert to the released build
 #   uv tool install remo-cli --force
 
@@ -183,6 +186,8 @@ jobs:
           WHEEL_URL="${RELEASE_URL}/remo_cli-${VERSION}-py3-none-any.whl"
           HETZNER_WHEEL="$(basename "$(ls dist/remo_provider_hetzner-*.whl)")"
           HETZNER_URL="${RELEASE_URL}/${HETZNER_WHEEL}"
+          EC2_WHEEL="$(basename "$(ls dist/remo_provider_ec2-*.whl)")"
+          EC2_URL="${RELEASE_URL}/${EC2_WHEEL}"
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           # Quoted heredoc: the notes contain backticks, which an unquoted one
           # would run as command substitution. Placeholders are filled in after.
@@ -202,6 +207,14 @@ jobs:
             --with "remo-provider-hetzner @ __HETZNER_URL__"
           ```
 
+          With the EC2 provider (formerly the built-in `aws`; a separate plugin
+          distribution since 4.5.0 — `remo aws …` still works, with a warning):
+
+          ```bash
+          uv tool install --force "remo-cli[web,ec2] @ __WHEEL_URL__" \
+            --with "remo-provider-ec2 @ __EC2_URL__"
+          ```
+
           Revert to the released build:
 
           ```bash
@@ -213,6 +226,7 @@ jobs:
           sed -i \
             -e "s|__WHEEL_URL__|${WHEEL_URL}|" \
             -e "s|__HETZNER_URL__|${HETZNER_URL}|" \
+            -e "s|__EC2_URL__|${EC2_URL}|" \
             -e "s|__SHA__|${GITHUB_SHA}|" \
             -e "s|__RUN_URL__|${RUN_URL}|" \
             /tmp/notes.md

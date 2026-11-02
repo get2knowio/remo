@@ -53,6 +53,10 @@ from remo_cli.web import app as app_module
 from remo_cli.web.config import WebSettings
 from remo_cli.web.terminal import build_attach_argv
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 # ---------------------------------------------------------------------------
 # Docker availability (checked once at collection time; same technique as
 # test_terminal_attach.py / test_remo_host_e2e.py).
@@ -110,9 +114,8 @@ class TestSsmArgvParity:
 
     @pytest.fixture
     def ssm_host(self, mocker):
-        mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
         return KnownHost(
-            type="aws",
+            type="cloudvm",
             name="devbox",
             host="3.14.15.92",
             user="remo",
@@ -536,7 +539,7 @@ class TestLiveDirectSshParity:
 # The one-line "your web deployment may be out of date" nudge must fire after a
 # SUCCESSFUL registry mutation — provider create/destroy, `remo add`/`remove`,
 # and an applied `sync` — iff a push cache exists, and NEVER on a dry-run/no-op
-# sync or on `aws stop|start|reboot`. These are pure in-process CLI/core tests
+# sync or on `ec2 stop|start|reboot` (plugin-side now). These are pure in-process CLI/core tests
 # (no Docker, no network): the provider business logic is mocked to succeed.
 # ---------------------------------------------------------------------------
 
@@ -575,8 +578,7 @@ class TestOutOfDateNudge:
             ("incus", "destroy", []),
             ("proxmox", "create", ["--host", "pve1"]),
             ("proxmox", "destroy", []),
-            ("aws", "create", []),
-            ("aws", "destroy", []),
+            # ec2 (formerly aws) rows: plugins/ec2/tests/unit/test_core_web_cli_parity.py.
         ],
     )
     def test_provider_create_destroy_nudges_with_cache(
@@ -652,18 +654,8 @@ class TestOutOfDateNudge:
         assert result.exit_code == 0
         assert _NUDGE not in result.output
 
-    # -- aws stop/start/reboot never nudge (no registry mutation) ----------
-
-    @pytest.mark.parametrize("cmd_attr", ["stop", "start", "reboot"])
-    def test_aws_power_commands_never_nudge(self, tmp_config_dir, mocker, cmd_attr):
-        from remo_cli.cli.providers.factory import build_provider_group
-        from remo_cli.core.provider_registry import get_descriptor
-
-        command = build_provider_group(get_descriptor("aws")).commands[cmd_attr]
-        mocker.patch(f"remo_cli.providers.aws.{cmd_attr}", return_value=None)
-        _seed_push_cache()
-        result = CliRunner().invoke(command, [])
-        assert _NUDGE not in result.output
+    # -- ec2 stop/start/reboot never nudge: plugins/ec2/tests/unit/
+    #    test_core_web_cli_parity.py (EC2 is the remo-provider-ec2 plugin, #258).
 
     # -- sync (run_sync apply path) ----------------------------------------
 

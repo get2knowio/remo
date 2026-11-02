@@ -1,0 +1,8 @@
+---
+# Installed by core/ansible_runner.run_playbook(playbook_dir=) under this
+# plugin's own collections marker, after remo's own requirements.yml.
+collections:
+  - name: amazon.aws
+    version: ">=11.1.0"
+  - name: community.aws
+    version: ">=11.0.0"

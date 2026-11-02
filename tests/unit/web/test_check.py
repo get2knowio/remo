@@ -29,7 +29,10 @@ from remo_cli.web.discovery import _read_registry_hosts_readonly
 from remo_cli.web.check import all_passed, format_results, run_checks
 from remo_cli.web.config import WebSettings
 
-pytestmark = pytest.mark.usefixtures("tmp_config_dir")
+
+# ssm_provider: the SSM-routed sample provider (tests/ssm_provider.py; AWS is a
+# plugin since #258).
+pytestmark = pytest.mark.usefixtures("tmp_config_dir", "ssm_provider")
 
 
 def _capabilities_payload() -> bytes:
@@ -209,7 +212,7 @@ class TestInstanceUnreachable:
     ):
         _write_registry(
             tmp_config_dir,
-            ["incus:good:127.0.0.1:remo", "aws:devbox:127.0.0.2:remo:i-0abc:ssm:us-west-2"],
+            ["incus:good:127.0.0.1:remo", "cloudvm:devbox:127.0.0.2:remo:i-0abc:ssm:us-west-2"],
         )
         monkeypatch.setenv("REMO_WEB_SSH_IDENTITY_FILE", str(_fake_key_file(tmp_path)))
         monkeypatch.setattr(check_module.shutil, "which", lambda name: f"/usr/bin/{name}")
@@ -230,7 +233,7 @@ class TestInstanceUnreachable:
         good = next(r for r in results if r.name == "instance incus/good")
         assert good.passed is True
 
-        bad = next(r for r in results if r.name == "instance aws/devbox")
+        bad = next(r for r in results if r.name == "instance cloudvm/devbox")
         assert bad.passed is False
         assert bad.remediation is not None
 

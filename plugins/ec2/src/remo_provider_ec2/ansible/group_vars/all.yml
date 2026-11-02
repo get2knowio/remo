@@ -1,0 +1,9 @@
+---
+# The ec2 plugin's own defaults. Loaded because this file sits next to the
+# plugin's playbooks; remo's shared defaults arrive via each play's
+# vars_files, which outranks group_vars -- so no name here may also appear in
+# remo's ansible/group_vars/all.yml (tests/ansible/test_playbook_layout.py).
+# AWS Configuration
+aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
+aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
+aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"

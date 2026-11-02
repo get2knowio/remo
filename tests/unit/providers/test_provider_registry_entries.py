@@ -22,6 +22,11 @@ from remo_cli.core.registry import (
     legacy_fields_to_entry,
 )
 from remo_cli.models.host import KnownHost
+import pytest
+
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
 
 
 def _v2_round_trip(host: KnownHost) -> KnownHost | None:
@@ -99,7 +104,7 @@ class TestAwsSaveShape:
 
     def _make(self) -> KnownHost:
         return KnownHost(
-            type="aws",
+            type="cloudvm",
             name="buildbox",
             host="203.0.113.7",
             user="remo",
@@ -158,7 +163,7 @@ class TestAwsImplicitSsmBackfillQuirk:
 
     def _make(self) -> KnownHost:
         return KnownHost(
-            type="aws",
+            type="cloudvm",
             name="buildbox",
             host="203.0.113.7",
             user="remo",
@@ -168,7 +173,7 @@ class TestAwsImplicitSsmBackfillQuirk:
 
     def test_to_line_backfills_ssm(self):
         line = self._make().to_line()
-        assert line == "aws:buildbox:203.0.113.7:remo:i-abc:ssm"
+        assert line == "cloudvm:buildbox:203.0.113.7:remo:i-abc:ssm"
 
     def test_migrated_line_classifies_as_ssm(self):
         line = self._make().to_line()

@@ -24,6 +24,10 @@ from remo_cli.core.registry import (
 from remo_cli.models.host import KnownHost
 from tests.conftest import build_v2_host_entry, write_v2_registry
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 
 def _all_type_hosts() -> list[KnownHost]:
     """One host per built-in type (plus ``ssh``) and a field-less host,
@@ -47,7 +51,7 @@ def _all_type_hosts() -> list[KnownHost]:
             region="root",
         ),
         KnownHost(
-            type="aws",
+            type="cloudvm",
             name="buildbox",
             host="203.0.113.7",
             user="remo",
@@ -59,7 +63,7 @@ def _all_type_hosts() -> list[KnownHost]:
         # field-less provider such as the hetzner plugin writes): no nested
         # object is emitted, and none is needed to read it back.
         KnownHost(
-            type="aws",
+            type="cloudvm",
             name="dev1",
             host="198.51.100.9",
             user="remo",
@@ -212,7 +216,7 @@ class TestTolerantReadWarnings:
                 # "user" missing
                 "access": "direct",
             },
-            build_v2_host_entry("aws", "web1", "5.6.7.8", "remo"),
+            build_v2_host_entry("cloudvm", "web1", "5.6.7.8", "remo"),
         ]
         write_v2_registry(tmp_config_dir, entries)
 
@@ -259,7 +263,7 @@ class TestValidationRuleRejections:
                 type="incus", name="dup", host="1.1.1.1", user="remo", access_mode="direct"
             ),
             KnownHost(
-                type="aws", name="dup", host="2.2.2.2", user="remo", access_mode="direct"
+                type="cloudvm", name="dup", host="2.2.2.2", user="remo", access_mode="direct"
             ),
         ]
         validate_hosts(hosts)  # must not raise
@@ -282,7 +286,7 @@ class TestValidationRuleRejections:
         validate_hosts(
             [
                 KnownHost(
-                    type="aws",
+                    type="cloudvm",
                     name="x",
                     host="1.1.1.1",
                     user="remo",
@@ -338,7 +342,7 @@ class TestValidationRuleRejections:
     def test_mutate_registry_rejects_before_write_disk_unchanged(self, tmp_config_dir):
         good = [
             KnownHost(
-                type="aws", name="web1", host="5.5.5.5", user="remo", access_mode="direct"
+                type="cloudvm", name="web1", host="5.5.5.5", user="remo", access_mode="direct"
             )
         ]
         replace_registry(good, allow_empty=True)
@@ -360,7 +364,7 @@ class TestIPv6AndColonValueFidelity:
 
     def test_ipv6_host_round_trips(self, tmp_config_dir):
         host = KnownHost(
-            type="aws", name="v6box", host="2001:db8::7", user="remo", access_mode="direct"
+            type="cloudvm", name="v6box", host="2001:db8::7", user="remo", access_mode="direct"
         )
         replace_registry([host], allow_empty=True)
 
@@ -393,7 +397,7 @@ class TestIPv6AndColonValueFidelity:
 
     def test_colon_containing_aws_region_round_trips(self, tmp_config_dir):
         host = KnownHost(
-            type="aws",
+            type="cloudvm",
             name="buildbox",
             host="1.2.3.4",
             user="remo",
@@ -426,7 +430,7 @@ class TestIPv6AndColonValueFidelity:
     def test_boundary_length_name_round_trips(self, tmp_config_dir):
         name = "a" * 63
         host = KnownHost(
-            type="aws", name=name, host="1.2.3.4", user="remo", access_mode="direct"
+            type="cloudvm", name=name, host="1.2.3.4", user="remo", access_mode="direct"
         )
         replace_registry([host], allow_empty=True)
 

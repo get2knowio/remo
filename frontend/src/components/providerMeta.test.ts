@@ -36,7 +36,7 @@ describe("providerMeta", () => {
   });
 
   it("still maps a known provider to its dedicated presentation", () => {
-    expect(providerMeta("aws")).toEqual({ label: "AWS", color: "var(--prov-aws)" });
+    expect(providerMeta("incus")).toEqual({ label: "Incus", color: "var(--prov-incus)" });
   });
 
   it("keeps a first-party plugin's presentation although it is off the generated union", () => {
@@ -44,5 +44,12 @@ describe("providerMeta", () => {
     // KnownProviderType deliberately omits it; the hand-written plugin map
     // must keep it from collapsing into the unknown fallback.
     expect(providerMeta("hetzner")).toEqual({ label: "Hetzner", color: "var(--prov-hetzner)" });
+    expect(providerMeta("ec2")).toEqual({ label: "AWS EC2", color: "var(--prov-aws)" });
+  });
+
+  it("keeps the ec2 provider's pre-#258 type name presentable", () => {
+    // A service whose registry was not rewritten since the aws -> ec2 rename
+    // still reports `aws`; it must not fall into the unknown fallback.
+    expect(providerMeta("aws")).toEqual({ label: "AWS", color: "var(--prov-aws)" });
   });
 });

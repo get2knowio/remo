@@ -65,14 +65,12 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │       └── factory.py     # build_provider_group(descriptor) generates create/destroy/upgrade/resize/list/info/sync/snapshot for every provider, plus tag (iff supports_managed_marker) and a host subgroup (iff host_commands non-empty) — the four hand-written per-provider CLI modules are gone
 ├── providers/             # Business logic (no Click imports); Provider Protocol (update_entry/teardown/probe/snapshot_*) + heterogeneous create/destroy/upgrade/resize/tag/extra verbs, all raising core/errors.py taxonomy errors (never sys.exit); update_entry delegates to upgrade
 │   ├── incus.py            # Incus provider implementation
-│   ├── aws.py              # AWS provider implementation
 │   ├── proxmox.py          # Proxmox provider implementation
 │   ├── incus_descriptor.py    # metadata-only ProviderDescriptor declaration, no SDK imports
-│   ├── aws_descriptor.py      # metadata-only ProviderDescriptor declaration, no SDK imports
 │   ├── proxmox_descriptor.py  # metadata-only ProviderDescriptor declaration, no SDK imports
 │   ├── added.py            # Business logic for remo add / remo remove / remo configure — registration (014) + generic configure play (022)
 │   ├── connector.py        # SSM connector business logic: launcher (attach), document, enroll/status/unenroll (025)
-│   └── builtin.py         # register_builtins(): the three built-in descriptors (incus, proxmox, aws) in fixed order — Hetzner is the plugins/hetzner distribution; called by provider_registry._ensure_discovered() before entry-point discovery (027)
+│   └── builtin.py         # register_builtins(): the two built-in descriptors (incus, proxmox) in fixed order — Hetzner and EC2 (formerly the built-in aws, #258) are the plugins/hetzner and plugins/ec2 distributions; called by provider_registry._ensure_discovered() before entry-point discovery (027)
 ├── core/                  # Shared utilities (no provider knowledge)
 │   ├── config.py          # REMO_HOME, paths, read-only registry accessor
 │   ├── platform.py        # POSIX-only startup gate: is_supported_platform() + the WSL2 message cli/main.py exits on (no remo_cli imports — it runs before them)
@@ -86,7 +84,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── validation.py      # Name, port, region, tool validation
 │   ├── registry.py        # Registry v2 accessor: parse/serialize/validate/lock/migrate (registry.json + legacy known_hosts); parse AND serialize driven by descriptor.registry_fields (+ registry_legacy_keys), access-mode rules by ConnectionSpec.mode_field_aware, is_known_type() = ssh pseudo-type or any registered provider incl. plugins (KNOWN_TYPES literal gone, 027); an entry of an uninstalled type is preserved verbatim and warned, never dropped
 │   ├── known_hosts.py     # Thin delegates onto registry.py (public API unchanged: get/save/remove/clear_known_hosts*); HOST_SCOPED short-name matching and display_name_for() driven by descriptor.name_format (models/host.py's display_name is a lazy shim onto it, 027); upgrade_command_for() is the one descriptor-driven "how to upgrade this host" spelling shared by remo shell/resume, the web console remediation and the configure guard (#243); no_hosts_message() lists one `remo <type> create` per installed provider; names no provider type (literal-gated since #221)
-│   ├── ssh.py             # build_ssh_base_cmd(), SSH options, terminal reset, timezone; SSM ProxyCommand construction lives behind descriptor.connection.proxy_hook (AWS: providers/aws.py:ssh_proxy_hook), not hardcoded here; run_pre_connect_hook() runs descriptor.connection.pre_connect_hook before remo shell/resume connect (AWS: start a stopped instance) (#258); shell_connect(tab_key=) forwards REMO_TAB_KEY via SendEnv (028)
+│   ├── ssh.py             # build_ssh_base_cmd(), SSH options, terminal reset, timezone; SSM ProxyCommand construction lives behind descriptor.connection.proxy_hook (EC2 plugin: remo_provider_ec2.provider.ssh_proxy_hook), not hardcoded here; run_pre_connect_hook() runs descriptor.connection.pre_connect_hook before remo shell/resume connect (EC2: start a stopped instance) (#258); shell_connect(tab_key=) forwards REMO_TAB_KEY via SendEnv (028)
 │   ├── attach.py          # build_attach_argv() — host-agnostic "ssh -tt … remo-host sessions attach" builder shared by web/terminal.py (now a thin wrapper) and the SSM connector launcher; no remo_cli.web import (025)
 │   ├── connector.py       # SSM connector contract: TargetV1 codec, exposure gate (default deny), ErrorCode/format_error_line, ConnectorState, document loader (ships core/remo_attach_document.json), connector_attach_argv() (025)
 │   ├── tab_identity.py    # Tab identity precedence (TMUX_PANE > WEZTERM_PANE > KITTY_WINDOW_ID > ITERM_SESSION_ID > TERM_SESSION_ID > WT_SESSION), derive_tab_key() HMAC → 32 hex, TAB_KEY_RE; pure, stdlib only (028)
@@ -164,6 +162,13 @@ frontend/                  # remo-web browser SPA (Vite + React + TypeScript)
         └── harness/       # Vite fixture mounting the REAL TerminalCard + paneLayout
 
 plugins/                   # First-party provider plugins: uv workspace members, each its own distribution
+├── ec2/                   # remo-provider-ec2 — the former built-in `aws` (#258); installed by `remo-cli[ec2]`.
+│   │                      #   Same layout as hetzner/ below: descriptor.py (type `ec2`, legacy_type_names +
+│   │                      #   deprecated_cli_aliases = ("aws",)), provider.py (boto3; SSM proxy_hook +
+│   │                      #   pre_connect_hook auto-start), ansible/ (aws_*.yml, roles/aws_server, aws_*
+│   │                      #   group_vars, requirements.yml: amazon.aws + community.aws), tests/
+│   ├── pyproject.toml     # own version + wheel; depends on remo-cli and boto3
+│   └── src/remo_provider_ec2/
 └── hetzner/               # remo-provider-hetzner — installed by `remo-cli[hetzner]`, found via the
     │                      #   `remo.providers` entry point like any third-party plugin
     ├── pyproject.toml     # own version + wheel; depends on remo-cli and hcloud (the hetzner.hcloud
@@ -213,7 +218,7 @@ ansible/                   # Ansible playbooks (invoked by Python via subprocess
 
 scripts/                   # Repo-root utility scripts (not part of the installed package)
 ├── export_openapi.py        # Exports frontend/src/api/generated/{openapi.json,terminal-frames.json} (feature 020)
-├── check_plugin_wheels.sh   # Proves `remo.providers` discovery on BUILT wheels (fixture + hetzner plugin, #222); CI + dev-build
+├── check_plugin_wheels.sh   # Proves `remo.providers` discovery on BUILT wheels (fixture + hetzner + ec2 plugins; remo-cli alone has no boto3/hcloud; legacy aws entry migration; install size, #222/#258); CI + dev-build
 └── palette-check.sh         # Prints every ANSI colour x normal/bold/dim/bright in a live terminal — audits a theme's legibility where contrast maths can't
 
 pyproject.toml             # Build config, dependencies (incl. `web` extra), console_scripts entry point
@@ -274,8 +279,9 @@ uv run remo providers             # every provider + source (builtin / distribut
 REMO_DISABLE_PROVIDER_PLUGINS=1 uv run remo --help   # built-ins only (diagnostic escape hatch)
 
 # Run tests — core and each plugin separately, as CI does
-uv sync --all-extras --no-extra hetzner && uv run --no-sync pytest   # core suite, no plugin installed
+uv sync --all-extras --no-extra hetzner --no-extra ec2 && uv run --no-sync pytest   # core suite, no plugin installed
 uv sync --all-extras && uv run --no-sync pytest plugins/hetzner/tests  # the Hetzner plugin's suite
+uv sync --all-extras && uv run --no-sync pytest plugins/ec2/tests      # the EC2 plugin's suite
 scripts/check_plugin_wheels.sh dist   # after `uv build --wheel --all-packages -o dist`
 
 # Type checking and linting
@@ -383,11 +389,11 @@ allowlists: no `sys.exit` in `providers/`, and no `cli/` reach-ins to a
 `providers/` module's private helpers.
 
 Provider-varying behavior lives behind a `ProviderDescriptor` field or hook —
-never a `host.type` string literal in `core/`. AWS's SSM `ProxyCommand` is the
-worked example: it sits in `providers/aws.py:ssh_proxy_hook`, reached via
+never a `host.type` string literal in `core/`. EC2's SSM `ProxyCommand` is the
+worked example: it sits in the ec2 plugin's `remo_provider_ec2/provider.py:ssh_proxy_hook`, reached via
 `descriptor.connection.proxy_hook`; starting a stopped instance before
 `remo shell`/`remo resume` connect is `descriptor.connection.pre_connect_hook`
-(`providers/aws.py:auto_start_aws_if_stopped`). Both are public plugin API
+(`remo_provider_ec2/provider.py:auto_start_aws_if_stopped`). Both are public plugin API
 (`docs/provider-plugins.md#connection-hooks`).
 
 Failures raise the `core/errors.py` taxonomy (`MissingDependencyError`,
@@ -395,7 +401,7 @@ Failures raise the `core/errors.py` taxonomy (`MissingDependencyError`,
 `cli/providers/factory.py`'s `provider_command` wrapper is the *only*
 exception-to-exit-code boundary: `0` success, `1` failure, `3` user-aborted.
 
-Provider implementation modules are lazily imported by `core/provider_registry.get_provider()`; an `ImportError` during that import becomes a `MissingDependencyError` naming `descriptor.sdk_extra` (e.g. "aws") and the `uv sync --extra <name>` install command. In practice `boto3` is an unconditional dependency today, so this `ImportError` branch is currently unreachable for the built-in providers — the message is aspirational pending issue #94; the mechanism is exercised by third-party providers that do have an optional SDK. Hetzner is no longer a built-in at all: it is the `remo-provider-hetzner` distribution in `plugins/hetzner` (a uv workspace member, installed by `remo-cli[hetzner]`), so `hcloud` is that plugin's dependency, not remo-cli's.
+Provider implementation modules are lazily imported by `core/provider_registry.get_provider()`; an `ImportError` during that import becomes a `MissingDependencyError` naming `descriptor.sdk_extra` (e.g. "ec2") and the `uv sync --extra <name>` install command; the mechanism is exercised by third-party providers that do have an optional SDK. Neither cloud provider is a built-in any more: Hetzner and EC2 are the `remo-provider-hetzner` and `remo-provider-ec2` distributions in `plugins/` (uv workspace members, installed by `remo-cli[hetzner]` / `remo-cli[ec2]`), so `hcloud` and `boto3` are those plugins' dependencies, not remo-cli's (#258 subsumes #94).
 
 ## Quality Gates
 
@@ -404,8 +410,9 @@ made conditional to get a build green — fix the code or amend the gate by PR.
 
 | Gate | Command | Enforces |
 |------|---------|----------|
-| Tests (3.11/3.12/3.13) | `uv run pytest` (core only: synced with `--no-extra hetzner`) | Principles III, VI, VII |
+| Tests (3.11/3.12/3.13) | `uv run pytest` (core only: synced with `--no-extra hetzner --no-extra ec2`) | Principles III, VI, VII |
 | Hetzner plugin (3.11/3.12/3.13) | `uv run pytest plugins/hetzner/tests` + ruff/mypy on `plugins/hetzner/src` | Principles II, VI |
+| EC2 plugin (3.11/3.12/3.13) | `uv run pytest plugins/ec2/tests` + ruff/mypy on `plugins/ec2/src` | Principles II, VI |
 | Architecture | `uv run pytest tests/unit/test_architecture.py` | Principle I |
 | Docs structure | `uv run pytest tests/unit/test_docs_structure.py` | Principle VIII |
 | Schema drift (Python) | `uv run pytest tests/unit/test_schema_drift.py` | Principle IV |
@@ -425,7 +432,7 @@ when is a cost decision:
 | Trigger | Providers | Cost |
 |---------|-----------|------|
 | pull request | `incus` only | runner minutes (local container) |
-| push to `main`, weekly cron | `aws` + `hetzner` + `incus` | aws/hetzner are billable |
+| push to `main`, weekly cron | `aws` (the ec2 plugin) + `hetzner` + `incus` | aws/hetzner are billable |
 | `workflow_dispatch` | whichever `provider` is chosen | as chosen |
 
 So a PR still proves the real create → configure → destroy path, for free, while
@@ -494,9 +501,9 @@ PR description.
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
+- ec2-plugin (#258): Extracted AWS into the first-party plugin distribution `remo-provider-ec2` (`plugins/ec2`, a uv workspace member; installed by `remo-cli[ec2]`) and renamed its provider type `aws` → `ec2`. remo-cli no longer depends on boto3 (a plain install drops from ~70 MB to ~39 MB of site-packages, measured by `scripts/check_plugin_wheels.sh`); the `amazon.aws`/`community.aws` collections, the four `aws_*.yml` playbooks, `roles/aws_server` and the `aws_*` group_vars moved with it (Ansible names kept: they describe AWS APIs, not remo's type). Built-ins are now incus/proxmox. Prep landed first (#260): `ConnectionSpec.pre_connect_hook` (start-before-connect, called by `core/ssh.run_pre_connect_hook` from `remo shell`/`remo resume`), `get_aws_region` moved out of core (#221; `known_hosts.py`/`ssh.py`/`picker.py` now literal-gated), the hooks documented as public plugin API, and the remo-web image installing every `plugins/*` wheel with its collections baked (`docker/bake_collections.py`). New descriptor fields for a renamed provider: `legacy_type_names` (`core/registry.canonicalize_entry` + `provider_registry.canonical_type_name`: an `aws` entry in `registry.json`, a legacy known_hosts line or a push-cache merge base — fingerprint re-derived — reads as `ec2` and the next write stores `ec2`) and `deprecated_cli_aliases` (hidden `remo aws …` that warns on stderr, `cli/providers/factory.build_deprecated_alias_groups`). `KnownProviderType.AWS` left the generated enum (artifacts regenerated); the console maps `ec2` and the legacy `aws` through `PLUGIN_PROVIDERS`. `docs/aws.md` → `docs/ec2.md` (with an upgrade section). CI: core suite synced with `--no-extra hetzner --no-extra ec2`, a `plugin-ec2` job, the smoke `aws` job installs `--extra ec2` and drives `remo ec2` (job id/dispatch option unchanged), `dev-build.yml` attaches the ec2 wheel to RCs. Like Hetzner, `remo-cli[ec2]` resolves only from this workspace or RC URLs until #257's release lane lands (blocks 4.5.0 stable). Constitution IX: a new distribution, extra and entry point — validated Tier 2 on the CI-built wheels.
 - hetzner-plugin (#222): Extracted Hetzner into the first-party plugin distribution `remo-provider-hetzner` (`plugins/hetzner`, a uv workspace member; installed by `remo-cli[hetzner]`; discovered through its `remo.providers` entry point like any third-party plugin). Closed the plugin API's Ansible gap: `core/ansible_runner.run_playbook(playbook_dir=)` runs a plugin's own playbook by absolute path from remo's `ansible/` (remo's `ansible.cfg` and shared roles apply; the plugin's roles resolve next to its playbook), installs the plugin's `requirements.yml` under its own `collections-<hash>.lock` marker, and passes `remo_core_ansible_dir` so plays reach remo's shared `tasks/` and load remo's `group_vars/all.yml` via `vars_files` (playbook-adjacent group_vars are the PLUGIN's; a plugin-default never shares a name with remo's, since vars_files outranks group_vars). Moved out of core: `providers/hetzner{,_descriptor}.py`, the five `hetzner_*.yml` playbooks, `roles/hetzner_server`, the `hetzner_*` group_vars, the `hetzner.hcloud` collection, the `hcloud` dependency, `KnownProviderType.HETZNER` (artifacts regenerated; the console keeps Hetzner's colour through a hand-written `PLUGIN_PROVIDERS` map) and the hardcoded `remo hetzner create` hints. Built-ins are now incus/proxmox/aws. Tests: Hetzner suites moved to `plugins/hetzner/tests`; core tests no longer depend on Hetzner (sample data re-targeted to built-ins, the fixture plugin, or test-local descriptors; "uninstalled type" coverage uses a made-up type) and pass with or without the plugin; CI runs the core suite with `--no-extra hetzner` and a separate plugin job; `scripts/check_plugin_wheels.sh` proves discovery on the built wheels in CI and `dev-build.yml` (which now builds and attaches the plugin wheel to RCs). An existing `hetzner` registry entry on a host without the plugin is preserved verbatim with a warning. Not yet done: the plugin is not on PyPI, so `remo-cli[hetzner]` resolves only from this workspace or RC URLs until its release lane lands (blocks 4.5.0 stable). Constitution IX: entry points, extras and a new distribution are packaging surfaces — validated Tier 2 by the CI-built wheels.
 - 028-tab-resume: Added `remo resume` — put a terminal tab back where it was after a dropped connection, never worse than `remo shell`. A tab's identity (first of `TMUX_PANE`, `WEZTERM_PANE`, `KITTY_WINDOW_ID`, `ITERM_SESSION_ID`, `TERM_SESSION_ID`, `WT_SESSION`; tmux composed with the `$TMUX` socket) is turned into a one-way 32-hex key (`core/tab_identity.py`, HMAC-SHA256 under a 0600 workstation secret) and forwarded as `REMO_TAB_KEY` via `ssh -o SendEnv` (`core/ssh.py::shell_connect(tab_key=)`; the sshd drop-in `accept-tz.conf` now says `AcceptEnv TZ REMO_TAB_KEY`, restarting sshd once on existing hosts). Workstation records live in `<REMO_HOME>/tab-records.json` (`core/tab_records.py`: flock + atomic write, 30-day/500-entry prune, malformed reads empty); every non-`--detach` `remo shell` records `{host, project}` (`cli/shell.py::remember_tab`) and `remo shell` itself never resumes (FR-012a). Host side: new additive `remo-host sessions lookup --key K --json` (advertised `sessions.lookup`, protocol still v1; liveness factored into one `zellij_state_for` shared with `sessions list`) and an internal unadvertised `sessions record`, called by `project-menu`/`project-launch` only when `REMO_TAB_KEY` is set (file-per-key under `~/.local/state/remo/tabs`). `core/resume.py` holds the pure `decide_resume` (the 11-row table in `specs/028-tab-resume/data-model.md`), the exact one-line messages, and the 5 s BatchMode `run_lookup`/`is_project_live`; `cli/resume.py` wires it and `--forget`/`--forget-all`; `cli/shell.py` gained the shared `connect_to_host()` and public `upgrade_command_hint`. Exit 4/2 from an old host reads as "not upgraded" (`TabLookupUnsupported`), falling back to the workstation's remembered `-p` project (verified live via `sessions list`) or the host's menu. No new runtime deps; no registry schema change; no FastAPI model changed (no artifact regenerated). Constitution IX: `.j2` templates and `AcceptEnv` are host-provisioning surfaces, not packaging; Tier 1 suffices.
-- 027-provider-plugins: Made the provider mechanism pluggable and finished Principle II. **Discovery**: `core/provider_registry._ensure_discovered()` now registers the four built-ins (`providers/builtin.py::register_builtins()`, same fixed order) and then every `remo.providers` entry point in name order via new `core/provider_plugins.py` (stdlib `importlib.metadata`): an entry point resolves to a `ProviderDescriptor` or a zero-arg factory; any load failure (import error, wrong object, descriptor validation) is ONE warning naming the distribution and entry point and a skip — never an exception, never a changed exit code; a duplicate `type_name` keeps the first registration (built-in or earlier plugin) and warns naming both distributions; `REMO_DISABLE_PROVIDER_PLUGINS=1` skips discovery; `PROVIDER_API_VERSION = 1` vs the plugin's `REMO_PROVIDER_API_VERSION` module attribute warns on mismatch/absence and still registers. `builtin_descriptors()`/`descriptor_source()` keep the built-in vocabulary pinned (`KnownProviderType` and the exact-command-set test compare against built-ins; plugin types ride the `KnownEnum | str` off-union path — no artifact regenerated). **De-literalized**: `core/registry.py` parses through the reverse of `descriptor.registry_fields` plus new `registry_legacy_keys` (Proxmox's `node_user → region` migration now declared on its descriptor), gates on `is_known_type()` (ssh pseudo-type or any registered provider; `KNOWN_TYPES` is gone), keys `ssm` inference and validation off `ConnectionSpec.mode_field_aware` (message byte-identical for built-ins), and preserves an entry of an uninstalled type verbatim with a warning instead of silently carrying it; `core/reconcile.SyncScope` uses new `region_scoped_sync` + `sync_scope_description` descriptor fields (AWS/incus/proxmox strings unchanged); `KnownHost.display_name` is a lazy shim onto `core/known_hosts.display_name_for()` (HOST_SCOPED-driven), as is `providers/added.py`'s conflict check. **Visibility**: new `remo providers` (`cli/plugins.py`) and a `provider_plugins` line in `remo web check` that always PASSES (the container startup gate must never be bricked by a plugin) but lists loaded/skipped plugins with reasons and a remediation. **Fixture**: `tests/fixtures/remo_fixture_provider/` is a real distribution installed by the `dev` dependency group (`[tool.uv.sources]` path; never in the wheel's metadata) so `tests/integration/test_fixture_plugin_e2e.py` proves the whole path (group in `--help`, generated verbs, registry v2 round-trip via `box_id`/`zone`, known_hosts, web hosts API type-as-string, the disable variable in a fresh process); synthetic entry points cover every skip/duplicate/mismatch case; `tests/unit/test_architecture_provider_literals.py` gates the four provider-neutral core modules against built-in type literals. New `docs/provider-plugins.md`. No new runtime deps; no registry schema change; no optional SDK extras (#94); `ssh` untouched. Constitution IX: entry points are a packaging surface — Tier 2 wheel validation is owed before the release that ships them.
 Only the newest three entries live here — `update-agent-context.sh` discards the rest on every run. The complete history is archived in [`docs/feature-history.md`](docs/feature-history.md); move displaced entries there rather than letting the generator drop them.
 
 

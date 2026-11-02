@@ -1,6 +1,10 @@
-# AWS Setup
+# AWS EC2 Setup
 
 Spin up an EC2 instance with EBS storage for persistent home directories.
+
+EC2 support is the `remo-provider-ec2` plugin (provider type `ec2`), installed
+with remo's `ec2` extra. Until remo 4.5.0 it was built in as the `aws`
+provider; see [Upgrading from the built-in `aws` provider](#upgrading-from-the-built-in-aws-provider).
 
 ## Prerequisites
 
@@ -12,8 +16,9 @@ Spin up an EC2 instance with EBS storage for persistent home directories.
 ## Quick Start
 
 ```bash
-# Install remo
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+# Install remo with the EC2 provider
+uv tool install "remo-cli[ec2]"
+# (already installed? add it: uv tool install --force "remo-cli[ec2]")
 
 # Configure AWS credentials (choose one method)
 aws configure                  # Interactive setup (stores in ~/.aws/)
@@ -21,7 +26,7 @@ aws configure                  # Interactive setup (stores in ~/.aws/)
 export AWS_PROFILE=your-profile  # Use an existing named profile / SSO
 
 # Provision instance
-remo aws create
+remo ec2 create
 
 # Connect
 remo shell
@@ -48,51 +53,51 @@ export AWS_REGION=us-west-2           # Optional (default: us-west-2)
 
 ```bash
 # Create instance with defaults (SSM access, no inbound ports)
-remo aws create
+remo ec2 create
 
 # Create with spot instance (cheaper, can be interrupted)
-remo aws create --spot
+remo ec2 create --spot
 
 # Create with custom options
-remo aws create --name alice --type t3.large --region us-east-1
+remo ec2 create --name alice --type t3.large --region us-east-1
 
 # List registered instances
-remo aws list
+remo ec2 list
 
 # Update dev tools on existing instance (NAME is positional and required)
-remo aws upgrade alice
+remo ec2 upgrade alice
 
 # Update only specific tools
-remo aws upgrade alice --only zellij --only fzf
+remo ec2 upgrade alice --only zellij --only fzf
 
 # Update but skip specific tools
-remo aws upgrade alice --skip docker --skip nodejs
+remo ec2 upgrade alice --skip docker --skip nodejs
 
 # Grow the persistent EBS volume (and the filesystem) in place
-remo aws resize alice --volume-size 100
+remo ec2 resize alice --volume-size 100
 
 # Show instance information (type, cores, memory, EBS volume size)
-remo aws info
+remo ec2 info
 
 # Stop instance (pause billing, keep storage)
-remo aws stop
+remo ec2 stop
 
 # Start a stopped instance
-remo aws start
+remo ec2 start
 
 # Destroy instance (keeps EBS storage)
-remo aws destroy --yes
+remo ec2 destroy --yes
 
 # Destroy instance AND EBS (removes all data)
-remo aws destroy --yes --remove-storage
+remo ec2 destroy --yes --remove-storage
 
 # Snapshots
-remo aws snapshot create <instance>                 # Auto-named (remo-YYYYMMDD-HHMMSS)
-remo aws snapshot create <instance> --name pre-x --description "before upgrade"
-remo aws snapshot list <instance>                   # Single instance
-remo aws snapshot list                              # All registered AWS instances
-remo aws snapshot restore <instance> <snap-name> [-y]   # In-place EBS volume swap
-remo aws snapshot delete <instance> <snap-name> [-y]    # Remove snapshot
+remo ec2 snapshot create <instance>                 # Auto-named (remo-YYYYMMDD-HHMMSS)
+remo ec2 snapshot create <instance> --name pre-x --description "before upgrade"
+remo ec2 snapshot list <instance>                   # Single instance
+remo ec2 snapshot list                              # All registered AWS instances
+remo ec2 snapshot restore <instance> <snap-name> [-y]   # In-place EBS volume swap
+remo ec2 snapshot delete <instance> <snap-name> [-y]    # Remove snapshot
 ```
 
 ### Create Options
@@ -115,7 +120,7 @@ remo aws snapshot delete <instance> <snap-name> [-y]    # Remove snapshot
 
 Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`, `fzf`, `zellij`
 
-`remo aws upgrade` also refreshes the instance's IP/instance-id in the local registry as a side effect; it never touches the EBS volume size.
+`remo ec2 upgrade` also refreshes the instance's IP/instance-id in the local registry as a side effect; it never touches the EBS volume size.
 
 ### Resize Options
 
@@ -124,7 +129,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 | `--volume-size <GB>` | Required. Grow the persistent EBS volume to this size and grow the ext4 filesystem in place via SSH-over-SSM. AWS only supports growing. |
 | `NAME` | Positional, required. Resource namespace (the instance's `remo` name). |
 
-`remo aws resize` never runs the configure/dev-tools play.
+`remo ec2 resize` never runs the configure/dev-tools play.
 
 ### Destroy Options
 
@@ -164,7 +169,7 @@ Available tools: `docker`, `user_setup`, `nodejs`, `devcontainers`, `github_cli`
 * **Pre-restore volume is preserved as an orphan.** After a successful restore, the pre-restore root volume is *not* deleted; it stays in the AZ tagged `remo-restore-orphan=<ISO-8601-timestamp>` as a safety net. Once you've verified the restore is healthy, delete it manually with `aws ec2 delete-volume --volume-id <id>`. `remo` prints the exact command on restore.
 * **Snapshots are scoped by volume ID.** Snapshots are listed by filtering on the *current* root volume ID, so if you destroy an instance and create a new one with the same name, the old snapshots will not appear in `list` (they become orphans, invisible to `remo`, manageable only via the AWS console).
 * **No cost estimation.** `remo` does not estimate monthly EBS snapshot storage cost — check your AWS billing console.
-* **Destroy-time cleanup.** `remo aws destroy` lists existing snapshots and offers to delete them as part of teardown. Declining (or passing `-y`) keeps the snapshots, which will continue to incur storage cost.
+* **Destroy-time cleanup.** `remo ec2 destroy` lists existing snapshots and offers to delete them as part of teardown. Declining (or passing `-y`) keeps the snapshots, which will continue to incur storage cost.
 
 ## Features
 
@@ -318,10 +323,10 @@ Multiple users can share the same AWS account by using different `--name` values
 
 ```bash
 # Alice's environment
-remo aws create --name alice
+remo ec2 create --name alice
 
 # Bob's environment
-remo aws create --name bob
+remo ec2 create --name bob
 ```
 
 Each user gets isolated resources (instance, EBS volume, security group).
@@ -331,7 +336,7 @@ Each user gets isolated resources (instance, EBS volume, security group).
 Spot instances offer ~70% savings but can be interrupted with 2 minutes notice:
 
 ```bash
-remo aws create --spot
+remo ec2 create --spot
 ```
 
 Good for:
@@ -349,7 +354,7 @@ If interrupted, the instance stops (not terminates), preserving your EBS data.
 
 All instances use SSM Session Manager — no inbound ports are opened. The SSM agent on the EC2 instance phones home to AWS over outbound HTTPS. SSH connections are tunneled through the SSM session using a ProxyCommand.
 
-This is the built-in path for `aws`-type EC2 instances only. For non-EC2
+This is the path for `ec2`-type instances only. For non-EC2
 hosts — a Proxmox/Incus box behind home NAT, or any other server you'd
 rather not expose — see [docs/ssm-connector.md](ssm-connector.md), which
 reaches those hosts through an SSM **connector** instead.
@@ -360,7 +365,7 @@ reaches those hosts through an SSM **connector** instead.
    - macOS: `brew install --cask session-manager-plugin`
    - Linux: Download from [AWS docs](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
 
-2. **IAM Instance Profile** — an instance profile with the `AmazonSSMManagedInstanceCore` managed policy. During `remo aws create`, you can:
+2. **IAM Instance Profile** — an instance profile with the `AmazonSSMManagedInstanceCore` managed policy. During `remo ec2 create`, you can:
    - Select an existing profile (auto-detected from your account)
    - Let remo create one (`remo-<name>-ssm-role` / `remo-<name>-ssm-profile`)
 
@@ -370,7 +375,7 @@ reaches those hosts through an SSM **connector** instead.
 remo shell
 
 # Check instance details
-remo aws info
+remo ec2 info
 ```
 
 ### Port Forwarding via SSM
@@ -386,7 +391,7 @@ aws ssm start-session \
 
 ### Cleanup
 
-When you run `remo aws destroy`, IAM resources created by remo (role and instance profile) are automatically cleaned up. User-selected IAM profiles are left untouched.
+When you run `remo ec2 destroy`, IAM resources created by remo (role and instance profile) are automatically cleaned up. User-selected IAM profiles are left untouched.
 
 ## Troubleshooting
 
@@ -397,7 +402,7 @@ Run `aws configure` or set `AWS_PROFILE` to a configured profile.
 Create a default VPC in the AWS Console: VPC → Your VPCs → Actions → Create default VPC.
 
 **Spot instance terminated?**
-Spot instances can be interrupted by AWS. Your EBS data is preserved. Run `remo aws create --spot` again.
+Spot instances can be interrupted by AWS. Your EBS data is preserved. Run `remo ec2 create --spot` again.
 
 **boto3 not found?**
 `boto3` is installed automatically as part of the `remo-cli` package; reinstall
@@ -409,3 +414,22 @@ The SSM agent may take 2-5 minutes to register after instance launch. Ensure the
 
 **"session-manager-plugin is not installed"?**
 Install the AWS Session Manager Plugin. On macOS: `brew install --cask session-manager-plugin`. See [AWS docs](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html) for other platforms.
+
+## Upgrading from the built-in `aws` provider
+
+remo 4.5.0 moved AWS out of remo-cli (it no longer installs boto3 for every
+user) and renamed the provider type `aws` → `ec2`.
+
+- **Install the plugin.** `uv tool install --force "remo-cli[ec2]"`. Without
+  it, remo keeps your `aws` registry entries untouched (with a warning) but
+  cannot manage or connect to them.
+- **Registry entries migrate by themselves.** With the plugin installed, an
+  entry of type `aws` is read as `ec2`, and the next registry write stores it
+  as `ec2`. Nothing to run.
+- **`remo aws …` still works for now**, as a hidden alias that prints a
+  deprecation warning; switch scripts to `remo ec2 …`.
+- **The remo-web image** installs the plugin. A service on an older image
+  shows `ec2` hosts only after it is upgraded.
+- **Unchanged:** the `remo=true` instance tag, the IAM/SSM setup, and the
+  Ansible variables (`aws_region`, …).
+

@@ -1,9 +1,4 @@
 ---
-# AWS Configuration
-aws_access_key_id: "{{ lookup('env', 'AWS_ACCESS_KEY_ID') }}"
-aws_secret_access_key: "{{ lookup('env', 'AWS_SECRET_ACCESS_KEY') }}"
-aws_region: "{{ lookup('env', 'AWS_REGION') | default('us-west-2', true) }}"
-
 # User Configuration
 remo_user: "remo"
 
@@ -22,7 +17,7 @@ remo_user: "remo"
 # the configuration a user picks for a cleaner VM.
 #
 # Every configure playbook gathers facts before including
-# tasks/configure_dev_tools.yml (ssh_configure.yml and aws_configure.yml do it
+# tasks/configure_dev_tools.yml (ssh_configure.yml and the ec2 plugin's aws_configure.yml do it
 # explicitly in pre_tasks), so ansible_kernel is always populated by then; the
 # default() is belt-and-braces per Constitution principle V. Force the
 # workarounds on elsewhere with `-e docker_nested_overlayfs=true`.

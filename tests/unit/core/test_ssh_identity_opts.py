@@ -43,7 +43,7 @@ def direct_host():
 def ssm_host():
     """An AWS host using SSM access mode."""
     return KnownHost(
-        type="aws",
+        type="cloudvm",
         name="devbox",
         host="3.14.15.92",
         user="remo",
@@ -77,8 +77,8 @@ def _no_aws_profile(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _mock_aws_region(mocker):
-    mocker.patch("remo_cli.providers.aws.get_aws_region", return_value="us-west-2")
+def _ssm_routed_provider(ssm_provider):
+    """The SSM fixture host's type: tests/ssm_provider.py (AWS is a plugin, #258)."""
 
 
 # The exact ProxyCommand string the SSM branch emits today (no AWS_PROFILE).

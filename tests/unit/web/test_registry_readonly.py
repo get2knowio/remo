@@ -24,6 +24,10 @@ from tests.conftest import (
     write_v2_registry,
 )
 
+#: The SSM-routed sample provider these tests use (tests/ssm_provider.py; AWS is a
+#: plugin since #258).
+pytestmark = pytest.mark.usefixtures("ssm_provider")
+
 skip_if_root = pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses permission bits")
 
 # The two "legacy access-mode variant" fixture entries exist to pin the
@@ -33,7 +37,7 @@ skip_if_root = pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses permi
 # carried by the always-installed `fixture` plugin provider
 # (tests/fixtures/remo_fixture_provider), so it is spelled here rather than
 # taken from the shared fixture table.
-_STANDARD_LEGACY_TYPES = ("incus", "proxmox", "aws", "fixture", "ssh")
+_STANDARD_LEGACY_TYPES = ("incus", "proxmox", "cloudvm", "fixture", "ssh")
 _LEGACY_LINES = {
     **LEGACY_FIXTURE_LINES,
     "fixture": legacy_line("fixture", "dev1", "198.51.100.9", "remo"),
@@ -99,7 +103,7 @@ class TestReadonlyNoSideEffects:
         entries = [
             build_v2_host_entry("incus", "nuc/dev1", "dev1.incus", "remo", host_user="paul"),
             build_v2_host_entry(
-                "aws",
+                "cloudvm",
                 "buildbox",
                 "203.0.113.7",
                 "remo",

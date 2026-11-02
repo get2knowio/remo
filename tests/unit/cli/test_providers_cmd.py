@@ -18,9 +18,9 @@ def _run(*args: str) -> str:
 
 def test_lists_builtins_with_builtin_source() -> None:
     out = _run()
-    for name in ("incus", "proxmox", "aws"):
+    for name in ("incus", "proxmox"):
         assert f"{name}" in out
-    assert out.count("builtin") >= 3
+    assert out.count("builtin") >= 2
     assert "Provider API version: 1" in out
 
 
