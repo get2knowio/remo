@@ -71,7 +71,9 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    timeout-minutes: 20
+    # Room for the 10-min snapshot poll AND a teardown that waits out a
+    # still-pending snapshot -- a job timeout mid-teardown orphans it.
+    timeout-minutes: 40
     env:
       INSTANCE_NAME: ci-${{ github.run_id }}-aws
 
@@ -180,7 +182,8 @@ jobs:
 
       - name: Snapshot — create (async kickoff)
         run: |
-          SNAP=ci-smoke-aws
+          # Per-run name: the teardown and smoke-test-cleanup.yml reap by it.
+          SNAP=ci-smoke-aws-${{ github.run_id }}
           echo "SNAP_NAME=$SNAP" >> "$GITHUB_ENV"
           OUT=$(uv run remo ec2 snapshot create "$INSTANCE_NAME" --name "$SNAP" --description "smoke test")
           echo "$OUT"
@@ -221,6 +224,7 @@ jobs:
 
       - name: Teardown
         if: always()
+        timeout-minutes: 15
         run: |
           # Best-effort cleanup of any leftover smoke snapshots (in case of
           # mid-step failure) before tearing down the instance.
@@ -228,6 +232,21 @@ jobs:
             uv run remo ec2 snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes 2>/dev/null || true
           fi
           uv run remo ec2 destroy --name "$INSTANCE_NAME" --yes --remove-storage || true
+
+          # `remo ... snapshot delete` refuses a still-pending snapshot and
+          # `destroy --yes` keeps snapshots, so a failure mid-poll used to
+          # orphan a billable one. Wait it out and delete it by its tag.
+          # smoke-test-cleanup.yml is the safety net if this, too, runs out.
+          if [ -n "${SNAP_NAME:-}" ]; then
+            IDS=$(aws ec2 describe-snapshots --owner-ids self \
+              --filters "Name=tag:remo-snapshot-name,Values=$SNAP_NAME" \
+              --query 'Snapshots[].SnapshotId' --output text)
+            for id in $IDS; do
+              aws ec2 wait snapshot-completed --snapshot-ids "$id" || true
+              aws ec2 delete-snapshot --snapshot-id "$id" \
+                && echo "Deleted leftover snapshot $id ($SNAP_NAME)"
+            done
+          fi
 
   # ===========================================================================
   # Hetzner Cloud
@@ -244,7 +263,9 @@ jobs:
        github.event.inputs.provider == 'all' ||
        github.event.inputs.provider == 'hetzner')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Room for the 10-min snapshot poll AND a teardown that waits out a
+    # still-pending snapshot -- a job timeout mid-teardown orphans it.
+    timeout-minutes: 40
     env:
       INSTANCE_NAME: ci-${{ github.run_id }}-hetzner
       HETZNER_API_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
@@ -311,7 +332,8 @@ jobs:
 
       - name: Snapshot — create (async kickoff)
         run: |
-          SNAP=ci-smoke-hetzner
+          # Per-run name: the teardown and smoke-test-cleanup.yml reap by it.
+          SNAP=ci-smoke-hetzner-${{ github.run_id }}
           echo "SNAP_NAME=$SNAP" >> "$GITHUB_ENV"
           OUT=$(uv run remo hetzner snapshot create "$INSTANCE_NAME" --name "$SNAP" --description "smoke test")
           echo "$OUT"
@@ -325,8 +347,9 @@ jobs:
           grep -q "$SNAP_NAME" /tmp/list-1.txt || { echo "FAIL: snapshot missing from initial list"; exit 1; }
           grep -q "STATUS" /tmp/list-1.txt || { echo "FAIL: Hetzner list missing STATUS column"; exit 1; }
 
-          # Poll up to 5 minutes for the snapshot to become available
-          for attempt in $(seq 1 30); do
+          # Poll up to 10 minutes for the snapshot to become available (a
+          # 40 GiB image has taken longer than 5 on a slow day).
+          for attempt in $(seq 1 60); do
             OUT=$(uv run remo hetzner snapshot list "$INSTANCE_NAME")
             if echo "$OUT" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" >/dev/null; then
               echo "Snapshot $SNAP_NAME is available (attempt $attempt)"
@@ -336,7 +359,7 @@ jobs:
             sleep 10
           done
           uv run remo hetzner snapshot list "$INSTANCE_NAME" | grep -E "^\s*$INSTANCE_NAME\s+$SNAP_NAME\s.*\savailable" \
-            || { echo "FAIL: snapshot did not reach available within 5 min"; exit 1; }
+            || { echo "FAIL: snapshot did not reach available within 10 min"; exit 1; }
           echo "hetzner snapshot list: PASS"
 
       - name: Snapshot — delete
@@ -350,11 +373,41 @@ jobs:
 
       - name: Teardown
         if: always()
+        timeout-minutes: 15
         run: |
           if [ -n "${SNAP_NAME:-}" ]; then
             uv run remo hetzner snapshot delete "$INSTANCE_NAME" "$SNAP_NAME" --yes 2>/dev/null || true
           fi
           uv run remo hetzner destroy --name "$INSTANCE_NAME" --yes --remove-volume || true
+
+          # `remo ... snapshot delete` refuses a still-pending snapshot and
+          # `destroy --yes` keeps snapshots, so a failure mid-poll used to
+          # orphan a billable one (run 41381962224). Wait until it leaves
+          # `creating`, then delete it by its remo-snapshot-name label.
+          # smoke-test-cleanup.yml is the safety net if this, too, runs out.
+          [ -n "${SNAP_NAME:-}" ] || exit 0
+          API=https://api.hetzner.cloud/v1
+          AUTH="Authorization: Bearer ${HETZNER_API_TOKEN}"
+          for attempt in $(seq 1 60); do
+            IMAGES=$(curl -fsSL -H "$AUTH" \
+              "$API/images?type=snapshot&label_selector=remo-snapshot-name%3D${SNAP_NAME}" \
+              | python3 -c "import sys,json; print(' '.join(f\"{i['id']}:{i['status']}\" for i in json.load(sys.stdin)['images']))")
+            [ -z "$IMAGES" ] && { echo "No leftover snapshot $SNAP_NAME"; exit 0; }
+            PENDING=0
+            for img in $IMAGES; do
+              id=${img%%:*}; status=${img#*:}
+              if [ "$status" = "creating" ]; then
+                PENDING=1
+              else
+                curl -fsSL -X DELETE -H "$AUTH" "$API/images/$id" \
+                  && echo "Deleted leftover snapshot $id ($SNAP_NAME)"
+              fi
+            done
+            [ "$PENDING" = 0 ] && exit 0
+            echo "Attempt $attempt: snapshot $SNAP_NAME still creating; sleeping 10s..."
+            sleep 10
+          done
+          echo "::warning::snapshot $SNAP_NAME still creating; smoke-test-cleanup.yml will reap it"
 
   # ===========================================================================
   # Incus / LXC (local on runner)
