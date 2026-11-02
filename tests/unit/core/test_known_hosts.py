@@ -6,8 +6,8 @@ from remo_cli.core.config import get_registry_backup_path
 from remo_cli.core.known_hosts import (
     clear_known_hosts_by_prefix,
     clear_known_hosts_by_type,
-    get_aws_region,
     get_known_hosts,
+    no_hosts_message,
     remove_known_host,
     resolve_remo_host_by_name,
     save_known_host,
@@ -319,94 +319,41 @@ class TestClearKnownHostsByPrefix:
 
 
 # -----------------------------------------------------------------------
-# get_aws_region()
+# no_hosts_message()
 # -----------------------------------------------------------------------
 
 
-class TestGetAwsRegion:
-    """AWS region resolution."""
+class TestNoHostsMessage:
+    """The empty-registry hint names what is installed, not a fixed list."""
 
-    def test_returns_region_from_matching_host(self, tmp_config_dir, monkeypatch):
-        """Returns region stored in the matching AWS host entry."""
-        monkeypatch.delenv("AWS_REGION", raising=False)
-        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
-        save_known_host(
-            _make_host(
-                type_="aws",
-                name="devbox",
-                host="1.2.3.4",
-                instance_id="i-abc",
-                access_mode="ssm",
-                region="eu-west-1",
-            )
+    def test_names_every_registered_provider_and_remo_add(self):
+        from remo_cli.core.provider_registry import all_descriptors
+
+        message = no_hosts_message()
+        assert message.startswith("No remo environments registered.")
+        for descriptor in all_descriptors():
+            assert f"  remo {descriptor.type_name} create" in message
+        assert message.rstrip().endswith("remo add NAME [user@]host[:port]")
+
+    def test_follows_the_registry_not_a_literal(self):
+        from remo_cli.core.provider_registry import (
+            ConnectionSpec,
+            NameFormat,
+            ProviderDescriptor,
+            temporary_registration,
         )
-        assert get_aws_region("devbox") == "eu-west-1"
 
-    def test_falls_back_to_aws_region_env(self, tmp_config_dir, monkeypatch):
-        """Falls back to AWS_REGION env var when host has no region."""
-        monkeypatch.setenv("AWS_REGION", "ap-southeast-1")
-        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
-        save_known_host(
-            _make_host(
-                type_="aws",
-                name="devbox",
-                host="1.2.3.4",
-                instance_id="i-abc",
-                access_mode="ssm",
-                region="",
-            )
+        madeup = ProviderDescriptor(
+            type_name="madeup",
+            display_name="Made Up",
+            default_instance_name="",
+            name_format=NameFormat.FLAT,
+            registry_fields=(),
+            connection=ConnectionSpec(),
+            implementation="remo_cli.providers._nonexistent_madeup_module",
         )
-        assert get_aws_region("devbox") == "ap-southeast-1"
-
-    def test_falls_back_to_aws_default_region_env(self, tmp_config_dir, monkeypatch):
-        """Falls back to AWS_DEFAULT_REGION when AWS_REGION is unset."""
-        monkeypatch.delenv("AWS_REGION", raising=False)
-        monkeypatch.setenv("AWS_DEFAULT_REGION", "sa-east-1")
-        save_known_host(
-            _make_host(
-                type_="aws",
-                name="devbox",
-                host="1.2.3.4",
-                instance_id="i-abc",
-                access_mode="ssm",
-            )
-        )
-        assert get_aws_region("devbox") == "sa-east-1"
-
-    def test_falls_back_to_us_west_2(self, tmp_config_dir, monkeypatch):
-        """Falls back to 'us-west-2' when no region info is available."""
-        monkeypatch.delenv("AWS_REGION", raising=False)
-        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
-        assert get_aws_region("nonexistent") == "us-west-2"
-
-    def test_ignores_non_matching_host(self, tmp_config_dir, monkeypatch):
-        """Does not use region from a different AWS host."""
-        monkeypatch.delenv("AWS_REGION", raising=False)
-        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
-        save_known_host(
-            _make_host(
-                type_="aws",
-                name="other-box",
-                host="1.2.3.4",
-                instance_id="i-abc",
-                access_mode="ssm",
-                region="eu-west-1",
-            )
-        )
-        assert get_aws_region("devbox") == "us-west-2"
-
-    def test_ignores_non_aws_host(self, tmp_config_dir, monkeypatch):
-        """Ignores non-aws hosts even if they have matching names."""
-        monkeypatch.delenv("AWS_REGION", raising=False)
-        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
-        save_known_host(_make_host(type_="incus", name="devbox"))
-        assert get_aws_region("devbox") == "us-west-2"
-
-    def test_aws_region_env_priority_over_default_region(self, tmp_config_dir, monkeypatch):
-        """AWS_REGION takes priority over AWS_DEFAULT_REGION."""
-        monkeypatch.setenv("AWS_REGION", "us-east-1")
-        monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-1")
-        assert get_aws_region("nonexistent") == "us-east-1"
+        with temporary_registration(madeup):
+            assert "  remo madeup create" in no_hosts_message()
 
 
 # -----------------------------------------------------------------------

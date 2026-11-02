@@ -116,7 +116,13 @@ class CommandSpec:
 
 @dataclass(frozen=True)
 class SshProxyPlan:
-    """What ``ConnectionSpec.proxy_hook`` returns for a proxied SSH connection."""
+    """What ``ConnectionSpec.proxy_hook`` returns for a proxied SSH connection.
+
+    Public plugin API (docs/provider-plugins.md#connection-hooks): every ssh
+    argv remo builds for the host -- ``remo shell``, ``remo cp``, discovery,
+    the web terminal -- uses ``ProxyCommand=<proxy_command>``, connects to
+    ``ssh_target`` instead of ``user@host``, and appends ``extra_opts``.
+    """
 
     proxy_command: str
     ssh_target: str
@@ -125,10 +131,19 @@ class SshProxyPlan:
 
 @dataclass(frozen=True)
 class ConnectionSpec:
-    """How to reach a provider's instances over SSH."""
+    """How to reach a provider's instances over SSH.
+
+    Both hooks are dotted paths, imported only when a host of this type is
+    connected to, so a descriptor stays importable without the provider's SDK.
+    Public plugin API: docs/provider-plugins.md#connection-hooks.
+    """
 
     mode_field_aware: bool = False
     proxy_hook: str | None = None  # dotted path: (KnownHost) -> SshProxyPlan | None
+    # dotted path: (KnownHost) -> KnownHost. Runs before `remo shell`/`remo
+    # resume` talk to the host; may start a stopped instance and return the
+    # refreshed entry (new address). Raises the core/errors.py taxonomy.
+    pre_connect_hook: str | None = None
 
 
 # ---------------------------------------------------------------------------

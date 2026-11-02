@@ -51,7 +51,7 @@ def test_unconfigured_ssh_host_connects_without_prompting(runner, mocker) -> Non
     """
     mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=_ssh_host())
     mocker.patch(
-        "remo_cli.providers.aws.auto_start_aws_if_stopped",
+        "remo_cli.core.ssh.run_pre_connect_hook",
         side_effect=lambda h: h,
     )
     mocker.patch(
@@ -81,7 +81,7 @@ def test_stale_configured_ssh_host_is_offered_remo_configure(runner, mocker) -> 
     """
     mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=_ssh_host())
     mocker.patch(
-        "remo_cli.providers.aws.auto_start_aws_if_stopped",
+        "remo_cli.core.ssh.run_pre_connect_hook",
         side_effect=lambda h: h,
     )
     mocker.patch(
@@ -106,7 +106,7 @@ def test_stale_configured_ssh_host_is_offered_remo_configure(runner, mocker) -> 
 def test_ssh_host_ahead_of_client_warns_like_any_other(runner, mocker) -> None:
     mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=_ssh_host())
     mocker.patch(
-        "remo_cli.providers.aws.auto_start_aws_if_stopped",
+        "remo_cli.core.ssh.run_pre_connect_hook",
         side_effect=lambda h: h,
     )
     mocker.patch(
@@ -130,7 +130,7 @@ def test_managed_host_still_runs_version_check(runner, mocker) -> None:
     # Contrast: a provider host DOES get the version check (gate is type-specific).
     mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=_incus_host())
     mocker.patch(
-        "remo_cli.providers.aws.auto_start_aws_if_stopped",
+        "remo_cli.core.ssh.run_pre_connect_hook",
         side_effect=lambda h: h,
     )
     mocker.patch(

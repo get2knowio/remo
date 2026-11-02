@@ -57,10 +57,8 @@ Rules the built-ins follow and plugins must too:
   without it, the entry is preserved verbatim and reported, never dropped.
 - `registry_legacy_keys` (optional) lists `(old_json_key, attribute)` pairs to
   read when the current key is absent — a lazy key migration.
-- `ConnectionSpec(mode_field_aware=True)` opts the provider into the
-  `access: ssm` handling; `proxy_hook="acme_provider.provider.ssh_proxy_hook"`
-  names a function `(KnownHost) -> SshProxyPlan | None` that returns an SSH
-  `ProxyCommand` plan (see `providers/aws.py:ssh_proxy_hook` for the shape).
+- `ConnectionSpec` says how remo reaches your instances; see
+  [Connection hooks](#connection-hooks).
 - `sync_scope_description` (optional) is a `str.format` template with `{host}`
   / `{region}` used by `remo <type> sync`'s plan header.
 - Shared options (`NAME`, `HOST`, `REGION`, `VOLUME_SIZE`, …) come from the
@@ -92,6 +90,43 @@ acme = "acme_provider.descriptor:DESCRIPTOR"
 ```
 
 The object may also be a zero-argument callable that returns the descriptor.
+
+### Connection hooks
+
+Everything remo does with a host — `remo shell`, `remo resume`, `remo cp`,
+discovery, the web terminal — goes over SSH. `ConnectionSpec` is how a provider
+changes that path without core knowing its name. Both hooks are dotted paths,
+imported only when a host of your type is being connected to, so your
+descriptor stays importable without your SDK:
+
+```python
+from remo_cli.core.provider_registry import ConnectionSpec, SshProxyPlan
+
+connection=ConnectionSpec(
+    mode_field_aware=True,
+    proxy_hook="acme_provider.provider.ssh_proxy_hook",
+    pre_connect_hook="acme_provider.provider.start_if_stopped",
+)
+```
+
+- `mode_field_aware=True` opts the type into the registry's `access` field
+  (`direct` / `ssm`); without it every entry is `direct`.
+- `proxy_hook` — `(KnownHost) -> SshProxyPlan | None`. Return `None` to connect
+  straight to `user@host`. Return an `SshProxyPlan(proxy_command, ssh_target,
+  extra_opts=())` and every ssh argv remo builds for that host uses
+  `-o ProxyCommand=<proxy_command>`, connects to `ssh_target` instead of
+  `user@host`, and appends `extra_opts`. The built-in AWS provider's
+  `ssh_proxy_hook` (an `aws ssm start-session` ProxyCommand) is the worked
+  example.
+- `pre_connect_hook` — `(KnownHost) -> KnownHost`. Runs before `remo shell`
+  and `remo resume` talk to the host. Use it to start a stopped instance and
+  return the refreshed entry (a new address); return the host unchanged when
+  there is nothing to do. Raise `remo_cli.core.errors` types — a
+  `PreconditionError` is printed and becomes exit 1. AWS's
+  `auto_start_aws_if_stopped` is the worked example.
+
+Both are SSH-shaped. A provider whose instances are not reachable over SSH at
+all has no seam yet (#223).
 
 ### 4. Shipping Ansible playbooks
 
@@ -164,6 +199,11 @@ The console's OpenAPI contract enumerates only the built-in types
 plain string and the console presents them through its runtime fallback. That
 is by design (spec 020 FR-004a): installing a plugin must never change the
 generated artifacts.
+
+The service shows a host only when its type's provider is installed *in the
+service's own environment*. The published `remo-web` image installs every
+first-party plugin; a third-party plugin needs an image built with it
+installed, or its hosts are left out of the console (the registry keeps them).
 
 ## First-party plugins
 

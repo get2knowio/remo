@@ -359,6 +359,77 @@ class TestResolveRemoHost:
 
 
 # ---------------------------------------------------------------------------
+# run_pre_connect_hook (ConnectionSpec.pre_connect_hook, #258)
+# ---------------------------------------------------------------------------
+
+
+def _hook_descriptor(type_name: str, hook: str | None):
+    from remo_cli.core.provider_registry import ConnectionSpec, NameFormat, ProviderDescriptor
+
+    return ProviderDescriptor(
+        type_name=type_name,
+        display_name=type_name,
+        default_instance_name="",
+        name_format=NameFormat.FLAT,
+        registry_fields=(),
+        connection=ConnectionSpec(pre_connect_hook=hook),
+        implementation="remo_cli.providers._nonexistent_hook_module",
+    )
+
+
+#: Started instance the test hook below hands back.
+STARTED = KnownHost(type="hooked", name="box", host="9.9.9.9", user="remo")
+
+
+def started_hook(host: KnownHost) -> KnownHost:
+    return STARTED
+
+
+class TestRunPreConnectHook:
+    def test_declared_hook_runs_and_its_host_is_returned(self):
+        from remo_cli.core.provider_registry import temporary_registration
+        from remo_cli.core.ssh import run_pre_connect_hook
+
+        hook = f"{__name__}.started_hook"
+        with temporary_registration(_hook_descriptor("hooked", hook)):
+            host = KnownHost(type="hooked", name="box", host="", user="remo")
+            assert run_pre_connect_hook(host) is STARTED
+
+    def test_provider_without_hook_returns_host_unchanged(self):
+        from remo_cli.core.provider_registry import temporary_registration
+        from remo_cli.core.ssh import run_pre_connect_hook
+
+        with temporary_registration(_hook_descriptor("unhooked", None)):
+            host = KnownHost(type="unhooked", name="box", host="1.1.1.1", user="remo")
+            assert run_pre_connect_hook(host) is host
+
+    @pytest.mark.parametrize("type_", ["ssh", "not-installed"])
+    def test_added_and_unknown_types_never_resolve_a_hook(self, type_):
+        from remo_cli.core.ssh import run_pre_connect_hook
+
+        host = KnownHost(type=type_, name="box", host="1.1.1.1", user="remo")
+        assert run_pre_connect_hook(host) is host
+
+    def test_hook_errors_propagate(self, mocker):
+        from remo_cli.core.errors import PreconditionError
+        from remo_cli.core.provider_registry import temporary_registration
+        from remo_cli.core.ssh import run_pre_connect_hook
+
+        mocker.patch(f"{__name__}.started_hook", side_effect=PreconditionError("stopping"))
+        with temporary_registration(_hook_descriptor("hooked", f"{__name__}.started_hook")):
+            with pytest.raises(PreconditionError, match="stopping"):
+                run_pre_connect_hook(KnownHost(type="hooked", name="b", host="", user="r"))
+
+    def test_aws_declares_its_auto_start_as_the_hook(self):
+        from remo_cli.core.provider_registry import get_descriptor
+
+        assert (
+            get_descriptor("aws").connection.pre_connect_hook
+            == "remo_cli.providers.aws.auto_start_aws_if_stopped"
+        )
+
+
+# ---------------------------------------------------------------------------
 # require_session_manager_plugin
 # ---------------------------------------------------------------------------
 

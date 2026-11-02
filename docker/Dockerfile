@@ -3,8 +3,9 @@
 # Multi-stage image for `remo web` (010-web-session-interface).
 #
 # Stage 1 (frontend-builder): builds the TypeScript SPA (frontend/) with Node.
-# Stage 2 (wheel-builder):    builds a `remo-cli` wheel with hatchling (no
-#                              build tools ship in the runtime layer).
+# Stage 2 (wheel-builder):    builds the `remo-cli` wheel and every first-party
+#                              provider plugin's wheel (plugins/*) with hatchling
+#                              (no build tools ship in the runtime layer).
 # Stage 3 (runtime):          slim Python runtime that serves the API + the
 #                              built SPA assets, plus the SSH/AWS SSM tooling
 #                              needed to reach session targets.
@@ -28,8 +29,9 @@ RUN npm ci && npm run build
 # ---------------------------------------------------------------------------
 # Stage 2: wheel-builder
 # ---------------------------------------------------------------------------
-# Builds a wheel for remo-cli[web] so the runtime stage doesn't need build
-# tools (hatchling) installed — mirrors the repo-root Dockerfile's approach.
+# Builds the remo-cli wheel plus one wheel per first-party provider plugin
+# (plugins/*, each its own distribution) so the runtime stage doesn't need
+# build tools (hatchling) installed — mirrors the repo-root Dockerfile's approach.
 FROM python:3.14-slim AS wheel-builder
 
 WORKDIR /build
@@ -39,8 +41,9 @@ RUN pip install --no-cache-dir hatchling
 COPY pyproject.toml README.md ./
 COPY src/ src/
 COPY ansible/ ansible/
+COPY plugins/ plugins/
 
-RUN pip wheel --no-deps --wheel-dir /build/wheels .
+RUN pip wheel --no-deps --wheel-dir /build/wheels . plugins/*/
 
 # ---------------------------------------------------------------------------
 # Stage 3: runtime
@@ -95,9 +98,14 @@ RUN useradd -u 1000 -m -s /bin/bash remo
 # — avoids needing build tools in this final layer and avoids `pip install
 # --user` (so no PATH fix-up is needed; `remo` / `remo web` land directly on
 # the system PATH for the `remo` user the entrypoint drops to).
-COPY --from=wheel-builder /build/wheels/*.whl /tmp/
-RUN pip install --no-cache-dir "$(ls /tmp/*.whl)[web]" && \
-    rm /tmp/*.whl
+# Every first-party provider plugin's wheel is installed beside it: the
+# console lists a registry entry only when its type's provider is installed,
+# so an image without them would silently hide those hosts (#258). Each is
+# named by path, so pip never looks for an unpublished plugin on an index.
+COPY --from=wheel-builder /build/wheels/*.whl /tmp/wheels/
+RUN pip install --no-cache-dir "$(ls /tmp/wheels/remo_cli-*.whl)[web]" \
+        $(ls /tmp/wheels/*.whl | grep -v '/remo_cli-') && \
+    rm -r /tmp/wheels
 
 # Bake the Ansible Galaxy collections (023): the embedded CLI's configure
 # jobs need them, and lazy-installing from Galaxy at job time would make the
@@ -106,12 +114,12 @@ RUN pip install --no-cache-dir "$(ls /tmp/*.whl)[web]" && \
 # path, so any uid finds them (PUID/PGID overrides included). The lock file
 # mirrors core/ansible_runner._ensure_collections' marker (sha256 of
 # requirements.yml); the entrypoint seeds it into REMO_HOME so the runtime
-# install short-circuits.
-COPY ansible/requirements.yml /tmp/requirements.yml
-RUN ansible-galaxy collection install -r /tmp/requirements.yml \
-        -p /usr/share/ansible/collections && \
-    sha256sum /tmp/requirements.yml | cut -d' ' -f1 > /app/collections.lock && \
-    rm /tmp/requirements.yml
+# install short-circuits. Each installed provider plugin's requirements.yml
+# is baked the same way under its own marker (docker/bake_collections.py);
+# the entrypoint seeds every marker in /app/collections-seed.
+COPY docker/bake_collections.py /tmp/bake_collections.py
+RUN python /tmp/bake_collections.py /app/collections-seed && \
+    rm /tmp/bake_collections.py
 
 # Built frontend assets, placed where REMO_WEB_FRONTEND_DIST_DIR (below)
 # points the running service at.

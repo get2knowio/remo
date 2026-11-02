@@ -21,6 +21,11 @@ PROVIDER_NEUTRAL_MODULES = (
     CORE / "provider_registry.py",
     CORE / "registry.py",
     CORE / "reconcile.py",
+    # #221/#258: the connection and host-resolution helpers, once the AWS
+    # region lookup and pre-connect start moved behind ConnectionSpec.
+    CORE / "known_hosts.py",
+    CORE / "ssh.py",
+    CORE / "picker.py",
 )
 
 ALLOWLIST: set[tuple[str, int]] = set()

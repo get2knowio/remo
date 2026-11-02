@@ -24,7 +24,6 @@ from remo_cli.core.errors import (
     UserAbortedError,
 )
 from remo_cli.core.known_hosts import (
-    get_aws_region,
     get_known_hosts,
     guard_not_added_ssh_host,
     save_known_host,
@@ -57,8 +56,34 @@ from remo_cli.models.host import KnownHost
 from remo_cli.models.snapshot import Snapshot, SnapshotStatus
 
 
+def get_aws_region(name: str) -> str:
+    """Return the AWS region for the named host.
+
+    Resolution order:
+    1. ``region`` field of the matching AWS entry in the registry (if non-empty)
+    2. ``AWS_REGION`` environment variable
+    3. ``AWS_DEFAULT_REGION`` environment variable
+    4. Hard-coded fallback ``"us-west-2"``
+
+    Lives with the provider, not in core/known_hosts.py (#221): core names no
+    provider type.
+    """
+    for host in get_known_hosts(type_filter="aws"):
+        if host.name == name and host.region:
+            return host.region
+
+    return (
+        os.environ.get("AWS_REGION")
+        or os.environ.get("AWS_DEFAULT_REGION")
+        or "us-west-2"
+    )
+
+
 def auto_start_aws_if_stopped(host: KnownHost) -> KnownHost:
     """Start an AWS instance if it is stopped, then return the updated host.
+
+    The descriptor's ``ConnectionSpec.pre_connect_hook``: `remo shell` and
+    `remo resume` call it for every AWS host before connecting.
 
     Only acts when ``host.type == "aws"`` and ``host.instance_id`` is set.
     Queries the EC2 instance state via boto3.  If the instance is stopped it
