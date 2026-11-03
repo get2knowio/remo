@@ -1,5 +1,25 @@
 # Changelog
 
+## [5.0.0](https://github.com/get2knowio/remo/compare/v4.4.2...v5.0.0) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **providers:** AWS support requires `remo-cli[ec2]`; the provider type and CLI group are `ec2` (`remo aws` remains as a deprecated alias).
+
+### Features
+
+* **cli:** `remo resume` puts each terminal tab back in its own session (spec 028) ([#249](https://github.com/get2knowio/remo/issues/249)) ([a90ea9b](https://github.com/get2knowio/remo/commit/a90ea9b2dc430c74b508ed9213620ba040bd60df))
+* **providers:** ship AWS as the remo-provider-ec2 plugin, type renamed aws -&gt; ec2 ([#258](https://github.com/get2knowio/remo/issues/258)) ([#261](https://github.com/get2knowio/remo/issues/261)) ([0267c99](https://github.com/get2knowio/remo/commit/0267c992730a84dbf13e1cf9d3cceb701265eba7))
+* **providers:** ship Hetzner as the remo-provider-hetzner plugin ([#222](https://github.com/get2knowio/remo/issues/222)) ([#259](https://github.com/get2knowio/remo/issues/259)) ([ff15057](https://github.com/get2knowio/remo/commit/ff15057cb7ed74206552b307e8acec2a4ac502da))
+
+
+### Bug Fixes
+
+* **ansible:** defer a zellij upgrade while sessions are live ([#242](https://github.com/get2knowio/remo/issues/242)) ([46617a3](https://github.com/get2knowio/remo/commit/46617a368598f4efcd42efa4f73f8edaa54c338f))
+* **ci:** cleanup actually matches AWS CI resources; reap Hetzner volumes/firewalls ([#265](https://github.com/get2knowio/remo/issues/265)) ([890e6c1](https://github.com/get2knowio/remo/commit/890e6c16cd1e9937ffce8157e6989de5462f1d78))
+* **ci:** never orphan a smoke-test snapshot; reap stale CI snapshots ([#262](https://github.com/get2knowio/remo/issues/262)) ([9891cb7](https://github.com/get2knowio/remo/commit/9891cb7f7c08c7a87cf1c5ae7febf361aa46c40f))
+
 ## [4.4.2](https://github.com/get2knowio/remo/compare/v4.4.1...v4.4.2) (2026-10-04)
 
 
