@@ -38,18 +38,22 @@ jobs:
           role-session-name: remo-cleanup-${{ github.run_id }}
           aws-region: us-west-2
 
+      # Every resource the ec2 plugin creates is tagged
+      # remo_resource_name=<resource>; a smoke run's resource is
+      # ci-<run_id>-aws. Its NAMES are remo-ci-... (instance Name tag
+      # remo-<resource>, key remo-<resource>-key, SG remo-<resource>-sg,
+      # volume remo-<resource>-home), so the old `ci-*` name filters never
+      # matched anything. Filter on the tag instead.
       - name: Terminate stale CI instances
         run: |
-          CUTOFF=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S 2>/dev/null || \
-                   date -u -v-1H +%Y-%m-%dT%H:%M:%S)
-
+          CUTOFF=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S)
           echo "Looking for remo CI instances launched before $CUTOFF..."
 
           INSTANCE_IDS=$(aws ec2 describe-instances \
             --filters \
-              "Name=tag:Name,Values=ci-*" \
+              "Name=tag:remo_resource_name,Values=ci-*" \
               "Name=tag:remo,Values=true" \
-              "Name=instance-state-name,Values=running,stopped" \
+              "Name=instance-state-name,Values=pending,running,stopping,stopped" \
             --query "Reservations[].Instances[?LaunchTime<=\`${CUTOFF}\`].InstanceId" \
             --output text)
 
@@ -60,29 +64,108 @@ jobs:
 
           for id in $INSTANCE_IDS; do
             echo "Terminating stale instance: $id"
-            aws ec2 terminate-instances --instance-ids "$id"
+            aws ec2 terminate-instances --instance-ids "$id" >/dev/null
           done
+          # So the security groups / volumes below are no longer in use.
+          aws ec2 wait instance-terminated --instance-ids $INSTANCE_IDS || true
 
       - name: Clean up orphaned CI resources
         run: |
-          # Delete key pairs with ci- prefix
-          aws ec2 describe-key-pairs \
-            --filters "Name=key-name,Values=ci-*" \
-            --query "KeyPairs[].KeyName" --output text | tr '\t' '\n' | \
-          while read -r name; do
+          CUTOFF=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%S)
+          TAG="Name=tag:remo_resource_name,Values=ci-*"
+
+          # Resource names still owned by a live (non-terminated) CI instance:
+          # an in-flight smoke run's key pair / security group are left alone.
+          LIVE=$(aws ec2 describe-instances --filters "$TAG" \
+              "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query "Reservations[].Instances[].Tags[?Key=='remo_resource_name'].Value[]" \
+            --output text | tr '\t' '\n')
+          live() { grep -qxF "$1" <<<"$LIVE"; }
+
+          echo "== Key pairs"
+          aws ec2 describe-key-pairs --filters "$TAG" \
+            --query "KeyPairs[?CreateTime<=\`${CUTOFF}\`].[KeyName, Tags[?Key=='remo_resource_name'].Value | [0]]" \
+            --output text | \
+          while read -r name owner; do
             [ -z "$name" ] && continue
+            live "$owner" && continue
             echo "Deleting orphaned key pair: $name"
-            aws ec2 delete-key-pair --key-name "$name"
+            aws ec2 delete-key-pair --key-name "$name" || true
           done
 
-          # Delete security groups with ci- prefix (ignore failures from in-use groups)
-          aws ec2 describe-security-groups \
-            --filters "Name=group-name,Values=ci-*" \
-            --query "SecurityGroups[].{Id:GroupId,Name:GroupName}" --output text | \
+          echo "== Security groups"
+          aws ec2 describe-security-groups --filters "$TAG" \
+            --query "SecurityGroups[].[GroupId, GroupName, Tags[?Key=='remo_resource_name'].Value | [0]]" \
+            --output text | \
+          while read -r id name owner; do
+            [ -z "$id" ] && continue
+            live "$owner" && continue
+            echo "Deleting orphaned security group: $name ($id)"
+            aws ec2 delete-security-group --group-id "$id" || true
+          done
+
+          echo "== EBS volumes (unattached)"
+          aws ec2 describe-volumes --filters "$TAG" "Name=status,Values=available" \
+            --query "Volumes[?CreateTime<=\`${CUTOFF}\`].[VolumeId, Tags[?Key=='Name'].Value | [0]]" \
+            --output text | \
           while read -r id name; do
             [ -z "$id" ] && continue
-            echo "Deleting orphaned security group: $name ($id)"
-            aws ec2 delete-security-group --group-id "$id" 2>/dev/null || true
+            echo "Deleting orphaned volume: $name ($id)"
+            aws ec2 delete-volume --volume-id "$id" || true
+          done
+
+          # Elastic IPs: today's role allocates none, but older remo
+          # versions did (named remo-<resource>-eip) and an unassociated
+          # one bills by the hour.
+          echo "== Elastic IPs (unassociated)"
+          aws ec2 describe-addresses --filters "Name=tag:Name,Values=remo-ci-*-eip" \
+            --query "Addresses[?AssociationId==null].[AllocationId, PublicIp]" \
+            --output text | \
+          while read -r alloc ip; do
+            [ -z "$alloc" ] && continue
+            echo "Releasing orphaned Elastic IP: $ip ($alloc)"
+            aws ec2 release-address --allocation-id "$alloc" || true
+          done
+
+          # IAM: `remo ec2 create` makes remo-<resource>-ssm-role/-profile
+          # when no usable SSM profile exists; the playbook deletes them on
+          # teardown. IAM is global and free, but capped per account.
+          echo "== IAM SSM roles / instance profiles"
+          aws iam list-instance-profiles \
+            --query "InstanceProfiles[?starts_with(InstanceProfileName, 'remo-ci-') && CreateDate<=\`${CUTOFF}\`].InstanceProfileName" \
+            --output text | tr '\t' '\n' | \
+          while read -r profile; do
+            [ -z "$profile" ] && continue
+            live "$(sed -E 's/^remo-(.*)-ssm-profile$/\1/' <<<"$profile")" && continue
+            for role in $(aws iam get-instance-profile --instance-profile-name "$profile" \
+                            --query "InstanceProfile.Roles[].RoleName" --output text); do
+              aws iam remove-role-from-instance-profile \
+                --instance-profile-name "$profile" --role-name "$role" || true
+            done
+            echo "Deleting orphaned instance profile: $profile"
+            aws iam delete-instance-profile --instance-profile-name "$profile" || true
+          done
+          aws iam list-roles \
+            --query "Roles[?starts_with(RoleName, 'remo-ci-') && CreateDate<=\`${CUTOFF}\`].RoleName" \
+            --output text | tr '\t' '\n' | \
+          while read -r role; do
+            [ -z "$role" ] && continue
+            live "$(sed -E 's/^remo-(.*)-ssm-role$/\1/' <<<"$role")" && continue
+            for profile in $(aws iam list-instance-profiles-for-role --role-name "$role" \
+                               --query "InstanceProfiles[].InstanceProfileName" --output text); do
+              aws iam remove-role-from-instance-profile \
+                --instance-profile-name "$profile" --role-name "$role" || true
+            done
+            for arn in $(aws iam list-attached-role-policies --role-name "$role" \
+                           --query "AttachedPolicies[].PolicyArn" --output text); do
+              aws iam detach-role-policy --role-name "$role" --policy-arn "$arn" || true
+            done
+            for pol in $(aws iam list-role-policies --role-name "$role" \
+                           --query "PolicyNames[]" --output text); do
+              aws iam delete-role-policy --role-name "$role" --policy-name "$pol" || true
+            done
+            echo "Deleting orphaned IAM role: $role"
+            aws iam delete-role --role-name "$role" || true
           done
 
       # A smoke run that fails or times out while its snapshot is still
@@ -146,6 +229,39 @@ jobs:
             case "$name" in ci-*) ;; *) continue ;; esac
             echo "Deleting orphaned SSH key: $name ($id)"
             hcloud ssh-key delete "$id" 2>/dev/null || true
+          done
+
+      # The volume (ci-<run>-hetzner-home) and firewall
+      # (ci-<run>-hetzner-firewall) are deleted only by the smoke job's own
+      # teardown; if that never runs, the server goes above and these stay.
+      # Only ci-* ones no server uses any more: a volume that is detached
+      # and over an hour old, a firewall applied to nothing.
+      - name: Delete orphaned CI volumes and firewalls
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HETZNER_API_TOKEN }}
+        run: |
+          CUTOFF=$(date -u -d '1 hour ago' +%s)
+          hcloud volume list -o json | \
+            jq -r --argjson cutoff "$CUTOFF" '.[]
+              | select(.name | startswith("ci-"))
+              | select(.server == null)
+              | select((.created | sub("\\+00:00$"; "Z") | fromdateiso8601) <= $cutoff)
+              | "\(.id) \(.name)"' | \
+          while read -r id name; do
+            [ -z "$id" ] && continue
+            echo "Deleting orphaned volume: $name ($id)"
+            hcloud volume delete "$id" || true
+          done
+
+          hcloud firewall list -o json | \
+            jq -r '.[]
+              | select(.name | startswith("ci-"))
+              | select((.applied_to // []) | length == 0)
+              | "\(.id) \(.name)"' | \
+          while read -r id name; do
+            [ -z "$id" ] && continue
+            echo "Deleting orphaned firewall: $name ($id)"
+            hcloud firewall delete "$id" || true
           done
 
       # Same safety net as AWS: a smoke snapshot orphaned by a failed or
