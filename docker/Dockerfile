@@ -32,7 +32,7 @@ RUN npm ci && npm run build
 # Builds the remo-cli wheel plus one wheel per first-party provider plugin
 # (plugins/*, each its own distribution) so the runtime stage doesn't need
 # build tools (hatchling) installed — mirrors the repo-root Dockerfile's approach.
-FROM python:3.14-slim AS wheel-builder
+FROM python:3.15-slim AS wheel-builder
 
 WORKDIR /build
 
@@ -48,7 +48,7 @@ RUN pip wheel --no-deps --wheel-dir /build/wheels . plugins/*/
 # ---------------------------------------------------------------------------
 # Stage 3: runtime
 # ---------------------------------------------------------------------------
-FROM python:3.14-slim AS runtime
+FROM python:3.15-slim AS runtime
 
 # Enables arch-specific package selection below (docker buildx sets this
 # automatically for multi-arch builds; amd64/arm64 per SC-006).
