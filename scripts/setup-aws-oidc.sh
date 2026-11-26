@@ -144,7 +144,7 @@ fi
 # ============================================================================
 # Step 3: Attach inline permissions policy
 # ============================================================================
-PERMISSIONS_POLICY=$(cat <<'EOF'
+PERMISSIONS_POLICY=$(cat <<EOF
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -192,7 +192,10 @@ PERMISSIONS_POLICY=$(cat <<'EOF'
         "ec2:AllocateAddress",
         "ec2:AssociateAddress",
         "ec2:DisassociateAddress",
-        "ec2:ReleaseAddress"
+        "ec2:ReleaseAddress",
+        "ec2:RebootInstances",
+        "ec2:CreateSnapshot",
+        "ec2:DeleteSnapshot"
       ],
       "Resource": "*"
     },
@@ -210,24 +213,47 @@ PERMISSIONS_POLICY=$(cat <<'EOF'
       "Resource": "*"
     },
     {
-      "Sid": "IAMForSSMInstanceProfile",
+      "Sid": "IAMReadForSSMProfileSelectionAndCleanup",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetInstanceProfile",
+        "iam:ListEntitiesForPolicy",
+        "iam:ListInstanceProfilesForRole",
+        "iam:ListRoles",
+        "iam:ListInstanceProfiles",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "IAMPassAnSSMProfileToEC2",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"iam:PassedToService": "ec2.amazonaws.com"}}
+    },
+    {
+      "Sid": "IAMWriteOnlyTheSSMPairRemoCreates",
       "Effect": "Allow",
       "Action": [
         "iam:CreateRole",
+        "iam:TagRole",
         "iam:DeleteRole",
-        "iam:GetRole",
         "iam:AttachRolePolicy",
         "iam:DetachRolePolicy",
+        "iam:DeleteRolePolicy",
         "iam:CreateInstanceProfile",
+        "iam:TagInstanceProfile",
         "iam:DeleteInstanceProfile",
-        "iam:GetInstanceProfile",
         "iam:AddRoleToInstanceProfile",
-        "iam:RemoveRoleFromInstanceProfile",
-        "iam:ListEntitiesForPolicy",
-        "iam:ListInstanceProfilesForRole",
-        "iam:PassRole"
+        "iam:RemoveRoleFromInstanceProfile"
       ],
-      "Resource": "*"
+      "Resource": [
+        "arn:aws:iam::${AWS_ACCOUNT_ID}:role/remo-*-ssm-role",
+        "arn:aws:iam::${AWS_ACCOUNT_ID}:instance-profile/remo-*-ssm-profile"
+      ]
     }
   ]
 }
