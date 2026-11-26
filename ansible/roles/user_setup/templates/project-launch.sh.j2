@@ -158,10 +158,21 @@ if ! $HAS_DC && [[ -n "$EXEC_CMD" ]]; then
         bash -lc "$EXEC_CMD"
 fi
 
+EXEC_STATUS_FILE=""
 if [[ -n "$EXEC_CMD" ]]; then
     # Case 2: pass command through the env var remo-session-shell
     # honors and runs via `bash -lc`.
     export REMO_DEVCONTAINER_CMD="$EXEC_CMD"
+    # The command runs in the session's pane, so its exit status never reaches
+    # zellij's own: remo-session-shell writes it to this per-launch file and it
+    # is read back below (spec 029 US3 #2, issue #279). mktemp makes the name
+    # unique per invocation; the shell writes only to a file that still exists,
+    # so a pane finishing after this launch has stopped waiting leaves nothing.
+    _status_dir="$HOME/.local/state/remo/exec-status"
+    mkdir -p "$_status_dir"
+    EXEC_STATUS_FILE="$(mktemp "$_status_dir/launch.XXXXXX")"
+    export REMO_EXEC_STATUS_FILE="$EXEC_STATUS_FILE"
+    trap 'rm -f "$EXEC_STATUS_FILE"' EXIT
 fi
 
 # Clean up any exited session of the same name (mirrors project-menu)
@@ -180,6 +191,22 @@ fi
 # The session's shell is remo-session-shell (--default-shell, applied when the
 # session is created): it starts the devcontainer for a devcontainer project and
 # otherwise hands over to the user's login shell. No rc file is involved.
-exec zellij attach --create "$PROJECT" options \
+if [[ -z "$EXEC_STATUS_FILE" ]]; then
+    exec zellij attach --create "$PROJECT" options \
+        --default-shell "$HOME/.local/bin/remo-session-shell" \
+        --default-cwd "$PROJECT_DIR"
+fi
+
+# --exec: wait for the session, then exit with the command's status. An empty
+# file means the command never reported one (the user detached, or the session
+# already existed and so never ran it): zellij's own status stands, as before.
+_zellij_rc=0
+zellij attach --create "$PROJECT" options \
     --default-shell "$HOME/.local/bin/remo-session-shell" \
-    --default-cwd "$PROJECT_DIR"
+    --default-cwd "$PROJECT_DIR" || _zellij_rc=$?
+_exec_status="$(cat "$EXEC_STATUS_FILE" 2>/dev/null || true)"
+rm -f "$EXEC_STATUS_FILE"
+if [[ "$_exec_status" =~ ^[0-9]+$ ]]; then
+    exit "$_exec_status"
+fi
+exit "$_zellij_rc"
