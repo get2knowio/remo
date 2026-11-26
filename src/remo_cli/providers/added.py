@@ -21,6 +21,7 @@ from remo_cli.core.config import (
     ADDED_HOST_TYPE,
     DEFAULT_ADDED_HOST_USER,
     DEFAULT_SSH_PORT,
+    LOCAL_HOST_TYPE,
 )
 from remo_cli.core.known_hosts import (
     get_known_hosts,
@@ -484,6 +485,24 @@ def remove(*, name: str, assume_yes: bool = False) -> int:
             f"(list with 'remo shell' to see registered environments)"
         )
         return 1
+
+    if existing.type == LOCAL_HOST_TYPE:
+        # Spec 029: the local host deregisters like an added one; its scripts,
+        # state and project list stay on disk (re-run `remo local setup`).
+        if not assume_yes:
+            if not confirm(
+                f"Deregister the local host '{name}'? Its scripts and project "
+                f"list stay; 'remo local setup' registers it again.",
+                default=False,
+            ):
+                print_info("Aborted; no changes made.")
+                return 1
+        remove_known_host(LOCAL_HOST_TYPE, name)
+        print_success(
+            f"Removed '{name}' from the registry. Scripts and the project list "
+            f"were left in place; run 'remo local setup' to register it again."
+        )
+        return 0
 
     if existing.type != ADDED_HOST_TYPE:
         print_error(

@@ -10,7 +10,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from remo_cli.core.errors import ProviderError, UserAbortedError
-from remo_cli.core.known_hosts import guard_not_added_ssh_host, remove_known_host
+from remo_cli.core.known_hosts import (
+    guard_not_added_ssh_host,
+    guard_not_local_host,
+    remove_known_host,
+)
 from remo_cli.core.output import confirm, print_error, print_info, print_warning
 from remo_cli.core.snapshot import handle_destroy_snapshot_cleanup
 from remo_cli.models.host import KnownHost
@@ -32,7 +36,7 @@ def run_destroy(
 ) -> None:
     """Destroy *entry*. Ordering is normative (Edge Case "Interrupted destroy").
 
-    1. Added-host guard (``type == "ssh"``) -> ``PreconditionError``.
+    1. Added-host / local-host guards (``type == "ssh"`` / ``"local"``) -> ``PreconditionError``.
     2. Snapshot pre-cleanup (``core.snapshot.handle_destroy_snapshot_cleanup``).
     3. Confirmation unless *auto_confirm* -> ``UserAbortedError`` (exit 3) on decline.
     4. ``teardown()`` — the only provider-specific step.
@@ -40,6 +44,7 @@ def run_destroy(
        removal failures warn but never mask a real teardown failure.
     """
     guard_not_added_ssh_host(display_name, type_name)
+    guard_not_local_host(display_name, type_name)
 
     try:
         pre_destroy_snapshots = list_snapshots()

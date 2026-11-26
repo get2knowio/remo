@@ -36,6 +36,23 @@ for mod in hcloud boto3 botocore; do
   "$bin/python" -c "import $mod" 2>/dev/null && fail "$mod installed by remo-cli alone"
 done
 core_mb="$(site_mb "$bin")"
+# 029: the local host ships in the wheel -- the group, its playbook, the shared
+# script-render task file and the two new templates (package data, Principle IX).
+local_help="$("$bin/remo" local --help)"
+for verb in setup check add remove list; do
+  grep -qE "^\s+$verb\b" <<<"$local_help" || fail "'remo local' lacks $verb"
+done
+"$bin/python" - <<'EOF'
+from remo_cli.core.config import get_ansible_dir
+
+core = get_ansible_dir()
+for name in ("local_setup.yml",
+             "roles/user_setup/tasks/host_scripts.yml",
+             "roles/user_setup/templates/remo-lib.sh.j2",
+             "roles/user_setup/templates/remo-session-shell.sh.j2"):
+    assert (core / name).is_file(), f"{name} missing from the remo-cli wheel ({core})"
+print(f"OK: local-host playbook and templates are in the wheel ({core})")
+EOF
 meta="$("$bin/python" -c 'from importlib.metadata import metadata; print("\n".join(metadata("remo-cli").get_all("Requires-Dist") or []))')"
 grep -qxE "remo-provider-hetzner; extra == [\"']hetzner[\"']" <<<"$meta" || fail "remo-cli lacks the [hetzner] extra: $meta"
 grep -qxE "remo-provider-ec2; extra == [\"']ec2[\"']" <<<"$meta" || fail "remo-cli lacks the [ec2] extra: $meta"

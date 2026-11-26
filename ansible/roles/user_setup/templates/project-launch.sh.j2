@@ -1,4 +1,4 @@
-#!/bin/bash
+#!{{ remo_bash_path | default('/bin/bash') }}
 # project-launch - Launch a project session non-interactively.
 # Managed by Ansible - do not edit manually
 #
@@ -11,14 +11,14 @@
 # Modes:
 #   Interactive (default):
 #       Acts like "pick NAME in project-menu". Drops into the project's
-#       zellij session; the existing .bashrc DEVCONTAINER block brings
-#       up the devcontainer and execs the user's shell (or SHELL_COMMAND
+#       zellij session whose default shell is remo-session-shell,
+#       which brings up the devcontainer and execs the user's shell (or SHELL_COMMAND
 #       when --exec is supplied — passed via REMO_DEVCONTAINER_CMD).
 #
 #   Detached (--detach):
 #       Requires --exec. Brings up the devcontainer (or runs on the
 #       host project dir if no .devcontainer), launches the command in
-#       the background via nohup+setsid + `bash -lc`, captures
+#       the background via remo_detach (nohup, +setsid where present) + `bash -lc`, captures
 #       stdout/stderr to ~/.local/state/remo/<project>.log, and
 #       returns immediately.
 #
@@ -29,6 +29,13 @@
 set -e
 
 PROJECTS_DIR="{{ dev_workspace_dir }}"
+
+# Shared helpers (project index resolver, portability shims): beside this
+# script, else in ~/.local/bin.
+REMO_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/remo-lib.sh"
+[ -r "$REMO_LIB_PATH" ] || REMO_LIB_PATH="$HOME/.local/bin/remo-lib.sh"
+# shellcheck source=/dev/null
+. "$REMO_LIB_PATH"
 
 # Pin zellij's session namespace. zellij keeps session sockets in
 # $XDG_RUNTIME_DIR/zellij, falling back to /tmp/zellij-$UID when that variable
@@ -79,7 +86,10 @@ if [[ -z "$PROJECT" ]]; then
     exit 2
 fi
 
-PROJECT_DIR="$PROJECTS_DIR/$PROJECT"
+# Resolve through the project index, then PROJECTS_DIR; an unknown name is
+# reported against PROJECTS_DIR, where it would have been looked up before —
+# or ~/projects (where a clone lands) on a host with none, never "/$PROJECT".
+PROJECT_DIR="$(remo_project_path "$PROJECT")" || PROJECT_DIR="${PROJECTS_DIR:-$HOME/projects}/$PROJECT"
 if [[ ! -d "$PROJECT_DIR" ]]; then
     echo "project-launch: project not found: $PROJECT_DIR" >&2
     exit 1
@@ -112,13 +122,13 @@ if $DETACH; then
     if $HAS_DC; then
         echo "Bringing up devcontainer for $PROJECT..."
         {{ devcontainer_cli_bin }} up --workspace-folder "$PROJECT_DIR" {{ devcontainer_up_extra_args }} >/dev/null
-        printf -- '----- %s detached launch: %s -----\n' "$(date -Iseconds)" "$EXEC_CMD" >>"$LOG_FILE"
-        nohup setsid {{ devcontainer_cli_bin }} exec --workspace-folder "$PROJECT_DIR" \
+        printf -- '----- %s detached launch: %s -----\n' "$(remo_iso_now)" "$EXEC_CMD" >>"$LOG_FILE"
+        remo_detach {{ devcontainer_cli_bin }} exec --workspace-folder "$PROJECT_DIR" \
             env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
             bash -lc "$EXEC_CMD" >>"$LOG_FILE" 2>&1 </dev/null &
     else
-        printf -- '----- %s detached launch: %s -----\n' "$(date -Iseconds)" "$EXEC_CMD" >>"$LOG_FILE"
-        nohup setsid env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
+        printf -- '----- %s detached launch: %s -----\n' "$(remo_iso_now)" "$EXEC_CMD" >>"$LOG_FILE"
+        remo_detach env REMO_INSTANCE="$REMO_INSTANCE" REMO_PROJECT="$PROJECT" \
             bash -lc "$EXEC_CMD" >>"$LOG_FILE" 2>&1 </dev/null &
     fi
 
@@ -149,13 +159,13 @@ if ! $HAS_DC && [[ -n "$EXEC_CMD" ]]; then
 fi
 
 if [[ -n "$EXEC_CMD" ]]; then
-    # Case 2: pass command through env var that .bashrc DEVCONTAINER block
+    # Case 2: pass command through the env var remo-session-shell
     # honors and runs via `bash -lc`.
     export REMO_DEVCONTAINER_CMD="$EXEC_CMD"
 fi
 
 # Clean up any exited session of the same name (mirrors project-menu)
-if zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -q "^$PROJECT.*EXITED"; then
+if zellij list-sessions 2>/dev/null | remo_strip_ansi | grep -q "^$PROJECT.*EXITED"; then
     zellij delete-session "$PROJECT" 2>/dev/null || true
 fi
 
@@ -167,4 +177,9 @@ if [ -n "${REMO_TAB_KEY:-}" ]; then
     "$HOME/.local/bin/remo-host" sessions record --key "$REMO_TAB_KEY" --project "$PROJECT" >/dev/null 2>&1 || true
 fi
 
-exec zellij attach --create "$PROJECT"
+# The session's shell is remo-session-shell (--default-shell, applied when the
+# session is created): it starts the devcontainer for a devcontainer project and
+# otherwise hands over to the user's login shell. No rc file is involved.
+exec zellij attach --create "$PROJECT" options \
+    --default-shell "$HOME/.local/bin/remo-session-shell" \
+    --default-cwd "$PROJECT_DIR"

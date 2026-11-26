@@ -127,6 +127,17 @@ class KnownHost:
         return None
 
     @property
+    def projects_dir(self) -> str:
+        """Configured projects folder of the ``local`` host, ``""`` otherwise.
+
+        Rides the ``region`` slot exactly as ``ssh`` rides it for the identity
+        path (feature 029); only the ``local`` type reads it.
+        """
+        from remo_cli.core.config import LOCAL_HOST_TYPE
+
+        return self.region if self.type == LOCAL_HOST_TYPE else ""
+
+    @property
     def display_region(self) -> str:
         """``region`` when it really is a region, ``""`` when the slot is reused.
 
@@ -140,7 +151,7 @@ class KnownHost:
         a "region" but is neither secret nor new; it is left alone deliberately
         so this fix does not silently change what Proxmox users see.
         """
-        return "" if self.type == "ssh" else (self.region or "")
+        return "" if self.type in ("ssh", "local") else (self.region or "")
 
     # ------------------------------------------------------------------
     # Display

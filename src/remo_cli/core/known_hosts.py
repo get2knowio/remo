@@ -68,11 +68,13 @@ def upgrade_command_for(host: KnownHost) -> str:
       (for an unknown type this still names the type that is actually wrong;
       ``remo shell`` refuses to run it).
     """
-    from remo_cli.core.config import ADDED_HOST_TYPE  # noqa: PLC0415
+    from remo_cli.core.config import ADDED_HOST_TYPE, LOCAL_HOST_TYPE  # noqa: PLC0415
     from remo_cli.core.provider_registry import get_descriptor  # noqa: PLC0415
 
     if host.type == ADDED_HOST_TYPE:
         return f"remo configure {host.name}"
+    if host.type == LOCAL_HOST_TYPE:
+        return "remo local setup"
 
     if _is_host_scoped_type(host.type) and "/" in host.name:
         host_part, _, short_name = host.name.partition("/")
@@ -262,6 +264,29 @@ def guard_not_added_ssh_host(name: str, provider: str) -> None:
     )
 
 
+def guard_not_local_host(name: str, provider: str) -> None:
+    """Fail clearly when *name* is this machine's ``local`` host (spec 029).
+
+    The sibling of :func:`guard_not_added_ssh_host`: the local host has no
+    managed provider infrastructure, so a provider lifecycle verb that
+    resolves *name* would mis-target. A same-type managed host of the same
+    name legitimately wins and is let through.
+    """
+    from remo_cli.core.config import LOCAL_HOST_TYPE  # noqa: PLC0415
+    from remo_cli.core.errors import PreconditionError  # noqa: PLC0415
+
+    all_hosts = get_known_hosts()
+    if not any(h.type == LOCAL_HOST_TYPE and h.name == name for h in all_hosts):
+        return
+    if any(h.type == provider and h.name == name for h in all_hosts):
+        return
+    raise PreconditionError(
+        f"'{name}' is this machine's local host, with no managed {provider} "
+        f"infrastructure. Use 'remo remove {name}' to deregister it "
+        f"(its scripts and project list stay; 'remo local setup' restores it)."
+    )
+
+
 def guard_added_ssh_host_only(name: str) -> KnownHost:
     """Return *name*'s added-SSH entry, or raise explaining what to run instead.
 
@@ -273,10 +298,16 @@ def guard_added_ssh_host_only(name: str) -> KnownHost:
     (#121) — so a mis-target would *succeed* while configuring the host wrongly.
     Refusing is the only behavior whose failure mode is a message.
     """
-    from remo_cli.core.config import ADDED_HOST_TYPE  # noqa: PLC0415
+    from remo_cli.core.config import ADDED_HOST_TYPE, LOCAL_HOST_TYPE  # noqa: PLC0415
     from remo_cli.core.errors import PreconditionError  # noqa: PLC0415
 
     hosts = get_known_hosts()
+
+    if any(h.type == LOCAL_HOST_TYPE and h.name == name for h in hosts):
+        raise PreconditionError(
+            f"'{name}' is this machine's local host; there is nothing to "
+            f"configure over SSH. Refresh its tools with: remo local setup"
+        )
 
     entry = next(
         (h for h in hosts if h.type == ADDED_HOST_TYPE and h.name == name), None

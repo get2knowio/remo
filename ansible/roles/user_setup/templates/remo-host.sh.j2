@@ -1,4 +1,4 @@
-#!/bin/bash
+#!{{ remo_bash_path | default('/bin/bash') }}
 # remo-host - Machine-readable discovery/attach protocol for the Remo web
 # session interface. See specs/010-web-session-interface/contracts/
 # remo-host-protocol.md for the full contract (JSON shapes, versioning).
@@ -11,6 +11,9 @@
 #   remo-host sessions lookup --key KEY --json
 #   remo-host host stats --json
 #   remo-host projects clone --repo OWNER/REPO|URL [--name NAME] --json
+#   remo-host projects add --path PATH [--name NAME] --json
+#   remo-host projects remove --project NAME --json
+#   remo-host projects list --json
 #   remo-host projects delete --project NAME --json
 #   remo-host projects rebuild --project NAME [--no-cache] --json
 #   remo-host jobs status --job ID --json
@@ -35,6 +38,13 @@ set -e
 
 PROTOCOL_VERSION=1
 PROJECTS_DIR="{{ dev_workspace_dir }}"
+
+# Shared helpers: the project index resolver and the portability shims. Found
+# beside this script, else in ~/.local/bin (a symlinked invocation).
+REMO_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/remo-lib.sh"
+[ -r "$REMO_LIB_PATH" ] || REMO_LIB_PATH="$HOME/.local/bin/remo-lib.sh"
+# shellcheck source=/dev/null
+. "$REMO_LIB_PATH"
 
 # Pin zellij's session namespace. zellij keeps session sockets in
 # $XDG_RUNTIME_DIR/zellij, falling back to /tmp/zellij-$UID when that variable
@@ -126,7 +136,7 @@ cmd_capabilities() {
         rebuild_op=',"projects.rebuild"'
     fi
 
-    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach","sessions.lookup","host.stats","projects.clone","projects.delete"%s,"jobs.status"],"zellij":%s,"docker":%s}\n' \
+    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach","sessions.lookup","host.stats","projects.clone","projects.delete"%s,"projects.add","projects.remove","projects.list","jobs.status"],"zellij":%s,"docker":%s}\n' \
         "$PROTOCOL_VERSION" \
         "$(json_escape "$version")" \
         "$(json_escape "$PROJECTS_DIR")" \
@@ -164,7 +174,7 @@ load_zellij_states() {
             else
                 ZELLIJ_STATES["$sess_name"]="active"
             fi
-        done < <(zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+        done < <(zellij list-sessions 2>/dev/null | remo_strip_ansi)
     fi
 }
 
@@ -186,10 +196,13 @@ cmd_sessions_list() {
     local dir name has_dc zellij_state devcontainer_running container_id entry
     local git_tracked git_dirty git_ahead git_behind git_counts
 
-    if [[ -d "$PROJECTS_DIR" ]]; then
-        while IFS= read -r dir; do
-            [[ -z "$dir" ]] && continue
-            name="$(basename "$dir")"
+    # Explicit index records plus the PROJECTS_DIR subdirectories, through the
+    # one resolver; only live ("ok") projects are reported here.
+    local plist src pstatus
+    plist="$(remo_project_list)" || exit 5
+    if [[ -n "$plist" ]]; then
+        while IFS=$'\t' read -r name dir src pstatus; do
+            [[ "$pstatus" == "ok" ]] || continue
 
             has_dc="false"
             if [[ -d "$dir/.devcontainer" ]] || [[ -f "$dir/.devcontainer.json" ]]; then
@@ -239,7 +252,7 @@ cmd_sessions_list() {
             else
                 projects_json="$projects_json,$entry"
             fi
-        done < <(find "$PROJECTS_DIR" -maxdepth 1 -mindepth 1 -type d ! -name '.*' 2>/dev/null | sort)
+        done <<<"$plist"
     fi
 
     printf '{"protocol_version":%d,"projects_root":"%s","projects":[%s]}\n' \
@@ -252,48 +265,17 @@ cmd_sessions_list() {
 # sessions attach --project NAME
 # ---------------------------------------------------------------------------
 
-# Validate a project name before any launch (FR-011). Prints a diagnostic to
-# stderr and returns non-zero on the first violation found. The optional
-# second argument names the verb for diagnostics (default: sessions attach).
-validate_project_name() {
+# validate_project_name (the name-shape rules, twin of
+# core/validation.validate_project_name) lives in remo-lib.sh. Here a project
+# must additionally EXIST: resolved through the index, then PROJECTS_DIR.
+validate_project_exists() {
     local name="$1"
     local ctx="${2:-sessions attach}"
+    local path
 
-    if [[ -z "$name" ]]; then
-        echo "remo-host: $ctx: project name must not be empty" >&2
-        return 1
-    fi
+    validate_project_name "$name" "$ctx" || return 1
 
-    if LC_ALL=C printf '%s' "$name" | grep -q '[[:cntrl:]]'; then
-        echo "remo-host: $ctx: project name contains control characters: $name" >&2
-        return 1
-    fi
-
-    if [[ "$name" == /* ]]; then
-        echo "remo-host: $ctx: absolute paths are not allowed: $name" >&2
-        return 1
-    fi
-
-    case "$name" in
-        .. | ../* | */.. | */../*)
-            echo "remo-host: $ctx: path traversal is not allowed: $name" >&2
-            return 1
-            ;;
-    esac
-
-    if [[ "$name" == */* ]]; then
-        echo "remo-host: $ctx: path separators are not allowed: $name" >&2
-        return 1
-    fi
-
-    # Hidden names are reserved for the host's own staging dirs (clone stages
-    # in "$PROJECTS_DIR/.remo-clone.*") and are excluded from `sessions list`.
-    if [[ "$name" == .* ]]; then
-        echo "remo-host: $ctx: hidden project names (leading '.') are not allowed: $name" >&2
-        return 1
-    fi
-
-    if [[ ! -d "$PROJECTS_DIR/$name" ]]; then
+    if ! path="$(remo_project_path "$name")" || [[ ! -d "$path" ]]; then
         echo "remo-host: $ctx: project not found: $name" >&2
         return 1
     fi
@@ -327,7 +309,7 @@ cmd_sessions_attach() {
         exit 2
     fi
 
-    validate_project_name "$name" || exit 3
+    validate_project_exists "$name" || exit 3
 
     exec "$HOME/.local/bin/project-launch" --project "$name"
 }
@@ -387,7 +369,7 @@ cmd_sessions_record() {
     fi
 
     validate_tab_key "$key" || exit 3
-    validate_project_name "$project" "sessions record" || exit 3
+    validate_project_exists "$project" "sessions record" || exit 3
 
     mkdir -p -m 0700 "$TABS_DIR"
     local tmp
@@ -464,7 +446,112 @@ sample_cpu_totals() {
     }' "$PROC_ROOT/stat" 2>/dev/null
 }
 
+
+# df in BYTES, one POSIX line per filesystem. GNU df has -B1 (exact, and what
+# Linux hosts have always reported); BSD/macOS df has only -k, scaled here. An
+# empty PROJECTS_DIR (a local host with no projects folder) is simply skipped.
+df_bytes() {
+    local -a targets=()
+    local t
+    for t in "$@"; do
+        [[ -n "$t" ]] && targets+=("$t")
+    done
+    df -B1 -P "${targets[@]}" 2>/dev/null && return 0
+    df -Pk "${targets[@]}" 2>/dev/null | awk 'NR == 1 { print; next } { if ($2 ~ /^[0-9]+$/) $2 = $2 * 1024; if ($3 ~ /^[0-9]+$/) $3 = $3 * 1024; if ($4 ~ /^[0-9]+$/) $4 = $4 * 1024; print }' || true
+}
+
+# Sets DISKS_JSON: the filesystems backing the projects root and /.
+DISKS_JSON=""
+collect_disks_json() {
+    # Filesystems backing the projects root and /, deduped by mount point
+    # (they are frequently the same filesystem).
+    local disks_json="" disk_entry seen_mounts=$'\n'
+    local fs_dev fs_size fs_used fs_avail fs_pct fs_mount
+    while read -r fs_dev fs_size fs_used fs_avail fs_pct fs_mount; do
+        [[ -z "$fs_mount" ]] && continue
+        [[ "$fs_size$fs_used$fs_avail" =~ ^[0-9]+$ ]] || continue
+        case "$seen_mounts" in
+            *$'\n'"$fs_mount"$'\n'*) continue ;;
+        esac
+        seen_mounts="$seen_mounts$fs_mount"$'\n'
+        disk_entry="$(printf '{"mount":"%s","size_bytes":%s,"used_bytes":%s,"avail_bytes":%s}' \
+            "$(json_escape "$fs_mount")" "$fs_size" "$fs_used" "$fs_avail")"
+        if [[ -n "$disks_json" ]]; then
+            disks_json="$disks_json,$disk_entry"
+        else
+            disks_json="$disk_entry"
+        fi
+    done < <(df_bytes "$PROJECTS_DIR" / | awk 'NR > 1')
+    DISKS_JSON="$disks_json"
+}
+
+# macOS has no /proc or /sys: the same JSON payload from sysctl, vm_stat, ps and
+# uptime. Temperatures are reported unavailable ([]), which the client already
+# treats as "hide the card". Every source is guarded: a missing tool degrades a
+# field to zero, never a non-zero exit.
+cmd_host_stats_darwin() {
+    local uptime_s=0 boot_s now_s
+    boot_s="$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^[{ ]*sec = \([0-9][0-9]*\).*/\1/p' || true)"
+    now_s="$(date +%s)"
+    if [[ "$boot_s" =~ ^[0-9]+$ ]]; then
+        uptime_s=$((now_s - boot_s))
+    fi
+
+    local load_1=0 load_5=0 load_15=0 loads
+    loads="$(uptime 2>/dev/null | sed -n 's/.*load averages\{0,1\}: *//p' | tr -d ',' || true)"
+    if [[ -n "$loads" ]]; then
+        read -r load_1 load_5 load_15 _ <<<"$loads" || true
+    fi
+    [[ "$load_1" =~ ^[0-9.]+$ ]] || load_1=0
+    [[ "$load_5" =~ ^[0-9.]+$ ]] || load_5=0
+    [[ "$load_15" =~ ^[0-9.]+$ ]] || load_15=0
+
+    local cpu_count
+    cpu_count="$(sysctl -n hw.ncpu 2>/dev/null || echo 1)"
+    [[ "$cpu_count" =~ ^[0-9]+$ ]] || cpu_count=1
+
+    # Busy percentage: summed per-process %CPU over the core count, capped.
+    local cpu_used_pct
+    cpu_used_pct="$(ps -A -o %cpu= 2>/dev/null | awk -v n="$cpu_count" '{ t += $1 } END { p = (n > 0) ? t / n : 0; if (p > 100) p = 100; if (p < 0) p = 0; printf "%.1f", p }' || true)"
+    [[ -n "$cpu_used_pct" ]] || cpu_used_pct="0.0"
+
+    local mem_total=0 mem_used=0 mem_available=0 swap_total=0 swap_used=0
+    mem_total="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
+    [[ "$mem_total" =~ ^[0-9]+$ ]] || mem_total=0
+    mem_available="$(vm_stat 2>/dev/null | awk '
+        /page size of/ { for (i = 1; i <= NF; i++) if ($i ~ /^[0-9]+$/) ps = $i }
+        /^Pages free:/        { f = $3 + 0 }
+        /^Pages inactive:/    { n = $3 + 0 }
+        /^Pages speculative:/ { sp = $3 + 0 }
+        END { if (ps == 0) ps = 4096; printf "%d", (f + n + sp) * ps }' || true)"
+    [[ "$mem_available" =~ ^[0-9]+$ ]] || mem_available=0
+    if (( mem_available > mem_total )); then
+        mem_available="$mem_total"
+    fi
+    mem_used=$((mem_total - mem_available))
+    read -r swap_total swap_used < <(sysctl -n vm.swapusage 2>/dev/null | awk '
+        function bytes(v,   u) { u = substr(v, length(v)); sub(/[KMGT]$/, "", v)
+            return v * (u == "K" ? 1024 : u == "M" ? 1048576 : u == "G" ? 1073741824 : u == "T" ? 1099511627776 : 1) }
+        { for (i = 1; i <= NF; i++) { if ($i == "total") t = bytes($(i + 2)); if ($i == "used") u = bytes($(i + 2)) } }
+        END { printf "%d %d", t, u }' || true) || true
+    [[ "$swap_total" =~ ^[0-9]+$ ]] || swap_total=0
+    [[ "$swap_used" =~ ^[0-9]+$ ]] || swap_used=0
+
+    collect_disks_json
+
+    printf '{"protocol_version":%d,"uptime_s":%s,"load_1":%s,"load_5":%s,"load_15":%s,"cpu_count":%s,"cpu_used_pct":%s,"mem_total":%s,"mem_used":%s,"mem_available":%s,"swap_total":%s,"swap_used":%s,"disks":[%s],"temps":[]}\n' \
+        "$PROTOCOL_VERSION" "$uptime_s" "$load_1" "$load_5" "$load_15" \
+        "$cpu_count" "$cpu_used_pct" \
+        "$mem_total" "$mem_used" "$mem_available" "$swap_total" "$swap_used" \
+        "$DISKS_JSON"
+}
+
 cmd_host_stats() {
+    if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+        cmd_host_stats_darwin
+        return 0
+    fi
+
     local uptime_s=0
     if [[ -r "$PROC_ROOT/uptime" ]]; then
         uptime_s="$(awk '{printf "%d", $1}' "$PROC_ROOT/uptime")"
@@ -476,7 +563,7 @@ cmd_host_stats() {
     fi
 
     local cpu_count
-    cpu_count="$(nproc 2>/dev/null || echo 1)"
+    cpu_count="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)"
 
     # Busy-CPU percentage from two /proc/stat samples 0.25s apart. A static
     # or missing /proc/stat yields 0.0 rather than an error.
@@ -508,25 +595,8 @@ cmd_host_stats() {
         mem_used=$((mem_total - mem_available))
     fi
 
-    # Filesystems backing the projects root and /, deduped by mount point
-    # (they are frequently the same filesystem).
-    local disks_json="" disk_entry seen_mounts=$'\n'
-    local fs_dev fs_size fs_used fs_avail fs_pct fs_mount
-    while read -r fs_dev fs_size fs_used fs_avail fs_pct fs_mount; do
-        [[ -z "$fs_mount" ]] && continue
-        [[ "$fs_size$fs_used$fs_avail" =~ ^[0-9]+$ ]] || continue
-        case "$seen_mounts" in
-            *$'\n'"$fs_mount"$'\n'*) continue ;;
-        esac
-        seen_mounts="$seen_mounts$fs_mount"$'\n'
-        disk_entry="$(printf '{"mount":"%s","size_bytes":%s,"used_bytes":%s,"avail_bytes":%s}' \
-            "$(json_escape "$fs_mount")" "$fs_size" "$fs_used" "$fs_avail")"
-        if [[ -n "$disks_json" ]]; then
-            disks_json="$disks_json,$disk_entry"
-        else
-            disks_json="$disk_entry"
-        fi
-    done < <(df -B1 -P "$PROJECTS_DIR" / 2>/dev/null | awk 'NR > 1')
+    collect_disks_json
+    local disks_json="$DISKS_JSON"
 
     # Temperatures: hwmon first (millidegrees C), thermal_zone fallback when
     # no hwmon sensor produced a reading, [] when neither interface exists
@@ -630,7 +700,7 @@ start_job() {
 
     local job_id started_at meta_file log_file exit_file pid
     job_id="$(new_job_id "$kind")"
-    started_at="$(date -Iseconds)"
+    started_at="$(remo_iso_now)"
     meta_file="$JOBS_DIR/$job_id.json"
     log_file="$JOBS_DIR/$job_id.log"
     exit_file="$JOBS_DIR/$job_id.exit"
@@ -640,7 +710,7 @@ start_job() {
     # ATOMICALLY: a plain `> file` redirection creates/truncates before the
     # printf writes, and a status poll in that window would read an empty
     # file and misreport a succeeded job as failed.
-    REMO_JOB_EXIT_FILE="$exit_file" nohup setsid bash -c \
+    REMO_JOB_EXIT_FILE="$exit_file" remo_detach bash -c \
         '"$@"; rc=$?; printf "%s\n" "$rc" >"$REMO_JOB_EXIT_FILE.tmp" && mv -f "$REMO_JOB_EXIT_FILE.tmp" "$REMO_JOB_EXIT_FILE"; exit "$rc"' \
         remo-host-job "$@" >>"$log_file" 2>&1 </dev/null &
     pid=$!
@@ -717,7 +787,7 @@ cmd_jobs_status() {
         else
             state="failed"
         fi
-        finished_at="\"$(json_escape "$(date -Iseconds -r "$exit_file")")\""
+        finished_at="\"$(json_escape "$(remo_file_mtime_iso "$exit_file")")\""
     elif [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
         state="running"
     else
@@ -821,18 +891,25 @@ cmd_projects_clone() {
         echo "remo-host: projects clone: invalid project name (must start with an alphanumeric or '_'): $name" >&2
         exit 3
     fi
-    if [[ -e "$PROJECTS_DIR/$name" ]]; then
+
+    # Clone into PROJECTS_DIR, or ~/projects on a host that has none (a local
+    # machine registered without a projects folder).
+    local clone_root="$PROJECTS_DIR"
+    if [[ -z "$clone_root" ]]; then
+        clone_root="$HOME/projects"
+    fi
+    if remo_project_path "$name" >/dev/null 2>&1 || [[ -e "$clone_root/$name" ]]; then
         echo "remo-host: projects clone: project already exists: $name" >&2
         exit 3
     fi
 
-    mkdir -p "$PROJECTS_DIR"
+    mkdir -p "$clone_root"
 
     # gh honours the host's `gh auth login` (private repos); git is the
     # anonymous fallback (public repos). `--` guards git's argv even though
     # the shape check above already forbids option-lookalikes.
     local worker='set -e
-repo="$1"; git_url="$2"; dest="$3"; projects_dir="$4"
+repo="$1"; git_url="$2"; dest="$3"; projects_dir="$4"; lib="$5"; name="$6"
 tmp="$(mktemp -d "$projects_dir/.remo-clone.XXXXXXXX")"
 trap '\''rm -rf "$tmp"'\'' EXIT
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
@@ -840,10 +917,121 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
 else
     git clone -- "$git_url" "$tmp/repo"
 fi
-mv -- "$tmp/repo" "$dest"'
+mv -- "$tmp/repo" "$dest"
+# Record the checkout in the project index. Best effort: the clone itself
+# succeeded, and a project under PROJECTS_DIR is found without a record anyway.
+if [ -r "$lib" ]; then
+    . "$lib"
+    PROJECTS_DIR="$projects_dir" remo_project_add "$dest" "$name" >/dev/null 2>&1 || true
+fi'
 
     start_job clone "$name" bash -c "$worker" remo-clone-worker \
-        "$repo" "$git_url" "$PROJECTS_DIR/$name" "$PROJECTS_DIR"
+        "$repo" "$git_url" "$clone_root/$name" "$clone_root" "$REMO_LIB_PATH" "$name"
+}
+
+# ---------------------------------------------------------------------------
+# projects add|remove|list --json (spec 029, contracts/project-index.md)
+#
+# The index verbs. Rejections exit 3 with the contract's bare stderr message and
+# nothing on stdout; every success payload carries protocol_version like the
+# other verbs, so the client's version check holds.
+# ---------------------------------------------------------------------------
+cmd_projects_add() {
+    local path="" name="" json_given=false path_given=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --path) [[ $# -ge 2 ]] || { echo "remo-host: projects add: --path needs a value" >&2; exit 2; }
+                    path="$2"; path_given=true; shift 2 ;;
+            --name) [[ $# -ge 2 ]] || { echo "remo-host: projects add: --name needs a value" >&2; exit 2; }
+                    name="$2"; shift 2 ;;
+            --json) json_given=true; shift ;;
+            *)
+                echo "remo-host: projects add: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    if ! $json_given; then
+        echo "remo-host: projects add: --json is required" >&2
+        exit 2
+    fi
+    if ! $path_given; then
+        echo "remo-host: projects add: --path PATH is required" >&2
+        exit 2
+    fi
+
+    local rc=0
+    remo_project_add "$path" "$name" || rc=$?
+    if (( rc != 0 )); then
+        exit "$rc"
+    fi
+
+    printf '{"protocol_version":%d,"name":"%s","path":"%s","status":"ok"}\n' \
+        "$PROTOCOL_VERSION" "$(json_escape "$REMO_ADDED_NAME")" "$(json_escape "$REMO_ADDED_PATH")"
+}
+
+cmd_projects_remove() {
+    local name="" json_given=false project_given=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --project) [[ $# -ge 2 ]] || { echo "remo-host: projects remove: --project needs a value" >&2; exit 2; }
+                       name="$2"; project_given=true; shift 2 ;;
+            --json) json_given=true; shift ;;
+            *)
+                echo "remo-host: projects remove: unknown argument: $1" >&2
+                exit 2
+                ;;
+        esac
+    done
+
+    if ! $json_given; then
+        echo "remo-host: projects remove: --json is required" >&2
+        exit 2
+    fi
+    if ! $project_given; then
+        echo "remo-host: projects remove: --project NAME is required" >&2
+        exit 2
+    fi
+
+    local rc=0
+    remo_project_remove "$name" || rc=$?
+    if (( rc != 0 )); then
+        exit "$rc"
+    fi
+
+    printf '{"protocol_version":%d,"name":"%s","removed":true}\n' \
+        "$PROTOCOL_VERSION" "$(json_escape "$name")"
+}
+
+cmd_projects_list() {
+    if [[ "${1:-}" != "--json" ]]; then
+        echo "remo-host: projects list: --json is required" >&2
+        exit 2
+    fi
+
+    local plist name path src pstatus entry projects_json="" extra
+    plist="$(remo_project_list)" || exit 5
+    if [[ -n "$plist" ]]; then
+        while IFS=$'\t' read -r name path src pstatus; do
+            [[ -n "$name" ]] || continue
+            extra=""
+            if [[ "$pstatus" == "shadowed" ]]; then
+                extra=',"shadowed":true'
+            fi
+            entry="$(printf '{"name":"%s","path":"%s","source":"%s","status":"%s"%s}' \
+                "$(json_escape "$name")" "$(json_escape "$path")" "$src" "$pstatus" "$extra")"
+            if [[ -n "$projects_json" ]]; then
+                projects_json="$projects_json,$entry"
+            else
+                projects_json="$entry"
+            fi
+        done <<<"$plist"
+    fi
+
+    printf '{"protocol_version":%d,"projects":[%s]}\n' "$PROTOCOL_VERSION" "$projects_json"
 }
 
 # ---------------------------------------------------------------------------
@@ -883,9 +1071,10 @@ cmd_projects_delete() {
         exit 2
     fi
 
-    validate_project_name "$name" "projects delete" || exit 3
+    validate_project_exists "$name" "projects delete" || exit 3
 
-    local dir="$PROJECTS_DIR/$name"
+    local dir
+    dir="$(remo_project_path "$name")"
 
     if has_zellij; then
         zellij kill-session "$name" >/dev/null 2>&1 || true
@@ -905,6 +1094,10 @@ cmd_projects_delete() {
         echo "remo-host: projects delete: failed to remove $dir" >&2
         exit 5
     fi
+
+    # The checkout is gone: drop its index record too (a no-op for a project
+    # that only ever lived under PROJECTS_DIR).
+    remo_project_remove "$name" >/dev/null 2>&1 || true
 
     printf '{"protocol_version":%d,"deleted":"%s"}\n' \
         "$PROTOCOL_VERSION" "$(json_escape "$name")"
@@ -957,9 +1150,10 @@ cmd_projects_rebuild() {
         exit 2
     fi
 
-    validate_project_name "$name" "projects rebuild" || exit 3
+    validate_project_exists "$name" "projects rebuild" || exit 3
 
-    local dir="$PROJECTS_DIR/$name"
+    local dir
+    dir="$(remo_project_path "$name")"
     if [[ ! -d "$dir/.devcontainer" ]] && [[ ! -f "$dir/.devcontainer.json" ]]; then
         echo "remo-host: projects rebuild: project has no devcontainer configuration: $name" >&2
         exit 3
@@ -1059,12 +1253,24 @@ case "${1:-}" in
                 shift
                 cmd_projects_delete "$@"
                 ;;
+            add)
+                shift
+                cmd_projects_add "$@"
+                ;;
+            remove)
+                shift
+                cmd_projects_remove "$@"
+                ;;
+            list)
+                shift
+                cmd_projects_list "$@"
+                ;;
             rebuild)
                 shift
                 cmd_projects_rebuild "$@"
                 ;;
             "")
-                echo "remo-host: usage: remo-host projects {clone|delete|rebuild} ..." >&2
+                echo "remo-host: usage: remo-host projects {clone|add|remove|list|delete|rebuild} ..." >&2
                 exit 2
                 ;;
             *)
@@ -1091,7 +1297,7 @@ case "${1:-}" in
         esac
         ;;
     -h|--help)
-        sed -n '2,32p' "$0" | sed 's/^# \{0,1\}//'
+        sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
         exit 0
         ;;
     "")

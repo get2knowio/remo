@@ -210,7 +210,7 @@ class TestRunLookup:
 
     def test_budget_and_batchmode(self, mocker, host):
         base = ["ssh", "-o", "ControlMaster=auto", "remo@1.2.3.4"]
-        build = mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=base)
+        build = mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=base)
         found = hit(ZellijState.ACTIVE)
         lookup = mocker.patch("remo_cli.core.resume.lookup_tab", return_value=found)
 
@@ -225,7 +225,7 @@ class TestRunLookup:
         assert lookup.call_args.kwargs["timeout"] == 5.0
 
     def test_unsupported(self, mocker, host):
-        mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "t"])
         mocker.patch("remo_cli.core.resume.lookup_tab", side_effect=TabLookupUnsupported("old"))
         assert run_lookup(host, self.KEY) == (None, "unsupported")
 
@@ -233,7 +233,7 @@ class TestRunLookup:
         "exc", [SshTransportError("timeout"), SshTransportError("no route", returncode=255)]
     )
     def test_transport_error_is_unreachable(self, mocker, host, exc):
-        mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "t"])
         mocker.patch("remo_cli.core.resume.lookup_tab", side_effect=exc)
         assert run_lookup(host, self.KEY) == (None, "unreachable")
 
@@ -241,7 +241,7 @@ class TestRunLookup:
         "exc", [MalformedResponseError("x"), RemoHostCommandError(3, "boom", verb="sessions lookup")]
     )
     def test_any_other_client_error_is_failed(self, mocker, host, exc):
-        mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "t"])
         mocker.patch("remo_cli.core.resume.lookup_tab", side_effect=exc)
         assert run_lookup(host, self.KEY) == (None, "failed")
 
@@ -254,7 +254,7 @@ class TestIsProjectLive:
         return ProjectEntry(name, False, state, DevcontainerRunning.UNKNOWN)
 
     def test_active_is_live(self, mocker, host):
-        mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "t"])
         lister = mocker.patch(
             "remo_cli.core.resume.list_sessions",
             return_value=[self.entry("A", ZellijState.ACTIVE)],
@@ -265,12 +265,12 @@ class TestIsProjectLive:
 
     @pytest.mark.parametrize("state", [ZellijState.EXITED, ZellijState.ABSENT])
     def test_not_active_is_not_live(self, mocker, host, state):
-        mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "t"])
         mocker.patch("remo_cli.core.resume.list_sessions", return_value=[self.entry("A", state)])
         assert is_project_live(host, "A") is False
 
     def test_other_project_active_is_not_live(self, mocker, host):
-        mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "t"])
         mocker.patch(
             "remo_cli.core.resume.list_sessions",
             return_value=[self.entry("B", ZellijState.ACTIVE)],
@@ -278,6 +278,6 @@ class TestIsProjectLive:
         assert is_project_live(host, "A") is False
 
     def test_error_is_not_live(self, mocker, host):
-        mocker.patch("remo_cli.core.resume.build_ssh_base_cmd", return_value=["ssh", "t"])
+        mocker.patch("remo_cli.core.ssh.build_ssh_base_cmd", return_value=["ssh", "t"])
         mocker.patch("remo_cli.core.resume.list_sessions", side_effect=SshTransportError("x"))
         assert is_project_live(host, "A") is False

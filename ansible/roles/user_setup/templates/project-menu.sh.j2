@@ -1,10 +1,17 @@
-#!/bin/bash
+#!{{ remo_bash_path | default('/bin/bash') }}
 # project-menu - TUI menu for selecting/managing project zellij sessions
 # Managed by Ansible - do not edit manually
 
 set -e
 
 PROJECTS_DIR="{{ dev_workspace_dir }}"
+
+# Shared helpers (project index resolver, portability shims): beside this
+# script, else in ~/.local/bin.
+REMO_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/remo-lib.sh"
+[ -r "$REMO_LIB_PATH" ] || REMO_LIB_PATH="$HOME/.local/bin/remo-lib.sh"
+# shellcheck source=/dev/null
+. "$REMO_LIB_PATH"
 
 # Pin zellij's session namespace. zellij keeps session sockets in
 # $XDG_RUNTIME_DIR/zellij, falling back to /tmp/zellij-$UID when that variable
@@ -30,7 +37,7 @@ REMO_VERSION=""
 get_active_sessions() {
     if command -v zellij &> /dev/null; then
         # Strip ANSI color codes, exclude EXITED sessions, and get session names
-        zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -v 'EXITED' | awk '{print $1}' || true
+        zellij list-sessions 2>/dev/null | remo_strip_ansi | grep -v 'EXITED' | awk '{print $1}' || true
     fi
 }
 
@@ -39,17 +46,41 @@ cleanup_exited_sessions() {
     if command -v zellij &> /dev/null; then
         # Get list of exited sessions and delete them
         local exited_sessions
-        exited_sessions=$(zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep 'EXITED' | awk '{print $1}' || true)
+        exited_sessions=$(zellij list-sessions 2>/dev/null | remo_strip_ansi | grep 'EXITED' | awk '{print $1}' || true)
         for session in $exited_sessions; do
             [ -n "$session" ] && zellij delete-session "$session" &>/dev/null || true
         done
     fi
 }
 
-# Get list of project directories
-get_project_dirs() {
-    if [ -d "$PROJECTS_DIR" ]; then
-        find "$PROJECTS_DIR" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | sort
+# Load the project list (explicit index records + PROJECTS_DIR subdirectories)
+# into parallel arrays. A malformed index is reported on stderr and leaves the
+# list empty rather than showing a half-truth.
+PROJ_NAMES=()
+PROJ_PATHS=()
+PROJ_STATUS=()
+load_projects() {
+    PROJ_NAMES=()
+    PROJ_PATHS=()
+    PROJ_STATUS=()
+    local plist name path src pstatus
+    plist="$(remo_project_list)" || return 0
+    [ -n "$plist" ] || return 0
+    while IFS=$'\t' read -r name path src pstatus; do
+        [ -n "$name" ] || continue
+        PROJ_NAMES+=("$name")
+        PROJ_PATHS+=("$path")
+        PROJ_STATUS+=("$pstatus")
+    done <<<"$plist"
+}
+
+# The fix for a project whose folder is gone: re-add it elsewhere, or drop it.
+missing_fix_hint() {
+    local name="$1"
+    if [ -f "$HOME/.local/state/remo/local.env" ]; then
+        echo "  Fix: remo local add <new-path> --name $name   (or: remo local remove $name)"
+    else
+        echo "  Fix: remo-host projects remove --project $name --json"
     fi
 }
 
@@ -89,7 +120,6 @@ get_git_status_indicators() {
 # Build menu options
 build_menu_options() {
     local active_sessions
-    local project_dirs
     local options=()
 
     # Clean up any exited sessions first
@@ -98,14 +128,15 @@ build_menu_options() {
     # Get active sessions as array
     mapfile -t active_sessions < <(get_active_sessions)
 
-    # Get all project directories
-    mapfile -t project_dirs < <(get_project_dirs)
+    # Get all projects (index records and PROJECTS_DIR subdirectories)
+    load_projects
 
     # Fetch upstream for all git repos in parallel (so behind-count is fresh)
     local fetch_pids=()
-    for dir in "${project_dirs[@]}"; do
-        if [ -d "$PROJECTS_DIR/$dir/.git" ]; then
-            timeout 10 git -C "$PROJECTS_DIR/$dir" fetch --quiet 2>/dev/null &
+    local i
+    for i in "${!PROJ_NAMES[@]}"; do
+        if [ "${PROJ_STATUS[$i]}" = "ok" ] && [ -d "${PROJ_PATHS[$i]}/.git" ]; then
+            remo_timeout 10 git -C "${PROJ_PATHS[$i]}" fetch --quiet 2>/dev/null &
             fetch_pids+=($!)
         fi
     done
@@ -123,16 +154,28 @@ build_menu_options() {
     options+=("")
 
     # Build options: show projects with git status and active indicators
-    for dir in "${project_dirs[@]}"; do
+    for i in "${!PROJ_NAMES[@]}"; do
+        local dir="${PROJ_NAMES[$i]}"
         local indicators=""
+
+        # A project whose folder is gone, or one hidden by an index record of
+        # the same name, is shown as such and never launched.
+        if [ "${PROJ_STATUS[$i]}" = "missing" ]; then
+            options+=("$(printf '%s \033[31m✗ missing\033[0m' "$dir")")
+            continue
+        fi
+        if [ "${PROJ_STATUS[$i]}" = "shadowed" ]; then
+            options+=("$(printf '%s \033[33m⚠ shadowed\033[0m' "$dir")")
+            continue
+        fi
 
         # Add git status indicators
         local git_status
-        git_status=$(get_git_status_indicators "$PROJECTS_DIR/$dir")
+        git_status=$(get_git_status_indicators "${PROJ_PATHS[$i]}")
         [ -n "$git_status" ] && indicators="$git_status"
 
         # Add active indicator if session is running
-        if [ -n "${active_map[$dir]}" ]; then
+        if [ -n "${active_map[$dir]:-}" ]; then
             [ -n "$indicators" ] && indicators="$indicators "
             indicators="${indicators}⚡"
         fi
@@ -258,14 +301,17 @@ handle_clone() {
     # Extract repo name from URL or owner/repo format
     repo_name=$(basename "$repo_url" .git)
 
-    local target_dir="$PROJECTS_DIR/$repo_name"
+    # PROJECTS_DIR, or ~/projects on a host registered without one.
+    local clone_root="${PROJECTS_DIR:-$HOME/projects}"
+    local target_dir="$clone_root/$repo_name"
 
-    if [ -d "$target_dir" ]; then
+    if [ -d "$target_dir" ] || remo_project_path "$repo_name" >/dev/null 2>&1; then
         echo "Error: Directory $target_dir already exists" >&2
         sleep 2
         return 1
     fi
 
+    mkdir -p "$clone_root"
     echo "Cloning $repo_url to $target_dir..." >&2
 
     # Try gh first (better auth), fall back to git clone
@@ -284,6 +330,11 @@ handle_clone() {
         fi
     fi
 
+    # Without a PROJECTS_DIR nothing would find the checkout: index it.
+    if [ -z "$PROJECTS_DIR" ]; then
+        remo_project_add "$target_dir" "$repo_name" >/dev/null 2>&1 || true
+    fi
+
     echo "Cloned successfully!" >&2
     sleep 1
 
@@ -294,13 +345,18 @@ handle_clone() {
 # Handle deleting a project
 handle_delete() {
     local project_name="$1"
-    local project_dir="$PROJECTS_DIR/$project_name"
+    local project_dir
     local warnings=()
 
     echo ""
 
-    if [ ! -d "$project_dir" ]; then
-        echo "  Not a project directory, skipping."
+    if ! project_dir="$(remo_project_path "$project_name")" || [ ! -d "$project_dir" ]; then
+        # A stale index record (its folder is gone) can be dropped here.
+        if remo_project_remove "$project_name" >/dev/null 2>&1; then
+            echo "  Folder is gone; removed the stale index record for $project_name."
+        else
+            echo "  Not a project directory, skipping."
+        fi
         sleep 1
         return 1
     fi
@@ -325,7 +381,7 @@ handle_delete() {
 
     # Check for active zellij session
     local has_session=false
-    if zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -v 'EXITED' | grep -q "^${project_name}\b"; then
+    if zellij list-sessions 2>/dev/null | remo_strip_ansi | grep -v 'EXITED' | grep -q "^${project_name}\b"; then
         has_session=true
         warnings+=("$(printf '\033[32m  ⚡ Active zellij session (will be killed)\033[0m')")
     fi
@@ -377,6 +433,7 @@ handle_delete() {
     # Remove project directory
     echo "  Removing $project_dir..."
     rm -rf "$project_dir"
+    remo_project_remove "$project_name" >/dev/null 2>&1 || true
 
     printf '\033[32m  ✓ Deleted %s\033[0m\n' "$project_name"
     sleep 1
@@ -385,18 +442,26 @@ handle_delete() {
 # Launch or attach to a zellij session for a project
 launch_session() {
     local project_name="$1"
-    local project_dir="$PROJECTS_DIR/$project_name"
+    local project_dir
+    # Same fallback as project-launch: never "/$project_name" on a host with
+    # no PROJECTS_DIR (a clone there lands in ~/projects).
+    project_dir="$(remo_project_path "$project_name")" || project_dir="${PROJECTS_DIR:-$HOME/projects}/$project_name"
 
     if [ ! -d "$project_dir" ]; then
         echo "Error: Project directory not found: $project_dir"
-        sleep 2
+        if remo_project_path "$project_name" >/dev/null 2>&1; then
+            missing_fix_hint "$project_name"
+            sleep 4
+        else
+            sleep 2
+        fi
         return 1
     fi
 
     echo "Launching $project_name..."
 
     # Clean up any exited session with this name before attaching
-    if zellij list-sessions 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -q "^$project_name.*EXITED"; then
+    if zellij list-sessions 2>/dev/null | remo_strip_ansi | grep -q "^$project_name.*EXITED"; then
         zellij delete-session "$project_name" 2>/dev/null || true
     fi
 
@@ -412,7 +477,11 @@ launch_session() {
     fi
 
     # Try to attach, and if it fails due to corrupted session layout, clean up and retry
-    if ! zellij attach --create "$project_name" 2>&1; then
+    # remo-session-shell is the session's shell: it starts the devcontainer for
+    # a devcontainer project and otherwise hands over to the login shell. Zellij
+    # applies --default-shell/--default-cwd when it CREATES the session.
+    local session_opts=(options --default-shell "$HOME/.local/bin/remo-session-shell" --default-cwd "$project_dir")
+    if ! zellij attach --create "$project_name" "${session_opts[@]}" 2>&1; then
         echo "Session may be corrupted, cleaning up and retrying..."
         # Kill any orphaned zellij processes for this session
         zellij kill-session "$project_name" 2>/dev/null || true
@@ -420,7 +489,7 @@ launch_session() {
         # Remove corrupted session cache files
         rm -rf "$HOME/.cache/zellij"/*/session_info/"$project_name" 2>/dev/null || true
         # Retry creating a fresh session
-        zellij attach --create "$project_name"
+        zellij attach --create "$project_name" "${session_opts[@]}"
     fi
 
     # Reset terminal state after zellij detach — zellij can leave the tty in
@@ -450,10 +519,24 @@ main() {
         local key="${fzf_output%%$'\n'*}"
         local selection="${fzf_output#*$'\n'}"
 
+        # A shadowed row is the PROJECTS_DIR folder hidden by an index record of
+        # the same name: the name resolves to the RECORD, so neither launching
+        # nor deleting it by name may act on that row. Matched on the row's
+        # status suffix, never a substring a project name could contain.
+        local plain_selection
+        plain_selection=$(echo "$selection" | remo_strip_ansi)
+
         # Handle delete key
         if [ "$key" = "d" ]; then
             local project_name
-            project_name=$(echo "$selection" | sed 's/\x1b\[[0-9;]*m//g' | sed -E 's/ [●⇡⇣⚡ ]+$//')
+            project_name=$(echo "$plain_selection" | sed -E 's/ (✗ missing|⚠ shadowed)$//; s/ [●⇡⇣⚡ ]+$//')
+            case "$plain_selection" in
+                *" ⚠ shadowed")
+                    echo "'$project_name' here is a folder hidden by an index entry with the same name; rename or remove one first."
+                    sleep 3
+                    continue
+                    ;;
+            esac
             if [[ "$project_name" != \[* ]] && [[ "$project_name" != *Legend* ]] && [ -n "$project_name" ]; then
                 handle_delete "$project_name"
             fi
@@ -481,7 +564,14 @@ main() {
                 # Extract project name (strip ANSI codes and status indicators)
                 local project_name
                 # Remove ANSI escape codes, then strip trailing indicators (● ⇡ ⚡ and spaces)
-                project_name=$(echo "$selection" | sed 's/\x1b\[[0-9;]*m//g' | sed -E 's/ [●⇡⇣⚡ ]+$//')
+                project_name=$(echo "$plain_selection" | sed -E 's/ (✗ missing|⚠ shadowed)$//; s/ [●⇡⇣⚡ ]+$//')
+                case "$plain_selection" in
+                    *" ⚠ shadowed")
+                        echo "'$project_name' is hidden by an index entry with the same name; rename or remove one."
+                        sleep 3
+                        continue
+                        ;;
+                esac
                 launch_session "$project_name"
                 ;;
         esac

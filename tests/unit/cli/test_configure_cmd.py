@@ -113,3 +113,19 @@ def test_no_nudge_when_the_command_failed(runner, mocker, _no_drift_nudge) -> No
     runner.invoke(configure, ["mbp"])
 
     _no_drift_nudge.assert_not_called()
+
+
+def test_configure_refuses_the_local_host_without_running_anything(
+    runner, tmp_config_dir, mocker
+) -> None:
+    from remo_cli.models.host import KnownHost
+    from tests.conftest import seed_registry
+
+    seed_registry(
+        tmp_config_dir, [KnownHost("local", "local", "localhost", "paul", access_mode="direct")]
+    )
+    play = mocker.patch("remo_cli.core.ansible_runner.run_playbook")
+    result = runner.invoke(configure, ["local"])
+    assert result.exit_code == 1
+    assert "remo local setup" in result.output
+    play.assert_not_called()

@@ -79,6 +79,19 @@ Every configure playbook (including the Hetzner and EC2 plugins', via `remo_core
 | `container_ssh_user` | `remo` | SSH user created in container |
 | `container_ip` | (required for configure) | IP address of container to configure |
 
+### Local host (`local_setup.yml`)
+
+`local_setup.yml` backs `remo local setup` ([docs/local.md](../docs/local.md)):
+`hosts: localhost`, `connection: local`, `become: false`, no facts, and no
+rc-file tasks. It renders the same host scripts a remote host gets by running
+`roles/user_setup/tasks/host_scripts.yml` (shared by the remote role and this
+play; owner/group are omitted when `remo_local_install` is true) into `$HOME`,
+and writes `~/.local/state/remo/local.env` and `~/.remo-version`. The scripts
+include `remo-lib.sh` (per-host project index and macOS portability helpers)
+and `remo-session-shell` (starts the devcontainer from a Zellij
+`--default-shell`). A second run reports `changed=0`
+(`tests/unit/test_local_setup_playbook.py`).
+
 ## Project Structure
 
 ```
@@ -88,6 +101,7 @@ ansible/
 ├── incus_configure.yml       # Incus: install dev tools
 ├── incus_teardown.yml        # Incus: destroy container
 ├── incus_bootstrap.yml       # Incus: install Incus on host
+├── local_setup.yml           # remo local setup: this machine, no SSH, no become
 ├── tasks/
 │   └── configure_dev_tools.yml  # Shared dev tools configuration
 ├── roles/

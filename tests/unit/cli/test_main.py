@@ -93,6 +93,7 @@ class TestSubcommandRegistration:
         "completion",
         "web",
         "connector",
+        "local",
         "providers",
     ]
 

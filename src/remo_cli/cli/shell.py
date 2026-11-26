@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import functools
+from typing import TYPE_CHECKING, Any
 
 import click
 
@@ -97,7 +98,7 @@ def shell(
     # --detach is not an interactive attach, so it neither records nor
     # forwards a tab key (spec 028 R11).
     tab_key = None if detach else this_tab_key()
-    connect_to_host(
+    returncode = connect_to_host(
         host,
         tunnels=tunnels,
         no_open=no_open,
@@ -110,6 +111,11 @@ def shell(
         # prompt that can still stop the connection (issue #248).
         on_connect=tab_recorder(tab_key, host.name, project),
     )
+    if exec_cmd and isinstance(returncode, int) and returncode != 0:
+        # Only the local host reports one (spec 029), and only --exec's own
+        # failure is the user's exit status: leaving the project menu with
+        # Esc ends project-menu with 1, which is not a failed `remo shell`.
+        raise SystemExit(returncode)
 
 
 def this_tab_key() -> str | None:
@@ -188,6 +194,30 @@ def auto_start_host(host):  # noqa: ANN001, ANN201
         raise SystemExit(e.exit_code) from e
 
 
+def _exit_on_provider_error(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Print a ``ProviderError`` and exit with its code.
+
+    ``remo shell`` / ``remo resume`` are not provider commands, so they have no
+    ``provider_command`` wrapper; the typed refusals the local host raises
+    (setup not completed, ``-L`` on the local host) must still end as one
+    actionable line, never a traceback.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        from remo_cli.core.errors import ProviderError  # noqa: PLC0415
+        from remo_cli.core.output import print_error  # noqa: PLC0415
+
+        try:
+            return fn(*args, **kwargs)
+        except ProviderError as e:
+            print_error(str(e))
+            raise SystemExit(e.exit_code) from e
+
+    return wrapper
+
+
+@_exit_on_provider_error
 def connect_to_host(
     host,  # noqa: ANN001
     *,
@@ -200,7 +230,7 @@ def connect_to_host(
     tab_key: str | None = None,
     auto_started: bool = False,
     on_connect: Callable[[], None] | None = None,
-) -> None:
+) -> int | None:
     """Everything `remo shell` does once the host is resolved.
 
     Extracted so `remo resume` makes the *same* pre-connect checks (instance
@@ -211,6 +241,7 @@ def connect_to_host(
     passed through to :func:`shell_connect`, which calls it only once every
     pre-connect check and prompt has passed (issue #248).
     """
+    from remo_cli.core.config import LOCAL_HOST_TYPE  # noqa: PLC0415
     from remo_cli.core.ssh import check_remote_version, shell_connect  # noqa: PLC0415
     from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
     from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415
@@ -246,6 +277,16 @@ def connect_to_host(
                     f"Could not check tools version on '{host.name}':\n"
                     f"  {remote_err}\n"
                     f"  Skipping update check; proceeding with connection."
+                )
+            elif remote_version is None and host.type == LOCAL_HOST_TYPE:
+                # Unlike an added SSH host (a plain box by choice), the local
+                # host's scripts ARE remo's: no marker means setup never
+                # completed, and `remo shell` cannot work without them.
+                from remo_cli.core.errors import PreconditionError  # noqa: PLC0415
+
+                raise PreconditionError(
+                    "remo local setup has not completed on this machine — "
+                    "run: remo local setup"
                 )
             elif remote_version is None and host.type == "ssh":
                 # An added host with no marker was never `remo configure`d.
@@ -292,7 +333,7 @@ def connect_to_host(
                     ):
                         raise SystemExit(e.exit_code) from e
 
-    shell_connect(
+    return shell_connect(
         host,
         list(tunnels),
         no_open,
@@ -332,6 +373,16 @@ def _run_tools_upgrade(host) -> None:  # noqa: ANN001
     from remo_cli.core.provider_registry import get_provider, is_provider_type  # noqa: PLC0415
 
     print_info(f"Upgrading instance '{host.name}'...")
+
+    from remo_cli.core.config import LOCAL_HOST_TYPE  # noqa: PLC0415
+
+    if host.type == LOCAL_HOST_TYPE:
+        from remo_cli.providers import local  # noqa: PLC0415
+
+        # `remo local setup` is idempotent and never escalates, so the
+        # confirmed prompt is all the consent it needs.
+        local.setup(assume_yes=True)
+        return
 
     if host.type == "ssh":
         from remo_cli.providers import added  # noqa: PLC0415

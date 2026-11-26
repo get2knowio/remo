@@ -1,0 +1,62 @@
+---
+# The remo host scripts and their shared library, rendered into <home>/.local/bin.
+#
+# One definition for every machine that carries them: the remote role
+# (tasks/main.yml, include_tasks) and the local machine (ansible/local_setup.yml,
+# spec 029). Parametrised by
+#   remo_scripts_home    the account's home; defaults to the remote layout
+#                        (/home/<remo_user>)
+#   remo_local_install   true on the local machine: no owner/group (the invoking
+#                        user already owns everything, and there is no sudo)
+#   remo_bash_path       interpreter for the shebang; defaults to /bin/bash, so
+#                        a remote host renders exactly what it always did
+#
+# Principle V: nothing here reads a registered variable.
+
+- name: Install remo-lib helper library
+  ansible.builtin.template:
+    src: remo-lib.sh.j2
+    dest: "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/bin/remo-lib.sh"
+    owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    mode: '0644'
+
+- name: Install devshell helper script
+  ansible.builtin.template:
+    src: devshell.sh.j2
+    dest: "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/bin/devshell"
+    owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    mode: '0755'
+
+- name: Install project-menu script
+  ansible.builtin.template:
+    src: project-menu.sh.j2
+    dest: "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/bin/project-menu"
+    owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    mode: '0755'
+
+- name: Install project-launch script
+  ansible.builtin.template:
+    src: project-launch.sh.j2
+    dest: "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/bin/project-launch"
+    owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    mode: '0755'
+
+- name: Install remo-host script
+  ansible.builtin.template:
+    src: remo-host.sh.j2
+    dest: "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/bin/remo-host"
+    owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    mode: '0755'
+
+- name: Install remo-session-shell script
+  ansible.builtin.template:
+    src: remo-session-shell.sh.j2
+    dest: "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/bin/remo-session-shell"
+    owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    mode: '0755'

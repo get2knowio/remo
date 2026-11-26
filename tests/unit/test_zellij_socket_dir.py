@@ -178,3 +178,19 @@ class TestNormalisationBehaviour:
         runtime.mkdir()
         got = self._run(name, env={"XDG_RUNTIME_DIR": ""}, runtime_dir=runtime)
         assert got == str(runtime)
+
+
+class TestSessionsStartThroughTheSessionShell:
+    """Spec 029: sessions are created with remo-session-shell as their shell, so
+    the devcontainer start-up no longer depends on ~/.bashrc."""
+
+    @pytest.mark.parametrize("name", ["project-menu.sh.j2", "project-launch.sh.j2"])
+    def test_attach_passes_default_shell_and_cwd(self, name: str) -> None:
+        text = _source(name)
+        assert "--default-shell" in text
+        assert ".local/bin/remo-session-shell" in text
+        assert "--default-cwd" in text
+        # every `zellij attach --create` carries the options
+        for line in text.splitlines():
+            if "attach --create" in line and not line.lstrip().startswith("#"):
+                assert "options" in line or "session_opts" in line or line.rstrip().endswith("\\")

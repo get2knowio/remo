@@ -298,6 +298,7 @@ def _register_commands() -> None:
         build_deprecated_alias_groups,
         build_provider_group,
     )
+    from remo_cli.cli.local import local  # noqa: F811
     from remo_cli.cli.web import web  # noqa: F811
     from remo_cli.cli.connector import connector  # noqa: F811
     from remo_cli.cli.plugins import providers  # noqa: F811
@@ -309,6 +310,7 @@ def _register_commands() -> None:
     cli.add_command(add)
     cli.add_command(remove)
     cli.add_command(configure)
+    cli.add_command(local)
     # Built-ins first, then `remo.providers` entry-point plugins in name
     # order (027) — all_descriptors() already returns them in that order.
     for descriptor in all_descriptors():

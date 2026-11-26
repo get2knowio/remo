@@ -28,6 +28,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from remo_cli.core.config import ADDED_HOST_TYPE
+from remo_cli.core.config import LOCAL_HOST_TYPE
 from remo_cli.core.known_hosts import upgrade_command_for
 from remo_cli.core.registry import RegistryError, read_registry
 from remo_cli.core.remo_host_client import (
@@ -105,7 +106,10 @@ def _read_registry_hosts_readonly() -> list[KnownHost]:
 
     for warning in view.warnings:
         logger.warning("registry: %s", warning)
-    return view.hosts
+    # The local host is the workstation itself, never reachable from a service
+    # (spec 029 FR-004a): a mount-configured service on a workstation must not
+    # SSH to `localhost` for it.
+    return [h for h in view.hosts if h.type != LOCAL_HOST_TYPE]
 
 
 # ---------------------------------------------------------------------------

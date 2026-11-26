@@ -925,6 +925,15 @@ the CLI's error message names this setting if the check fails. The tunneled requ
 CLI traffic, covered by the setup surface's scoped Origin exemption (see
 [Security boundary](#reverse-proxies-sso-and-the-setup-surface)).
 
+### The local host is never pushed
+
+A machine registered with `remo local setup` ([docs/local.md](local.md)) is the
+workstation itself; a deployment cannot reach it. `remo web push` and
+`remo web sync` therefore skip it in both directions (it is not in the mirror
+payload, is never keyscanned or authorized, is not counted by `remo web
+status`'s drift report, and a `local` entry received from a deployment is
+ignored with a warning). Tracked as a follow-up in #276.
+
 ### What is never transmitted or stored
 
 - **Your personal SSH private key.** It is used *locally* to reach instances during

@@ -90,6 +90,7 @@ from remo_cli.core.web_adopt import (
     build_adoption_payload,
     instance_fingerprint,
     is_direct_access,
+    is_portable_host,
     load_push_cache,
     open_via_tunnel,
     render_revocations,
@@ -666,8 +667,17 @@ def parse_remote_registry(doc: dict[str, Any]) -> RemoteRegistry:
             if not isinstance(raw, dict):
                 continue
             host = registry.entry_to_known_host(raw)
-            if host is not None:
-                hosts.append(host)
+            if host is None:
+                continue
+            if not is_portable_host(host):
+                # A received `local` entry would make this workstation treat
+                # its own machine as that host (spec 029 FR-004a).
+                print_warning(
+                    f"ignoring {host.name!r} from the deployment: the local host "
+                    "is never synced"
+                )
+                continue
+            hosts.append(host)
     raw_keys = doc.get("host_keys")
     host_keys: dict[str, list[str]] = {}
     if isinstance(raw_keys, dict):
@@ -826,7 +836,10 @@ def _sync_flow(
         # AdoptError, so wrap it here (as the mutate path below does) to keep
         # run_web_sync's never-raises contract for a corrupt/newer registry.
         try:
-            local_hosts = registry.read_registry(readonly=True).hosts
+            local_hosts = [
+                h for h in registry.read_registry(readonly=True).hosts
+                if is_portable_host(h)
+            ]
         except registry.RegistryError as e:
             raise AdoptError(f"could not read the local registry: {e}") from e
         plan = build_sync_plan(base, local_hosts, remote.hosts, remote.generation)
@@ -867,12 +880,18 @@ def _sync_flow(
             baseline = plan.local_baseline
 
             def _mutator(full: list[KnownHost]) -> list[KnownHost]:
-                if frozenset(registry.canonical_entry(h) for h in full) != baseline:
+                portable = [h for h in full if is_portable_host(h)]
+                if frozenset(registry.canonical_entry(h) for h in portable) != baseline:
                     raise SyncLocalConflictError(
                         "the local registry changed while syncing; re-run "
                         "`remo web sync`."
                     )
-                kept = [h for h in full if h.name not in to_remove and h.name not in to_set]
+                kept = [
+                    h
+                    for h in full
+                    if not is_portable_host(h)
+                    or (h.name not in to_remove and h.name not in to_set)
+                ]
                 return kept + list(to_set.values())
 
             try:

@@ -394,3 +394,27 @@ class TestCpOptions:
 
         assert result.exit_code == 0
         assert mock_transfer.call_args.kwargs["recursive"] is True
+
+
+# ===========================================================================
+# The local host is refused (spec 029): copy files directly
+# ===========================================================================
+
+
+class TestLocalHostRefused:
+    @pytest.fixture
+    def local_host(self, mocker):
+        host = KnownHost(type="local", name="local", host="localhost", user="paul")
+        mocker.patch("remo_cli.cli.cp.resolve_remo_host_by_name", return_value=host)
+        mocker.patch("remo_cli.cli.cp.resolve_remo_host", return_value=host)
+        return host
+
+    @pytest.mark.parametrize("args", [["x.txt", "local:/tmp/"], ["local:/tmp/x", "./"], ["x.txt", ":/tmp/"]])
+    def test_upload_and_download_exit_1_and_run_nothing(self, local_host, mocker, tmp_path, args):
+        transfer = mocker.patch("remo_cli.cli.cp.transfer")
+        build = mocker.patch("remo_cli.cli.cp.build_ssh_opts")
+        result = CliRunner().invoke(cp, args)
+        assert result.exit_code == 1
+        assert "copy files directly" in result.output
+        transfer.assert_not_called()
+        build.assert_not_called()

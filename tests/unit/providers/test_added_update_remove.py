@@ -123,3 +123,38 @@ class TestRemove:
         rc = added.remove(name="ghost", assume_yes=True)
         assert rc == 1
         rm.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# remove() of the local host (spec 029) — deregisters, never provider-refused
+# ---------------------------------------------------------------------------
+
+
+class TestRemoveLocalHost:
+    def _local(self) -> KnownHost:
+        return KnownHost(type="local", name="local", host="localhost", user="paul")
+
+    def test_deregisters_after_confirmation(self, mocker, capsys) -> None:
+        mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[self._local()])
+        mocker.patch("remo_cli.providers.added.confirm", return_value=True)
+        drop = mocker.patch("remo_cli.providers.added.remove_known_host")
+
+        assert added.remove(name="local") == 0
+
+        drop.assert_called_once_with("local", "local")
+        out = capsys.readouterr().out
+        assert "remo local setup" in out and "left in place" in out
+
+    def test_yes_skips_the_prompt(self, mocker) -> None:
+        mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[self._local()])
+        ask = mocker.patch("remo_cli.providers.added.confirm")
+        mocker.patch("remo_cli.providers.added.remove_known_host")
+        assert added.remove(name="local", assume_yes=True) == 0
+        ask.assert_not_called()
+
+    def test_declining_changes_nothing(self, mocker) -> None:
+        mocker.patch("remo_cli.providers.added.get_known_hosts", return_value=[self._local()])
+        mocker.patch("remo_cli.providers.added.confirm", return_value=False)
+        drop = mocker.patch("remo_cli.providers.added.remove_known_host")
+        assert added.remove(name="local") == 1
+        drop.assert_not_called()
