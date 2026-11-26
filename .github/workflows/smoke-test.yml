@@ -1016,11 +1016,16 @@ jobs:
           # --- 3. --exec exit status reaches the CLI (#279) ---
           # A failed --exec pauses for a key inside the pane; a slow stream of
           # Enter answers it. The timeout turns a hang into a failure.
+          # The feeder must stop on its own once script(1) exits: loop on
+          # printf (fails with EPIPE then), not on sleep — and the whole
+          # pipeline is under one timeout so nothing in it can hang the job.
           set +e
-          ( while sleep 5; do printf '\n'; done ) | timeout 600 script -qec \
-            "stty cols 120 rows 40; uv run remo shell -p dc-proj --exec 'exit 3'; echo REMO_RC=\$?" \
-            /dev/null > /tmp/session-2.log 2>&1
+          timeout 600 bash -c '
+            ( while printf "\n" 2>/dev/null; do sleep 5; done ) | script -qec \
+              "stty cols 120 rows 40; uv run remo shell -p dc-proj --exec \"exit 3\"; echo REMO_RC=\$?" \
+              /dev/null' > /tmp/session-2.log 2>&1
           set -e
+          grep -a -o "REMO_RC=[0-9]*" /tmp/session-2.log || true
           grep -q "REMO_RC=3" /tmp/session-2.log || {
             echo "FAIL: --exec 'exit 3' did not exit 3"; tail -c 4000 /tmp/session-2.log; diag; exit 1; }
           echo "devcontainer --exec exit status: PASS"
