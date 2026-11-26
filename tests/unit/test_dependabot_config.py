@@ -139,3 +139,12 @@ def test_cooldown_applies_to_every_ecosystem() -> None:
             f"{entry['package-ecosystem']} has no cooldown; a new release could "
             "be proposed the moment it is published"
         )
+
+
+def test_python_base_image_held_below_315_until_ansible_core_supports_it() -> None:
+    """ansible-core 2.19 (remo's pin) crashes on import under Python 3.15 (#267);
+    the hold is lifted by #271 together with the ansible-core move."""
+    (docker,) = [u for u in _updates() if u["package-ecosystem"] == "docker"]
+    ignores = {i["dependency-name"]: i for i in docker.get("ignore", [])}
+    assert ignores.get("python", {}).get("versions") == [">= 3.15"]
+

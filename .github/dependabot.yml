@@ -57,8 +57,8 @@ updates:
           - "patch"
 
   # Docker base images. Two Dockerfiles ship images:
-  #   /Dockerfile        — the CLI image (python:3.13-slim)
-  #   /docker/Dockerfile — the remo-web service (node:24-slim, python:3.11-slim)
+  #   /Dockerfile        — the CLI image (python:3.14-slim)
+  #   /docker/Dockerfile — the remo-web service (node:24-slim, python:3.14-slim)
   # Nothing watched these before, so a base image could sit on an unpatched
   # tag indefinitely — the CVEs that matter for a container usually arrive via
   # the base image, not via the app's own dependencies.
@@ -88,3 +88,10 @@ updates:
       # patch bumps, which carry the base-image CVE fixes, keep flowing.
       - dependency-name: "node"
         update-types: ["version-update:semver-major"]
+      # Python 3.15 waits on ansible-core: the pinned 2.19 crashes on import
+      # under 3.15, and the first release that supports 3.15 (2.22) needs
+      # Python >= 3.13, above remo-cli's floor. #267 proposed the bump and
+      # failed the image build; #271 tracks the ansible-core move -- remove
+      # this entry there. 3.14 patch bumps keep flowing.
+      - dependency-name: "python"
+        versions: [">= 3.15"]
