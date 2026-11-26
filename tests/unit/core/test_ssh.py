@@ -543,6 +543,15 @@ class TestShellConnectTabKey:
 
         assert "REMO_TAB_KEY" not in os.environ
 
+    def test_remote_exit_status_is_returned(self, run, hetzner_host):
+        """#279: shell_connect reports ssh's exit status for remote hosts too
+        (the remote command's status, or 255 for ssh itself); cli/shell.py
+        turns it into the exit code only for --exec."""
+        from remo_cli.core.ssh import shell_connect
+
+        run.return_value = MagicMock(returncode=3)
+        assert shell_connect(hetzner_host, [], True, project="A", exec_cmd="exit 3") == 3
+
     def test_no_tab_key_is_identical_to_today(self, run, hetzner_host, monkeypatch):
         from remo_cli.core.ssh import shell_connect
 

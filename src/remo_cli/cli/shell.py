@@ -112,9 +112,9 @@ def shell(
         on_connect=tab_recorder(tab_key, host.name, project),
     )
     if exec_cmd and isinstance(returncode, int) and returncode != 0:
-        # Only the local host reports one (spec 029), and only --exec's own
-        # failure is the user's exit status: leaving the project menu with
-        # Esc ends project-menu with 1, which is not a failed `remo shell`.
+        # Only --exec's own failure is the user's exit status, on every host
+        # (#279): leaving the project menu with Esc ends project-menu with 1,
+        # which is not a failed `remo shell`.
         raise SystemExit(returncode)
 
 

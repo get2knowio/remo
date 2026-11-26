@@ -696,8 +696,12 @@ def shell_connect(
         else:
             # Per-call env, never a mutation of os.environ.
             completed = subprocess.run(ssh_cmd, env=run_env)
-        if not access.remote and isinstance(completed.returncode, int):
-            returncode = completed.returncode
+        # Returned for every host; the caller (cli/shell.py) acts on it only
+        # for --exec, where it is the command's own status (#279) — over ssh
+        # that is the remote project-launch's exit, or 255 for ssh itself.
+        status = getattr(completed, "returncode", None)
+        if isinstance(status, int):
+            returncode = status
     except KeyboardInterrupt:
         pass
     except FileNotFoundError as e:

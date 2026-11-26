@@ -278,6 +278,29 @@ class TestShellProjectLaunchFlags:
     """Tests for the -p / --exec / --detach passthrough flags."""
 
     @pytest.mark.usefixtures("_patch_shell_deps")
+    def test_remote_exec_failure_is_the_exit_status(self, runner, mocker):
+        """#279: over SSH, --exec's own status (the remote project-launch exit)
+        reaches the user — it used to be dropped for every remote host."""
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.core.ssh.shell_connect", return_value=3)
+
+        result = runner.invoke(shell, ["-p", "my-app", "--exec", "exit 3"])
+
+        assert result.exit_code == 3, result.output
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
+    @pytest.mark.parametrize("args", [[], ["-p", "my-app"]])
+    def test_remote_session_exit_status_is_not_a_failure(self, runner, mocker, args):
+        """Without --exec a non-zero ssh exit (leaving the menu with Esc ends
+        project-menu with 1) stays a successful `remo shell`, as before."""
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
+        mocker.patch("remo_cli.core.ssh.shell_connect", return_value=1)
+
+        result = runner.invoke(shell, args)
+
+        assert result.exit_code == 0, result.output
+
+    @pytest.mark.usefixtures("_patch_shell_deps")
     def test_project_flag_forwards_to_shell_connect(self, runner, mocker):
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
         mock_sc = mocker.patch("remo_cli.core.ssh.shell_connect")
