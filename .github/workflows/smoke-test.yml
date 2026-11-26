@@ -422,7 +422,8 @@ jobs:
        github.event.inputs.provider == 'all' ||
        github.event.inputs.provider == 'incus')
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # +15 min for the devcontainer step (image pull + two container starts).
+    timeout-minutes: 40
     env:
       CONTAINER_NAME: ci-test
 
@@ -969,6 +970,60 @@ jobs:
             echo "FAIL: --detach without --exec should have errored"; exit 1
           fi
           echo "validation: --detach without --exec errors as expected"
+
+      # A real devcontainer project, through the paths spec 029 moved off
+      # .bashrc: project-launch's detached start-up, and a foreground session
+      # whose devcontainer start-up runs in remo-session-shell (zellij
+      # --default-shell). The host is Ubuntu; seeing Debian bookworm proves the
+      # command ran INSIDE the container. Each check drops a marker file in the
+      # bind-mounted project dir and verifies it over SSH, because zellij's
+      # alternate screen makes captured output unreliable.
+      - name: Test a devcontainer project (session shell + container start-up)
+        run: |
+          SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=30 -o BatchMode=yes -i ~/.ssh/id_rsa remo@$HOST"
+          diag() {
+            echo "--- diagnostics ---"
+            $SSH_CMD "ls -la ~/projects/dc-proj; cat ~/.local/state/remo/dc-proj.log 2>/dev/null | tail -50; docker ps -a" || true
+          }
+
+          $SSH_CMD "mkdir -p ~/projects/dc-proj/.devcontainer && \
+            printf '%s\n' '{\"image\": \"debian:bookworm-slim\"}' \
+              > ~/projects/dc-proj/.devcontainer/devcontainer.json"
+
+          # --- 1. Detached --exec: container start-up from project-launch ---
+          uv run remo shell -p dc-proj --detach \
+            --exec 'grep -q bookworm /etc/os-release && touch .ci-detached-in-container'
+          for i in $(seq 1 60); do
+            $SSH_CMD "test -f ~/projects/dc-proj/.ci-detached-in-container" && break
+            sleep 5
+          done
+          $SSH_CMD "test -f ~/projects/dc-proj/.ci-detached-in-container" || {
+            echo "FAIL: detached --exec did not run inside the devcontainer"; diag; exit 1; }
+          echo "devcontainer --detach --exec: PASS"
+
+          # --- 2. Foreground --exec through zellij + remo-session-shell ---
+          # `script` gives remo a real local terminal (zellij needs one).
+          timeout 600 script -qec "stty cols 120 rows 40; uv run remo shell -p dc-proj \
+            --exec 'grep -q bookworm /etc/os-release && touch .ci-session-in-container'" \
+            /dev/null > /tmp/session-1.log 2>&1 || {
+              echo "FAIL: foreground devcontainer --exec exited non-zero"; tail -c 4000 /tmp/session-1.log; diag; exit 1; }
+          $SSH_CMD "test -f ~/projects/dc-proj/.ci-session-in-container" || {
+            echo "FAIL: session-shell --exec did not run inside the devcontainer"
+            tail -c 4000 /tmp/session-1.log; diag; exit 1; }
+          echo "devcontainer session --exec (zellij + remo-session-shell): PASS"
+
+          # --- 3. --exec exit status reaches the CLI (#279) ---
+          # A failed --exec pauses for a key inside the pane; a slow stream of
+          # Enter answers it. The timeout turns a hang into a failure.
+          set +e
+          ( while sleep 5; do printf '\n'; done ) | timeout 600 script -qec \
+            "stty cols 120 rows 40; uv run remo shell -p dc-proj --exec 'exit 3'; echo REMO_RC=\$?" \
+            /dev/null > /tmp/session-2.log 2>&1
+          set -e
+          grep -q "REMO_RC=3" /tmp/session-2.log || {
+            echo "FAIL: --exec 'exit 3' did not exit 3"; tail -c 4000 /tmp/session-2.log; diag; exit 1; }
+          echo "devcontainer --exec exit status: PASS"
 
       - name: Teardown
         if: always()
