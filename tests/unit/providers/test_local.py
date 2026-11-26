@@ -408,6 +408,101 @@ class TestIndexVerbQuoting:
         assert not (tmp_path / "pwned").exists()
 
 
+class TestProjectsDirSurvivesRemoveLocal:
+    """#281: `remo remove local` keeps the scripts and local.env; a later setup
+    without --projects-dir must restore the folder, not silently drop it."""
+
+    @pytest.fixture
+    def play(self, ready):
+        # Stand-in for ansible/local_setup.yml's local.env task (its real output
+        # is pinned by tests/unit/test_local_setup_playbook.py).
+        def _write_env(playbook, extra, **kwargs):
+            play_vars = _play_vars(extra)
+            env = Path(os.environ["HOME"]) / ".local" / "state" / "remo" / "local.env"
+            env.parent.mkdir(parents=True, exist_ok=True)
+            env.write_text(
+                f"REMO_BASH={play_vars['remo_bash_path']}\n"
+                f"REMO_PROJECTS_DIR={play_vars['remo_local_projects_dir']}\n"
+            )
+            return 0
+
+        ready.side_effect = _write_env
+        return ready
+
+    def _remove_local(self):
+        from remo_cli.core.known_hosts import remove_known_host
+
+        remove_known_host("local", "local")
+        assert local.get_local_host() is None
+
+    def test_setup_after_remove_restores_the_folder(self, play, tmp_path, capsys):
+        folder = tmp_path / "proj"
+        folder.mkdir()
+        local.setup(projects_dir=str(folder))
+        self._remove_local()
+        capsys.readouterr()
+        result = local.setup()
+        assert local.get_local_host().projects_dir == str(folder)
+        assert _play_vars(play.call_args.args[1])["remo_local_projects_dir"] == str(folder)
+        assert result.changed  # the entry was re-created
+        assert "Restoring the projects folder" in capsys.readouterr().out
+        # ...and a further run is a no-op.
+        assert local.setup().changed is False
+
+    def test_a_path_with_spaces_round_trips(self, play, tmp_path):
+        folder = tmp_path / "My Projects  dir"
+        folder.mkdir()
+        local.setup(projects_dir=str(folder))
+        assert local.persisted_projects_dir() == str(folder)
+        self._remove_local()
+        local.setup()
+        assert local.get_local_host().projects_dir == str(folder)
+        assert _play_vars(play.call_args.args[1])["remo_local_projects_dir"] == str(folder)
+
+    def test_explicit_empty_clears_it_and_the_persisted_value(self, play, tmp_path):
+        folder = tmp_path / "proj"
+        folder.mkdir()
+        local.setup(projects_dir=str(folder))
+        self._remove_local()
+        local.setup(projects_dir="")
+        assert local.get_local_host().projects_dir == ""
+        assert _play_vars(play.call_args.args[1])["remo_local_projects_dir"] == ""
+        assert local.persisted_projects_dir() == ""
+        # Cleared stays cleared across another remove + setup.
+        self._remove_local()
+        local.setup()
+        assert local.get_local_host().projects_dir == ""
+
+    def test_registered_value_wins_over_the_persisted_one(self, play, tmp_path):
+        folder = tmp_path / "proj"
+        folder.mkdir()
+        local.setup()  # registered with no folder
+        local.local_env_path().write_text(f"REMO_BASH=/b/bash\nREMO_PROJECTS_DIR={folder}\n")
+        local.setup()
+        assert local.get_local_host().projects_dir == ""
+
+    def test_a_vanished_persisted_folder_is_dropped_with_a_warning(self, play, tmp_path, capsys):
+        folder = tmp_path / "proj"
+        folder.mkdir()
+        local.setup(projects_dir=str(folder))
+        self._remove_local()
+        folder.rmdir()
+        capsys.readouterr()
+        local.setup()
+        assert local.get_local_host().projects_dir == ""
+        captured = capsys.readouterr()
+        assert "no longer exists" in captured.out + captured.err
+
+    def test_no_env_file_or_no_key_means_no_folder(self, ready, home):
+        assert local.persisted_projects_dir() == ""
+        env = local.local_env_path()
+        env.parent.mkdir(parents=True)
+        env.write_text("REMO_BASH=/b/bash\n")  # written by a setup that predates the key
+        assert local.persisted_projects_dir() == ""
+        local.setup()
+        assert local.get_local_host().projects_dir == ""
+
+
 def test_setup_preserves_a_hand_edited_second_local_entry(ready, tmp_config_dir):
     """The first local entry is the local host; any extra one is kept as-is."""
     first = KnownHost("local", "local", "localhost", "paul", access_mode="direct")

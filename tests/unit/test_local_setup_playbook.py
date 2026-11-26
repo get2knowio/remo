@@ -8,6 +8,7 @@ to install collections first).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import stat
@@ -133,7 +134,9 @@ def test_local_setup_installs_then_second_run_changes_nothing(tmp_path: Path) ->
     state = home / ".local" / "state" / "remo"
     assert stat.S_IMODE(state.stat().st_mode) == 0o700
     assert (state / "tabs").is_dir()
-    assert (state / "local.env").read_text() == "REMO_BASH=/usr/bin/env-bash-for-test\n"
+    assert (state / "local.env").read_text() == (
+        "REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR=\n"
+    )
     assert (home / ".remo-version").read_text() == "9.9.9"
 
     before = _snapshot(sandbox)
@@ -162,3 +165,29 @@ def test_no_version_marker_without_a_version(tmp_path: Path) -> None:
     result2 = _run(home, "-e", "remo_bash_path=/bin/bash")
     assert result2.returncode == 0
     assert (home / ".local" / "bin" / "remo-host").read_text().startswith("#!/bin/bash\n")
+
+
+def test_projects_dir_is_persisted_verbatim_and_idempotent(tmp_path: Path) -> None:
+    """#281: local.env records the projects folder (spaces intact) so a setup
+    after `remo remove local` can restore it; a re-run changes nothing."""
+    home = tmp_path / "home"
+    home.mkdir()
+    folder = tmp_path / "My Projects"
+    folder.mkdir()
+    # One JSON -e document, exactly as providers/local.setup passes it.
+    doc = json.dumps({"remo_local_projects_dir": str(folder)})
+    first = _run(home, "-e", doc)
+    assert first.returncode == 0, first.stdout + first.stderr
+    env = home / ".local" / "state" / "remo" / "local.env"
+    assert env.read_text() == (
+        f"REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR={folder}\n"
+    )
+    assert f'PROJECTS_DIR="{folder}"' in (home / ".local" / "bin" / "remo-host").read_text()
+
+    second = _run(home, "-e", doc)
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert _recap(second.stdout)["changed"] == 0, second.stdout
+
+    cleared = _run(home, "-e", json.dumps({"remo_local_projects_dir": ""}))
+    assert cleared.returncode == 0, cleared.stdout + cleared.stderr
+    assert env.read_text() == "REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR=\n"

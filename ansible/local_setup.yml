@@ -58,11 +58,17 @@
         tasks_from: host_scripts
 
     # Where the local transport finds the bash >= 4 the scripts were installed with
-    # (core/host_access.py reads it).
-    - name: Record the bash the host scripts run under
+    # (core/host_access.py reads it), and the projects folder the scripts were
+    # installed with: `remo remove local` drops only the registry entry, so a
+    # later `remo local setup` without --projects-dir restores the folder from
+    # here instead of silently losing it (#281). Values are written verbatim
+    # (KEY=rest-of-line, never sourced by a shell), so a path with spaces survives.
+    - name: Record the bash and projects folder the host scripts run with
       ansible.builtin.copy:
         dest: "{{ remo_scripts_home }}/.local/state/remo/local.env"
-        content: "REMO_BASH={{ remo_bash_path }}\n"
+        content: |
+          REMO_BASH={{ remo_bash_path }}
+          REMO_PROJECTS_DIR={{ dev_workspace_dir }}
         mode: "0600"
 
     - name: Write remo version marker

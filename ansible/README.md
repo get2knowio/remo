@@ -86,7 +86,8 @@ Every configure playbook (including the Hetzner and EC2 plugins', via `remo_core
 rc-file tasks. It renders the same host scripts a remote host gets by running
 `roles/user_setup/tasks/host_scripts.yml` (shared by the remote role and this
 play; owner/group are omitted when `remo_local_install` is true) into `$HOME`,
-and writes `~/.local/state/remo/local.env` and `~/.remo-version`. The scripts
+and writes `~/.local/state/remo/local.env` (`REMO_BASH` and
+`REMO_PROJECTS_DIR`, verbatim `KEY=value` lines) and `~/.remo-version`. The scripts
 include `remo-lib.sh` (per-host project index and macOS portability helpers)
 and `remo-session-shell` (starts the devcontainer from a Zellij
 `--default-shell`). A second run reports `changed=0`
