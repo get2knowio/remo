@@ -130,15 +130,25 @@ jobs:
           # IAM: `remo ec2 create` makes remo-<resource>-ssm-role/-profile
           # when no usable SSM profile exists; the playbook deletes them on
           # teardown. IAM is global and free, but capped per account.
+          #
+          # ONLY the exact per-run shape remo-ci-<run_id>-aws-ssm-{role,profile}.
+          # A bare `remo-ci-` prefix also matches this job's own OIDC role,
+          # remo-ci-github-actions -- which run 45749586140 deleted. Three
+          # independent guards: the query's suffix, the exact-shape regex, and
+          # never the role this job is running as.
           echo "== IAM SSM roles / instance profiles"
+          SELF_ROLE=$(aws sts get-caller-identity --query Arn --output text | cut -d/ -f2)
+          echo "Running as role: $SELF_ROLE (never touched)"
           aws iam list-instance-profiles \
-            --query "InstanceProfiles[?starts_with(InstanceProfileName, 'remo-ci-') && CreateDate<=\`${CUTOFF}\`].InstanceProfileName" \
+            --query "InstanceProfiles[?starts_with(InstanceProfileName, 'remo-ci-') && ends_with(InstanceProfileName, '-ssm-profile') && CreateDate<=\`${CUTOFF}\`].InstanceProfileName" \
             --output text | tr '\t' '\n' | \
           while read -r profile; do
             [ -z "$profile" ] && continue
+            [[ "$profile" =~ ^remo-ci-[0-9]+-aws-ssm-profile$ ]] || { echo "Skipping (not a smoke-run profile): $profile"; continue; }
             live "$(sed -E 's/^remo-(.*)-ssm-profile$/\1/' <<<"$profile")" && continue
             for role in $(aws iam get-instance-profile --instance-profile-name "$profile" \
                             --query "InstanceProfile.Roles[].RoleName" --output text); do
+              [ "$role" = "$SELF_ROLE" ] && continue
               aws iam remove-role-from-instance-profile \
                 --instance-profile-name "$profile" --role-name "$role" || true
             done
@@ -146,10 +156,12 @@ jobs:
             aws iam delete-instance-profile --instance-profile-name "$profile" || true
           done
           aws iam list-roles \
-            --query "Roles[?starts_with(RoleName, 'remo-ci-') && CreateDate<=\`${CUTOFF}\`].RoleName" \
+            --query "Roles[?starts_with(RoleName, 'remo-ci-') && ends_with(RoleName, '-ssm-role') && CreateDate<=\`${CUTOFF}\`].RoleName" \
             --output text | tr '\t' '\n' | \
           while read -r role; do
             [ -z "$role" ] && continue
+            [[ "$role" =~ ^remo-ci-[0-9]+-aws-ssm-role$ ]] || { echo "Skipping (not a smoke-run role): $role"; continue; }
+            [ "$role" = "$SELF_ROLE" ] && { echo "Skipping this job's own role: $role"; continue; }
             live "$(sed -E 's/^remo-(.*)-ssm-role$/\1/' <<<"$role")" && continue
             for profile in $(aws iam list-instance-profiles-for-role --role-name "$role" \
                                --query "InstanceProfiles[].InstanceProfileName" --output text); do
