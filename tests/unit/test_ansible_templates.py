@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -174,8 +176,11 @@ def test_remo_host_capabilities_json_stdout_only(rendered_script: Path, tmp_path
     assert isinstance(payload["zellij"], bool)
     assert isinstance(payload["docker"], bool)
     # Degrades gracefully instead of crashing regardless of what's installed.
-    assert payload["zellij"] == (shutil.which("zellij") is not None)
-    assert payload["docker"] == (shutil.which("docker") is not None)
+    # Compared against the PATH the script ran with (_run_remo_host's), not the
+    # test process's: on macOS Homebrew's /opt/homebrew/bin is on the latter only.
+    script_path = "/usr/bin:/bin:/usr/local/bin"
+    assert payload["zellij"] == (shutil.which("zellij", path=script_path) is not None)
+    assert payload["docker"] == (shutil.which("docker", path=script_path) is not None)
 
 
 @pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
@@ -444,6 +449,10 @@ def _stats_shims(tmp_path: Path, df_lines: list[str] | None = None) -> Path:
     body_lines += [f'echo "{line}"' for line in df_lines]
     _write_shim(shim_dir, "df", "\n".join(body_lines))
     _write_shim(shim_dir, "nproc", "echo 8")
+    # These tests exercise the Linux /proc + /sys branch; on a macOS runner the
+    # real uname says Darwin and the script (correctly) takes the Darwin branch,
+    # covered by tests/unit/test_host_stats_darwin.py instead.
+    _write_shim(shim_dir, "uname", "echo Linux")
     return shim_dir
 
 
@@ -1558,6 +1567,7 @@ class TestMacPortability:
 
     def test_file_mtime_uses_stat_and_epoch_date_on_bsd(self, tmp_path: Path) -> None:
         real_date, real_stat = shutil.which("date"), shutil.which("stat")
+        PY = shlex.quote(sys.executable)  # noqa: N806
         target = tmp_path / "f"
         target.write_text("x")
         os.utime(target, (1_700_000_000, 1_700_000_000))
@@ -1565,14 +1575,21 @@ class TestMacPortability:
             tmp_path / "t",
             extra_shims={
                 # BSD date: no -I, and -r takes epoch seconds, not a file.
+                # Formatted in Python so the fake works on GNU and BSD hosts alike.
                 "date": (
                     'case "$1" in -I*) exit 1;; esac\n'
-                    'if [ "$1" = -u ] && [ "$2" = -r ]; then exec ' + str(real_date) + ' -u -d "@$3" "$4"; fi\n'
+                    'if [ "$1" = -u ] && [ "$2" = -r ]; then exec ' + PY + ' -c '
+                    '"import sys,time; print(time.strftime(sys.argv[2][1:], time.gmtime(int(sys.argv[1]))))" "$3" "$4"; fi\n'
                     'if [ "$1" = -r ]; then exit 1; fi\n'
                     f'exec {real_date} "$@"'
                 ),
                 # BSD stat: -f FORMAT, no -c.
-                "stat": f'[ "$1" = -c ] && exit 1\nif [ "$1" = -f ]; then exec {real_stat} -c %Y "$3"; fi\nexec {real_stat} "$@"',
+                "stat": (
+                    '[ "$1" = -c ] && exit 1\n'
+                    'if [ "$1" = -f ]; then exec ' + PY + ' -c '
+                    '"import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))" "$3"; fi\n'
+                    f'exec {real_stat} "$@"'
+                ),
             },
         )
         result = _lib_run(tmp_path, f'remo_file_mtime_iso "{target}"', path)

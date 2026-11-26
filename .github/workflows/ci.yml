@@ -218,13 +218,18 @@ jobs:
       - name: Install the host-script prerequisites
         run: brew install bash zellij fzf
 
+      # Pinned: uv otherwise picks the runner's newest CPython (3.15), where
+      # ansible-core 2.19 crashes on import (#271) and every playbook test fails.
       - name: Install dependencies
-        run: uv sync --all-extras --no-extra hetzner --no-extra ec2
+        run: uv sync --python 3.13 --all-extras --no-extra hetzner --no-extra ec2
 
+      # -rs prints each skip's reason, so a test silently skipping on macOS
+      # (e.g. one gated on Linux-only /run/user) is visible in the log.
       - name: Run the host-script tests on macOS
         run: >-
-          uv run --no-sync pytest --tb=short -q
+          uv run --no-sync pytest --tb=short -q -rs
           tests/unit/test_ansible_templates.py
+          tests/unit/test_host_stats_darwin.py
           tests/unit/test_project_index.py
           tests/unit/test_session_shell.py
           tests/unit/test_project_launch_tab_record.py
