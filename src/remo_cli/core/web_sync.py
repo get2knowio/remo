@@ -696,6 +696,42 @@ def parse_remote_registry(doc: dict[str, Any]) -> RemoteRegistry:
     )
 
 
+def split_local_name_collisions(
+    remote_hosts: list[KnownHost], local_registry: list[KnownHost]
+) -> tuple[list[KnownHost], list[KnownHost]]:
+    """(mergeable, shadowed) deployment entries.
+
+    The local host never travels (FR-004a), so the deployment can hold an
+    entry of another type under this machine's local-host name. Pulling it
+    would leave two registry hosts with one name and `remo shell NAME`
+    ambiguous (#280); a shadowed entry is kept out of the merge entirely and
+    passed through to the deployment unchanged.
+    """
+    local_names = {h.name for h in local_registry if not is_portable_host(h)}
+    mergeable = [h for h in remote_hosts if h.name not in local_names]
+    shadowed = [h for h in remote_hosts if h.name in local_names]
+    return mergeable, shadowed
+
+
+def _warn_local_name_collisions(
+    shadowed: list[KnownHost], local_registry: list[KnownHost], *, warned: set[str]
+) -> None:
+    local_by_name = {h.name: h for h in local_registry if not is_portable_host(h)}
+    for host in shadowed:
+        if host.name in warned:
+            continue
+        warned.add(host.name)
+        mine = local_by_name.get(host.name)
+        mine_type = mine.type if mine is not None else "local"
+        print_warning(
+            f"not pulling the deployment's {host.type} host {host.name!r}: this "
+            f"machine's {mine_type} host is also named {host.name!r}. It stays on "
+            "the deployment unchanged. Rename one side — `remo local setup "
+            "--name <other>` here, or rename the entry on the deployment — then "
+            "re-run `remo web sync`."
+        )
+
+
 def _check_sync_supported(status: dict[str, Any]) -> None:
     versions = status.get("payload_versions")
     if not isinstance(versions, list) or SYNC_PAYLOAD_VERSION not in versions:
@@ -809,9 +845,11 @@ def _sync_flow(
     resolution_memo: dict[str, str] = {}
     consent_memo: set[str] = set()
     persisted_bases: dict[str, CachedInstance | None] = {}
+    collision_warned: set[str] = set()
 
     applied: dict[str, Any] | None = None
     final_plan: SyncPlan | None = None
+    final_shadowed: list[KnownHost] = []
     outcomes: list[InstanceOutcome] = []
     host_keys: dict[str, list[str]] = {}
     revocations: list[RevocationOutcome] = []
@@ -836,13 +874,21 @@ def _sync_flow(
         # AdoptError, so wrap it here (as the mutate path below does) to keep
         # run_web_sync's never-raises contract for a corrupt/newer registry.
         try:
-            local_hosts = [
-                h for h in registry.read_registry(readonly=True).hosts
-                if is_portable_host(h)
-            ]
+            all_local = registry.read_registry(readonly=True).hosts
         except registry.RegistryError as e:
             raise AdoptError(f"could not read the local registry: {e}") from e
-        plan = build_sync_plan(base, local_hosts, remote.hosts, remote.generation)
+        portable_local = [h for h in all_local if is_portable_host(h)]
+        remote_hosts, shadowed = split_local_name_collisions(remote.hosts, all_local)
+        _warn_local_name_collisions(shadowed, all_local, warned=collision_warned)
+        shadowed_names = {h.name for h in shadowed}
+        local_hosts = [h for h in portable_local if h.name not in shadowed_names]
+        plan_base = {n: e for n, e in base.items() if n not in shadowed_names}
+        plan = build_sync_plan(plan_base, local_hosts, remote_hosts, remote.generation)
+        # CAS baseline = every portable entry on disk (the Step 8 mutator
+        # compares against all of them, shadowed or not).
+        plan.local_baseline = frozenset(
+            registry.canonical_entry(h) for h in portable_local
+        )
         render_sync_plan(plan, deployment_id)
 
         # Step 6: dry run stops here — GETs only, nothing written anywhere.
@@ -866,7 +912,9 @@ def _sync_flow(
             print_error("sync aborted before any change was applied.")
             return EXIT_ABORTED
 
-        final_hosts = merged_hosts(plan)
+        # Shadowed deployment entries ride through the payload untouched: not
+        # pulling them must never delete them from the deployment (#280).
+        final_hosts = merged_hosts(plan) + shadowed
         if not final_hosts and not allow_empty:
             raise AdoptError(
                 "the merged registry is empty. Refusing to sync: an empty "
@@ -924,6 +972,10 @@ def _sync_flow(
         # authorization; workstation reachability is not a sync precondition).
         outcomes = []
         host_keys = {}
+        for shadow in shadowed:
+            passthrough = remote.host_keys.get(shadow.name, [])
+            if passthrough:
+                host_keys[shadow.name] = list(passthrough)
         for action in plan.actions:
             side = _final_side(action)
             if side is None:
@@ -1002,6 +1054,7 @@ def _sync_flow(
             )
             continue
         final_plan = plan
+        final_shadowed = shadowed
         break
 
     assert applied is not None and final_plan is not None
@@ -1026,7 +1079,7 @@ def _sync_flow(
         returned = applied.get("mirror_generation")
         repair_base = returned if isinstance(returned, int) and not isinstance(returned, bool) else 0
         payload = build_adoption_payload(
-            merged_hosts(final_plan),
+            merged_hosts(final_plan) + final_shadowed,
             host_keys,
             allow_empty=True,
             version=SYNC_PAYLOAD_VERSION,

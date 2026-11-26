@@ -33,6 +33,16 @@ login_shell() {
     exec "${SHELL:-/bin/bash}" -l
 }
 
+# project-launch --exec waits on REMO_EXEC_STATUS_FILE for the command's exit
+# status (zellij's own never carries it). Written only while the file exists:
+# project-launch removes it once it stops waiting.
+record_exec_status() {
+    if [[ -n "${REMO_DEVCONTAINER_CMD:-}" ]] && [[ -n "${REMO_EXEC_STATUS_FILE:-}" ]] \
+        && [[ -f "$REMO_EXEC_STATUS_FILE" ]]; then
+        printf '%s\n' "$1" >"$REMO_EXEC_STATUS_FILE" 2>/dev/null || true
+    fi
+}
+
 # Nothing to do outside a project session, or inside a devcontainer already.
 if [[ -z "${ZELLIJ_SESSION_NAME:-}" ]] || [[ -n "${REMOTE_CONTAINERS:-}" ]]; then
     login_shell
@@ -102,6 +112,7 @@ echo "Starting devcontainer for $ZELLIJ_SESSION_NAME..."
 if ! {{ devcontainer_cli_bin }} up --workspace-folder "$_project_dir" {{ devcontainer_up_extra_args | default('') }} $_rebuild_flag; then
     echo ""
     echo "{{ devcontainer_cli_bin }} up failed. [Press any key to continue]"
+    record_exec_status 1
     read -n 1 -s -r
     exit 1
 fi
@@ -126,14 +137,22 @@ else
 fi
 
 # Run devcontainer shell (not exec, so we can stop container after)
-if ! {{ devcontainer_cli_bin }} exec --workspace-folder "$_project_dir" \
+_exec_rc=0
+{{ devcontainer_cli_bin }} exec --workspace-folder "$_project_dir" \
     env REMO_INSTANCE="${REMO_INSTANCE:-$(hostname)}" \
         REMO_PROJECT="$ZELLIJ_SESSION_NAME" \
-    /bin/bash $_bash_flags "$_exec_cmd"; then
+    /bin/bash $_bash_flags "$_exec_cmd" || _exec_rc=$?
+record_exec_status "$_exec_rc"
+if [[ "$_exec_rc" -ne 0 ]]; then
     echo ""
-    echo "{{ devcontainer_cli_bin }} exec failed. [Press any key to continue]"
+    if [[ -n "${REMO_DEVCONTAINER_CMD:-}" ]]; then
+        echo "Command exited with status $_exec_rc. [Press any key to continue]"
+    else
+        echo "{{ devcontainer_cli_bin }} exec failed. [Press any key to continue]"
+    fi
     read -n 1 -s -r
 fi
+unset _exec_rc
 unset _exec_cmd _bash_flags
 
 # After exiting devcontainer, stop the container(s) to free resources.

@@ -13,10 +13,14 @@ Wiring: `src/remo_cli/cli/local.py` (Click only). Logic:
    `ansible_python_interpreter=<sys.executable>`), installing remo's scripts to
    `~/.local/bin`, the version marker `~/.remo-version`, state dirs under
    `~/.local/state/remo/`, and `~/.local/state/remo/local.env`
-   (`REMO_BASH=<path>`).
+   (`REMO_BASH=<path>` and `REMO_PROJECTS_DIR=<path or empty>`, one
+   verbatim `KEY=value` line each; never sourced by a shell).
 3. Create or update the single `local` registry entry (default name `local`;
    `--name` renames an existing one; `--projects-dir` sets/clears
-   `projects_dir`; `--projects-dir ""` clears it).
+   `projects_dir`; `--projects-dir ""` clears it). With no flag the
+   registered value is kept; with no local entry either (e.g. after
+   `remo remove local`) the folder recorded in `local.env` is restored if it
+   still exists, otherwise a warning is printed and none is set (#281).
 4. Print what changed (or "Already up to date" on a no-op run).
 
 Guarantees: no sudo/become, no user creation, no edits to `~/.bashrc`,

@@ -308,6 +308,47 @@ def _normalize_projects_dir(value: str) -> str:
     return str(path)
 
 
+#: The ``local.env`` key ``ansible/local_setup.yml`` records the projects folder under.
+PROJECTS_DIR_KEY = "REMO_PROJECTS_DIR"
+
+
+def persisted_projects_dir() -> str:
+    """The projects folder the host scripts were last installed with, or ``""``.
+
+    ``remo remove local`` deregisters the host but keeps the scripts and
+    ``local.env`` (#281), so this is what lets a later ``remo local setup``
+    without ``--projects-dir`` restore the folder. The value is the rest of the
+    line, verbatim: the file is never sourced by a shell, so a path with spaces
+    needs no quoting.
+    """
+    try:
+        text = local_env_path().read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == PROJECTS_DIR_KEY:
+            return value
+    return ""
+
+
+def _default_projects_dir(existing: KnownHost | None) -> str:
+    """``--projects-dir`` not given: the registered value, else the persisted one."""
+    if existing is not None:
+        return existing.projects_dir
+    persisted = persisted_projects_dir()
+    if not persisted:
+        return ""
+    if not Path(persisted).is_dir():
+        print_warning(
+            f"The previous projects folder {persisted} no longer exists; continuing "
+            "without one. Set one with: remo local setup --projects-dir DIR"
+        )
+        return ""
+    print_info(f"Restoring the projects folder {persisted} (clear it with: --projects-dir \"\")")
+    return persisted
+
+
 def _register(name: str, projects_dir: str) -> bool:
     """Create or update the single local entry. Returns whether it changed."""
     desired = KnownHost(
@@ -378,8 +419,9 @@ def setup(
 ) -> SetupResult:
     """Install the host scripts for this machine and register the local host.
 
-    *projects_dir*: ``None`` keeps the registered value, ``""`` clears it, any
-    other value sets it. *assume_yes* is accepted for symmetry with the other
+    *projects_dir*: ``None`` keeps the registered value (or, with no local
+    entry, the folder the scripts were last installed with — see
+    :func:`persisted_projects_dir`), ``""`` clears it, any other value sets it. *assume_yes* is accepted for symmetry with the other
     upgrade paths; setup asks nothing today (it never escalates privileges).
     """
     del assume_yes  # nothing to confirm: no sudo, no system-wide change
@@ -410,7 +452,7 @@ def setup(
             f"Choose a different name: remo local setup --name <name>"
         )
     if projects_dir is None:
-        effective_projects = existing.projects_dir if existing else ""
+        effective_projects = _default_projects_dir(existing)
     elif projects_dir == "":
         effective_projects = ""
     else:
@@ -542,6 +584,7 @@ __all__ = [
     "list_projects",
     "local_setup_state",
     "missing_required",
+    "persisted_projects_dir",
     "remove_project",
     "render_prerequisites",
     "render_projects",

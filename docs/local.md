@@ -24,6 +24,9 @@ host per machine).
 Option: `--projects-dir DIR` registers a folder whose subfolders are all
 projects (the same convention remote hosts use for `~/projects`). Pass `''` to
 clear it later. It is optional: you can add checkouts one by one instead.
+The folder is also recorded in `~/.local/state/remo/local.env`, so after
+`remo remove local` a plain `remo local setup` restores it (an explicit
+`--projects-dir ''` clears it there too).
 
 ### Prerequisites
 
@@ -88,7 +91,7 @@ a `.bashrc` block, which is why no rc file needs to change.
 | `remo configure NAME` | installs tools over SSH | refused: use `remo local setup` |
 | `remo web push` / `remo web sync` | mirrored to the console | never sent or accepted (a deployment cannot reach your machine); a `local` entry received from a deployment is ignored with a warning |
 | Upgrading tools | `remo <type> upgrade` / `remo configure` | `remo local setup` (offered automatically when `remo shell` finds older scripts) |
-| Deregister | `remo remove NAME` | `remo remove local` — scripts and the project list stay; `remo local setup` registers it again |
+| Deregister | `remo remove NAME` | `remo remove local` — scripts, the project list and the projects folder stay; `remo local setup` registers it again |
 
 An older remo that does not know the `local` host type keeps its registry entry
 untouched.
