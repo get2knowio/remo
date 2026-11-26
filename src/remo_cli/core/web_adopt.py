@@ -77,6 +77,7 @@ from typing import Any, Literal
 from remo_cli.core import registry
 from remo_cli.core.atomic_file import atomic_write_json
 from remo_cli.core.config import (
+    LOCAL_HOST_TYPE,
     DEFAULT_SSH_PORT,
     get_known_hosts_path_readonly,
     get_remo_home_readonly,
@@ -411,6 +412,13 @@ class SetupApiClient:
 # ---------------------------------------------------------------------------
 
 
+def is_portable_host(host: KnownHost) -> bool:
+    """False for the ``local`` host: it names *this* machine, so it never
+    travels to a deployment or back (spec 029 FR-004a). The one predicate every
+    push/sync/drift seam shares."""
+    return host.type != LOCAL_HOST_TYPE
+
+
 def is_direct_access(host: KnownHost) -> bool:
     """True when the entry is reached over plain SSH (not SSM-routed).
 
@@ -442,6 +450,7 @@ def build_adoption_payload(
     if not hosts and not allow_empty:
         raise EmptyRegistryError(_empty_registry_message())
 
+    hosts = [h for h in hosts if is_portable_host(h)]
     direct_names = {h.name for h in hosts if is_direct_access(h)}
     filtered_keys = {
         name: lines
@@ -1990,7 +1999,7 @@ def _push_flow(
             )
 
     # Step 3: build the mirror from the local registry (FR-008/FR-016).
-    hosts = get_known_hosts()
+    hosts = [h for h in get_known_hosts() if is_portable_host(h)]
     if not hosts and not allow_empty:
         raise EmptyRegistryError(_empty_registry_message())
 

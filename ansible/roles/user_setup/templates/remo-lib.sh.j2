@@ -1,0 +1,353 @@
+# remo-lib.sh - shared helpers sourced by remo-host, project-menu, project-launch,
+# devshell and remo-session-shell. Not executable on its own.
+# Managed by Ansible - do not edit manually
+#
+# Two jobs:
+#
+#   1. The PROJECT INDEX (specs/029-local-host/contracts/project-index.md): a
+#      per-host TSV, name<TAB>absolute-path, that lets a project live anywhere,
+#      alongside the implicit projects found under PROJECTS_DIR. Every script
+#      resolves a project name to a path through remo_project_path and
+#      enumerates projects through remo_project_list; nothing builds
+#      "$PROJECTS_DIR/$name" itself.
+#
+#   2. PORTABILITY helpers, so one script body runs on GNU/Linux and on macOS
+#      (BSD date/stat/sed, no setsid, no timeout): remo_iso_now,
+#      remo_file_mtime_iso, remo_sha256, remo_strip_ansi, remo_detach,
+#      remo_timeout.
+#
+# No `set -e`/`set -u` here: the sourcing script owns its shell options, and
+# every function reports failure through its return status.
+
+REMO_PROJECT_INDEX="${REMO_PROJECT_INDEX:-$HOME/.local/state/remo/projects.tsv}"
+
+# ---------------------------------------------------------------------------
+# Name validation (twin of core/validation.validate_project_name)
+# ---------------------------------------------------------------------------
+
+# Validate a project NAME's shape (FR-011). Prints a diagnostic to stderr and
+# returns non-zero on the first violation found. The optional second argument
+# names the verb for diagnostics (default: sessions attach). Whether the project
+# EXISTS is a separate question answered by remo_project_path.
+validate_project_name() {
+    local name="$1"
+    local ctx="${2:-sessions attach}"
+
+    if [[ -z "$name" ]]; then
+        echo "remo-host: $ctx: project name must not be empty" >&2
+        return 1
+    fi
+
+    if LC_ALL=C printf '%s' "$name" | grep -q '[[:cntrl:]]'; then
+        echo "remo-host: $ctx: project name contains control characters: $name" >&2
+        return 1
+    fi
+
+    if [[ "$name" == /* ]]; then
+        echo "remo-host: $ctx: absolute paths are not allowed: $name" >&2
+        return 1
+    fi
+
+    case "$name" in
+        .. | ../* | */.. | */../*)
+            echo "remo-host: $ctx: path traversal is not allowed: $name" >&2
+            return 1
+            ;;
+    esac
+
+    if [[ "$name" == */* ]]; then
+        echo "remo-host: $ctx: path separators are not allowed: $name" >&2
+        return 1
+    fi
+
+    # Hidden names are reserved for the host's own staging dirs (clone stages
+    # in "$PROJECTS_DIR/.remo-clone.*") and are excluded from the project list.
+    if [[ "$name" == .* ]]; then
+        echo "remo-host: $ctx: hidden project names (leading '.') are not allowed: $name" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Project index: read side
+# ---------------------------------------------------------------------------
+
+REMO_IDX_NAMES=()
+REMO_IDX_PATHS=()
+
+# Load the explicit records into REMO_IDX_NAMES / REMO_IDX_PATHS. A missing or
+# empty file is "no explicit projects". A malformed line (anything but exactly
+# one tab between two non-empty fields) is an error naming the file and line,
+# and returns 5; the file is never rewritten by a reader.
+_remo_index_load() {
+    REMO_IDX_NAMES=()
+    REMO_IDX_PATHS=()
+    local file="$REMO_PROJECT_INDEX"
+    [[ -f "$file" ]] || return 0
+
+    local line name path n=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        n=$((n + 1))
+        [[ -z "$line" ]] && continue
+        name="${line%%$'\t'*}"
+        path="${line#*$'\t'}"
+        if [[ "$name" == "$line" || -z "$name" || -z "$path" || "$path" == *$'\t'* ]]; then
+            echo "remo: project index $file line $n is malformed (expected NAME<TAB>PATH); fix or delete that line" >&2
+            return 5
+        fi
+        REMO_IDX_NAMES+=("$name")
+        REMO_IDX_PATHS+=("$path")
+    done <"$file"
+    return 0
+}
+
+# Print `name<TAB>path<TAB>source<TAB>status` for every project: the explicit
+# index records first (source=index; status ok|missing), then each non-hidden
+# direct subdirectory of PROJECTS_DIR when set and present (source=dir). An
+# explicit record wins a name clash: the implicit entry is then printed with
+# status=shadowed. An implicit directory that IS an explicit record's path is
+# the same project and is listed once.
+remo_project_list() {
+    _remo_index_load || return $?
+
+    declare -A explicit_path=()
+    # Every explicit record's path, whatever its name: a PROJECTS_DIR folder
+    # added under another name (`--name`) is that record, not a second project.
+    declare -A explicit_dirs=()
+    local i name path status
+    for i in "${!REMO_IDX_NAMES[@]}"; do
+        name="${REMO_IDX_NAMES[$i]}"
+        path="${REMO_IDX_PATHS[$i]}"
+        [[ -n "${explicit_path[$name]+x}" ]] && continue
+        explicit_path["$name"]="$path"
+        explicit_dirs["$path"]=1
+        if [[ -d "$path" ]]; then status=ok; else status=missing; fi
+        printf '%s\t%s\tindex\t%s\n' "$name" "$path" "$status"
+    done
+
+    if [[ -n "${PROJECTS_DIR:-}" && -d "$PROJECTS_DIR" ]]; then
+        local dir
+        while IFS= read -r dir; do
+            [[ -z "$dir" ]] && continue
+            [[ -n "${explicit_dirs[$dir]+x}" ]] && continue
+            name="${dir##*/}"
+            if [[ -n "${explicit_path[$name]+x}" ]]; then
+                printf '%s\t%s\tdir\tshadowed\n' "$name" "$dir"
+                continue
+            fi
+            printf '%s\t%s\tdir\tok\n' "$name" "$dir"
+        done < <(find "$PROJECTS_DIR" -maxdepth 1 -mindepth 1 -type d ! -name '.*' 2>/dev/null | sort)
+    fi
+    return 0
+}
+
+# Print the path for project NAME: the explicit record first, then
+# PROJECTS_DIR/NAME. Returns 3 when the name is unknown (callers check the path
+# is a directory themselves: an explicit record may point at a missing one).
+remo_project_path() {
+    local want="${1:-}"
+    case "$want" in
+        "" | .* | */*) return 3 ;;
+    esac
+
+    _remo_index_load || return $?
+    local i
+    for i in "${!REMO_IDX_NAMES[@]}"; do
+        if [[ "${REMO_IDX_NAMES[$i]}" == "$want" ]]; then
+            printf '%s\n' "${REMO_IDX_PATHS[$i]}"
+            return 0
+        fi
+    done
+
+    if [[ -n "${PROJECTS_DIR:-}" && -d "$PROJECTS_DIR/$want" ]]; then
+        printf '%s\n' "$PROJECTS_DIR/$want"
+        return 0
+    fi
+    return 3
+}
+
+# ---------------------------------------------------------------------------
+# Project index: write side (the only writers)
+# ---------------------------------------------------------------------------
+
+# Rewrite the index from the REMO_IDX_NAMES / REMO_IDX_PATHS arrays: mktemp in
+# the index's own directory + mv -f, atomic on Linux and macOS. Directory 0700,
+# file 0600.
+_remo_index_store() {
+    local file="$REMO_PROJECT_INDEX" dir tmp i
+    dir="$(dirname "$file")"
+    mkdir -p -m 0700 "$dir" || return 5
+    tmp="$(mktemp "$dir/.projects.tsv.XXXXXX")" || return 5
+    for i in "${!REMO_IDX_NAMES[@]}"; do
+        printf '%s\t%s\n' "${REMO_IDX_NAMES[$i]}" "${REMO_IDX_PATHS[$i]}" >>"$tmp"
+    done
+    : >>"$tmp"
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$file"
+}
+
+# remo_project_add PATH [NAME]: register an existing directory under NAME
+# (default: its basename). Errors go to stderr as the bare message the contract
+# specifies; the return status is 3 for a rejected request, 5 for a failure.
+remo_project_add() {
+    local path="${1:-}" name="${2:-}"
+
+    if [[ -z "$path" ]] || LC_ALL=C printf '%s' "$path" | grep -q '[[:cntrl:]]'; then
+        echo "no such directory: $path" >&2
+        return 3
+    fi
+    [[ "$path" == /* ]] || path="$PWD/$path"
+    if [[ ! -d "$path" ]]; then
+        echo "no such directory: $path" >&2
+        return 3
+    fi
+    # Normalise ('..', '.', repeated or trailing slashes) without resolving
+    # symlinks: the path is stored as the user gave it.
+    path="$(cd "$path" 2>/dev/null && pwd)" || { echo "no such directory: $path" >&2; return 3; }
+
+    [[ -n "$name" ]] || name="${path##*/}"
+    local reason
+    if ! reason="$(validate_project_name "$name" "projects add" 2>&1)"; then
+        echo "invalid project name: ${reason#remo-host: projects add: }" >&2
+        return 3
+    fi
+
+    _remo_index_load || return $?
+
+    local i existing_at=-1
+    for i in "${!REMO_IDX_NAMES[@]}"; do
+        if [[ "${REMO_IDX_PATHS[$i]}" == "$path" ]]; then
+            echo "$path is already registered as '${REMO_IDX_NAMES[$i]}'" >&2
+            return 3
+        fi
+        [[ "${REMO_IDX_NAMES[$i]}" == "$name" ]] && existing_at="$i"
+    done
+
+    if (( existing_at >= 0 )); then
+        # Re-adding a project whose folder moved: the same name with a new path
+        # replaces the dead record; a live one keeps the name.
+        if [[ -d "${REMO_IDX_PATHS[$existing_at]}" ]]; then
+            echo "project '$name' already exists at ${REMO_IDX_PATHS[$existing_at]} — use --name to pick another" >&2
+            return 3
+        fi
+        REMO_IDX_PATHS[existing_at]="$path"
+    else
+        REMO_IDX_NAMES+=("$name")
+        REMO_IDX_PATHS+=("$path")
+    fi
+
+    _remo_index_store || { echo "could not write $REMO_PROJECT_INDEX" >&2; return 5; }
+    REMO_ADDED_NAME="$name"
+    REMO_ADDED_PATH="$path"
+    return 0
+}
+
+# remo_project_remove NAME: drop the explicit record; files are untouched.
+remo_project_remove() {
+    local name="${1:-}"
+    _remo_index_load || return $?
+
+    local i found=-1
+    for i in "${!REMO_IDX_NAMES[@]}"; do
+        if [[ "${REMO_IDX_NAMES[$i]}" == "$name" ]]; then
+            found="$i"
+            break
+        fi
+    done
+
+    if (( found < 0 )); then
+        if [[ -n "$name" && -n "${PROJECTS_DIR:-}" && -d "$PROJECTS_DIR/$name" ]]; then
+            echo "'$name' is a folder under $PROJECTS_DIR, not an indexed project — move or delete the folder instead" >&2
+        else
+            echo "no such project: $name" >&2
+        fi
+        return 3
+    fi
+
+    unset 'REMO_IDX_NAMES[found]' 'REMO_IDX_PATHS[found]'
+    REMO_IDX_NAMES=("${REMO_IDX_NAMES[@]}")
+    REMO_IDX_PATHS=("${REMO_IDX_PATHS[@]}")
+    _remo_index_store || { echo "could not write $REMO_PROJECT_INDEX" >&2; return 5; }
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Portability helpers
+# ---------------------------------------------------------------------------
+
+# Current time, ISO 8601. GNU `date -Iseconds` where it exists (Linux output is
+# unchanged); a UTC spelling BSD date can produce otherwise.
+remo_iso_now() {
+    date -Iseconds 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+# A file's mtime, ISO 8601: GNU `date -r FILE`, else BSD `stat -f %m` + `date -r EPOCH`.
+remo_file_mtime_iso() {
+    local f="$1" epoch
+    date -Iseconds -r "$f" 2>/dev/null && return 0
+    epoch="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)" || epoch=""
+    if [[ "$epoch" =~ ^[0-9]+$ ]]; then
+        date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+            || true
+    fi
+    return 0
+}
+
+# SHA-256 of stdin, hex only: sha256sum (GNU), else `shasum -a 256` (macOS).
+remo_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | cut -d' ' -f1
+    else
+        shasum -a 256 | cut -d' ' -f1
+    fi
+}
+
+# Strip ANSI colour codes from stdin. $'\e' (not the GNU-only \x1b) in the
+# pattern, so GNU and BSD sed both accept it.
+remo_strip_ansi() {
+    sed $'s/\e\\[[0-9;]*m//g'
+}
+
+# Run a command detached from the controlling terminal and from its parent's
+# lifetime: `setsid` when present, plain nohup otherwise (macOS has no setsid;
+# nohup alone still survives the parent). Call it BACKGROUNDED with the caller's
+# own redirections: `remo_detach cmd args >>log 2>&1 </dev/null &`.
+#
+# It EXECs, replacing the background subshell `&` forks for the function, so
+# `$!` is the detached command itself, exactly as with the former inline
+# `nohup setsid cmd &` (remo-host's jobs record that pid and probe it with
+# `kill -0`). Never call it in the foreground: it would replace the caller.
+remo_detach() {
+    if command -v setsid >/dev/null 2>&1; then
+        exec nohup setsid "$@"
+    else
+        exec nohup "$@"
+    fi
+}
+
+# Run a command with a time limit: `timeout`, `gtimeout` (Homebrew coreutils),
+# else a watchdog that kills it, so a hung `git fetch` never blocks a menu.
+remo_timeout() {
+    local secs="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$secs" "$@"
+        return $?
+    fi
+    if command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$secs" "$@"
+        return $?
+    fi
+    "$@" &
+    local pid=$! rc watchdog
+    ( sleep "$secs"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+    watchdog=$!
+    wait "$pid" 2>/dev/null
+    rc=$?
+    kill "$watchdog" 2>/dev/null
+    wait "$watchdog" 2>/dev/null
+    return "$rc"
+}

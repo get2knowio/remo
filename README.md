@@ -201,6 +201,10 @@ You land in an interactive project menu. Pick a project, and you're in a persist
 
 All platforms give you the same dev workflow and tooling described below.
 
+**This machine**: no VM or SSH server needed — `remo local setup` turns the
+laptop you are on into a host, and `remo local add PATH` adds the checkouts
+you already have, in place. See [docs/local.md](docs/local.md).
+
 **SSM connector (any host, no inbound ports)**: for a host that isn't AWS at
 all — a Proxmox/Incus box behind home NAT, or an isolated server you'd
 rather not expose — enroll it as a **connector**: a hybrid-activated SSM
@@ -606,6 +610,13 @@ remo add NAME host --user alice     # Override default SSH user (default: remo)
 remo configure NAME                 # Install/refresh the dev tools on an added host
 remo configure NAME --skip docker   # Skip a tool (repeatable; --only is the inverse)
 remo remove NAME [--yes]            # Deregister an added host (local-only)
+
+# This machine as a host (no SSH — see docs/local.md)
+remo local check                    # Detect prerequisites (read-only)
+remo local setup [--name N] [--projects-dir DIR]   # Install scripts under ~/.local, register `local`
+remo local add PATH [--name N]      # Add an existing checkout in place
+remo local remove NAME              # Drop it from the list (files untouched)
+remo local list                     # Projects on this machine
 
 # SSM connector (any host, no inbound ports — see docs/ssm-connector.md)
 remo connector enroll NAME --activation-id ID --region REGION --expose HOST/PROJECT

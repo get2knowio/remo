@@ -27,7 +27,8 @@ from remo_cli.core.remo_host_client import (
     list_sessions,
     lookup_tab,
 )
-from remo_cli.core.ssh import build_ssh_base_cmd
+from remo_cli.core.errors import ProviderError
+from remo_cli.core.host_access import get_host_access
 from remo_cli.core.tab_records import TabRecord
 from remo_cli.models.host import KnownHost
 
@@ -185,21 +186,24 @@ def resume_message(decision: ResumeDecision, *, upgrade_hint: str | None = None)
 
 
 def _ssh_prefix(host: KnownHost) -> list[str]:
-    # Non-interactive (BatchMode, mirroring core/attach.py) and multiplexed, so
-    # the interactive connection that follows reuses the master this opens.
-    base = build_ssh_base_cmd(host, multiplex=True)
-    return [base[0], "-o", "BatchMode=yes", *base[1:]]
+    return get_host_access(host).command_prefix(host, batch=True)
 
 
 def run_lookup(host: KnownHost, key: str) -> tuple[TabLookup | None, LookupStatus]:
-    """Ask *host* which project this tab used, within the 5 s budget (FR-015)."""
+    """Ask *host* which project this tab used, within the 5 s budget (FR-015).
+
+    A host that cannot even be addressed (the local host before `remo local
+    setup` has run: ``PreconditionError`` from the access layer) reads as
+    ``failed`` like any other unanswered lookup; the connection that follows
+    reports the actionable message, so resume never ends in a traceback.
+    """
     try:
         return lookup_tab(_ssh_prefix(host), key, timeout=LOOKUP_TIMEOUT_S), "ok"
     except TabLookupUnsupported:
         return None, "unsupported"
     except SshTransportError:
         return None, "unreachable"
-    except RemoHostClientError:
+    except (RemoHostClientError, ProviderError):
         return None, "failed"
 
 
@@ -207,6 +211,6 @@ def is_project_live(host: KnownHost, project: str) -> bool:
     """True only if *host* lists *project* with an active zellij session."""
     try:
         entries = list_sessions(_ssh_prefix(host), timeout=LOOKUP_TIMEOUT_S)
-    except RemoHostClientError:
+    except (RemoHostClientError, ProviderError):
         return False
     return any(e.name == project and e.zellij_state is ZellijState.ACTIVE for e in entries)

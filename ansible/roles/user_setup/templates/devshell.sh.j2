@@ -1,4 +1,4 @@
-#!/bin/bash
+#!{{ remo_bash_path | default('/bin/bash') }}
 # devshell - Launch a devcontainer shell for a project
 # Managed by Ansible - do not edit manually
 #
@@ -9,6 +9,13 @@
 set -e
 
 PROJECTS_DIR="{{ dev_workspace_dir }}"
+
+# Shared helpers (project index resolver, portability shims): beside this
+# script, else in ~/.local/bin.
+REMO_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/remo-lib.sh"
+[ -r "$REMO_LIB_PATH" ] || REMO_LIB_PATH="$HOME/.local/bin/remo-lib.sh"
+# shellcheck source=/dev/null
+. "$REMO_LIB_PATH"
 
 # Pin zellij's session namespace. zellij keeps session sockets in
 # $XDG_RUNTIME_DIR/zellij, falling back to /tmp/zellij-$UID when that variable
@@ -32,19 +39,21 @@ show_usage() {
     echo "  devshell <repo>                    Start/attach to devcontainer for <repo>"
     echo "  devshell <repo> clone <github-url> Clone repo and start devcontainer"
     echo ""
-    echo "Available projects in $PROJECTS_DIR:"
-    if [ -d "$PROJECTS_DIR" ] && [ "$(ls -A "$PROJECTS_DIR" 2>/dev/null)" ]; then
-        for dir in "$PROJECTS_DIR"/*/; do
-            if [ -d "$dir" ]; then
-                repo_name=$(basename "$dir")
-                if [ -d "$dir/.devcontainer" ]; then
-                    echo "  $repo_name (has .devcontainer)"
-                else
-                    echo "  $repo_name"
-                fi
+    echo "Available projects:"
+    local plist name path src pstatus listed=false
+    plist="$(remo_project_list 2>/dev/null || true)"
+    if [ -n "$plist" ]; then
+        while IFS=$'\t' read -r name path src pstatus; do
+            [ "$pstatus" = "ok" ] || continue
+            listed=true
+            if [ -d "$path/.devcontainer" ]; then
+                echo "  $name (has .devcontainer)"
+            else
+                echo "  $name"
             fi
-        done
-    else
+        done <<<"$plist"
+    fi
+    if ! $listed; then
         echo "  (no projects found)"
     fi
 }
@@ -55,7 +64,7 @@ if [ -z "$1" ]; then
 fi
 
 REPO_NAME="$1"
-WORKSPACE_DIR="$PROJECTS_DIR/$REPO_NAME"
+WORKSPACE_DIR="$(remo_project_path "$REPO_NAME" 2>/dev/null)" || WORKSPACE_DIR="${PROJECTS_DIR:-$HOME/projects}/$REPO_NAME"
 
 # Handle clone command
 if [ "$2" = "clone" ]; then
@@ -73,6 +82,10 @@ if [ "$2" = "clone" ]; then
     
     echo "Cloning $GITHUB_URL to $WORKSPACE_DIR..."
     git clone "$GITHUB_URL" "$WORKSPACE_DIR"
+    # With no PROJECTS_DIR nothing would find the checkout: index it.
+    if [ -z "$PROJECTS_DIR" ]; then
+        remo_project_add "$WORKSPACE_DIR" "$REPO_NAME" >/dev/null 2>&1 || true
+    fi
 fi
 
 # Verify project directory exists

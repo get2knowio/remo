@@ -8,6 +8,7 @@ import sys
 
 import click
 
+from remo_cli.core.config import LOCAL_HOST_TYPE
 from remo_cli.core.known_hosts import resolve_remo_host_by_name
 from remo_cli.core.output import print_error, print_info
 from remo_cli.core.rsync import transfer
@@ -120,6 +121,13 @@ def cp(recursive: bool, progress: bool, args: tuple[str, ...]) -> None:
         host = resolve_remo_host_by_name(remote_env_name)
     else:
         host = resolve_remo_host()
+
+    if host.type == LOCAL_HOST_TYPE:
+        print_error(
+            f"'{host.name}' is this machine's local host: copy files directly "
+            f"(cp / rsync) — remo cp only transfers over SSH."
+        )
+        sys.exit(1)
 
     # --- Phase 6: Build SSH opts ---
     ssh_opts, ssh_target = build_ssh_opts(host)

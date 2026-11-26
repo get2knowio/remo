@@ -1,0 +1,73 @@
+---
+# Local machine as a remo host (spec 029): install the remo host scripts into the
+# invoking user's own home. No SSH, no sudo, no user creation, and NO rc-file
+# edits - the session shell (remo-session-shell) replaces what the remote role
+# puts in ~/.bashrc, and local sessions always start through it.
+#
+# The scripts come from the SAME task file the remote user_setup role uses
+# (roles/user_setup/tasks/host_scripts.yml), so a local and a remote host cannot
+# drift apart.
+#
+# Extra vars (all optional; the CLI passes what it detected):
+#   remo_bash_path            a bash >= 4 for the scripts' shebang (default /bin/bash)
+#   remo_version              written to ~/.remo-version when non-empty
+#   remo_local_projects_dir   the projects folder ('' = none, index only)
+#   devcontainer_runtime / devcontainer_runtime_effective / devcontainer_cli_bin /
+#   devcontainer_up_extra_args   as on a remote host
+#
+# Principle V: no registered variable is read anywhere in this play.
+
+- name: Install remo host scripts on this machine
+  hosts: localhost
+  connection: local
+  become: false
+  gather_facts: false
+
+  vars:
+    remo_local_install: true
+    remo_scripts_home: "{{ lookup('env', 'HOME') }}"
+    dev_workspace_dir: "{{ remo_local_projects_dir | default('') }}"
+    remo_bash_path: /bin/bash
+    remo_version: ""
+    devcontainer_runtime: auto
+    # Same late binding as the user_setup role's defaults: an unresolved "auto"
+    # is the reference CLI, the safe choice.
+    devcontainer_cli_bin: "{{ 'deacon' if (devcontainer_runtime_effective | default(devcontainer_runtime)) == 'deacon' else 'devcontainer' }}"
+    devcontainer_up_extra_args: "{{ '--trust-workspace-persist' if (devcontainer_runtime_effective | default(devcontainer_runtime)) == 'deacon' else '' }}"
+
+  tasks:
+    - name: Create the script and state directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        # Only remo's own state directories get a mode; ~/.local and friends are
+        # the user's, and are created with their umask or left exactly as found.
+        mode: "{{ item.mode | default(omit) }}"
+      loop:
+        - { path: "{{ remo_scripts_home }}/.local" }
+        - { path: "{{ remo_scripts_home }}/.local/bin" }
+        - { path: "{{ remo_scripts_home }}/.local/state" }
+        - { path: "{{ remo_scripts_home }}/.local/state/remo", mode: "0700" }
+        - { path: "{{ remo_scripts_home }}/.local/state/remo/tabs", mode: "0700" }
+      loop_control:
+        label: "{{ item.path }}"
+
+    - name: Install the remo host scripts
+      ansible.builtin.include_role:
+        name: user_setup
+        tasks_from: host_scripts
+
+    # Where the local transport finds the bash >= 4 the scripts were installed with
+    # (core/host_access.py reads it).
+    - name: Record the bash the host scripts run under
+      ansible.builtin.copy:
+        dest: "{{ remo_scripts_home }}/.local/state/remo/local.env"
+        content: "REMO_BASH={{ remo_bash_path }}\n"
+        mode: "0600"
+
+    - name: Write remo version marker
+      ansible.builtin.copy:
+        dest: "{{ remo_scripts_home }}/.remo-version"
+        content: "{{ remo_version }}"
+        mode: "0644"
+      when: remo_version | default('') | length > 0

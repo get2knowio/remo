@@ -21,6 +21,7 @@ from typing import Any
 
 from remo_cli.core.atomic_file import advisory_lock, atomic_write_text
 from remo_cli.core.config import (
+    LOCAL_HOST_TYPE,
     get_known_hosts_path,
     get_known_hosts_path_readonly,
     get_registry_backup_path,
@@ -36,13 +37,18 @@ SUPPORTED_VERSION = 2
 #: (`remo add` hosts, feature 014). Never registered; never an entry point.
 SSH_PSEUDO_TYPE = "ssh"
 
+#: The second pseudo-type: this machine as a host (feature 029). Same rules as
+#: ``ssh`` — no descriptor, nested object keyed by the type name — but only
+#: ``projects_dir`` is stored, and only when set.
+LOCAL_PSEUDO_TYPE = LOCAL_HOST_TYPE
+
 
 def is_known_type(type_: str) -> bool:
     """True for the ``ssh`` pseudo-type and every registered provider type —
     built-in or discovered from a ``remo.providers`` entry point (027 FR-006).
     Replaces the pre-027 ``KNOWN_TYPES`` literal set, so a plugin's entries are
     accepted on parse exactly like a built-in's."""
-    if type_ == SSH_PSEUDO_TYPE:
+    if type_ in (SSH_PSEUDO_TYPE, LOCAL_PSEUDO_TYPE):
         return True
     from remo_cli.core.provider_registry import is_provider_type  # noqa: PLC0415
 
@@ -55,7 +61,7 @@ def canonicalize_entry(entry: dict[str, Any]) -> dict[str, Any]:
     ``legacy_type_names``, #258). Returned unchanged -- the same object --
     when nothing is renamed, so a second pass is a no-op (Principle VII)."""
     type_ = entry.get("type")
-    if not isinstance(type_, str) or type_ == SSH_PSEUDO_TYPE:
+    if not isinstance(type_, str) or type_ in (SSH_PSEUDO_TYPE, LOCAL_PSEUDO_TYPE):
         return entry
     from remo_cli.core.provider_registry import canonical_type_name  # noqa: PLC0415
 
@@ -232,6 +238,8 @@ def known_host_to_entry(host: KnownHost) -> dict[str, Any]:
                 pass
         if host.region:
             nested["identity_file"] = host.region
+    elif host.type == LOCAL_PSEUDO_TYPE:
+        nested = {"projects_dir": host.region} if host.region else {}
     else:
         nested = _provider_nested_fields(host.type, host.instance_id, host.region)
 
@@ -289,7 +297,16 @@ def entry_to_known_host(entry: dict[str, Any]) -> KnownHost | None:
     region = ""
 
     nested = entry.get(type_)
-    if type_ == SSH_PSEUDO_TYPE:
+    if type_ == LOCAL_PSEUDO_TYPE:
+        # Only a direct, on-this-machine host: no ssm, and a relative projects
+        # folder is meaningless (contracts/registry-local-entry.md).
+        if access != "direct":
+            return None
+        if isinstance(nested, dict):
+            region = str(nested.get("projects_dir", "") or "")
+            if region and not region.startswith("/"):
+                return None
+    elif type_ == SSH_PSEUDO_TYPE:
         if isinstance(nested, dict):
             port = nested.get("port", "")
             instance_id = str(port) if port != "" else ""
@@ -368,6 +385,9 @@ def legacy_fields_to_entry(
                 pass
         if region:
             nested["identity_file"] = region
+    elif type_ == LOCAL_PSEUDO_TYPE:
+        if region:
+            nested["projects_dir"] = region
     else:
         nested = _provider_nested_fields(type_, instance_id, region)
 
@@ -430,6 +450,9 @@ def _validate_single_host(h: KnownHost) -> str | None:
         # 'aws'"); lists every mode-field-aware type once plugins declare one.
         aware = ", ".join(repr(t) for t in _mode_field_aware_types()) or "(none registered)"
         return f"access 'ssm' is only valid for type {aware} (entry: {entry_label})"
+
+    if h.type == LOCAL_PSEUDO_TYPE and h.region and not h.region.startswith("/"):
+        return f"projects_dir must be an absolute path (entry: {entry_label})"
 
     if h.type == "ssh" and h.instance_id:
         try:

@@ -6,7 +6,8 @@ content actually differs, so running the playbook twice (fresh host, or a
 host that already has project-menu/project-launch installed) converges to
 `changed=false` on the second run. Since a live `ansible-playbook` run isn't
 available in this sandbox, the reliable, always-run core of this test is
-structural: parse `ansible/roles/user_setup/tasks/main.yml` and assert the
+structural: parse `ansible/roles/user_setup/tasks/host_scripts.yml` (the one task
+file the remote role and the local setup play both include, spec 029) and assert the
 "Install remo-host script" task exists, uses the `template` module (not
 `copy`/`shell`/`command`, which would NOT give that idempotency guarantee),
 is unconditional (no `when:` that could skip it on an already-provisioned
@@ -29,7 +30,9 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MAIN_YML = REPO_ROOT / "ansible" / "roles" / "user_setup" / "tasks" / "main.yml"
+TASKS_DIR = REPO_ROOT / "ansible" / "roles" / "user_setup" / "tasks"
+MAIN_YML = TASKS_DIR / "main.yml"
+HOST_SCRIPTS_YML = TASKS_DIR / "host_scripts.yml"
 
 TEMPLATE_MODULE = "ansible.builtin.template"
 NON_IDEMPOTENT_MODULES = {
@@ -42,9 +45,13 @@ NON_IDEMPOTENT_MODULES = {
 }
 
 
+# Remote layout by default; the local play overrides remo_scripts_home.
+SCRIPTS_BIN = "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/bin"
+
+
 def _load_tasks() -> list[dict[str, Any]]:
-    data = yaml.safe_load(MAIN_YML.read_text())
-    assert isinstance(data, list), "main.yml is expected to be a flat list of tasks"
+    data = yaml.safe_load(HOST_SCRIPTS_YML.read_text())
+    assert isinstance(data, list), "host_scripts.yml is expected to be a flat list of tasks"
     return data
 
 
@@ -60,6 +67,24 @@ def _module_key(task: dict[str, Any]) -> str:
     module_keys = [k for k in task if k not in reserved]
     assert len(module_keys) == 1, f"expected exactly one module key in task {task.get('name')!r}, found {module_keys}"
     return module_keys[0]
+
+
+def test_main_yml_includes_host_scripts_and_no_longer_renders_them() -> None:
+    """The remote role reaches the scripts only through the shared task file."""
+    data = yaml.safe_load(MAIN_YML.read_text())
+    includes = [t for t in data if "ansible.builtin.include_tasks" in t]
+    assert [t["ansible.builtin.include_tasks"] for t in includes] == ["host_scripts.yml"]
+    assert not [
+        t for t in data if str(t.get("name", "")).startswith("Install remo-host script")
+    ]
+
+
+def test_every_host_script_task_omits_owner_for_a_local_install() -> None:
+    """No sudo, no remo user locally: owner/group vanish when remo_local_install."""
+    for task in _load_tasks():
+        args = task[TEMPLATE_MODULE]
+        for key in ("owner", "group"):
+            assert "omit if (remo_local_install | default(false) | bool) else remo_user" in args[key]
 
 
 def test_install_remo_host_task_exists() -> None:
@@ -103,7 +128,7 @@ def test_install_remo_host_mirrors_project_launch_shape() -> None:
     project_launch_args = project_launch_task[TEMPLATE_MODULE]
 
     assert remo_host_args["src"] == "remo-host.sh.j2"
-    assert remo_host_args["dest"] == "/home/{{ remo_user }}/.local/bin/remo-host"
+    assert remo_host_args["dest"] == SCRIPTS_BIN + "/remo-host"
 
     # Same owner/group/mode shape as the sibling task.
     assert remo_host_args["owner"] == project_launch_args["owner"]
@@ -111,9 +136,9 @@ def test_install_remo_host_mirrors_project_launch_shape() -> None:
     assert remo_host_args["mode"] == project_launch_args["mode"]
     assert remo_host_args["mode"] == "0755"
 
-    # dest follows the same "/home/{{ remo_user }}/.local/bin/<name>" pattern.
-    assert remo_host_args["dest"].startswith("/home/{{ remo_user }}/.local/bin/")
-    assert project_launch_args["dest"].startswith("/home/{{ remo_user }}/.local/bin/")
+    # dest follows the same "<scripts home>/.local/bin/<name>" pattern.
+    assert remo_host_args["dest"].startswith(SCRIPTS_BIN + "/")
+    assert project_launch_args["dest"].startswith(SCRIPTS_BIN + "/")
 
 
 def test_install_remo_host_task_ordered_after_project_launch() -> None:

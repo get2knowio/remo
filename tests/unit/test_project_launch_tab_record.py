@@ -48,6 +48,8 @@ def env(tmp_path: Path):
     script = tmp_path / "project-launch"
     script.write_text(_render("project-launch.sh.j2", projects))
     script.chmod(0o755)
+    # The scripts source remo-lib.sh from beside themselves.
+    (tmp_path / "remo-lib.sh").write_text(_render("remo-lib.sh.j2", projects))
 
     def set_remo_host(exit_code: int = 0) -> None:
         rh = home / ".local" / "bin" / "remo-host"
@@ -71,16 +73,24 @@ def env(tmp_path: Path):
 pytestmark = pytest.mark.skipif(BASH is None, reason="bash not available")
 
 
+def _is_attach(call: str) -> bool:
+    """The session is created with remo-session-shell as its shell, in the project."""
+    return (
+        call.startswith("zellij attach --create alpha options --default-shell ")
+        and "/.local/bin/remo-session-shell --default-cwd " in call
+        and call.endswith("/projects/alpha")
+    )
+
+
 def test_records_before_attach(env) -> None:
     run, calls, set_remo_host = env
     set_remo_host()
     result = run("--project", "alpha", tab_key=KEY)
     assert result.returncode == 0, result.stderr
     seen = [c for c in calls() if not c.startswith("zellij list-sessions")]
-    assert seen == [
-        f"remo-host sessions record --key {KEY} --project alpha",
-        "zellij attach --create alpha",
-    ]
+    assert len(seen) == 2
+    assert seen[0] == f"remo-host sessions record --key {KEY} --project alpha"
+    assert _is_attach(seen[1])
 
 
 def test_no_key_never_calls_remo_host(env) -> None:
@@ -89,7 +99,7 @@ def test_no_key_never_calls_remo_host(env) -> None:
     result = run("--project", "alpha")
     assert result.returncode == 0, result.stderr
     assert not any(c.startswith("remo-host") for c in calls())
-    assert "zellij attach --create alpha" in calls()
+    assert any(_is_attach(c) for c in calls())
 
 
 def test_empty_key_never_calls_remo_host(env) -> None:
@@ -112,7 +122,7 @@ def test_failing_recorder_does_not_block_attach(env) -> None:
     set_remo_host(exit_code=1)
     result = run("--project", "alpha", tab_key=KEY)
     assert result.returncode == 0, result.stderr
-    assert "zellij attach --create alpha" in calls()
+    assert any(_is_attach(c) for c in calls())
 
 
 def test_missing_recorder_does_not_block_attach(env) -> None:
@@ -120,7 +130,7 @@ def test_missing_recorder_does_not_block_attach(env) -> None:
     run, calls, _ = env
     result = run("--project", "alpha", tab_key=KEY)
     assert result.returncode == 0, result.stderr
-    assert "zellij attach --create alpha" in calls()
+    assert any(_is_attach(c) for c in calls())
 
 
 def test_project_menu_records_before_attach_guarded() -> None:
@@ -137,3 +147,33 @@ def test_project_menu_records_before_attach_guarded() -> None:
     attach = body.index('zellij attach --create "$project_name"')
     assert record.start() < attach
     assert body.index('cd "$project_dir"') < record.start()
+
+
+def test_without_a_projects_dir_an_unknown_name_is_not_resolved_against_root(tmp_path: Path) -> None:
+    """A local host registered with no projects folder renders PROJECTS_DIR="":
+    `-p tmp` must be "not found", never a session in /tmp (spec 029)."""
+    assert Path("/tmp").is_dir()
+    home = tmp_path / "home"
+    (home / ".local" / "bin").mkdir(parents=True)
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    log = tmp_path / "calls.log"
+    zellij = shims / "zellij"
+    zellij.write_text(f'#!/bin/bash\necho "zellij $*" >>"{log}"\nexit 0\n')
+    zellij.chmod(0o755)
+    def render_without_projects_dir(name: str) -> str:
+        return Environment(autoescape=False).from_string((TEMPLATES / name).read_text()).render(
+            dev_workspace_dir="", devcontainer_cli_bin="devcontainer", devcontainer_up_extra_args=""
+        )
+
+    script = tmp_path / "project-launch"
+    script.write_text(render_without_projects_dir("project-launch.sh.j2"))
+    (tmp_path / "remo-lib.sh").write_text(render_without_projects_dir("remo-lib.sh.j2"))
+    result = subprocess.run(
+        [BASH, str(script), "--project", "tmp"],
+        capture_output=True, text=True,
+        env={"PATH": f"{shims}:/usr/bin:/bin", "HOME": str(home)},
+    )
+    assert result.returncode == 1
+    assert "project not found" in result.stderr
+    assert not log.exists() or "attach" not in log.read_text()

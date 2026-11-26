@@ -1,6 +1,7 @@
 """The devcontainer stop-on-exit cleanup must stop EVERY container it finds.
 
-`roles/user_setup/tasks/main.yml`'s `.bashrc` block stops the project's
+`roles/user_setup/templates/remo-session-shell.sh.j2` (formerly the
+`.bashrc` block in tasks/main.yml) stops the project's
 devcontainer when the user exits it. It used to do::
 
     _container_id=$(docker ps -q --filter "label=devcontainer.local_folder=$dir")
@@ -31,6 +32,9 @@ from jinja2 import Environment, TemplateSyntaxError
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 USER_SETUP_TASKS = REPO_ROOT / "ansible" / "roles" / "user_setup" / "tasks" / "main.yml"
+SESSION_SHELL = (
+    REPO_ROOT / "ansible" / "roles" / "user_setup" / "templates" / "remo-session-shell.sh.j2"
+)
 ANSIBLE_DIR = REPO_ROOT / "ansible"
 
 BASH = shutil.which("bash")
@@ -45,11 +49,11 @@ def _stop_snippet() -> str:
     tests fail for the wrong reason — extraction missing, not behaviour wrong —
     which is a false negative waiting to become a false positive.
     """
-    text = USER_SETUP_TASKS.read_text(encoding="utf-8")
+    text = SESSION_SHELL.read_text(encoding="utf-8")
     match = re.search(
         r'^( *)echo "Stopping devcontainer\.\.\."\n.*?\n\1fi$', text, re.S | re.M
     )
-    assert match, "the container-stop cleanup block was not found in main.yml"
+    assert match, "the container-stop cleanup block was not found in remo-session-shell.sh.j2"
     return textwrap.dedent(match.group(0))
 
 
@@ -159,12 +163,13 @@ class TestJinjaCommentTrap:
     about the trap contained it, and Jinja2 then failed to parse the file.
     """
 
-    def test_user_setup_tasks_parse_as_jinja(self) -> None:
+    @pytest.mark.parametrize("source", [USER_SETUP_TASKS, SESSION_SHELL], ids=lambda p: p.name)
+    def test_user_setup_tasks_parse_as_jinja(self, source: Path) -> None:
         try:
-            Environment().parse(USER_SETUP_TASKS.read_text(encoding="utf-8"))
+            Environment().parse(source.read_text(encoding="utf-8"))
         except TemplateSyntaxError as exc:  # pragma: no cover - failure path
             pytest.fail(
-                f"{USER_SETUP_TASKS.relative_to(REPO_ROOT)} is not Jinja2-parseable "
+                f"{source.relative_to(REPO_ROOT)} is not Jinja2-parseable "
                 f"({exc.message} at line {exc.lineno}). A bash array-length "
                 "expression is the usual cause — use star expansion instead."
             )

@@ -20,8 +20,11 @@ rejects bad input before ever reaching ``exec``.
 from __future__ import annotations
 
 import json
+import os
+import shlex
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -58,6 +61,16 @@ def test_template_parses(template_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+REMO_LIB_TEMPLATE = REMO_HOST_TEMPLATE.with_name("remo-lib.sh.j2")
+
+
+def _install_lib(directory: Path) -> None:
+    """The scripts source remo-lib.sh from beside themselves."""
+    (directory / "remo-lib.sh").write_text(
+        Environment(autoescape=False).from_string(REMO_LIB_TEMPLATE.read_text()).render()
+    )
+
+
 def _render_remo_host(projects_dir: str, devcontainer_cli_bin: str = "devcontainer") -> str:
     """Render remo-host.sh.j2 with the minimal context it needs.
 
@@ -90,6 +103,7 @@ def rendered_script(tmp_path: Path) -> Path:
     script_path = tmp_path / "remo-host"
     script_path.write_text(rendered)
     script_path.chmod(0o755)
+    _install_lib(tmp_path)
     return script_path
 
 
@@ -154,13 +168,19 @@ def test_remo_host_capabilities_json_stdout_only(rendered_script: Path, tmp_path
         "projects.clone",
         "projects.delete",
         "projects.rebuild",
+        "projects.add",
+        "projects.remove",
+        "projects.list",
         "jobs.status",
     ]
     assert isinstance(payload["zellij"], bool)
     assert isinstance(payload["docker"], bool)
     # Degrades gracefully instead of crashing regardless of what's installed.
-    assert payload["zellij"] == (shutil.which("zellij") is not None)
-    assert payload["docker"] == (shutil.which("docker") is not None)
+    # Compared against the PATH the script ran with (_run_remo_host's), not the
+    # test process's: on macOS Homebrew's /opt/homebrew/bin is on the latter only.
+    script_path = "/usr/bin:/bin:/usr/local/bin"
+    assert payload["zellij"] == (shutil.which("zellij", path=script_path) is not None)
+    assert payload["docker"] == (shutil.which("docker", path=script_path) is not None)
 
 
 @pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
@@ -235,6 +255,7 @@ def test_remo_host_sessions_list_reports_git_status(tmp_path: Path) -> None:
     script_path = tmp_path / "remo-host"
     script_path.write_text(rendered)
     script_path.chmod(0o755)
+    _install_lib(tmp_path)
 
     result = _run_remo_host(script_path, tmp_path, "sessions", "list", "--json")
     assert result.returncode == 0, result.stderr
@@ -254,6 +275,7 @@ def test_remo_host_sessions_list_empty_projects_dir(tmp_path: Path) -> None:
     script_path = tmp_path / "remo-host"
     script_path.write_text(rendered)
     script_path.chmod(0o755)
+    _install_lib(tmp_path)
 
     result = _run_remo_host(script_path, tmp_path, "sessions", "list", "--json")
     assert result.returncode == 0, result.stderr
@@ -427,6 +449,10 @@ def _stats_shims(tmp_path: Path, df_lines: list[str] | None = None) -> Path:
     body_lines += [f'echo "{line}"' for line in df_lines]
     _write_shim(shim_dir, "df", "\n".join(body_lines))
     _write_shim(shim_dir, "nproc", "echo 8")
+    # These tests exercise the Linux /proc + /sys branch; on a macOS runner the
+    # real uname says Darwin and the script (correctly) takes the Darwin branch,
+    # covered by tests/unit/test_host_stats_darwin.py instead.
+    _write_shim(shim_dir, "uname", "echo Linux")
     return shim_dir
 
 
@@ -1009,6 +1035,7 @@ def test_remo_host_rebuild_passes_runtime_check_with_deacon(tmp_path: Path) -> N
     script_path = tmp_path / "remo-host"
     script_path.write_text(rendered)
     script_path.chmod(0o755)
+    _install_lib(tmp_path)
 
     result = _run_remo_host(script_path, tmp_path, "projects", "rebuild", "--project", "beta")
     assert result.returncode == 2
@@ -1024,6 +1051,7 @@ def test_remo_host_capabilities_deacon_advertises_rebuild(tmp_path: Path) -> Non
     script_path = tmp_path / "remo-host"
     script_path.write_text(rendered)
     script_path.chmod(0o755)
+    _install_lib(tmp_path)
 
     result = _run_remo_host(script_path, tmp_path, "capabilities", "--json")
     assert result.returncode == 0, result.stderr
@@ -1044,6 +1072,7 @@ def test_remo_host_rebuild_unsupported_runtime_is_omitted_and_refused(tmp_path: 
     script_path = tmp_path / "remo-host"
     script_path.write_text(rendered)
     script_path.chmod(0o755)
+    _install_lib(tmp_path)
 
     caps = _run_remo_host(script_path, tmp_path, "capabilities", "--json")
     assert caps.returncode == 0, caps.stderr
@@ -1426,3 +1455,255 @@ class TestSessionsRecordLookup:
         assert files == sorted(keys)
         for k in keys:
             assert (tmp_path / "tabs" / k).read_text().startswith("alpha\t")
+
+
+# ---------------------------------------------------------------------------
+# Spec 029: interpreter, and macOS portability (R6, R9)
+# ---------------------------------------------------------------------------
+
+BASH_SCRIPT_TEMPLATES = [
+    "remo-host.sh.j2",
+    "project-menu.sh.j2",
+    "project-launch.sh.j2",
+    "devshell.sh.j2",
+    "remo-session-shell.sh.j2",
+]
+
+
+def _render_template(name: str, **ctx: str) -> str:
+    ctx.setdefault("dev_workspace_dir", "")
+    ctx.setdefault("devcontainer_cli_bin", "devcontainer")
+    ctx.setdefault("devcontainer_up_extra_args", "")
+    source = (TEMPLATE_ROOT / "roles" / "user_setup" / "templates" / name).read_text()
+    return Environment(autoescape=False).from_string(source).render(**ctx)
+
+
+@pytest.mark.parametrize("name", BASH_SCRIPT_TEMPLATES)
+def test_shebang_defaults_to_bin_bash_so_remote_renders_are_unchanged(name: str) -> None:
+    assert _render_template(name).splitlines()[0] == "#!/bin/bash"
+
+
+@pytest.mark.parametrize("name", BASH_SCRIPT_TEMPLATES)
+def test_shebang_takes_the_detected_bash(name: str) -> None:
+    rendered = _render_template(name, remo_bash_path="/opt/homebrew/bin/bash")
+    assert rendered.splitlines()[0] == "#!/opt/homebrew/bin/bash"
+
+
+@pytest.mark.parametrize("name", BASH_SCRIPT_TEMPLATES + ["remo-lib.sh.j2"])
+def test_no_gnu_only_constructs_remain(name: str) -> None:
+    text = _render_template(name)
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    assert "\\x1b" not in code, "BSD sed does not understand \\x1b"
+    assert "setsid" not in code.replace("command -v setsid", "").replace("nohup setsid", "") or name == "remo-lib.sh.j2"
+    assert "sha256sum" not in code or name == "remo-lib.sh.j2"
+    assert "date -Iseconds" not in code or name == "remo-lib.sh.j2"
+    assert "df -B1" not in code or name == "remo-host.sh.j2"
+
+
+def _restricted_path(directory: Path, *, without: tuple[str, ...] = (), extra_shims: dict[str, str] | None = None) -> str:
+    """PATH of the real tools minus *without*, plus shim scripts standing in for BSD tools."""
+    directory.mkdir(parents=True, exist_ok=True)
+    tools = (
+        "bash sh sed grep awk cat cut date dirname basename mktemp mv rm mkdir find sort tr tail "
+        "head sleep id hostname env nohup printf chmod stat kill wc cp touch ln uname git setsid "
+        "timeout sha256sum df ls"
+    ).split()
+    for name in tools:
+        real = shutil.which(name)
+        if real and name not in without and not (directory / name).exists():
+            (directory / name).symlink_to(real)
+    for name, body in (extra_shims or {}).items():
+        shim = directory / name
+        if shim.is_symlink() or shim.exists():
+            shim.unlink()
+        shim.write_text(f"#!/bin/sh\n{body}\n")
+        shim.chmod(0o755)
+    return str(directory)
+
+
+def _lib_run(tmp_path: Path, snippet: str, path: str) -> subprocess.CompletedProcess[str]:
+    lib = tmp_path / "remo-lib.sh"
+    lib.write_text(_render_template("remo-lib.sh.j2"))
+    assert BASH is not None
+    return subprocess.run(
+        [BASH, "-c", f'. "{lib}"\n{snippet}'],
+        capture_output=True,
+        text=True,
+        env={"PATH": path, "HOME": str(tmp_path)},
+        timeout=60,
+    )
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available")
+class TestMacPortability:
+    def test_strip_ansi_works_without_gnu_sed_escapes(self, tmp_path: Path) -> None:
+        # A sed that rejects the GNU-only \x1b spelling, as BSD sed does.
+        real_sed = shutil.which("sed")
+        path = _restricted_path(
+            tmp_path / "t",
+            extra_shims={"sed": f'case "$*" in *\'\\x1b\'*) echo "bsd sed: bad escape" >&2; exit 1;; esac\nexec {real_sed} "$@"'},
+        )
+        result = _lib_run(tmp_path, "printf '\\033[32;1mactive\\033[m [x]\\n' | remo_strip_ansi", path)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == "active [x]\n"
+
+    def test_iso_now_without_dash_i(self, tmp_path: Path) -> None:
+        real_date = shutil.which("date")
+        path = _restricted_path(
+            tmp_path / "t",
+            extra_shims={"date": f'case "$1" in -I*) echo "date: illegal option -- I" >&2; exit 1;; esac\nexec {real_date} "$@"'},
+        )
+        result = _lib_run(tmp_path, "remo_iso_now", path)
+        assert result.returncode == 0
+        import re
+
+        assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\n", result.stdout), result.stdout
+
+    def test_iso_now_on_linux_is_unchanged(self, tmp_path: Path) -> None:
+        result = _lib_run(tmp_path, "remo_iso_now", _restricted_path(tmp_path / "t"))
+        import re
+
+        assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d\n", result.stdout), result.stdout
+
+    def test_file_mtime_uses_stat_and_epoch_date_on_bsd(self, tmp_path: Path) -> None:
+        real_date, real_stat = shutil.which("date"), shutil.which("stat")
+        PY = shlex.quote(sys.executable)  # noqa: N806
+        target = tmp_path / "f"
+        target.write_text("x")
+        os.utime(target, (1_700_000_000, 1_700_000_000))
+        path = _restricted_path(
+            tmp_path / "t",
+            extra_shims={
+                # BSD date: no -I, and -r takes epoch seconds, not a file.
+                # Formatted in Python so the fake works on GNU and BSD hosts alike.
+                "date": (
+                    'case "$1" in -I*) exit 1;; esac\n'
+                    'if [ "$1" = -u ] && [ "$2" = -r ]; then exec ' + PY + ' -c '
+                    '"import sys,time; print(time.strftime(sys.argv[2][1:], time.gmtime(int(sys.argv[1]))))" "$3" "$4"; fi\n'
+                    'if [ "$1" = -r ]; then exit 1; fi\n'
+                    f'exec {real_date} "$@"'
+                ),
+                # BSD stat: -f FORMAT, no -c.
+                "stat": (
+                    '[ "$1" = -c ] && exit 1\n'
+                    'if [ "$1" = -f ]; then exec ' + PY + ' -c '
+                    '"import os,sys; print(int(os.stat(sys.argv[1]).st_mtime))" "$3"; fi\n'
+                    f'exec {real_stat} "$@"'
+                ),
+            },
+        )
+        result = _lib_run(tmp_path, f'remo_file_mtime_iso "{target}"', path)
+        assert result.stdout == "2023-11-14T22:13:20Z\n", result.stderr
+
+    def test_file_mtime_on_linux_is_the_gnu_spelling(self, tmp_path: Path) -> None:
+        target = tmp_path / "f"
+        target.write_text("x")
+        os.utime(target, (1_700_000_000, 1_700_000_000))
+        result = _lib_run(tmp_path, f'remo_file_mtime_iso "{target}"', _restricted_path(tmp_path / "t"))
+        expected = subprocess.run(
+            ["date", "-Iseconds", "-r", str(target)], capture_output=True, text=True
+        ).stdout
+        assert result.stdout == expected
+
+    def test_detach_without_setsid_still_runs_the_job(self, tmp_path: Path) -> None:
+        path = _restricted_path(tmp_path / "t", without=("setsid",))
+        marker = tmp_path / "ran"
+        result = _lib_run(
+            tmp_path,
+            f'remo_detach sh -c \'echo done >"{marker}"\' >/dev/null 2>&1 </dev/null &\nwait',
+            path,
+        )
+        assert result.returncode == 0, result.stderr
+        assert marker.read_text() == "done\n"
+
+    def test_detach_with_setsid_matches_the_old_behaviour(self, tmp_path: Path) -> None:
+        if SETSID is None:
+            pytest.skip("setsid not available")
+        marker = tmp_path / "ran"
+        result = _lib_run(
+            tmp_path,
+            f'remo_detach sh -c \'echo done >"{marker}"\' >/dev/null 2>&1 </dev/null &\nwait',
+            _restricted_path(tmp_path / "t"),
+        )
+        assert result.returncode == 0, result.stderr
+        assert marker.read_text() == "done\n"
+
+    @pytest.mark.parametrize("with_setsid", [True, False])
+    def test_detach_bang_pid_is_the_detached_command(self, tmp_path: Path, with_setsid: bool) -> None:
+        """`$!` must be the job itself (remo-host jobs probe it with kill -0),
+        not a wrapper subshell that outlives or predeceases it."""
+        if with_setsid and SETSID is None:
+            pytest.skip("setsid not available")
+        path = _restricted_path(
+            tmp_path / "t", without=() if with_setsid else ("setsid",)
+        )
+        result = _lib_run(
+            tmp_path,
+            "remo_detach sleep 5 >/dev/null 2>&1 </dev/null &\n"
+            "p=$!\nsleep 0.5\n"
+            'comm="$(ps -o comm= -p "$p")"\nkill "$p"\necho "comm=$comm"',
+            path + ":/usr/bin:/bin",
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "comm=sleep"
+
+    def test_timeout_fallback_kills_a_hung_command(self, tmp_path: Path) -> None:
+        path = _restricted_path(tmp_path / "t", without=("timeout",))
+        started = time.time()
+        result = _lib_run(tmp_path, "remo_timeout 1 sleep 30; echo rc=$?", path)
+        assert time.time() - started < 15
+        assert result.stdout.strip() != "rc=0"
+        assert result.stdout.startswith("rc=")
+
+    def test_timeout_fallback_passes_a_fast_command_through(self, tmp_path: Path) -> None:
+        path = _restricted_path(tmp_path / "t", without=("timeout",))
+        result = _lib_run(tmp_path, "remo_timeout 5 sh -c 'exit 3'; echo rc=$?", path)
+        assert result.stdout.strip() == "rc=3"
+
+    def test_gtimeout_is_preferred_when_timeout_is_missing(self, tmp_path: Path) -> None:
+        path = _restricted_path(
+            tmp_path / "t", without=("timeout",), extra_shims={"gtimeout": 'echo "gtimeout $*"'}
+        )
+        result = _lib_run(tmp_path, "remo_timeout 7 true", path)
+        assert result.stdout.strip() == "gtimeout 7 true"
+
+    def test_sha256_falls_back_to_shasum(self, tmp_path: Path) -> None:
+        path = _restricted_path(
+            tmp_path / "t",
+            without=("sha256sum",),
+            extra_shims={"shasum": '[ "$1 $2" = "-a 256" ] || exit 2\ncat >/dev/null\necho "abc123  -"'},
+        )
+        assert _lib_run(tmp_path, "printf x | remo_sha256", path).stdout == "abc123\n"
+
+    def test_sha256_on_linux_is_sha256sum(self, tmp_path: Path) -> None:
+        result = _lib_run(tmp_path, "printf x | remo_sha256", _restricted_path(tmp_path / "t"))
+        assert result.stdout.strip() == (
+            "2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881"
+        )
+
+    def test_df_without_dash_b_is_scaled_from_kilobytes(self, tmp_path: Path) -> None:
+        # df shim: BSD df has no -B; `-Pk` lists 1K-blocks.
+        script = _render_template("remo-host.sh.j2", dev_workspace_dir=str(tmp_path))
+        host = tmp_path / "remo-host"
+        host.write_text(script)
+        _install_lib(tmp_path)
+        path = _restricted_path(
+            tmp_path / "t",
+            extra_shims={
+                "df": '[ "$1" = -B1 ] && { echo "df: illegal option -- B" >&2; exit 1; }\n'
+                'echo "Filesystem 1024-blocks Used Available Capacity Mounted on"\n'
+                'echo "/dev/disk1 1000 400 600 40% /"'
+            },
+        )
+        assert BASH is not None
+        result = subprocess.run(
+            [BASH, str(host), "host", "stats", "--json"],
+            capture_output=True,
+            text=True,
+            env={"PATH": path, "HOME": str(tmp_path)},
+        )
+        assert result.returncode == 0, result.stderr
+        disks = json.loads(result.stdout)["disks"]
+        assert disks == [
+            {"mount": "/", "size_bytes": 1024000, "used_bytes": 409600, "avail_bytes": 614400}
+        ]

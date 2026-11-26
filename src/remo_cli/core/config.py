@@ -32,6 +32,16 @@ ADDED_HOST_TYPE = "ssh"
 DEFAULT_ADDED_HOST_USER = "remo"
 DEFAULT_SSH_PORT = 22
 
+# ---------------------------------------------------------------------------
+# The local machine as a host (feature 029-local-host)
+#
+# A second pseudo-type beside ``ssh``: never a registered provider, never
+# reached over SSH. ``KnownHost.region`` carries the optional projects folder.
+# ---------------------------------------------------------------------------
+
+LOCAL_HOST_TYPE = "local"
+DEFAULT_LOCAL_HOST_NAME = "local"
+
 
 def _resolve_remo_home() -> Path:
     """Resolve the remo config directory path with no filesystem side effects.

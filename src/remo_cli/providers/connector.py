@@ -39,6 +39,7 @@ from remo_cli.core.connector import (
     state_dir,
 )
 from remo_cli.core.errors import OperationFailedError, PreconditionError, UserAbortedError
+from remo_cli.core.host_access import get_host_access
 from remo_cli.core.known_hosts import get_known_hosts
 from remo_cli.core.registry import RegistryError, known_host_to_entry
 from remo_cli.core.ssh import build_ssh_base_cmd, build_ssh_opts
@@ -355,6 +356,14 @@ def enroll(
             raise PreconditionError(
                 f"--expose host '{host_name}' is reachable only via AWS SSM; exposed hosts must "
                 "be directly reachable from the connector"
+            )
+        if not get_host_access(entry).remote:
+            # The local host: its address is `localhost` — from the connector
+            # that is the connector itself (spec 029: it is never reached over
+            # SSH). Asked of the access seam, not a type literal (Principle II).
+            raise PreconditionError(
+                f"--expose host '{host_name}' is this machine's local host; it cannot be "
+                "reached from a connector"
             )
         exposed_hosts.append(entry)
 

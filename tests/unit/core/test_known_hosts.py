@@ -492,3 +492,34 @@ class TestUpgradeCommandFor:
     def test_unknown_type_keeps_the_provider_spelling(self):
         host = _make_host(type_="nosuchprovider", name="a/b")
         assert upgrade_command_for(host) == "remo nosuchprovider upgrade a/b"
+
+
+# -----------------------------------------------------------------------
+# local host (spec 029): upgrade command + provider-lifecycle guard
+# -----------------------------------------------------------------------
+
+
+class TestLocalHost:
+    def test_upgrade_command_is_local_setup(self):
+        host = _make_host(type_="local", name="local", host="localhost")
+        assert upgrade_command_for(host) == "remo local setup"
+
+    def test_guard_refuses_a_provider_verb_on_the_local_host(self, tmp_config_dir):
+        from remo_cli.core.errors import PreconditionError
+        from remo_cli.core.known_hosts import guard_not_local_host
+
+        save_known_host(_make_host(type_="local", name="local", host="localhost"))
+        with pytest.raises(PreconditionError, match="remo remove local"):
+            guard_not_local_host("local", "incus")
+
+    def test_guard_allows_a_same_name_managed_host(self, tmp_config_dir):
+        from remo_cli.core.known_hosts import guard_not_local_host
+
+        save_known_host(_make_host(type_="local", name="dev", host="localhost"))
+        save_known_host(_make_host(type_="incus", name="dev", host="1.2.3.4"))
+        guard_not_local_host("dev", "incus")
+
+    def test_guard_is_silent_for_unrelated_names(self, tmp_config_dir):
+        from remo_cli.core.known_hosts import guard_not_local_host
+
+        guard_not_local_host("nothing", "incus")

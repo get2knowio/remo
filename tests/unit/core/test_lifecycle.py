@@ -106,3 +106,14 @@ def test_ssh_guard_raises_precondition_error(tmp_config_dir, mocker):
         _run(entry, calls=calls, auto_confirm=True, mocker=mocker)
 
     assert calls == []  # guard fires before anything else
+
+
+def test_destroy_refuses_the_local_host_before_any_work(tmp_config_dir, mocker):
+    save_known_host(KnownHost(type="local", name="local", host="localhost", user="paul"))
+    calls: list[str] = []
+    victim = KnownHost(type="incus", name="local", host="1.2.3.4", user="remo")
+    # A same-named *incus* host would be let through; with none registered the
+    # guard must stop run_destroy before snapshots, prompt or teardown.
+    with pytest.raises(PreconditionError, match="local host"):
+        _run(victim, calls=calls, mocker=mocker)
+    assert calls == []

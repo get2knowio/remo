@@ -45,7 +45,11 @@ from remo_cli.core.remo_host_client import (
     SshTransportError,
     get_capabilities,
 )
-from remo_cli.core.config import get_known_hosts_path_readonly, get_registry_path_readonly
+from remo_cli.core.config import (
+    LOCAL_HOST_TYPE,
+    get_known_hosts_path_readonly,
+    get_registry_path_readonly,
+)
 from remo_cli.core.registry import RegistryNewerVersionError, RegistryReadError, read_registry
 from remo_cli.core.ssh import build_ssh_base_cmd
 from remo_cli.models.host import KnownHost
@@ -433,6 +437,12 @@ def run_checks(
 
     if include_instances:
         for host in hosts:
+            # The local host is the workstation itself and never reachable
+            # from a service (spec 029 FR-004a) — discovery skips it for the
+            # same reason; probing `localhost` here would FAIL a
+            # mount-configured service on a machine that has one.
+            if host.type == LOCAL_HOST_TYPE:
+                continue
             results.append(_instance_check(host, settings))
 
     return results

@@ -279,8 +279,13 @@ def build_remo_host_argv(
     job: str | None = None,
     no_cache: bool = False,
     key: str | None = None,
+    path: str | None = None,
 ) -> list[str]:
     """Build the `remo-host` argv for *verb* as a clean list (no shell quoting).
+
+    ``"projects add"`` (``path`` + optional ``name``), ``"projects remove"``
+    (``project``) and ``"projects list"`` are the project-index verbs
+    (spec 029); *path* belongs to ``"projects add"`` only.
 
     Supported verbs: ``"capabilities"``, ``"sessions list"``,
     ``"sessions attach"``, ``"sessions lookup"`` (takes *key*, spec 028),
@@ -313,6 +318,32 @@ def build_remo_host_argv(
         return argv
 
     _reject_unsupported_flags(verb, key=key)
+    if verb != "projects add":
+        _reject_unsupported_flags(verb, path=path)
+
+    if verb == "projects add":
+        _reject_unsupported_flags(verb, project=project, repo=repo, job=job, no_cache=no_cache)
+        argv += ["--path", _require_flag(verb, "path", path)]
+        if name:
+            argv += ["--name", name]
+        if json:
+            argv.append("--json")
+        return argv
+
+    if verb == "projects remove":
+        _reject_unsupported_flags(verb, repo=repo, name=name, job=job, no_cache=no_cache)
+        argv += ["--project", _require_flag(verb, "project", project)]
+        if json:
+            argv.append("--json")
+        return argv
+
+    if verb == "projects list":
+        _reject_unsupported_flags(
+            verb, project=project, repo=repo, name=name, job=job, no_cache=no_cache
+        )
+        if json:
+            argv.append("--json")
+        return argv
 
     if verb == "sessions attach":
         _reject_unsupported_flags(verb, repo=repo, name=name, job=job, no_cache=no_cache)
@@ -461,6 +492,7 @@ def run_remo_host_json(
     job: str | None = None,
     no_cache: bool = False,
     key: str | None = None,
+    path: str | None = None,
     timeout: float = DEFAULT_TIMEOUT,
     payload_cap: int = DEFAULT_PAYLOAD_CAP,
     supported_range: tuple[int, int] = SUPPORTED_PROTOCOL_RANGE,
@@ -480,18 +512,26 @@ def run_remo_host_json(
     # REMOTE_PATH_PREFIX is a separate command word; ssh joins the post-target
     # words with spaces, so the remote shell evaluates it as a `PATH=... cmd`
     # assignment prefix that locates remo-host in ~/.local/bin.
+    #
+    # The words are re-joined and re-parsed by a shell (ssh's, or the local
+    # `eval "$*"`), so every value a user typed for the project-index verbs
+    # (spec 029) is quoted to arrive as ONE word, never split or expanded.
+    # The pre-029 verbs keep their exact argv (their names are validated
+    # upstream), so this is limited to the index verbs.
+    index_verb = verb in ("projects add", "projects remove")
     argv = [
         *ssh_argv_prefix,
         REMOTE_PATH_PREFIX,
         *build_remo_host_argv(
             verb,
-            project=project,
+            project=shlex.quote(project) if (index_verb and project) else project,
             json=True,
             repo=repo,
-            name=name,
+            name=shlex.quote(name) if (index_verb and name) else name,
             job=job,
             no_cache=no_cache,
             key=key,
+            path=shlex.quote(path) if path else None,
         ),
     ]
     result = _invoke(argv, timeout=timeout)

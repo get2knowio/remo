@@ -258,6 +258,19 @@ def test_ssm_mode_host_refused(operator_registry, captured_playbook) -> None:
     assert captured_playbook == []
 
 
+def test_local_host_cannot_be_exposed(operator_registry, captured_playbook) -> None:
+    """The local host's address is `localhost`: from the connector that is the
+    connector itself (spec 029), so exposing it would mis-target."""
+    doc = json.loads((operator_registry / "registry.json").read_text())
+    doc["hosts"].append(
+        {"type": "local", "name": "local", "host": "localhost", "user": "paul", "access": "direct"}
+    )
+    (operator_registry / "registry.json").write_text(json.dumps(doc, indent=2) + "\n")
+    with pytest.raises(PreconditionError, match="local host"):
+        connector_provider.enroll(**_base_kwargs(expose=("local/remo",)))
+    assert captured_playbook == []
+
+
 def test_invalid_project_in_expose(operator_registry, captured_playbook) -> None:
     with pytest.raises(PreconditionError):
         connector_provider.enroll(**_base_kwargs(expose=("lxc1/../etc",)))

@@ -17,6 +17,8 @@ from remo_cli.core.known_hosts import (
     no_hosts_message,
     resolve_remo_host_by_name,
 )
+from remo_cli.core.errors import PreconditionError
+from remo_cli.core.host_access import TUNNEL_REFUSAL, get_host_access
 from remo_cli.core.output import print_info
 from remo_cli.core.picker import pick_environment
 from remo_cli.core.validation import validate_port, validate_project_name
@@ -463,13 +465,8 @@ def check_remote_version(host: KnownHost) -> tuple[str | None, str | None]:
       timeout, ...); *error* is the underlying message so the caller can
       surface it to the user.
     """
-    ssh_opts, ssh_target = build_ssh_opts(host)
-    cmd = ["ssh"] + ssh_opts + [
-        "-o", "ConnectTimeout=10",
-        "-o", "BatchMode=yes",
-        ssh_target,
-        "cat ~/.remo-version 2>/dev/null",
-    ]
+    access = get_host_access(host)
+    cmd = access.probe_argv(host, "cat ~/.remo-version 2>/dev/null")
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
@@ -482,7 +479,7 @@ def check_remote_version(host: KnownHost) -> tuple[str | None, str | None]:
     # connection refused, ...). Any other non-zero exit code comes from
     # the remote command — here, `cat` failing because the marker is
     # absent — which we treat as "no marker" rather than an SSH error.
-    if result.returncode == 255:
+    if access.remote and result.returncode == 255:
         stderr = result.stderr.strip()
         return None, stderr or "SSH connection failed (exit code 255)"
 
@@ -541,8 +538,12 @@ def shell_connect(
     exec_cmd: str | None = None,
     tab_key: str | None = None,
     on_connect: Callable[[], None] | None = None,
-) -> None:
+) -> int | None:
     """Open an SSH session to *host* with optional port tunnels.
+
+    Returns ``None`` for an SSH host (exit status deliberately unchanged from
+    before spec 029) and the session's exit status for the local host, so
+    ``remo shell local -p X --exec CMD`` reports CMD's own failure.
 
     Parameters
     ----------
@@ -575,6 +576,9 @@ def shell_connect(
         record (issue #248). Never called when this function raises first.
     """
     use_project_launch = bool(project)
+    access = get_host_access(host)
+    if tunnels and not access.supports_tunnels():
+        raise PreconditionError(TUNNEL_REFUSAL)
 
     print_info(f"Connecting to {host.type}: {host.name} ({host.host})...")
 
@@ -602,7 +606,7 @@ def shell_connect(
         validate_port(remote_port)
 
         # Check if local port is already in use
-        if shutil.which("ss"):
+        if access.supports_tunnels() and shutil.which("ss"):
             result = subprocess.run(
                 ["ss", "-tlnH", f"sport = :{local_port}"],
                 capture_output=True,
@@ -639,23 +643,24 @@ def shell_connect(
     # `control_dir=None` preserves the CLI's default `~/.ssh` ControlPath.
     # ------------------------------------------------------------------
     extra_opts = list(tunnel_opts)
-    if tab_key is not None:
+    if tab_key is not None and access.remote:
         # A host without `AcceptEnv REMO_TAB_KEY` drops this silently (FR-005).
         extra_opts += ["-o", "SendEnv=REMO_TAB_KEY"]
-    ssh_cmd = build_ssh_base_cmd(
-        host,
-        tty=use_project_launch and not detach,
-        multiplex=True,
-        control_dir=None,
-        extra_opts=extra_opts or None,
-    )
 
+    remote_cmd: str | None = None
     if use_project_launch:
         assert project is not None  # narrowed by use_project_launch
         # build_project_launch_remote_cmd() runs validate_project_name()
         # (T059) before shlex.quote(), so a malicious/malformed name is
         # rejected here with a clear SystemExit rather than reaching ssh.
-        ssh_cmd.append(build_project_launch_remote_cmd(project, detach, exec_cmd))
+        remote_cmd = build_project_launch_remote_cmd(project, detach, exec_cmd)
+    ssh_cmd = access.interactive_argv(
+        host,
+        remote_cmd,
+        tty=use_project_launch and not detach,
+        extra_opts=extra_opts,
+    )
+    run_env = access.env(host, tab_key=tab_key)
 
     # Every refusal above has had its chance; the connection is now being
     # attempted (issue #248).
@@ -684,13 +689,26 @@ def shell_connect(
     except termios.error:
         pass
 
+    returncode: int | None = None
     try:
-        if tab_key is None:
-            subprocess.run(ssh_cmd)
+        if run_env is None:
+            completed = subprocess.run(ssh_cmd)
         else:
             # Per-call env, never a mutation of os.environ.
-            subprocess.run(ssh_cmd, env={**os.environ, "REMO_TAB_KEY": tab_key})
+            completed = subprocess.run(ssh_cmd, env=run_env)
+        if not access.remote and isinstance(completed.returncode, int):
+            returncode = completed.returncode
     except KeyboardInterrupt:
         pass
+    except FileNotFoundError as e:
+        if access.remote:
+            raise
+        # The bash recorded by `remo local setup` can vanish (uninstalled, a
+        # moved Homebrew prefix): say what to run, never a traceback.
+        raise PreconditionError(
+            f"the bash recorded by remo local setup ({ssh_cmd[0]}) is no longer "
+            "available — re-run: remo local setup"
+        ) from e
     finally:
         reset_terminal(saved_attrs)
+    return returncode

@@ -23,6 +23,7 @@ from remo_cli.core.web_adopt import (
     CachedInstance,
     PushCache,
     instance_fingerprint,
+    is_portable_host,
     load_push_cache,
 )
 from remo_cli.models.host import KnownHost
@@ -82,6 +83,7 @@ def diff_registry_against_cache(
     exact same field set the push mirrors moved. Pure and offline.
     """
     entries: list[InstanceDrift] = []
+    hosts = [h for h in hosts if is_portable_host(h)]
     host_names = {h.name for h in hosts}
     for host in hosts:
         cached = cached_instances.get(host.name)
