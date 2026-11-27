@@ -305,8 +305,14 @@ remo_pin_session_dir() {
     fi
     owner="$(stat -c %u "$dir" 2>/dev/null || stat -f %u "$dir" 2>/dev/null)"
     mode="$(stat -c %a "$dir" 2>/dev/null || stat -f %Lp "$dir" 2>/dev/null)"
-    if [[ "$owner" != "$(id -u)" ]] || (( 8#${mode:-777} & 8#077 )); then
-        echo "remo: refusing to use the session directory $dir: it must be owned by you and not accessible to others (mode 0700). Fix with: chmod 700 '$dir'" >&2
+    # Each refusal names the one command that fixes it: chmod cannot repair a
+    # directory someone else owns, so that case says to remove it instead.
+    if [[ "$owner" != "$(id -u)" ]]; then
+        echo "remo: refusing to use the session directory $dir: it is owned by uid ${owner:-unknown}, not you (sessions are shell access). Fix: remove it (as its owner or root) and re-run: rm -rf '$dir'" >&2
+        return 1
+    fi
+    if (( 8#${mode:-777} & 8#077 )); then
+        echo "remo: refusing to use the session directory $dir: it is accessible to others (mode ${mode:-unknown}; it must be 0700, since sessions are shell access). Fix: chmod 700 '$dir'" >&2
         return 1
     fi
     export ZELLIJ_SOCKET_DIR="$dir"

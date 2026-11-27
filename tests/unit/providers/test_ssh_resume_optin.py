@@ -21,8 +21,14 @@ CONTENT = local.SSH_DROPIN_CONTENT
 class FakeRunner:
     """Records argv and applies `install` / `rm` to the temp /etc."""
 
-    def __init__(self, sshd_rc: int = 0, reload_rcs: tuple[int, ...] = (0, 0)) -> None:
+    def __init__(
+        self,
+        sshd_rc: int = 0,
+        reload_rcs: tuple[int, ...] = (0, 0),
+        sshd: str = local.SSHD_BINARY,
+    ) -> None:
         self.calls: list[list[str]] = []
+        self.sshd = sshd
         self.sshd_rc = sshd_rc
         self.reload_rcs = list(reload_rcs)
 
@@ -36,7 +42,7 @@ class FakeRunner:
         if rest[0] == "rm":
             Path(rest[2]).unlink(missing_ok=True)
             return subprocess.CompletedProcess(argv, 0, "", "")
-        if rest[0] == local.SSHD_BINARY:
+        if rest[0] == self.sshd:
             return subprocess.CompletedProcess(argv, self.sshd_rc, "", "bad directive" if self.sshd_rc else "")
         if rest[0] == "systemctl":
             return subprocess.CompletedProcess(argv, self.reload_rcs.pop(0), "", "")
@@ -63,6 +69,7 @@ def _dropin(etc: Path) -> Path:
 def _call(etc, runner, enable=True, **kw):
     kw.setdefault("interactive", True)
     kw.setdefault("assume_yes", True)
+    kw.setdefault("locate_sshd", lambda: local.SSHD_BINARY)
     local.configure_ssh_resume(enable, runner=runner, etc_root=etc, **kw)
 
 
@@ -88,6 +95,49 @@ def test_commented_include_is_not_support(etc):
     runner = FakeRunner()
     _call(etc, runner)
     assert runner.calls == []
+
+
+def test_sshd_at_a_non_default_path_is_used_for_validation(etc):
+    brewed = "/opt/homebrew/sbin/sshd"
+    runner = FakeRunner(sshd=brewed)
+    _call(etc, runner, locate_sshd=lambda: brewed)
+    assert runner.calls[1] == ["sudo", brewed, "-t"]
+    assert _dropin(etc).read_text() == CONTENT
+
+
+@pytest.mark.parametrize("enable", [True, False])
+def test_no_sshd_changes_nothing_and_prints_manual_text(etc, capsys, enable):
+    if not enable:
+        _dropin(etc).write_text(CONTENT)
+    runner = FakeRunner()
+    _call(etc, runner, enable=enable, locate_sshd=lambda: None)
+    assert runner.calls == []
+    out = capsys.readouterr().out
+    assert "no sshd found" in out
+    expected = local._manual_ssh_resume_text(_dropin(etc), enable)
+    assert all(line in out for line in expected.splitlines())
+    assert (_dropin(etc).exists()) is (not enable)
+
+
+def test_find_sshd_prefers_usr_sbin():
+    assert local.find_sshd(which=lambda _: "/elsewhere/sshd", is_executable=lambda p: True) == (
+        local.SSHD_BINARY
+    )
+
+
+def test_find_sshd_falls_back_to_path():
+    found = local.find_sshd(which=lambda _: "/nix/bin/sshd", is_executable=lambda p: False)
+    assert found == "/nix/bin/sshd"
+
+
+@pytest.mark.parametrize("candidate", local.SSHD_FALLBACKS)
+def test_find_sshd_checks_known_locations(candidate):
+    found = local.find_sshd(which=lambda _: None, is_executable=lambda p: p == candidate)
+    assert found == candidate
+
+
+def test_find_sshd_returns_none_when_absent():
+    assert local.find_sshd(which=lambda _: None, is_executable=lambda p: False) is None
 
 
 def test_enable_fresh_installs_validates_and_reloads_on_linux(etc):
