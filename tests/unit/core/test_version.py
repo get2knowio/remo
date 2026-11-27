@@ -340,31 +340,94 @@ def _resp(mocker, payload):
     return mocker.patch("remo_cli.core.version.urllib.request.urlopen", return_value=r)
 
 
+_MANIFEST = [{"name": "remo_cli-x.whl"}, {"name": "manifest.json"}]
+
+
+def _rel(tag, *, pre=None, draft=False, manifest=True):
+    return {
+        "tag_name": tag,
+        "draft": draft,
+        "prerelease": tag.startswith("rc-") if pre is None else pre,
+        "assets": list(_MANIFEST) if manifest else [{"name": "remo_cli-x.whl"}],
+    }
+
+
 class TestGithubLookup:
-    def test_stable_reads_latest_and_strips_v(self, mocker):
-        m = _resp(mocker, {"tag_name": "v5.0.1"})
+    def test_stable_reads_the_list_and_strips_v(self, mocker):
+        m = _resp(mocker, [_rel("rc-5.1.0rc1"), _rel("v5.0.1"), _rel("v5.0.0")])
         assert get_latest_github_release("o/r", "stable") == "5.0.1"
         req = m.call_args[0][0]
-        assert req.full_url == "https://api.github.com/repos/o/r/releases/latest"
+        assert req.full_url == "https://api.github.com/repos/o/r/releases?per_page=20"
 
     def test_prerelease_picks_first_rc_prerelease(self, mocker):
         m = _resp(
             mocker,
             [
-                {"tag_name": "v5.0.0", "prerelease": False},
-                {"tag_name": "rc-5.1.0rc2", "prerelease": True},
-                {"tag_name": "rc-5.1.0rc1", "prerelease": True},
+                _rel("v5.0.0"),
+                _rel("rc-5.1.0rc2"),
+                _rel("rc-5.1.0rc1"),
             ],
         )
         assert get_latest_github_release("o/r", "prerelease") == "5.1.0rc2"
         assert m.call_args[0][0].full_url.endswith("/releases?per_page=20")
 
+    def test_stable_skips_a_release_still_being_published(self, mocker):
+        """#290: release-please publishes vX.Y.Z before its assets exist."""
+        _resp(mocker, [_rel("v5.0.2", manifest=False), _rel("v5.0.1"), _rel("v5.0.0")])
+        assert get_latest_github_release("o/r", "stable") == "5.0.1"
+
+    def test_prerelease_skips_a_release_without_a_manifest(self, mocker):
+        _resp(mocker, [_rel("rc-5.1.0rc3", manifest=False), _rel("rc-5.1.0rc2")])
+        assert get_latest_github_release("o/r", "prerelease") == "5.1.0rc2"
+
+    def test_stable_skips_drafts_and_prereleases(self, mocker):
+        _resp(
+            mocker,
+            [
+                _rel("v5.0.3", draft=True),
+                _rel("v5.0.2", pre=True),
+                _rel("rc-5.1.0rc1"),
+                _rel("v5.0.1"),
+            ],
+        )
+        assert get_latest_github_release("o/r", "stable") == "5.0.1"
+
+    def test_prerelease_skips_drafts_and_unflagged_rc_tags(self, mocker):
+        _resp(
+            mocker,
+            [
+                _rel("rc-5.1.0rc3", draft=True),
+                _rel("rc-5.1.0rc2", pre=False),
+                _rel("rc-5.1.0rc1"),
+            ],
+        )
+        assert get_latest_github_release("o/r", "prerelease") == "5.1.0rc1"
+
+    @pytest.mark.parametrize(
+        ("channel", "tag", "what"),
+        [("stable", "v5.0.2", "stable release"), ("prerelease", "rc-5.1.0rc1", "pre-release")],
+    )
+    def test_no_release_with_a_manifest_names_the_pending_one(self, mocker, channel, tag, what):
+        _resp(mocker, [_rel(tag, manifest=False)])
+        with pytest.raises(ReleaseLookupError, match=f"no {what}.*manifest.*{tag}"):
+            get_latest_github_release("o/r", channel)
+
+    def test_assets_of_an_unexpected_shape_count_as_no_manifest(self, mocker):
+        _resp(mocker, [{"tag_name": "v5.0.2", "prerelease": False, "assets": "x"}])
+        with pytest.raises(ReleaseLookupError, match="manifest"):
+            get_latest_github_release("o/r", "stable")
+
     def test_prerelease_none_found(self, mocker):
-        _resp(mocker, [{"tag_name": "v5.0.0", "prerelease": False}])
+        _resp(mocker, [_rel("v5.0.0")])
         with pytest.raises(ReleaseLookupError, match="pre-release"):
             get_latest_github_release("o/r", "prerelease")
 
-    def test_stable_missing_tag(self, mocker):
+    def test_stable_none_found(self, mocker):
+        _resp(mocker, [_rel("rc-5.1.0rc1"), "junk"])
+        with pytest.raises(ReleaseLookupError, match="no stable release found"):
+            get_latest_github_release("o/r", "stable")
+
+    def test_stable_not_a_list(self, mocker):
         _resp(mocker, {"nope": 1})
         with pytest.raises(ReleaseLookupError):
             get_latest_github_release("o/r", "stable")

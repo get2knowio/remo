@@ -363,46 +363,162 @@ make_workdir() {
     trap 'rm -rf "${WORKDIR}"' EXIT
 }
 
-# Newest GitHub pre-release, as a bare version (`rc-5.0.0rc1` -> `5.0.0rc1`).
+# ---------------------------------------------------------------------------
+# Release lookup through the GitHub API (#290).
 #
-# /releases/latest deliberately skips pre-releases, so the full list is the only
-# option. Unauthenticated: 60 requests/hour per IP, and no `gh` login to arrange
-# on a fresh machine.
-resolve_latest_prerelease() {
-    # No JSON parser needed, so nothing here can be missing on a fresh box:
-    # /releases is newest-first, and an `rc-` tag is only ever created by
-    # dev-build.yml's prerelease job, so the first `rc-*` tag_name IS the newest
-    # pre-release. Same grep/sed shape as try-hola/hola's cli-install.sh.
+# A GitHub release exists before its assets do: release-please publishes
+# vX.Y.Z at once, and release.yml attaches the wheels and manifest.json only
+# after its tests and build pass, or never, if it fails. So "newest release" is
+# not enough here: the answer is the newest release on the channel that
+# already carries a manifest.json. core/version.py's get_latest_github_release
+# applies the same rule for `remo self-update` and the update notice.
+#
+# Unauthenticated: 60 requests/hour per IP, and no `gh` login to arrange on a
+# fresh machine. No JSON parser either, so nothing here can be missing on a
+# fresh box: grep/sed/awk only, the same shape as try-hola/hola's
+# cli-install.sh.
+# ---------------------------------------------------------------------------
+API_BODY=""
+
+fetch_release_list() {
     # No -f: a 403 body is how GitHub says the rate limit is spent, and that
     # deserves its own message.
-    local body tag
-    body=$(curl -sSL "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null) || body=""
+    API_BODY=$(curl -sSL "https://api.github.com/repos/${REPO}/releases?per_page=20" 2>/dev/null) || API_BODY=""
+}
 
-    tag=$(printf '%s\n' "${body}" \
-        | grep '"tag_name"' \
-        | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/' \
-        | grep -E '^rc-' \
-        | head -1) || true
+# Only an error body counts: a successful listing carries every release's
+# notes, and a note that merely mentions a rate limit must not turn into a
+# refusal. GitHub's error is `"message": "API rate limit exceeded for …"`.
+api_rate_limited() {
+    printf '%s' "${API_BODY}" | grep -qiE '"message": *"[^"]*rate limit'
+}
 
-    # Only an error body counts: a successful listing carries every release's
-    # notes, and a note that merely mentions a rate limit must not turn into a
-    # refusal. GitHub's error is `"message": "API rate limit exceeded for …"`.
-    if [ -z "${tag:-}" ] && printf '%s' "${body}" | grep -qiE '"message": *"[^"]*rate limit'; then
-        print_error "GitHub's API rate limit is exhausted, so the newest pre-release cannot be looked up."
-        echo "  Wait a while, or name the version: --prerelease 5.0.0rc1" >&2
-        return 1
+# channel_releases CHANNEL -> "<tag> yes|no" per release on CHANNEL, newest
+# first (the API's own order); "yes" when it carries a manifest.json.
+#
+# Stable is a `v` tag that is neither a draft nor a pre-release; prerelease an
+# `rc-` tag flagged as one. Splitting on commas copes with GitHub's pretty and
+# compact layouts alike, and a key is matched only at the start of a fragment:
+# release notes are one JSON string whose quotes are escaped, so text in them
+# can never pass for a key. draft/prerelease follow tag_name in each release
+# object, so they belong to the tag most recently seen. The manifest is
+# recognised by its download url, which names the tag itself
+# (.../releases/download/<tag>/manifest.json), so that part does not depend on
+# field order at all; a draft's assets live under an `untagged-` url.
+channel_releases() {
+    printf '%s\n' "${API_BODY}" | tr ',' '\n' | awk -v channel="$1" '
+        function flush() {
+            if (tag != "") { order[n++] = tag; dr[tag] = draft; pr[tag] = pre }
+        }
+        /^[ \t\[{]*"tag_name"[ \t]*:/ {
+            flush()
+            tag = $0
+            sub(/^[^:]*:[ \t]*"/, "", tag)
+            sub(/".*/, "", tag)
+            draft = 0; pre = 0
+            next
+        }
+        /^[ \t]*"draft"[ \t]*:[ \t]*true/ { draft = 1; next }
+        /^[ \t]*"prerelease"[ \t]*:[ \t]*true/ { pre = 1; next }
+        /^[ \t\[{]*"browser_download_url"[ \t]*:.*\/releases\/download\/[^"\/]+\/manifest\.json"/ {
+            u = $0
+            sub(/\/manifest\.json".*/, "", u)
+            sub(/.*\//, "", u)
+            has[u] = 1
+            next
+        }
+        END {
+            flush()
+            for (i = 0; i < n; i++) {
+                t = order[i]
+                if (dr[t]) continue
+                if (channel == "stable") {
+                    if (pr[t] || t !~ /^v/) continue
+                } else {
+                    if (!pr[t] || t !~ /^rc-/) continue
+                }
+                print t " " (has[t] ? "yes" : "no")
+            }
+        }'
+}
+
+# newest_installable CHANNEL -> the newest tag on CHANNEL that carries a
+# manifest.json, on stdout, or nothing. When a newer release is still being
+# published, a note on stderr names it and the version installed instead.
+newest_installable() {
+    local listing newest chosen
+    listing="$(channel_releases "$1")"
+    newest="$(printf '%s\n' "${listing}" | awk 'NF { print $1; exit }')"
+    chosen="$(printf '%s\n' "${listing}" | awk '$2 == "yes" { print $1; exit }')"
+    if [ -z "${chosen}" ]; then
+        return 0
+    fi
+    if [ "${newest}" != "${chosen}" ]; then
+        print_warning "Note: ${newest} is the newest release but is still being published (its manifest.json is not attached yet)." >&2
+        print_warning "      Installing ${chosen} instead. Run the installer again later to get ${newest}." >&2
+    fi
+    printf '%s' "${chosen}"
+}
+
+# The newest release on CHANNEL, installable or not (for the error messages).
+newest_listed() {
+    channel_releases "$1" | awk 'NF { print $1; exit }'
+}
+
+# Newest GitHub pre-release that can be installed, as a bare version
+# (`rc-5.0.0rc1` -> `5.0.0rc1`). /releases/latest deliberately skips
+# pre-releases, so the API list is the only option.
+resolve_latest_prerelease() {
+    local tag pending
+    fetch_release_list
+    tag="$(newest_installable prerelease)"
+    if [ -n "${tag}" ]; then
+        printf '%s' "${tag#rc-}"
+        return 0
     fi
 
-    if [ -z "${tag:-}" ]; then
+    pending="$(newest_listed prerelease)"
+    if api_rate_limited; then
+        print_error "GitHub's API rate limit is exhausted, so the newest pre-release cannot be looked up."
+        echo "  Wait a while, or name the version: --prerelease 5.0.0rc1" >&2
+    elif [ -n "${pending}" ]; then
+        print_error "No recent pre-release carries a manifest.json yet (${pending} is still being published)."
+        echo "  Try again in a few minutes, or see https://github.com/${REPO}/releases" >&2
+    else
         # Deliberately NOT hola's warn-and-fall-back-to-stable: installing the
         # stable release when a pre-release was asked for is the exact silent
         # substitution this rewrite exists to remove.
         print_error "Could not determine the newest pre-release from GitHub."
         echo "  Check your connection, or name the version: --prerelease 5.0.0rc1" >&2
-        return 1
     fi
+    return 1
+}
 
-    printf '%s' "${tag#rc-}"
+# The default (latest stable) manifest could not be downloaded, most often
+# because the newest release is still being published. Sets EXPECTED_TAG to
+# the newest stable release that carries a manifest, or explains and exits.
+# Never used for a version the user named: that one is installed or refused.
+fallback_to_installable_stable() {
+    local url="$1" tag pending
+    fetch_release_list
+    tag="$(newest_installable stable)"
+    if [ -n "${tag}" ]; then
+        EXPECTED_TAG="${tag}"
+        return 0
+    fi
+    pending="$(newest_listed stable)"
+    print_error "Could not download the manifest for the latest release: ${url}"
+    if api_rate_limited; then
+        echo "  GitHub's API rate limit is exhausted, so an earlier release cannot be looked up." >&2
+        echo "  Wait a while, or name the version: --version 5.0.0" >&2
+    elif [ -n "${pending}" ]; then
+        echo "  No recent stable release carries a manifest.json yet (${pending} is still being published)." >&2
+        echo "  Try again in a few minutes, or see https://github.com/${REPO}/releases" >&2
+    else
+        echo "  No stable release with a manifest.json was found." >&2
+        echo "  Check your connection, or see https://github.com/${REPO}/releases" >&2
+    fi
+    exit 1
 }
 
 # ---------------------------------------------------------------------------
@@ -452,7 +568,21 @@ fetch_manifest() {
     else
         what="the latest release"
     fi
-    if ! curl -fsSL "${url}" -o "${MANIFEST}" 2>/dev/null; then
+    local fetched=false
+    if curl -fsSL "${url}" -o "${MANIFEST}" 2>/dev/null; then
+        fetched=true
+    elif [ -z "${EXPECTED_TAG}" ]; then
+        # Latest stable only: fall back to the newest stable release that is
+        # installable already (#290), and fetch that one by its tag, which
+        # also brings the tag check below into play.
+        fallback_to_installable_stable "${url}"
+        url="$(manifest_url)"
+        what="release ${EXPECTED_TAG}"
+        if curl -fsSL "${url}" -o "${MANIFEST}" 2>/dev/null; then
+            fetched=true
+        fi
+    fi
+    if [ "${fetched}" != true ]; then
         print_error "Could not download the manifest for ${what}: ${url}"
         echo "  That release may not exist, or may predate the manifest-based installer." >&2
         echo "  Try a newer version, or see https://github.com/${REPO}/releases" >&2

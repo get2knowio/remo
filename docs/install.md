@@ -33,8 +33,19 @@ If a digest does not match, nothing is installed.
 | A specific pre-release | `--prerelease 5.0.0rc1` (or `--version 5.0.0rc1`) |
 
 Stable releases are tagged `v<version>`; pre-releases `rc-<version>`. Pre-releases
-are never published to PyPI. Looking up the newest pre-release uses GitHub's API,
-which allows 60 unauthenticated requests per hour per IP; if that is exhausted the
+are never published to PyPI.
+
+A release appears on GitHub a few minutes before its wheels and `manifest.json`
+are attached. If the newest stable release has no manifest yet, the installer
+asks GitHub's API (`https://api.github.com/repos/get2knowio/remo/releases?per_page=20`)
+for the newest stable release that has one, installs that, and says which release
+is still being published; run it again later to get the newer one. `--prerelease`
+picks the newest pre-release that has a manifest the same way. A version you name
+with `--version` or `--prerelease <version>` is never swapped for another: if it
+has no manifest, the installer stops. `remo self-update` and the update notice
+follow the same rule, so neither offers a release that cannot be installed yet.
+
+Both lookups use GitHub's API, which allows 60 unauthenticated requests per hour per IP; if that is exhausted the
 installer says so and you can name the version instead.
 
 ## `--with`: web and plugins

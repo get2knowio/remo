@@ -48,7 +48,17 @@ class TestReleaseYml:
         assert "build" in job["needs"]
         step = _step_with_uses(job, "softprops/action-gh-release")
         files = step["with"]["files"]
-        assert "*.whl" in files and "manifest.json" in files
+        assert "*.whl" in files
+        # #290: the manifest marks a release installable, so it is uploaded
+        # strictly after the wheels it lists, never alongside them.
+        assert "manifest.json" not in files
+        steps = job["steps"]
+        manifest_steps = [
+            i for i, s in enumerate(steps)
+            if "gh release upload" in s.get("run", "") and "dist/manifest.json" in s["run"]
+        ]
+        assert len(manifest_steps) == 1
+        assert manifest_steps[0] > steps.index(step)
         _step_with_uses(job, "actions/attest-build-provenance")
         perms = job["permissions"]
         assert perms["id-token"] == "write"

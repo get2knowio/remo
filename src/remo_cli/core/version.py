@@ -140,27 +140,49 @@ def _github_json(url: str) -> object:
         raise ReleaseLookupError(f"unexpected response from GitHub: {exc}") from exc
 
 
+def _has_manifest(rel: dict[str, object]) -> bool:
+    assets = rel.get("assets")
+    return isinstance(assets, list) and any(
+        isinstance(a, dict) and a.get("name") == "manifest.json" for a in assets
+    )
+
+
 def get_latest_github_release(repo: str, channel: str) -> str:
-    """Newest release version on *channel* (``stable`` or ``prerelease``).
+    """Newest *installable* release version on *channel* (``stable`` or ``prerelease``).
 
-    Stable tracks ``v<ver>`` releases, prerelease the newest ``rc-<ver>``
-    pre-release. Raises :class:`ReleaseLookupError` rather than returning empty,
-    so self-update can name the cause.
+    Stable tracks non-draft, non-prerelease ``v<ver>`` releases, prerelease the
+    ``rc-<ver>`` pre-releases. Only a release that already carries its
+    ``manifest.json`` asset counts: release-please publishes ``vX.Y.Z`` before
+    release.yml attaches the assets, and never attaches them if release.yml
+    fails, so ``releases/latest`` could name a version that cannot be installed
+    (#290). The API list is newest-first, so the first match is the newest.
+    Raises :class:`ReleaseLookupError` rather than returning empty, so
+    self-update can name the cause.
     """
-    if channel == "stable":
-        data = _github_json(f"{_GITHUB_API}/{repo}/releases/latest")
-        tag = data.get("tag_name") if isinstance(data, dict) else None
-        if not isinstance(tag, str) or not tag:
-            raise ReleaseLookupError(f"no latest release found for {repo}")
-        return tag.removeprefix("v")
-
+    stable = channel == "stable"
+    prefix = "v" if stable else "rc-"
     data = _github_json(f"{_GITHUB_API}/{repo}/releases?per_page=20")
-    if isinstance(data, list):
-        for rel in data:
-            tag = rel.get("tag_name") if isinstance(rel, dict) else None
-            if isinstance(tag, str) and tag.startswith("rc-") and rel.get("prerelease"):
-                return tag.removeprefix("rc-")
-    raise ReleaseLookupError(f"no pre-release found for {repo}")
+    if not isinstance(data, list):
+        raise ReleaseLookupError(f"unexpected response from GitHub for {repo}'s releases")
+    pending: list[str] = []
+    for rel in data:
+        if not isinstance(rel, dict) or rel.get("draft"):
+            continue
+        tag = rel.get("tag_name")
+        if not isinstance(tag, str) or not tag.startswith(prefix):
+            continue
+        if bool(rel.get("prerelease")) == stable:
+            continue
+        if _has_manifest(rel):
+            return tag.removeprefix(prefix)
+        pending.append(tag)
+    what = "stable release" if stable else "pre-release"
+    if pending:
+        raise ReleaseLookupError(
+            f"no {what} of {repo} carries a manifest.json yet "
+            f"({pending[0]} is still being published)"
+        )
+    raise ReleaseLookupError(f"no {what} found for {repo}")
 
 
 def version_is_newer(candidate: str, current: str) -> bool:

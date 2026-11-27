@@ -18,10 +18,13 @@ Served from `https://raw.githubusercontent.com/get2knowio/remo/main/install.sh` 
 
 ## Resolution
 
-- stable, no version: `https://github.com/<repo>/releases/latest/download/manifest.json`
+- stable, no version: `https://github.com/<repo>/releases/latest/download/manifest.json`. If that download fails (#290: release-please publishes `vX.Y.Z` before release.yml attaches its assets, and never attaches them if release.yml fails), fall back to `https://api.github.com/repos/<repo>/releases?per_page=20`: the newest release that is not a draft, not a pre-release, has a `v` tag, and carries a `manifest.json` asset; then fetch `https://github.com/<repo>/releases/download/<tag>/manifest.json`, with the tag check in force. When a newer stable release is listed without a manifest, a note on stderr names it as still being published and names the version installed instead. No such release → exit 1, naming the pending release when there is one; an exhausted rate limit is named, with `--version` as the next step.
 - stable `VER`: `https://github.com/<repo>/releases/download/v<VER>/manifest.json`
 - prerelease `VER`: `https://github.com/<repo>/releases/download/rc-<VER>/manifest.json`
-- bare `--prerelease`: newest `rc-` tag from `https://api.github.com/repos/<repo>/releases?per_page=20`, then as above. `--dry-run` still resolves (read-only) so the printed command is exact.
+- A named version (`--version VER`, `--prerelease VER`) is never substituted: if its manifest is missing, the installer exits 1 naming its tag, and no API call is made.
+- bare `--prerelease`: from `https://api.github.com/repos/<repo>/releases?per_page=20`, the newest `rc-` release flagged as a pre-release, not a draft, that carries a `manifest.json` asset (the same skip and note as stable), then as above. Never falls back to stable. `--dry-run` still resolves (read-only) so the printed command is exact.
+- The API listing is parsed with grep/sed/awk only (no `jq`, no `python3`): keys are matched only at the start of a comma-separated fragment, so text in release notes cannot pass for one, and a manifest is recognised by its `browser_download_url` (`…/releases/download/<tag>/manifest.json`).
+- release.yml uploads `manifest.json` in its own step after every wheel, so a manifest's presence means the release is complete.
 
 ## Set computation
 

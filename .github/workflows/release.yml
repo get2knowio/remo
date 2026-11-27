@@ -230,9 +230,20 @@ jobs:
           prerelease: ${{ needs.build.outputs.is_prerelease == 'true' }}
           draft: false
           # The wheels and the manifest ARE the release; install.sh reads them.
+          # The manifest goes up in the next step, once every wheel is there.
           files: |
             dist/*.whl
-            dist/manifest.json
+
+      # Last, and on its own: a manifest.json asset is how install.sh and
+      # `remo self-update` tell an installable release from one still being
+      # published (#290). release-please publishes the vX.Y.Z release before
+      # this workflow runs, so the release is visible asset-less for a while;
+      # the manifest must never appear before the wheels it lists.
+      - name: Attach the manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+        run: gh release upload "$TAG" dist/manifest.json --clobber --repo "$GITHUB_REPOSITORY"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2

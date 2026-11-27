@@ -35,7 +35,7 @@ are in [research.md](research.md).
 
 **Project Type**: CLI and release engineering.
 
-**Performance Goals**: Stable manifest resolution needs no GitHub API call (`releases/latest/download/manifest.json`); only bare `--prerelease` and self-update use the API (one call).
+**Performance Goals**: Stable manifest resolution needs no GitHub API call (`releases/latest/download/manifest.json`); only bare `--prerelease`, self-update, and the stable fallback when the newest release has no manifest yet (#290) use the API (one call).
 
 **Constraints**:
 - No `v*` tag or PyPI upload from any RC path.
