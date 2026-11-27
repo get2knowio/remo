@@ -23,6 +23,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -31,6 +32,14 @@ from tests.unit import install_fixtures as fx
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SH = REPO_ROOT / "install.sh"
 DEV_BUILD_YML = REPO_ROOT / ".github" / "workflows" / "dev-build.yml"
+
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+")
+
+
+def _hosts(texts) -> set[str]:
+    """Hostnames of every URL in ``texts``: compare hosts exactly, never by substring."""
+    return {urlparse(u).hostname or "" for t in texts for u in _URL_RE.findall(t)}
 
 BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(BASH is None, reason="bash not available")
@@ -348,7 +357,7 @@ class TestReleaseRouting:
     def test_bare_prerelease_resolves_newest_rc_through_the_api(self, sandbox, fake_path) -> None:
         r = sandbox.run("--prerelease", "--with", "ec2", path=fake_path(uv=True))
         assert r.returncode == 0, r.stderr
-        assert any("api.github.com" in u for u in sandbox.urls())
+        assert "api.github.com" in _hosts(sandbox.urls())
         assert f"{RC_URL}/manifest.json" in sandbox.urls()
         assert _local(sandbox.installs()[0][3]) == WHL_CLI_RC
 
@@ -411,7 +420,7 @@ class TestReleaseRouting:
         fx.make_release(sandbox.root, "rc-9.9.9rc1", foreign_url=True)
         r = sandbox.run("--prerelease", "9.9.9rc1", path=fake_path(uv=True))
         assert r.returncode == 1
-        assert "evil.example.com" in r.stderr or "outside" in r.stderr
+        assert "evil.example.com" in _hosts([r.stderr]) or "outside" in r.stderr
         assert sandbox.installs() == []
 
     def test_manifest_for_another_tag_is_refused(self, sandbox, fake_path) -> None:
@@ -528,7 +537,7 @@ class TestStableRouting:
     def test_pypi_is_never_consulted(self, sandbox, fake_path) -> None:
         r = sandbox.run("--with", "ec2", path=fake_path(uv=True))
         assert r.returncode == 0, r.stderr
-        assert not any("pypi.org" in u for u in sandbox.urls())
+        assert "pypi.org" not in _hosts(sandbox.urls())
         for call in sandbox.calls("uv"):
             assert not any(re.match(r"remo-cli(==|$)", a) for a in call), call
 
