@@ -796,6 +796,8 @@ jobs:
           # it explicitly (spec 030); "[Exit to shell]" must then give a prompt.
           expect <<'EXPECT'
           set timeout 30
+          # expect's pty is 0x0 by default; fzf then draws no rows at all.
+          set stty_init "rows 40 cols 120"
           spawn uv run remo shell
           expect {
             "Exit to shell" {}
