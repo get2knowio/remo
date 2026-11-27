@@ -583,6 +583,9 @@ SSH_DROPIN_CONTENT = (
 )
 _SSHD_INCLUDE = re.compile(r"^\s*Include\s+.*sshd_config\.d/\*", re.IGNORECASE | re.MULTILINE)
 SSHD_BINARY = "/usr/sbin/sshd"
+#: Where sshd lives when it is neither at :data:`SSHD_BINARY` nor on ``PATH``
+#: (``sudo``'s secure_path and a user's PATH rarely include an ``sbin``).
+SSHD_FALLBACKS = ("/usr/local/sbin/sshd", "/opt/homebrew/sbin/sshd")
 
 #: ``runner(argv) -> CompletedProcess``; the default shells out. Tests inject a
 #: fake so no real sudo ever runs.
@@ -591,6 +594,25 @@ Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
 
 def _default_runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(argv, capture_output=True, text=True)
+
+
+def _is_executable(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def find_sshd(
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    is_executable: Callable[[str], bool] = _is_executable,
+) -> str | None:
+    """Return the sshd to validate with: :data:`SSHD_BINARY`, then ``PATH``,
+    then :data:`SSHD_FALLBACKS`; ``None`` when there is none (issue #285)."""
+    if is_executable(SSHD_BINARY):
+        return SSHD_BINARY
+    on_path = which("sshd")
+    if on_path:
+        return on_path
+    return next((c for c in SSHD_FALLBACKS if is_executable(c)), None)
 
 
 def _manual_ssh_resume_text(dropin: Path, enable: bool) -> str:
@@ -610,6 +632,7 @@ def configure_ssh_resume(
     runner: Runner | None = None,
     etc_root: Path = Path("/etc"),
     interactive: bool | None = None,
+    locate_sshd: Callable[[], str | None] = find_sshd,
 ) -> None:
     """Add or remove the sshd ``AcceptEnv`` drop-in that lets ``remo resume`` work
     when this machine is reached over SSH (spec 030 R7).
@@ -635,6 +658,17 @@ def configure_ssh_resume(
         print_warning(
             f"Cannot manage the SSH server configuration automatically: {config} is "
             "unreadable or does not include sshd_config.d/*."
+        )
+        print_info(_manual_ssh_resume_text(dropin, enable))
+        return
+
+    # Without an sshd to run ``-t`` with, a change could not be validated or
+    # reverted safely, so it is not made at all.
+    sshd = locate_sshd()
+    if sshd is None:
+        print_warning(
+            "Cannot manage the SSH server configuration automatically: no sshd found at "
+            f"{SSHD_BINARY}, on PATH, or at {', '.join(SSHD_FALLBACKS)}."
         )
         print_info(_manual_ssh_resume_text(dropin, enable))
         return
@@ -699,7 +733,7 @@ def configure_ssh_resume(
     else:
         remove()
 
-    checked = sudo(SSHD_BINARY, "-t")
+    checked = sudo(sshd, "-t")
     if checked.returncode != 0:
         restore()
         raise OperationFailedError(
