@@ -1,10 +1,52 @@
 <!--
-  Amendment 2026-11-27 (spec 031, PATCH): Version 2.1.0 → 2.1.1. Principle IX
-  wording only: GitHub Releases is the artifact source for every release
-  (stable and RC, installed by install.sh from the release manifest); PyPI
-  receives only final remo-cli releases, as a secondary channel; RCs still never
-  reach PyPI. No rule is loosened.
+  Sync Impact Report
+  ===================
+  Version change: 2.1.0 → 3.0.0 (MAJOR)
+  (Supersedes the unreleased 2.1.1 PATCH amendment of the same day, spec 031,
+  which had kept PyPI as a secondary channel for final remo-cli releases.)
 
+  Bump rationale: Principle IX is REDEFINED. It was "Pre-Release Builds Never
+  Touch PyPI" — PyPI received final releases, only non-final builds stayed
+  off-index. The repo owner decided on 2026-11-27 that remo is no longer
+  uploaded to PyPI at all: stable, RCs and plugins, no exceptions. GitHub
+  Releases (wheels + manifest.json + attestations, installed by install.sh) is
+  the only package channel, beside the GHCR remo-web image. Redefining a
+  principle is MAJOR under the Versioning Policy below. The off-index
+  pre-release discipline (tiers, version hygiene, promote-don't-rebuild, `v*`
+  only from release-please) is kept unchanged.
+
+  Modified principles:
+  - IX. Pre-Release Builds Never Touch PyPI → IX. Releases Ship Only Through
+    GitHub Releases — Never PyPI
+
+  Added sections: None.
+
+  Removed rules:
+  - "Publishing an RC to PyPI MUST require explicit human approval" (there is
+    no PyPI upload left to approve; replaced by the stable-release gate)
+  - Packaging & Release: "The PyPI publish step MUST be reachable only from a
+    pushed `v*` tag" (the step is deleted from release.yml)
+
+  Modified sections:
+  - Technology Standards → Packaging & Release (no PyPI step; `rc-` tags)
+  - Quality Gates → the Principle IX note
+  - Development Workflow → Pre-Release Checklist now gates a stable GitHub
+    release ("Before any upload to PyPI" → "Before a stable release")
+
+  Templates requiring updates:
+  - .specify/templates/plan-template.md: ✅ updated (Constitution Check row IX,
+    version reference → v3.0.0)
+  - .specify/templates/spec-template.md: ✅ no changes needed
+  - .specify/templates/tasks-template.md: ✅ no changes needed
+  - CLAUDE.md: ✅ updated (principle table, Commands, Pre-release testing)
+  - AGENTS.md: ✅ updated (mirrors CLAUDE.md)
+  - .claude/skills/release/SKILL.md: ✅ updated (PyPI outcome and rules removed)
+  - .github/workflows/release.yml: ✅ `publish` (PyPI) job removed
+
+  Follow-up TODOs: None
+-->
+
+<!--
   Sync Impact Report
   ===================
   Version change: 2.0.1 → 2.1.0 (MINOR)
@@ -334,18 +376,25 @@ the parts that can be checked mechanically MUST be.
 Anything a test can check, a test should check, because prose drifts silently
 and diagrams drift fastest.
 
-### IX. Pre-Release Builds Never Touch PyPI
+### IX. Releases Ship Only Through GitHub Releases — Never PyPI
 
-PyPI MUST receive only final, working releases. Every build that is not a
-final release MUST reach its testers through an off-index channel, and MUST be
-exercised there before any upload is considered. GitHub Releases is the artifact
-source for every release, stable and RC alike: each carries its wheels and a
-`manifest.json`, and `install.sh` installs from those verified files. PyPI is a
-secondary channel carrying only the final remo-cli wheel (never a plugin, never
-an RC).
+No build of remo-cli or of any plugin is ever uploaded to PyPI or TestPyPI —
+not a stable release, not an RC, not a plugin, with no exceptions. Every
+release is a GitHub release carrying its wheels, a `manifest.json` with their
+SHA-256 digests, and build-provenance attestations; `install.sh` installs from
+those verified files. Beside it, the only other published artifact is the GHCR
+`remo-web` image. Every build that is not a final release MUST reach its
+testers through an off-index channel, and MUST be exercised there before a
+stable release is cut.
 
 **Rules:**
 
+- No workflow, script or skill MAY upload a remo build to PyPI or TestPyPI. The
+  last versions already on PyPI stay there, frozen; they are never yanked,
+  updated or added to.
+- Every release — stable (`v*` tag) and pre-release (`rc-<version>` tag) — is a
+  GitHub release carrying the wheels + `manifest.json` (+ attestations), and is
+  installed by `install.sh`.
 - Testing a change "in the wild" MUST use the lowest channel that can prove it,
   escalating only when that channel cannot:
   - **Tier 1 — git refs (the default inner loop).** GitHub is the carrier; no
@@ -354,12 +403,15 @@ an RC).
     daily-drive the branch as the real CLI with
     `uv tool install git+https://github.com/get2knowio/remo@<ref>` (extras use
     the PEP 508 form, `"remo-cli[web] @ git+…@<ref>"`). Restore released state
-    with `uv tool install remo-cli --force`.
+    with the `install.sh` one-liner
+    (`curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash`).
   - **Tier 2 — CI-built wheels (release-candidate realism).** The
     `dev-build.yml` workflow builds the *actual* wheel in clean CI and uploads
     it as a run artifact; testers install it with
     `uv tool install --force ./dl/remo_cli-*.whl`. Nothing is tagged, nothing
-    is committed, no version is reserved.
+    is committed, no version is reserved. With an explicit `X.Y.ZrcN` and
+    `prerelease=true` the same wheels become an `rc-<version>` GitHub
+    pre-release that `install.sh --prerelease` installs.
   - **Tier 3 — a private index** (static PEP 503 index or `devpi`) MUST NOT be
     stood up until Tiers 1–2 demonstrably chafe. Adding standing
     infrastructure ahead of that friction is scope, not rigor.
@@ -368,40 +420,40 @@ an RC).
   Tier 1 builds from source and exercises the *sdist* path, not the wheel that
   ships, so a Tier 1 pass proves nothing about those surfaces.
 - Version hygiene: anything that is not final MUST carry a PEP 440 pre-release
-  or dev version (`4.4.0rc1`, `4.4.0.dev7`). Resolvers skip these by default,
-  so even a leaked pre-release never reaches a plain
-  `uv tool install remo-cli`.
+  or dev version (`4.4.0rc1`, `4.4.0.dev7`).
 - A dev build MUST additionally carry a PEP 440 **local version identifier**
-  (`4.4.0.dev7+g4f2a91c`). PyPI rejects local versions outright, which makes
-  accidental publication structurally impossible rather than merely unlikely,
-  and makes every build uniquely identifiable in `uv tool list`.
-- Promotion MUST publish the identical artifact that was validated, never a
-  rebuild. An RC that proves out is uploaded as-is; a rebuild is a different
-  artifact and re-opens everything the validation closed.
-- Publishing an RC to PyPI MUST require explicit human approval. The default
-  outcome of an RC is a Tier 1 or Tier 2 hand-off; an upload is the exception,
-  taken only when the tester cannot install off-index.
-- TestPyPI MUST NOT be used as a routine dev channel. It is public, shares a
-  namespace, is periodically pruned, and often cannot resolve real
-  dependencies. It is legitimate only to rehearse the publish pipeline itself.
+  (`4.4.0.dev7+g4f2a91c`). No release can carry a local version (PyPI and
+  other public indexes reject them outright), which marks a dev build as
+  structurally unpromotable and makes every build uniquely identifiable in
+  `uv tool list`.
+- `v*` tags MUST come only from release-please (merging its release PR). RCs
+  are `rc-<version>` tags made by `dev-build.yml`, which refuses `v*`.
+- Promotion MUST release the identical artifact that was validated, never a
+  rebuild. A rebuild is a different artifact and re-opens everything the
+  validation closed.
+- Cutting a stable release (merging the release PR, or pushing any tag) MUST
+  require explicit human approval: a `v*` tag creates a public GitHub release
+  and moves the GHCR `latest` image.
 - When remo depends on an unreleased library, the library MUST be injected
-  rather than vendored or pinned into a release: `uv tool install remo-cli
-  --with "<lib> @ git+…@<ref>"` (or the `uvx --with` form) keeps remo exactly
-  as released and swaps only the library under test. A `git = ` entry under
+  rather than vendored or pinned into a release: `uv tool install --force
+  "remo-cli @ <release wheel URL>" --with "<lib> @ git+…@<ref>"` (or the
+  `uvx --with` form) keeps remo exactly as released and swaps only the library
+  under test. A `git = ` entry under
   `[tool.uv.sources]` is TEMPORARY and MUST be swapped back to a version
   constraint before remo's own release — uv sources do not ship in wheel
-  metadata, so a release cut with one in place silently depends on the older
-  PyPI version.
+  metadata, so a release cut with one in place silently depends on an older
+  version of the library.
 - None of this applies inside remo's own repo devcontainer, where `uv run`
   already exercises the working tree. These channels exist for every *other*
   container and machine.
 
-**Rationale:** A version uploaded to PyPI can never be reused or truly
-withdrawn, so every experimental upload is a permanent, public artifact of a
-build that was not ready. The escalating tiers make the off-index path cheaper
-than publishing at every stage, and the local-version rule turns "don't publish
-a dev build" from a discipline the release runner must remember into something
-the index physically refuses.
+**Rationale:** One channel means one install path to test, document and
+support: the GitHub release carries remo-cli *and* its plugins with verified
+digests, which PyPI never did, and a second channel only produced installs that
+could not take plugins and drifted from what the installer manages. A published
+release can never be truly withdrawn, so the escalating off-index tiers keep
+every unready build off the public release page, and the local-version rule
+makes a dev build impossible to promote by accident.
 
 ## Technology Standards
 
@@ -452,17 +504,19 @@ the index physically refuses.
 
 - `pyproject.toml` carries the single `version` field; a build stamped for
   off-index testing MUST NOT be committed with that stamp in place.
-- Pre-release tags use the PEP 440 form with no separator (`v4.4.0rc1`).
-  `release.yml` keys its pre-release detection off that suffix and MUST NOT
-  move the `latest` container tag for one.
+- Pre-release versions use the PEP 440 form with no separator (`4.4.0rc1`),
+  released under an `rc-<version>` tag. `release.yml` (`v*` tags only) still
+  keys its pre-release detection off that suffix and MUST NOT move the
+  `latest` container tag for one.
 - `dev-build.yml` is the Tier 2 channel: it stamps `+g<shortsha>` onto every
-  build it produces, so its artifacts are un-uploadable to PyPI by
-  construction. That local segment MUST NOT be removed to "make the wheel
-  publishable" — republishing means cutting a real tag.
-- The PyPI publish step MUST be reachable only from a pushed `v*` tag, and MUST
-  run behind the tests it gates. It uploads the wheel the release build already
-  produced (the same file attached to the GitHub release), never a rebuild, and
-  only `remo-cli`: plugin wheels are GitHub Release assets.
+  auto build it produces, so those artifacts can never be promoted. That local
+  segment MUST NOT be removed to "make the wheel releasable" — releasing means
+  an explicit RC version or a real release.
+- `release.yml` MUST be reachable only from a pushed `v*` tag, and MUST run
+  behind the tests it gates. It attaches the wheels its one build produced
+  (remo-cli and every first-party plugin) plus `manifest.json` and
+  attestations to the GitHub release, and publishes the GHCR image. It MUST
+  NOT contain a PyPI or TestPyPI upload step.
 
 ### Ansible (`ansible/`)
 
@@ -517,10 +571,13 @@ uv run python scripts/export_openapi.py   # openapi.json + terminal-frames.json
 cd frontend && npm run generate:types      # schema.d.ts + terminal-frames.d.ts
 ```
 
-Principle IX has no CI row, and MUST NOT be given a decorative one: no gate
-can observe that a human installed a branch and used it. It is enforced by the
-`release` skill's mandatory validation step, by `dev-build.yml`'s unremovable
-`+g<sha>` local segment, and by review. A change to packaging surfaces MUST
+Principle IX has no CI row of its own, and MUST NOT be given a decorative one:
+no gate can observe that a human installed a branch and used it. It is enforced
+by the `release` skill's mandatory validation step, by `dev-build.yml`'s
+unremovable `+g<sha>` local segment, by review, and — for the "never PyPI"
+half, which a test *can* observe — by `tests/unit/test_release_workflows.py`,
+which fails if any workflow uses a PyPI publish action or a `pypi`
+environment. A change to packaging surfaces MUST
 state in its PR description which tier validated it.
 
 The `Lint & Types` job MUST install the `web` extra (`uv sync --all-extras`).
@@ -547,18 +604,20 @@ while checking nothing.
 
 ### Pre-Release Checklist
 
-Before any upload to PyPI:
+Before a stable release (merging the release-please PR, which creates the
+`v*` tag, the public GitHub release and the GHCR `latest` image):
 
 1. **Tier chosen**: the change was exercised on a git ref (Tier 1) or, if it
    touched packaging, on the CI-built wheel (Tier 2).
 2. **Version form**: non-final builds carry a PEP 440 pre-release/dev version;
    dev builds carry a `+g<sha>` local segment.
-3. **Same artifact**: what is published is the artifact that was validated, not
+3. **Same artifact**: what is released is the artifact that was validated, not
    a rebuild of it.
 4. **No stray sources**: no `git = ` entry remains under `[tool.uv.sources]`,
    and no off-index version stamp remains in `pyproject.toml`.
-5. **Approval**: the publish was explicitly approved by a human, with the
-   reason an off-index hand-off was insufficient.
+5. **Approval**: a human explicitly approved the release (merging the release
+   PR or pushing any tag).
+6. **Never PyPI**: nothing in the release path uploads to PyPI or TestPyPI.
 
 ### Code Review Focus Areas
 
@@ -609,4 +668,4 @@ is the defect.
 (current tree, commands, recent changes). They elaborate this constitution;
 they never override it.
 
-**Version**: 2.1.1 | **Ratified**: 2026-01-06 | **Last Amended**: 2026-11-27
+**Version**: 3.0.0 | **Ratified**: 2026-01-06 | **Last Amended**: 2026-11-27

@@ -32,8 +32,9 @@ If a digest does not match, nothing is installed.
 | Newest pre-release | `--prerelease` |
 | A specific pre-release | `--prerelease 5.0.0rc1` (or `--version 5.0.0rc1`) |
 
-Stable releases are tagged `v<version>`; pre-releases `rc-<version>`. Pre-releases
-are never published to PyPI.
+Stable releases are tagged `v<version>`; pre-releases `rc-<version>`. GitHub
+Releases is the only channel: no remo release, stable or pre-release, plugin or
+not, is published to PyPI.
 
 A release appears on GitHub a few minutes before its wheels and `manifest.json`
 are attached. If the newest stable release has no manifest yet, the installer
@@ -121,9 +122,15 @@ with a reason in `remo providers`.
 
 ## Switching from a PyPI install
 
-PyPI carries `remo-cli` for final releases only (no plugins, no pre-releases), and
-`remo self-update` does not follow it. Run the one-liner once; it replaces the
-PyPI copy (and any copy under the other of uv/pipx) after the new one is in place:
+Earlier versions of `remo-cli` were published on PyPI. PyPI no longer receives
+remo releases: the last version there stays frozen, so `uv tool upgrade remo-cli`
+or `pipx upgrade remo-cli` will never find anything newer, and
+`remo self-update` cannot move a PyPI install. A PyPI install still tells you
+after a command when a newer GitHub release exists, and points here.
+
+Run the one-liner once; it replaces the PyPI copy (and any copy under the other
+of uv/pipx) after the new one is in place, and from then on `remo self-update`
+keeps you current:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \

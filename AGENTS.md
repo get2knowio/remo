@@ -4,7 +4,7 @@ Auto-generated from all feature plans. Last updated: 2026-07-27
 
 ## Constitution
 
-See `.specify/memory/constitution.md` (v2.1.1) for the full text. The nine
+See `.specify/memory/constitution.md` (v3.0.0) for the full text. The nine
 non-negotiable principles, in short:
 
 | # | Principle | One-line rule |
@@ -17,7 +17,7 @@ non-negotiable principles, in short:
 | VI | Test Every Path That Can Skip or Fail | Error/skip/abort paths are covered, not just the happy path |
 | VII | Idempotent and Re-runnable by Default | A second run is a no-op; registry writes go through `core/registry.py` |
 | VIII | Documentation Reflects Reality, and CI Proves It | Structure diagrams and docs ship in the same change as the code |
-| IX | Pre-Release Builds Never Touch PyPI | Test off-index (git ref → CI wheel); PyPI receives only final, working releases |
+| IX | Releases Ship Only Through GitHub Releases — Never PyPI | Nothing is ever uploaded to PyPI/TestPyPI; every release is a GitHub release (wheels + `manifest.json`) installed by `install.sh`; test off-index first (git ref → CI wheel) |
 
 Principles I, IV, and VIII are machine-enforced — see [Quality Gates](#quality-gates).
 Principle IX is a human gate — see [Pre-release testing](#pre-release-testing-principle-ix).
@@ -43,7 +43,7 @@ Principle IX is a human gate — see [Pre-release testing](#pre-release-testing-
 - No new runtime deps; no registry schema change. `core/tab_identity.py` (pure tab-identity precedence + HMAC key), `core/tab_records.py` (workstation store: records + secret), `core/resume.py` (pure decision table + 5 s host lookup), `cli/resume.py`, `remo-host sessions lookup`/`record`, `AcceptEnv TZ REMO_TAB_KEY` (028-tab-resume)
 - No new runtime deps; no registry schema change. `core/host_access.py` (SSH vs local transport seam), `cli/local.py` + `providers/local.py` (`remo local`), `ansible/local_setup.yml`, `roles/user_setup/tasks/host_scripts.yml`, templates `remo-lib.sh.j2` (project index) and `remo-session-shell.sh.j2`, the `local` registry pseudo-type (029-local-host)
 - No new runtime deps; no registry schema change; remo-host protocol still v1. `models/host_info.py` + `core/ssh.probe_host_tools` (host-info probe), `providers/projects.py` + `cli/projects.py` (`remo projects`), `providers/local.configure_ssh_resume` (`--allow-ssh-resume`), `remo-lib.sh` session-dir pin + tool PATH, template `host-info.j2` (030-local-host-ssh)
-- No new runtime deps; no registry schema change. `scripts/release_manifest.py` (stdlib: manifest generate/verify), `core/install_record.py` (install.json + origin detection), `providers/self_update.py` + `cli/self_update.py` (`remo self-update`), `install.sh` rewritten around the release manifest, `release.yml` single build feeding GitHub Release + PyPI (031-install-path)
+- No new runtime deps; no registry schema change. `scripts/release_manifest.py` (stdlib: manifest generate/verify), `core/install_record.py` (install.json + origin detection), `providers/self_update.py` + `cli/self_update.py` (`remo self-update`), `install.sh` rewritten around the release manifest, `release.yml` single build feeding the GitHub Release (no PyPI upload: Constitution IX v3.0.0) (031-install-path)
 
 - Ansible 2.14+ / YAML + `ansible.builtin`, `community.general` (for zypper module) (001-bootstrap-incus-host)
 - Formal provider abstraction: `core/provider_registry.py` (`ProviderDescriptor`/`OptionSpec`/`CommandSpec`/`ConnectionSpec` + registry), `core/provider_protocol.py` (`Provider` Protocol), `core/errors.py` (typed taxonomy: `ProviderError`/`MissingDependencyError`/`PreconditionError`/`OperationFailedError`/`UserAbortedError`), `core/lifecycle.py` (shared `run_destroy` template), `cli/providers/factory.py` (generates all four provider CLI groups from descriptors). No new runtime deps. (018-provider-abstraction)
@@ -77,7 +77,7 @@ src/remo_cli/              # Python CLI package (src layout, hatchling build)
 │   ├── added.py            # Business logic for remo add / remo remove / remo configure — registration (014) + generic configure play (022)
 │   ├── connector.py        # SSM connector business logic: launcher (attach), document, enroll/status/unenroll (025)
 │   ├── projects.py         # remo projects business logic: generic add/remove/list over any host via get_host_access + remo-host, upgrade-command advice on unsupported verbs (030)
-│   ├── self_update.py      # remo self-update business logic: run_self_update (+ detect_with_names for the PyPI switch hint); runs the target release's own install.sh with the recorded set, guidance for pypi/source origins; injectable seams, typed errors (031)
+│   ├── self_update.py      # remo self-update business logic: run_self_update (+ detect_with_names for the switch-from-PyPI hint); runs the target release's own install.sh with the recorded set, guidance for pypi/source origins; injectable seams, typed errors (031)
 │   ├── local.py            # remo local business logic: check_prerequisites (detect, never install), setup (local_setup.yml, single `local` entry, no-op re-run), add/remove/list via remo-host projects through LocalAccess (029)
 │   └── builtin.py         # register_builtins(): the two built-in descriptors (incus, proxmox) in fixed order — Hetzner and EC2 (formerly the built-in aws, #258) are the plugins/hetzner and plugins/ec2 distributions; called by provider_registry._ensure_discovered() before entry-point discovery (027)
 ├── core/                  # Shared utilities (no provider knowledge)
@@ -339,16 +339,16 @@ uv run remo connector document            # print the shipped remo-attach sessio
 uv run remo connector status NAME
 uv run remo connector unenroll NAME [--purge] [--yes]
 
-# Pre-release testing, off-index (Constitution IX) — PyPI gets only final releases
+# Pre-release testing, off-index (Constitution IX) — remo is never uploaded to PyPI
 uvx --from git+https://github.com/get2knowio/remo@BRANCH remo --help  # Tier 1, zero footprint
 uv tool install git+https://github.com/get2knowio/remo@BRANCH         # Tier 1, daily-drive the branch
 uv tool install "remo-cli[web] @ git+https://github.com/get2knowio/remo@BRANCH"  # with extras
-uv tool install remo-cli --force                                      # PyPI remo-cli only (no plugins); prefer the installer one-liner below
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash  # back to the released build
 
 # install.sh is the one install path for every release (031): it reads the release's
 # manifest.json from GitHub Releases, sha256-verifies the wheels and installs them in one
-# uv/pipx command. Stable and RC differ only in which manifest; PyPI is never consulted
-# (RCs never reach PyPI). `--with` takes `web` and any plugin in the manifest (ec2, hetzner).
+# uv/pipx command. Stable and RC differ only in which manifest. It is the only install
+# channel: no remo build is ever uploaded to PyPI (Constitution IX). `--with` takes `web` and any plugin in the manifest (ec2, hetzner).
 # Picks uv, or pipx when that is what is already installed; never bare pip
 # (PEP 668). Refuses Git Bash/MSYS2/Cygwin before installing anything.
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
@@ -366,7 +366,7 @@ REMO_VERSION=4.4.0rc3 curl -fsSL "$INSTALL_URL" | bash         # env twin of --v
 # parity with try-hola/hola's cli-install.sh; `--pre-release` stays an alias.
 
 # Tier 2 — the real wheel, built in clean CI. Two shapes, and the difference is
-# whether the artifact can later be promoted to PyPI as-is:
+# whether the artifact can later be promoted to a release as-is:
 gh workflow run dev-build.yml                                         # dev build: X.Y.Z.devN+g<sha>,
                                                                       #   un-uploadable, validation only
 gh workflow run dev-build.yml -f version=X.Y.ZrcN                     # RC: canonical, no local segment,
@@ -481,19 +481,22 @@ checking nothing.
 
 ### Pre-release testing (Principle IX)
 
-PyPI receives only final, working releases. Everything before that flows
-off-index, escalating only as needed: **Tier 1** git refs (`uvx --from git+…`,
+No remo build — stable, RC or plugin — is ever uploaded to PyPI or TestPyPI.
+Every release is a GitHub release carrying the wheels, `manifest.json` and
+attestations, installed by `install.sh`; the GHCR `remo-web` image is the only
+other published artifact. Everything before a stable release flows off-index,
+escalating only as needed: **Tier 1** git refs (`uvx --from git+…`,
 `uv tool install git+…`) for the inner loop, **Tier 2** the real wheel built by
 `dev-build.yml` — mandatory for any change to packaging surfaces (entry points,
 extras, package data, build config), since Tier 1 exercises the sdist path and
 not the wheel that ships. Non-final versions are PEP 440 pre-release/dev forms;
-dev builds carry a `+g<sha>` local segment that PyPI rejects outright, so a dev
-build cannot leak. An **RC is different**: `dev-build.yml` stamps an explicit
+dev builds carry a `+g<sha>` local segment that no release (and no public
+index) accepts, so a dev build can never be promoted. An **RC is different**: `dev-build.yml` stamps an explicit
 `X.Y.ZrcN` verbatim with *no* local segment, precisely so the artifact stays
-promotable — promotion publishes the *identical* validated wheel, never a
+promotable — promotion releases the *identical* validated wheel, never a
 rebuild. With `-f prerelease=true` that same wheel is attached to a GitHub
 pre-release under an `rc-<version>` tag (never `v*`, which would trigger
-`release.yml` and its PyPI/GHCR publish), giving a plain URL that installs
+`release.yml` and its stable GitHub release + GHCR `latest` image), giving a plain URL that installs
 without `gh` auth. That same run also publishes
 `ghcr.io/get2knowio/remo-web:<version>` — the deployable half of an RC, for
 Compose-based installs such as a Hola catalog channel — tagged only by its
@@ -501,9 +504,12 @@ exact version, never `latest`. That is the default (`image=true`), because a
 wheel without its image is a partial artifact and the pre-release does not say
 which half you have; pass `-f image=false` for a CLI-only RC to skip the
 emulated arm64 build, or run `rc-image.yml` alone to backfill an image for an
-existing `rc-<version>` tag. TestPyPI is not a dev channel. Principle IX has no CI row — it is
-enforced by the `release` skill's validation gate, by that unremovable local
-segment, and by review; name the tier that validated a packaging change in the
+existing `rc-<version>` tag. `v*` tags come only from release-please. Principle
+IX has no CI row of its own — it is enforced by the `release` skill's
+validation gate (which also requires explicit approval before the release PR
+is merged or any tag pushed), by that unremovable local segment, by review, and
+by `tests/unit/test_release_workflows.py`, which fails if any workflow uses a
+PyPI publish action or a `pypi` environment; name the tier that validated a packaging change in the
 PR description.
 
 ### Repo-wide pre-commit checklist
@@ -533,7 +539,7 @@ PR description.
 - Ansible 2.14+ / YAML: Follow standard conventions plus Constitution principles
 
 ## Recent Changes
-- 031-install-path: One install path for every release. Every GitHub release (stable `v<ver>`, RC `rc-<ver>`) now carries the remo-cli wheel, each first-party plugin wheel and a line-oriented `manifest.json` (SHA-256 per wheel), built once by `release.yml`'s new `build` job (`uv build --all-packages`, `scripts/check_plugin_wheels.sh`, `scripts/release_manifest.py generate`+`verify`) with build-provenance attestations; the `publish` job uploads only the already-built `remo_cli-*` files to PyPI (never a rebuild, never a plugin). `dev-build.yml`'s prerelease job attaches the same set (`dist/*.whl dist/manifest.json`, `--target $GITHUB_SHA`). **Installer**: `install.sh` reads the manifest (stable, `--version`, `--prerelease`), validates names/URLs/tag, downloads and sha256-verifies the wheels, and installs from those verified files in one `uv tool install`/`pipx install`+`inject`; `--with`/`REMO_WITH` (`web` + manifest plugins), `--without`, `--with-pkg`, `--with-url`; additive via `<REMO_HOME>/install.json` (`core/install_record.py`: record loader + `detect_origin`). **Self-update**: `remo self-update [--check] [--yes]` (`cli/self_update.py` + `providers/self_update.py`) runs the target release's own `install.sh` with the recorded set; `core/version.py` gains `get_latest_github_release` and an origin-aware passive notice. No new runtime deps; no registry schema change. Constitution IX amended to v2.1.1 (wording only); RCs still never reach PyPI. Validated Tier 2 locally, end-to-end RC validation tracked in #289. (031-install-path)
+- 031-install-path: One install path for every release. Every GitHub release (stable `v<ver>`, RC `rc-<ver>`) now carries the remo-cli wheel, each first-party plugin wheel and a line-oriented `manifest.json` (SHA-256 per wheel), built once by `release.yml`'s new `build` job (`uv build --all-packages`, `scripts/check_plugin_wheels.sh`, `scripts/release_manifest.py generate`+`verify`) with build-provenance attestations; there is no PyPI upload (the `publish` job was removed: GitHub Releases is the only package channel). `dev-build.yml`'s prerelease job attaches the same set (`dist/*.whl dist/manifest.json`, `--target $GITHUB_SHA`). **Installer**: `install.sh` reads the manifest (stable, `--version`, `--prerelease`), validates names/URLs/tag, downloads and sha256-verifies the wheels, and installs from those verified files in one `uv tool install`/`pipx install`+`inject`; `--with`/`REMO_WITH` (`web` + manifest plugins), `--without`, `--with-pkg`, `--with-url`; additive via `<REMO_HOME>/install.json` (`core/install_record.py`: record loader + `detect_origin`). **Self-update**: `remo self-update [--check] [--yes]` (`cli/self_update.py` + `providers/self_update.py`) runs the target release's own `install.sh` with the recorded set; `core/version.py` gains `get_latest_github_release` and an origin-aware passive notice. No new runtime deps; no registry schema change. Constitution IX redefined (v3.0.0, MAJOR): "Releases Ship Only Through GitHub Releases — Never PyPI" — no remo build is ever uploaded to PyPI; a PyPI-origin install's passive notice looks up the newest GitHub stable release and points at the installer. Validated Tier 2 locally, end-to-end RC validation tracked in #289. (031-install-path)
 - 030-local-host-ssh: Made a machine set up with `remo local setup` the same host whether you sit at it or reach it over SSH from another workstation. **Probe**: the existing pre-connect probe (`core/ssh.probe_host_tools`; `check_remote_version` is now a wrapper) reads `~/.remo-version` plus a new host-side `~/.local/state/remo/host-info` record (`host_kind`, `menu_command`, `installed_by`; `models/host_info.py`, rendered by `host_scripts.yml`) in the same round trip, so `remo shell`/`remo resume` pay no extra SSH call; it now also runs when the local version is `unknown`. **Menu**: a bare `remo shell` to a host reporting `menu_command=1` starts `project-menu` as an explicit `-tt` command (`host_access.SSH_MENU_COMMAND`, `REMO_MENU=1` guard on the `.bashrc` hook); every other SSH argv is byte-identical and the gate is pinned both sides in `test_host_access_ssh_baseline.py`. **Locally managed hosts**: `upgrade_command_for(host_kind=)` and `connect_to_host` advise `remo local setup (run it on that machine)` instead of offering `remo configure`, and `providers/added.configure` refuses such a host before any prompt; `remo-host capabilities --json` gains an additive `host_kind` (`RemoteCapability.host_kind`; no `CapabilityOut` change). **macOS sessions**: `remo-lib.sh` `remo_pin_session_dir` (Darwin only: private `~/.local/state/remo/zellij` as `ZELLIJ_SOCKET_DIR`) and `remo_load_local_path` (`REMO_PATH` recorded in `local.env`) run in all four zellij-using scripts; `remo local setup` notes sessions started before the pin. **Resume opt-in**: `remo local setup --allow-ssh-resume/--no-allow-ssh-resume` (`providers/local.configure_ssh_resume`, injectable sudo runner, the only sudo in local setup) manages the sshd `AcceptEnv TZ REMO_TAB_KEY` drop-in. **Projects**: `remo projects {list,add,remove} HOST` (`cli/projects.py` + `providers/projects.py`, moved out of `providers/local.py` which keeps thin wrappers); `remo-host projects add` expands a leading `~/`. No new runtime deps; no registry schema change; remo-host protocol still v1. Constitution IX: a new template (`host-info.j2`) ships as package data, asserted by `scripts/check_plugin_wheels.sh` (Tier 2).
 - 029-local-host: Made the machine remo runs on a host, with no SSH and no VM. **Seam**: new `core/host_access.py` (`HostAccess` Protocol; `SshAccess` delegates to the existing builders so every SSH argv stays byte-identical, pinned by `tests/unit/core/test_host_access_ssh_baseline.py`; `LocalAccess` runs the same host-side commands with the bash >= 4 recorded in `~/.local/state/remo/local.env`, on the user's own TTY, forwarding `REMO_TAB_KEY` by env) now sits behind `core/ssh.shell_connect`/`check_remote_version` and `core/resume._ssh_prefix`; `-L` is refused locally and only the local host reports `--exec`'s exit status. **Registry**: `local` is a second pseudo-type beside `ssh` (`LOCAL_HOST_TYPE`; nested `local.projects_dir` only when set, carried in `KnownHost.region`/`projects_dir`; no format change, an older remo preserves it verbatim) and is never pushed/synced (`web_adopt.is_portable_host` at every `remo web` seam). **CLI**: `cli/local.py` + `providers/local.py` — `remo local {setup,check,add,remove,list}`; setup detects (never installs) bash >= 4, git, zellij, fzf, a devcontainer runtime and a container engine, runs `ansible/local_setup.yml` (local connection, `become: false`, no rc-file edits, idempotent), and registers the single local entry; `remo cp`/`remo configure` refuse it and `remo remove` deregisters it. **Host scripts**: the render tasks moved to `roles/user_setup/tasks/host_scripts.yml` (shared by remote and local, shebang `#!{{ remo_bash_path | default('/bin/bash') }}`), a per-host project index (`remo-lib.sh`, `~/.local/state/remo/projects.tsv`, additive `remo-host projects add|remove|list`, protocol still v1) lets existing checkouts anywhere be added in place, `remo-session-shell` starts the devcontainer from a Zellij `--default-shell` instead of `.bashrc` (remote keeps a guarded shim), and the scripts are macOS-portable (new `host-scripts-macos` CI job). No new runtime deps; no FastAPI model changed. Constitution IX: a new playbook and templates ship as package data — Tier 2, `scripts/check_plugin_wheels.sh` asserts them in the built wheel. (#276-#278 track the web console, project migration and a real macOS end-to-end run.)
 Only the newest three entries live here — `update-agent-context.sh` discards the rest on every run. The complete history is archived in [`docs/feature-history.md`](docs/feature-history.md); move displaced entries there rather than letting the generator drop them.

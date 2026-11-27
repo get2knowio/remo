@@ -12,9 +12,6 @@ import urllib.request
 from remo_cli.core.config import get_remo_home
 from remo_cli.core.install_record import InstallOrigin, detect_origin, load_record
 
-# PyPI JSON API for version checks
-_PYPI_URL = "https://pypi.org/pypi/remo-cli/json"
-
 # PEP 440 version pattern: optional v prefix, major.minor.patch,
 # optional pre-release suffix (rc/beta/alpha/dev + number)
 _SEMVER_RE = re.compile(
@@ -22,20 +19,12 @@ _SEMVER_RE = re.compile(
     r"(?:[.-]?(?:rc|beta|alpha|dev|a|b)\.?(\d+))?"
 )
 
-# Pre-release indicators (PEP 440 formats used by PyPI)
-_PRERELEASE_MARKERS = ("rc", "beta", "alpha", "dev")
-
-# The short PEP 440 forms (5.0.0a1, 5.0.0b2), which a substring test for a
-# bare "a"/"b" would over-match.
-_SHORT_PRERELEASE_RE = re.compile(r"\d(?:a|b)\d")
-
-
-def _is_prerelease(version: str) -> bool:
-    return any(marker in version for marker in _PRERELEASE_MARKERS) or bool(
-        _SHORT_PRERELEASE_RE.search(version)
-    )
-
 _GITHUB_API = "https://api.github.com/repos"
+
+# Where releases are published when no install record names a repo. GitHub
+# Releases is remo's only package channel (constitution IX, v3.0.0): PyPI never
+# receives a newer remo, so a lookup there would announce nothing, ever.
+DEFAULT_RELEASE_REPO = "get2knowio/remo"
 
 _SWITCH_ONE_LINER = (
     "curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash"
@@ -86,38 +75,6 @@ def get_current_version() -> str:
         return version("remo-cli")
     except Exception:
         return "unknown"
-
-
-def get_latest_release(include_prerelease: bool = False) -> str:
-    """Determine the latest remo-cli release version from PyPI.
-
-    Returns the version string of the latest release (e.g. ``"1.2.3"``),
-    or an empty string if nothing could be determined.
-    """
-    try:
-        req = urllib.request.Request(
-            _PYPI_URL,
-            headers={"Accept": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return ""
-
-    all_versions = list(data.get("releases", {}).keys())
-    if not all_versions:
-        return ""
-
-    if not include_prerelease:
-        all_versions = [
-            v for v in all_versions
-            if not _is_prerelease(v)
-        ]
-
-    if not all_versions:
-        return ""
-
-    return max(all_versions, key=_parse_version)
 
 
 def _github_json(url: str) -> object:
@@ -198,8 +155,12 @@ def check_for_updates_passive() -> str | None:
     """Perform a non-blocking update check and return a hint string if available.
 
     * If the current version is ``"unknown"``, returns ``None`` immediately.
-    * Detects whether the user is on a pre-release track.
-    * Uses a cache file at ``{remo_home}/latest_version_cache`` with a 24-hour TTL.
+    * Every lookup is a GitHub release lookup (constitution IX: remo is never
+      uploaded to PyPI). A recorded install follows its recorded repo and
+      channel; any other install (PyPI, source checkout, unknown) is compared
+      against the newest *stable* GitHub release of the default repo.
+    * Uses a cache file at ``{remo_home}/latest_version_cache.<channel>`` with a
+      24-hour TTL.
     * When the cache is fresh and a newer version exists, returns an
       informational hint string.
     * When the cache is stale or missing, spawns a background thread to
@@ -211,24 +172,17 @@ def check_for_updates_passive() -> str | None:
         if current == "unknown":
             return None
 
-        # Detect pre-release track
-        include_prerelease = _is_prerelease(current)
-
         origin = detect_origin()
         record, _ = load_record() if origin is InstallOrigin.RECORDED else (None, None)
-        if record is not None:
-            include_prerelease = record.channel == "prerelease"
+        repo = record.repo if record is not None else DEFAULT_RELEASE_REPO
+        channel = record.channel if record is not None else "stable"
 
         remo_home = get_remo_home()
-        # A recorded install caches per channel: a value looked up on PyPI or
-        # on the other channel would announce an update `remo self-update`
-        # then cannot find, for up to a day after a channel switch.
-        cache_name = (
-            "latest_version_cache"
-            if record is None
-            else f"latest_version_cache.{record.channel}"
-        )
-        cache_file = remo_home / cache_name
+        # Cached per channel: a value looked up on the other channel would
+        # announce an update `remo self-update` then cannot find, for up to a
+        # day after a channel switch. The un-suffixed `latest_version_cache`
+        # held PyPI lookups before 031 and is deliberately no longer read.
+        cache_file = remo_home / f"latest_version_cache.{channel}"
         cache_ttl = 86400  # 24 hours
 
         # Check cache freshness
@@ -252,17 +206,19 @@ def check_for_updates_passive() -> str | None:
                     if record is not None:
                         return head + "Run 'remo self-update' to upgrade."
                     if origin is InstallOrigin.PYPI:
-                        return head + f"Switch to the installer once: {_SWITCH_ONE_LINER}"
-                    return head + "Run 'uv tool upgrade remo-cli' to upgrade."
+                        return head + (
+                            "PyPI no longer receives remo releases. "
+                            f"Switch to the installer once: {_SWITCH_ONE_LINER}"
+                        )
+                    if origin is InstallOrigin.SOURCE:
+                        return head + "Update the source checkout with: git pull && uv sync"
+                    return head + f"Reinstall with the installer: {_SWITCH_ONE_LINER}"
                 return None
 
         # Cache is stale or missing — refresh in background
         def _refresh_cache() -> None:
             try:
-                if record is not None:
-                    latest = get_latest_github_release(record.repo, record.channel)
-                else:
-                    latest = get_latest_release(include_prerelease)
+                latest = get_latest_github_release(repo, channel)
                 if latest:
                     remo_home.mkdir(parents=True, exist_ok=True)
                     cache_file.write_text(latest)

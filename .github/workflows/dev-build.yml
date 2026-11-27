@@ -4,21 +4,21 @@ name: dev-build
 # difference between them is what the artifact may later become:
 #
 #  1. DEV BUILD (no `version` input) -> `X.Y.Z.dev<run>+g<sha>`.
-#     The PEP 440 *local* segment makes it un-uploadable to PyPI by
-#     construction, so it can never leak — and it can never be promoted either.
+#     The PEP 440 *local* segment (rejected by PyPI and by any public index)
+#     marks it as a throwaway — it can never be promoted to a release.
 #     Validation only. Uploaded as a run artifact (needs `gh` to fetch).
 #
 #  2. RELEASE CANDIDATE (`version=X.Y.ZrcN`) -> that version, verbatim.
 #     NO local segment, because a promotable artifact is the entire point: if
-#     the RC proves out it is published to PyPI as-is rather than rebuilt
-#     (constitution IX, "Promotion MUST publish the identical artifact").
-#     Resolvers skip pre-release versions by default, so it is still invisible
-#     to a plain `uv tool install remo-cli`.
+#     the RC proves out, the identical artifact is what gets released rather
+#     than a rebuild (constitution IX, promote-don't-rebuild).
 #     With `prerelease: true` it is also attached to a GitHub pre-release, so
 #     other machines can install it by URL with no `gh` auth at all.
 #
-# NOTHING here publishes to PyPI. The pre-release tag is `rc-*`, which
-# release.yml (`tags: v*`) deliberately does not match.
+# NOTHING here publishes to PyPI — and nothing anywhere does: remo ships only
+# through GitHub Releases (constitution IX). The pre-release tag is `rc-*`,
+# which release.yml (`tags: v*`, the stable GitHub release + GHCR image)
+# deliberately does not match.
 #
 # A `prerelease=true` run ALSO publishes the remo-web container image for the
 # same version via rc-image.yml — `ghcr.io/<owner>/remo-web:<version>`, never
@@ -107,12 +107,12 @@ jobs:
             VERSION="$INPUT_VERSION"
           else
             if [ "$WANT_PRERELEASE" = "true" ]; then
-              echo "::error::prerelease=true needs an explicit version. An auto dev build carries a +g<sha> local segment, which PyPI rejects — it can never be promoted, so publishing it as a release asset would be misleading."
+              echo "::error::prerelease=true needs an explicit version. An auto dev build carries a +g<sha> local segment — it can never be promoted, so publishing it as a release asset would be misleading."
               exit 1
             fi
             CORE=$(grep -m1 '^version = ' pyproject.toml \
               | sed -E 's/version = "([0-9]+\.[0-9]+\.[0-9]+).*"/\1/')
-            # Local segment: unique, and un-uploadable to PyPI by construction.
+            # Local segment: unique, and never promotable by construction.
             VERSION="${CORE}.dev${GITHUB_RUN_NUMBER}+g${SHA}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -172,7 +172,8 @@ jobs:
           set -euo pipefail
           TAG="rc-${VERSION}"
           # Hard stop: a v-prefixed tag would trigger release.yml, which
-          # publishes to PyPI and GHCR. This workflow must never do that.
+          # publishes the stable GitHub release and the GHCR `latest` image.
+          # This workflow must never do that.
           case "$TAG" in
             v*) echo "::error::refusing to create tag '$TAG' — it would trigger release.yml"; exit 1 ;;
           esac
@@ -187,7 +188,8 @@ jobs:
           # Quoted heredoc: the notes contain backticks, which an unquoted one
           # would run as command substitution. Placeholders are filled in after.
           cat > /tmp/notes.md <<'NOTES'
-          Pre-release build for testing. **Not published to PyPI.**
+          Pre-release build for testing. remo is never published to PyPI;
+          GitHub Releases is its only package channel.
 
           Install on any machine (no `gh` auth needed). The installer verifies
           every wheel against this release's `manifest.json` before installing:
@@ -197,7 +199,7 @@ jobs:
           ```
 
           With a provider plugin (`ec2` and/or `hetzner`; `remo-provider-*` wheels
-          are attached to this release, never on PyPI):
+          are attached to this release):
 
           ```bash
           curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --prerelease __VERSION__ --with web,ec2,hetzner

@@ -2,18 +2,32 @@
 
 Grounded in an audit of `main` at 62b16f0 (2026-11-27). Anchors are file:line at that commit.
 
-## R1 — One build feeds the GitHub release and PyPI
+## R1 — One build feeds the GitHub release ~~and PyPI~~
 
-- **Decision**: Restructure `release.yml` into four jobs: `build` → `release` (attach + attest) and `publish` (PyPI) → `publish-image`.
+> **Amended 2026-11-27 (owner decision):** remo is no longer uploaded to PyPI
+> at all — stable, RCs and plugins, no exceptions. The `publish` job below is
+> **removed**; `release.yml` is now three jobs after `test`: `build` →
+> `release` (attach wheels, then `manifest.json`, then attest) →
+> `publish-image` (`needs: [build, release]`: `build` for the pre-release flag
+> that gates `latest`, `release` so the image never appears for a tag whose
+> GitHub release failed). `tests/unit/test_release_workflows.py` fails if any
+> workflow uses `pypa/gh-action-pypi-publish` or a `pypi` environment.
+> Constitution IX is redefined to match (v3.0.0). The single-build rationale
+> stands on its own: the release must carry plugin wheels from the same build
+> as remo-cli (FR-001), and the manifest must describe exactly those files.
+> Superseded bullets are struck through below.
+
+- **Decision**: Restructure `release.yml` into ~~four~~ jobs: `build` → `release` (attach + attest) ~~and `publish` (PyPI)~~ → `publish-image`.
   - `build` checks out the tag and runs `uv build --all-packages -o dist`, then `scripts/check_plugin_wheels.sh dist`, then `scripts/release_manifest.py generate --dist dist --tag v<ver> --channel stable|prerelease --repo $GITHUB_REPOSITORY --out dist/manifest.json` and `… verify`. It uploads `dist/` as artifact `release-dist`.
   - `release` downloads `release-dist` and creates the release with `softprops/action-gh-release` `files:` set to `dist/*.whl` plus `dist/manifest.json`. It runs `actions/attest-build-provenance` over `dist/*.whl` and needs `id-token: write` and `attestations: write`.
-  - `publish` downloads the same artifact, copies only `remo_cli-*` (wheel and sdist) into `pypi-dist/`, and publishes with `packages-dir: pypi-dist/`.
+  - ~~`publish` downloads the same artifact, copies only `remo_cli-*` (wheel and sdist) into `pypi-dist/`, and publishes with `packages-dir: pypi-dist/`.~~ (Removed 2026-11-27.)
 - **Rationale**:
   - Today `publish` rebuilds with `uv build` (release.yml:191-192) and never builds plugins, so neither "identical wheel" (FR-003) nor plugin assets (FR-001) are possible without a single build.
-  - Filtering keeps plugins off PyPI (FR-005a).
+  - ~~Filtering keeps plugins off PyPI (FR-005a).~~ (Superseded 2026-11-27: nothing goes to PyPI; FR-005a now forbids any upload.)
 - **Alternatives**:
   - Build twice and compare hashes. Rejected: hatchling wheels are not guaranteed reproducible across runs.
-  - Attach from the publish job. Rejected: it couples asset upload to PyPI success.
+  - Attach from the publish job. Rejected: it couples asset upload to PyPI success. (Moot since 2026-11-27.)
+  - (2026-11-27) Keep a "secondary" PyPI upload of the identical remo-cli wheel. Rejected by the repo owner: a second channel cannot carry plugins, drifts from what the installer records and manages, and is a second thing to test and support.
 
 ## R2 — dev-build attaches the same set
 
@@ -91,9 +105,9 @@ Grounded in an audit of `main` at 62b16f0 (2026-11-27). Anchors are file:line at
 - **Decision**: `core/version.get_latest_github_release(repo, channel)`:
   - both channels read `GET https://api.github.com/repos/<repo>/releases?per_page=20` and take the first (newest) non-draft release on the channel that carries a `manifest.json` asset: stable is a `v` tag with `prerelease: false` (`v` stripped), prerelease an `rc-` tag with `prerelease: true` (`rc-` stripped). (Originally stable read `…/releases/latest`; #290 replaced it, because release-please publishes a release before release.yml attaches its assets, so `latest` can name a version that cannot be installed.)
   - It uses `urlopen` with a 10 s timeout and raises a typed `ReleaseLookupError` on failure, which self-update maps to `OperationFailedError`. A 403 with `X-RateLimit-Remaining: 0` names the rate limit.
-  - The passive check keeps its cache and thread design but consults GitHub when a record exists, using the record's channel; it keeps PyPI otherwise.
-  - `_SEMVER_RE` and the markers gain the PEP 440 `a`/`b` forms.
-- **Rationale**: Install-record installs track GitHub releases, not PyPI.
+  - The passive check keeps its cache and thread design but consults GitHub when a record exists, using the record's channel; ~~it keeps PyPI otherwise~~. **Amended 2026-11-27**: without a record (PyPI, source or unknown origin) it consults GitHub too, for the newest *stable* release of `get2knowio/remo` — PyPI will never receive a newer remo, so a PyPI lookup could never announce one. The cache is per channel (`latest_version_cache.<channel>`); the un-suffixed pre-031 PyPI cache is no longer read. `get_latest_release` (the PyPI lookup) and the `_is_prerelease` filter it used are removed.
+  - `_SEMVER_RE` ~~and the markers~~ gain~~s~~ the PEP 440 `a`/`b` forms.
+- **Rationale**: ~~Install-record installs track GitHub releases, not PyPI.~~ Every install tracks GitHub releases; PyPI receives no remo releases (amended 2026-11-27).
 
 ## R9 — Install origin detection
 

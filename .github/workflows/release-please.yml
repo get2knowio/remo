@@ -5,11 +5,14 @@ name: release-please
 # On every push to main, release-please maintains a "release PR" that bumps the
 # version in pyproject.toml and updates CHANGELOG.md. Merging that PR creates the
 # `vX.Y.Z` tag and a GitHub release — which in turn triggers the existing
-# tag-driven `release.yml` (PyPI + Docker image).
+# tag-driven `release.yml` (wheels + manifest.json on the GitHub release, and the
+# GHCR remo-web image). Nothing publishes to PyPI: GitHub Releases is remo's only
+# package channel (constitution IX).
 #
-# RCs / pre-releases are NOT handled here: cut those with a manual `vX.Y.Z-rcN`
-# tag (see CONTRIBUTING.md → Release Process), which `release.yml` publishes as a
-# prerelease. release-please stays out of the RC lane.
+# RCs / pre-releases are NOT handled here: cut those with dev-build.yml
+# (`-f version=X.Y.ZrcN -f prerelease=true`), which makes an `rc-<version>`
+# GitHub pre-release that release.yml never sees (see CONTRIBUTING.md → Release
+# Process). release-please stays out of the RC lane.
 
 on:
   push:
@@ -54,7 +57,7 @@ jobs:
           #   2. RELEASE_PLEASE_TOKEN PAT (if someone set one instead).
           #   3. GITHUB_TOKEN fallback — release-please still opens/maintains the
           #      release PR out of the box, but a tag it creates will NOT fire
-          #      `on: push: tags`, so `release.yml` (PyPI + Docker) won't run
+          #      `on: push: tags`, so `release.yml` (wheels + Docker) won't run
           #      until a maintainer re-pushes the tag. Configure the App (or the
           #      PAT) to make merge-to-publish automatic.
           token: ${{ steps.app-token.outputs.token || secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}

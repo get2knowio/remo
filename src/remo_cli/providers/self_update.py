@@ -48,8 +48,8 @@ def _switch_command(with_names: list[str]) -> str:
 
 
 def detect_with_names() -> list[str]:
-    """``--with`` names for a PyPI install: installed plugin dists plus ``web``
-    when the web extra's FastAPI is importable."""
+    """``--with`` names for switching a PyPI install to the installer:
+    installed plugin dists plus ``web`` when the web extra's FastAPI is importable."""
     names = []
     for dist in metadata.distributions():
         name = str(dist.metadata["Name"] or "").lower().replace("_", "-")
@@ -99,8 +99,8 @@ def run_self_update(
 
     if origin is InstallOrigin.PYPI:
         print_info(
-            "This remo was installed from PyPI, which is not where updates are published. "
-            "Switch to the installer once:"
+            "This remo was installed from PyPI. PyPI no longer receives remo releases; "
+            "they ship only through GitHub Releases. Switch to the installer once:"
         )
         print_info(f"    {_switch_command(detect_with_names())}")
         return

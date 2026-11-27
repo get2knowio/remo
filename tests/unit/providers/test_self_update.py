@@ -155,6 +155,7 @@ def test_pypi_guidance_derives_with(monkeypatch, capsys):
     monkeypatch.setattr(su, "detect_with_names", lambda: ["ec2", "web"])
     h.run(assume_yes=True)
     out = capsys.readouterr().out
+    assert "PyPI no longer receives remo releases" in out
     assert f"{SWITCH.replace('| bash', '| bash -s -- --with ec2,web')}" in out
     assert h.ran == [] and h.lookup_calls == []
 

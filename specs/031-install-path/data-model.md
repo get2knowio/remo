@@ -45,3 +45,5 @@ State transitions: absent → written after first successful install; each later
 ## Install origin (derived, not stored)
 
 `recorded` (valid record) · `source` (no record; PEP 610 `dir_info`) · `pypi` (no record; no direct URL) · `unknown`.
+
+`pypi` stays after the 2026-11-27 amendment (remo is no longer uploaded to PyPI): it describes existing installs of the frozen PyPI versions, which are steered to the installer. No origin's update lookup consults PyPI any more — `recorded` follows its record's repo and channel, every other origin the newest GitHub stable release of `get2knowio/remo`. The passive-notice cache file is `latest_version_cache.<channel>` (`stable` for an origin without a record); the pre-031 un-suffixed `latest_version_cache`, which held PyPI lookups, is no longer read.

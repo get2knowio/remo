@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a remo release — drive the release-please stable release PR, or build/validate/publish a pre-release (RC) — with a mandatory local "test before PyPI" gate and explicit approval before anything is tagged, merged, or published.
+description: Cut a remo release — drive the release-please stable release PR, or build/validate/publish a pre-release (RC) as a GitHub pre-release — with a mandatory local "test before a stable release" gate and explicit approval before anything is tagged, merged, or published. remo is never uploaded to PyPI.
 argument-hint: "[stable | rc [X.Y.ZrcN]] — omit to be asked"
 metadata:
   author: remo
@@ -14,13 +14,20 @@ release-please integration.
 
 **Non-negotiable safety rules — apply in every mode:**
 
-- **Publishing to PyPI is irreversible.** A version, once uploaded, can never be
-  replaced. Run the local build + smoke gate (Step V below) before anything that
-  reaches PyPI — a stable release PR merge, or RC outcome **D**.
-- **A `v*` tag publishes to PyPI. An `rc-*` tag does not.** `release.yml`
-  triggers on `tags: v*`; the GitHub-pre-release path (RC outcome **B**) tags
-  `rc-<version>` and never uploads. Check which namespace you are in before
-  pushing anything.
+- **remo is never uploaded to PyPI or TestPyPI** (constitution IX, v3.0.0) —
+  not a stable release, not an RC, not a plugin. GitHub Releases (wheels +
+  `manifest.json` + attestations, installed by `install.sh`) is the only package
+  channel, beside the GHCR `remo-web` image. Never propose, run or script a PyPI
+  upload; if asked for one, point at this rule.
+- **A `v*` tag is a public, stable release.** `release.yml` triggers on
+  `tags: v*`: it creates the public GitHub release with its wheels and manifest
+  and pushes the GHCR image (moving `latest` for a stable version). Users and
+  `remo self-update` pick it up at once, so it is effectively irreversible. Run
+  the local build + smoke gate (Step V below) before the stable release PR is
+  merged. `v*` tags come **only** from release-please; never hand-push one. The
+  GitHub-pre-release path (RC outcome **B**) tags `rc-<version>`, which
+  `release.yml` never sees. Check which namespace you are in before pushing
+  anything.
 - **Never** `git push` a tag, `git push` a version-bump commit, or `gh pr merge`
   a release PR **without explicit user approval in the current turn.** Approval
   from an earlier task does not carry over. Dispatching `dev-build.yml` is not in
@@ -30,8 +37,8 @@ release-please integration.
   file the operator owns and you did not touch is theirs: report it, never
   revert it.
 - Prefer testing **without** publishing. "Publish a pre-release" in this repo
-  means outcome **B** (GitHub) unless the user says PyPI. Never infer PyPI from
-  the word "publish".
+  means outcome **B** (an `rc-` GitHub pre-release). There is no other
+  pre-release publish path.
 
 ## Step 0 — Determine the mode
 
@@ -76,8 +83,8 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
 4. **Run the validation gate (Step V) on the PR's head branch** so you build the
    exact version that will publish.
 5. **Only on explicit approval**, merge it (release-please then tags `vX.Y.Z`,
-   which triggers `release.yml`: one build, the GitHub release assets, then PyPI
-   (remo-cli only) + GHCR):
+   which triggers `release.yml`: one build, the GitHub release assets —
+   wheels, then `manifest.json`, then attestations — and the GHCR image):
    ```bash
    gh pr merge <number> --squash
    ```
@@ -87,8 +94,9 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
 6. After the release CI finishes, verify the release carries **3 wheels
    (remo-cli, ec2, hetzner), `manifest.json` and attestations**
    (`gh release view vX.Y.Z --json assets --jq '.assets[].name'`;
-   `gh attestation verify <wheel> -R get2knowio/remo`), and that PyPI has only the
-   `remo-cli` files. The GitHub release is the release; PyPI is secondary.
+   `gh attestation verify <wheel> -R get2knowio/remo`), and that
+   `ghcr.io/get2knowio/remo-web:X.Y.Z` exists. The GitHub release is the whole
+   release; nothing goes to PyPI.
 7. Return to `main`, `git pull --ff-only`, report the new tag, and offer to watch
    the release CI. `gh run watch` needs an explicit run id outside a TTY:
    ```bash
@@ -104,13 +112,14 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
 
 | Tag | Created by | Publishes to |
 |-----|-----------|--------------|
-| `rc-X.Y.ZrcN` | `dev-build.yml` (`prerelease=true`) | **GitHub pre-release only** |
-| `vX.Y.Z*` | release-please, or a hand-pushed tag | **PyPI + GHCR** (`release.yml`) |
+| `rc-X.Y.ZrcN` | `dev-build.yml` (`prerelease=true`) | **GitHub pre-release** (+ `remo-web:X.Y.ZrcN`) |
+| `vX.Y.Z` | release-please only | **Public GitHub release + GHCR image** (`release.yml`) |
 
-`release.yml` triggers on `tags: v*`. A `v`-prefixed RC tag therefore uploads to
-PyPI, which is irreversible; `dev-build.yml` refuses to create one for exactly
-that reason. Outcome B below is what "publish a pre-release so we can install it
-by version" means in this repo — **not** a `v` tag.
+`release.yml` triggers on `tags: v*`. A `v`-prefixed RC tag would therefore cut
+a public release through the stable pipeline; `dev-build.yml` refuses to create
+one for exactly that reason, and this skill never hand-pushes a `v*` tag.
+Outcome B below is what "publish a pre-release so we can install it by version"
+means in this repo — **not** a `v` tag.
 
 1. `git checkout main && git pull --ff-only`.
 2. Determine the RC version `X.Y.ZrcN` (PEP 440 form, **no separator**):
@@ -149,7 +158,7 @@ git restore --source=HEAD --worktree -- pyproject.toml uv.lock
 If that diff contains anything else, stop and surface it: something edited these
 files during the run, and discarding it destroys unrecoverable work.
 
-### B — GitHub pre-release, installable by version (no PyPI)
+### B — GitHub pre-release, installable by version
 
 The usual way to get an RC onto other machines. `dev-build.yml` stamps the
 version in CI, so **no local bump is needed** and nothing is committed. The
@@ -184,8 +193,8 @@ remo --help
 gh release view rc-X.Y.ZrcN --json assets --jq '.assets[].name'   # 3 wheels + manifest.json
 ```
 
-Confirm with `gh release view rc-X.Y.ZrcN` that it is marked pre-release, and
-report that PyPI is unchanged. Testers install it with no `gh` auth:
+Confirm with `gh release view rc-X.Y.ZrcN` that it is marked pre-release.
+Testers install it with no `gh` auth:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
@@ -193,14 +202,14 @@ curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
 ```
 
 A GitHub pre-release is deletable and the version re-cuttable, so this outcome is
-recoverable — unlike D.
+recoverable — unlike a stable `v*` release.
 
 ### C — Dev build artifact (no version reserved, no tag)
 
 For cross-machine testing when no version should be claimed at all. Omit
 `version` and the workflow stamps `X.Y.Z.devN+g<sha>`; that PEP 440 **local
-segment** is what PyPI rejects outright, making publication structurally
-impossible. Note this applies only to the auto version — an explicit
+segment** marks it as a throwaway that can never be promoted to a release
+(`prerelease=true` refuses it). Note this applies only to the auto version — an explicit
 `-f version=X.Y.ZrcN` is stamped **verbatim with no local segment**, precisely so
 it stays promotable.
 
@@ -213,31 +222,13 @@ gh run download "$RUN_ID" -n remo-wheel -D ./dl   # needs gh auth on that machin
 uv tool install --force ./dl/remo_cli-*.whl
 ```
 
-### D — Publish the RC to PyPI (exceptional; explicit approval required)
-
-Constitution IX permits this, but as **the exception**: "taken only when the
-tester cannot install off-index." Outcome B needs no `gh` auth and no index, so
-that condition is now rarely met — before proposing D, state why B will not work
-for this tester. Never take D merely because the word "publish" was used.
-
-Requires **Step V** on the bumped tree first (this is irreversible), then:
-
-```bash
-git commit -am "chore(release): X.Y.ZrcN"
-git tag vX.Y.ZrcN          # a v* tag: this is what triggers release.yml
-git push origin main vX.Y.ZrcN
-```
-
-`release.yml` marks it a prerelease off the tag suffix, publishes to PyPI + GHCR,
-and never moves `latest`. Offer to watch CI. Warn the operator that this reserves
-`X.Y.ZrcN` on PyPI permanently.
-
 ---
 
-## Step V — Validation gate (test the exact wheel before PyPI)
+## Step V — Validation gate (test the exact wheels before a stable release)
 
-**Required for anything that reaches PyPI:** the stable lane, and RC outcome
-**D**. Also used by RC outcome **A**, whose whole purpose it is.
+**Required before every stable release** (merging the release-please PR, which
+creates the `v*` tag, the public GitHub release and the GHCR `latest` image).
+Also used by RC outcome **A**, whose whole purpose it is.
 
 Outcomes **B** and **C** build in clean CI rather than locally, so Step V does
 not apply as written — their equivalent is the post-publish check in **B**, which
@@ -246,12 +237,14 @@ already green on the same commit, say so rather than repeating it; do not claim
 Step V ran when CI did.
 
 Run this on whatever ref will be released (the release-please PR head for stable,
-or the bumped working tree for an RC). The published version comes from
-`pyproject.toml` via `uv build`, so this builds the identical artifact:
+or the bumped working tree for an RC). The released version comes from
+`pyproject.toml` via `uv build`, and `release.yml` builds every workspace package
+the same way, so this builds the identical set of artifacts:
 
 ```bash
 uv run pytest -q                    # full suite must pass
-uv build                            # -> dist/remo_cli-<version>-py3-none-any.whl
+uv build --wheel --all-packages -o dist   # remo-cli + every plugins/* wheel
+scripts/check_plugin_wheels.sh dist # plugin discovery on the built wheels
 VENV="$(mktemp -d)/venv"
 uv venv "$VENV"
 uv pip install --python "$VENV/bin/python" ./dist/remo_cli-<version>-py3-none-any.whl
@@ -265,8 +258,9 @@ doesn't load, **stop** and surface it — do not proceed to tag/merge/publish.
 ## Done when
 
 - The requested lane completed through the point the user approved (RC outcome
-  A/B/C/D, or stable PR merged).
+  A/B/C, or stable PR merged).
 - No tag was pushed, commit was pushed, or PR merged without explicit approval.
-- The outcome was reported clearly, naming **which index was touched**: for
-  outcomes A–C, that PyPI is unchanged; for D or a stable release, the version
-  now permanently reserved there.
+- Nothing was uploaded to PyPI or TestPyPI.
+- The outcome was reported clearly, naming **what became public**: for A and C,
+  nothing; for B, the `rc-` GitHub pre-release (and its `remo-web:X.Y.ZrcN`
+  image); for a stable release, the `vX.Y.Z` GitHub release and GHCR image.

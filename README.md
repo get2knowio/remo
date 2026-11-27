@@ -48,9 +48,22 @@ a newer release exists.
 
 - **From source** (contributors): `git clone https://github.com/get2knowio/remo.git`,
   then `uv sync --all-extras` and `uv run remo --help`.
-- **PyPI** carries `remo-cli` for final releases only, as a secondary channel. It
-  has no provider plugins and no pre-releases, and `remo self-update` does not
-  track it. If you installed from PyPI, run the one-liner above once to switch.
+- **Not PyPI.** remo is distributed only through GitHub Releases; PyPI no
+  longer receives remo releases of any kind.
+
+#### Switching from a PyPI install
+
+Earlier versions of `remo-cli` were published on PyPI. The last of them stays
+there, frozen — it will never be updated, so `uv tool upgrade remo-cli` or
+`pipx upgrade remo-cli` will never find a newer remo. Run the installer once to
+switch; from then on `remo self-update` keeps you current:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+```
+
+A PyPI install of remo tells you this itself when a newer GitHub release exists.
+[docs/install.md](docs/install.md#switching-from-a-pypi-install) has the details.
 
 Plain `pip install` is deliberately not used by the installer: on distributions
 that mark their Python externally-managed (PEP 668: Ubuntu 24.04, Debian 12,
@@ -92,7 +105,8 @@ succeed and then fail on the first command.
 
 ### Pre-release builds
 
-Release candidates are never published to PyPI. They are GitHub pre-releases
+Release candidates, like every remo release, are never published to PyPI. They
+are GitHub pre-releases
 (tag `rc-<version>`) and install through the same installer, with the same
 `--with`:
 
@@ -113,9 +127,9 @@ curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
 Return to the newest stable release by re-running the first one-liner above.
 
 If you are used to reaching for uv's `--prerelease allow`, it will not work
-here. That flag widens which versions on PyPI are acceptable; it does not change
-where uv looks. With no release candidate on PyPI to find, it resolves to the
-latest stable release and reports success.
+here. That flag widens which versions on an index are acceptable; it does not
+change where uv looks, and remo's releases are not on any index. Against PyPI it
+finds only the frozen last version published there and reports success.
 
 Each pre-release also publishes a matching container image for the web service,
 tagged by its exact version and never `latest`:
@@ -149,7 +163,7 @@ wsl --install -d Ubuntu
 Then, in the Ubuntu shell:
 
 ```bash
-uv tool install remo-cli
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 ```
 
 Note that `~/.ssh` inside WSL2 is separate from your Windows one. Copy a key
@@ -721,7 +735,7 @@ remo <provider> snapshot delete <instance> <snap-name> [-y]      # Remove
 # `<provider> destroy` will list existing snapshots and offer to clean them up first.
 
 # Updates
-uv tool upgrade remo-cli            # Update CLI to latest version
+remo self-update                    # Update CLI to the newest release on your channel
 remo <platform> upgrade NAME        # Update dev tools on remote
 
 # Help

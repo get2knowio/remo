@@ -6,8 +6,9 @@
 # their SHA-256, and installs remo-cli (plus any plugins and the `web` extra
 # you ask for) from those verified files in a single uv/pipx command. Stable
 # and pre-release (rc-) releases differ only in which manifest is read.
-# Pre-releases never reach PyPI (constitution principle IX); PyPI carries only
-# remo-cli for final releases, as a secondary channel this script never uses.
+# GitHub Releases is remo's only package channel: no remo build, stable or
+# pre-release, plugin or not, is ever uploaded to PyPI (constitution principle
+# IX). An install that came from PyPI switches by running this script once.
 #
 # Usage: see `--help`. URLs are written out in full because a shortened one
 # cannot be pasted:
@@ -159,9 +160,9 @@ ENVIRONMENT:
 
 Every release carries its wheels and a manifest.json (with SHA-256 digests) as
 GitHub release assets. This script downloads the wheels, verifies each digest,
-and installs from those verified files. Pre-releases are never published to PyPI
-and the PyPI copy of remo-cli carries no plugins, so this script never installs
-from it. Re-running is additive: what a previous run installed (see
+and installs from those verified files. GitHub Releases is the only channel:
+remo is never published to PyPI (the last versions there stay frozen). A PyPI
+install of remo switches over by running this script once. Re-running is additive: what a previous run installed (see
 install.json in the config directory) is kept unless you pass --without.
 
 Installs with uv, or pipx if that is what you already have. Plain `pip` is not

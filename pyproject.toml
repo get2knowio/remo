@@ -14,8 +14,8 @@ requires-python = ">=3.11"
 # the only hard install-time gate would be platform-tagged wheels instead of the
 # one py3-none-any we ship. That trade is deliberately not made: a resolver
 # "no matching distribution" error is a worse diagnostic than the startup gate in
-# core/platform.py, which can name WSL2. The classifiers exist so PyPI shows the
-# supported systems before anyone installs.
+# core/platform.py, which can name WSL2. The classifiers record the supported
+# systems in the wheel metadata (remo is never uploaded to PyPI; constitution IX).
 classifiers = [
     "Environment :: Console",
     "Intended Audience :: Developers",

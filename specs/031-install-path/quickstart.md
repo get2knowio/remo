@@ -46,4 +46,4 @@ remo providers        # ec2 + hetzner; web still present
 remo self-update --check
 ```
 
-PyPI is untouched by every step above. The stable-lane check (identical wheel on the GitHub release and PyPI) is verified at the next stable release by comparing `sha256` in `manifest.json` with the PyPI file's digest.
+PyPI is untouched by every step above. ~~The stable-lane check (identical wheel on the GitHub release and PyPI) is verified at the next stable release by comparing `sha256` in `manifest.json` with the PyPI file's digest.~~ **Amended 2026-11-27**: remo is no longer uploaded to PyPI at all, so there is no PyPI file to compare. The stable-lane check at the next stable release is that the `vX.Y.Z` GitHub release carries 3 wheels, `manifest.json` and attestations, that the installer installs from it, and that PyPI still shows only the frozen pre-031 versions.

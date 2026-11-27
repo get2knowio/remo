@@ -10,8 +10,13 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false  # Never cancel — a cancelled publish can leave the tag, the GitHub Release,
-  # PyPI and GHCR out of step with each other.
+  cancel-in-progress: false  # Never cancel — a cancelled publish can leave the tag, the GitHub Release
+  # and GHCR out of step with each other.
+
+# A `v*` tag means exactly two things: a public GitHub release carrying the
+# wheels + manifest.json (+ attestations) that install.sh reads, and the GHCR
+# remo-web image. Nothing here — or anywhere in this repo — uploads to PyPI or
+# TestPyPI (constitution principle IX, v3.0.0).
 
 jobs:
   test:
@@ -35,10 +40,10 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} pytest --tb=short -q
 
   build:
-    # ONE build feeds both the GitHub release and PyPI (specs/031-install-path
-    # R1): the wheels attached to the release are the very files remo-cli's
-    # PyPI upload is taken from, and the first-party plugin wheels are built
-    # here too so the release carries the complete set the installer needs.
+    # ONE build feeds the GitHub release (specs/031-install-path R1): remo-cli
+    # and every first-party plugin wheel are built here, so the release carries
+    # the complete set the installer needs. GitHub Releases is the only package
+    # channel; there is no PyPI upload.
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -182,13 +187,14 @@ jobs:
           if [ "${{ needs.build.outputs.is_prerelease }}" == "true" ]; then
             cat >> release_notes.md << PRERELEASE
 
-          > **Note:** This is a pre-release version for testing. Install with:
+          > **Note:** This is a pre-release version for testing. Install its
+          > wheel by URL:
           > \`\`\`bash
-          > uv tool install remo-cli==${VERSION}
+          > uv tool install --force "remo-cli @ https://github.com/${{ github.repository }}/releases/download/${TAG}/remo_cli-${VERSION}-py3-none-any.whl"
           > \`\`\`
-          > A \`v\`-tagged pre-release is the exceptional PyPI lane (release skill,
-          > outcome D). \`install.sh --prerelease\` reads only \`rc-\` pre-releases,
-          > so it cannot install this one.
+          > RCs normally ship as \`rc-\` GitHub pre-releases from dev-build.yml;
+          > \`install.sh --prerelease\` reads only those, so it cannot install
+          > this \`v\`-tagged one. No remo build is ever uploaded to PyPI.
           PRERELEASE
           fi
 
@@ -250,40 +256,13 @@ jobs:
         with:
           subject-path: dist/*.whl
 
-  publish:
-    # PyPI is a secondary channel: remo-cli only (never the plugins), and the
-    # identical wheel the release carries — taken from the build artifact, not
-    # rebuilt.
-    needs: [test, build, release]
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-    environment: pypi
-
-    steps:
-      - name: Download the build
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-dist
-          path: dist
-
-      - name: Select remo-cli distributions only
-        run: |
-          set -euo pipefail
-          mkdir pypi-dist
-          cp dist/remo_cli-* pypi-dist/
-          ls -la pypi-dist/
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
-        with:
-          packages-dir: pypi-dist/
-
   publish-image:
     # Publishes the remo-web container image that docker/compose.example.yml
     # pulls by default, so home-lab users can deploy with just a Compose file
-    # instead of a full source checkout.
-    needs: [test, build, release]
+    # instead of a full source checkout. It needs `build` for the pre-release
+    # flag (which decides the `latest` tag) and `release` so the image never
+    # appears for a tag whose GitHub release failed.
+    needs: [build, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read

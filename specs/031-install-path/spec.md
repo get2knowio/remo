@@ -4,9 +4,9 @@
 
 **Created**: 2026-11-27
 
-**Status**: Draft
+**Status**: Draft (amended 2026-11-27: never PyPI)
 
-**Input**: User description: "Make GitHub Releases the single artifact source for every remo version, release candidate and stable alike, and make `install.sh` (curl + shell, as in hola) the supported way to install remo with its provider plugins and extras, so an RC installs through exactly the path the stable release will." (Source: Notion spec prompt "One install path for every release — GitHub Releases + install.sh --with, plugins included", grounded in `main` at 62b16f0, 2026-11-27. Decided 2026-11-27: curl + shell is the default for every release, RC and stable; PyPI is no longer the default for anything. Supersedes #257; unblocks the 5.0.0 stable release.)
+**Input**: User description: "Make GitHub Releases the single artifact source for every remo version, release candidate and stable alike, and make `install.sh` (curl + shell, as in hola) the supported way to install remo with its provider plugins and extras, so an RC installs through exactly the path the stable release will." (Source: Notion spec prompt "One install path for every release — GitHub Releases + install.sh --with, plugins included", grounded in `main` at 62b16f0, 2026-11-27. Decided 2026-11-27: curl + shell is the default for every release, RC and stable; PyPI is no longer the default for anything. Supersedes #257; unblocks the 5.0.0 stable release. **Amended 2026-11-27 (owner decision): remo is no longer uploaded to PyPI at all — stable, RCs and plugins, no exceptions; see Clarifications.**)
 
 ## Context
 
@@ -34,16 +34,20 @@ installer — serve both, with plugins and extras as first-class choices.
 
 ### Session 2026-11-27
 
-- Q: Is PyPI kept at all? → A: remo-cli stable *may* keep a secondary PyPI upload so existing PyPI installs keep upgrading, but nothing documented or automated depends on it; plugins are never published to PyPI. #257 closes as superseded.
-- Q: Where does a stable install come from? → A: The wheel attached to the stable GitHub release, the identical file uploaded to PyPI (no rebuild) — the same code path as an RC, differing only in which release's manifest is read.
+- Q: Is PyPI kept at all? → A: ~~remo-cli stable *may* keep a secondary PyPI upload so existing PyPI installs keep upgrading, but nothing documented or automated depends on it; plugins are never published to PyPI.~~ **Superseded 2026-11-27** by the last Q below: PyPI is not kept. #257 closes as superseded.
+- Q: Where does a stable install come from? → A: The wheel attached to the stable GitHub release ~~, the identical file uploaded to PyPI (no rebuild)~~ — the same code path as an RC, differing only in which release's manifest is read. (**Amended 2026-11-27**: there is no PyPI upload to be identical to.)
 - Q: How does `remo self-update` run the install? → A: It fetches `install.sh` from the target release's own tag (`v<ver>` for stable, `rc-<ver>` for a pre-release) and runs it with the recorded set as flags (`--version`/`--prerelease VER`, `--with …`, `--with-pkg …`, `--with-url …`), so install logic lives in one place and the installer always matches the release it installs. Python never reimplements the install.
 - Q: Does the installer hand the manifest URLs to uv/pipx, or the files it verified? → A: It downloads each wheel to a private temp dir, verifies its SHA-256, and installs from those verified local files — so what was checked is exactly what is installed (no second download). The manifest URL is still recorded for provenance.
-- Q: Does the stable PyPI upload of remo-cli continue? → A: Yes, unchanged, as a secondary convenience so existing `uv tool install remo-cli`/pipx installs keep upgrading; it uploads the same wheel files that are attached to the GitHub release. Plugins are never uploaded to PyPI.
+- Q: Does the stable PyPI upload of remo-cli continue? → A: ~~Yes, unchanged, as a secondary convenience so existing `uv tool install remo-cli`/pipx installs keep upgrading; it uploads the same wheel files that are attached to the GitHub release. Plugins are never uploaded to PyPI.~~ **Superseded 2026-11-27**: No — see the last Q below.
 - Q: When is the install record written? → A: Only after the tool-manager install exits successfully; never on `--dry-run` or on any failure. Writes are atomic (temp file + rename) and the record carries `format: 1`.
 - Q: How does remo tell a PyPI install from a source checkout when there is no record? → A: From the running distribution's own install metadata: an editable/local-directory install (PEP 610 `direct_url.json` with `dir_info`) is a source checkout; anything else without a record is treated as a PyPI tool install. Unknown cases print both commands rather than guessing one.
 - Q: (Reconciliation with the code audit at 62b16f0) What makes a plugin component "belong to" a release, given plugin wheels carry their own versions (0.1.0) independent of remo-cli? → A: Belonging is by build and location, not version number: every component in a manifest is produced by the one build run that produced remo-cli, and every component URL lives under that release's own download path (`releases/download/<tag>/`). CI refuses to publish a manifest that fails either check; the installer refuses a manifest with a component URL outside its release's tag. Plugin versions stay independent.
 - Q: (Reconciliation) The installer test suite forbids a JSON parser (`jq`/`python3`) in install.sh. How is the manifest read? → A: The manifest stays JSON but is written line-oriented (one component object per line, fixed key order), a documented contract, so the installer reads it with grep/sed like its existing release resolution; the test stays. The install record uses the same shape.
-- Q: (Reconciliation) FR-003 said stable wheels are also "baked into the image", but the Dockerfile builds its own wheels and FR-028 keeps the image unchanged. → A: FR-028 wins; FR-003 amended to cover the GitHub release and PyPI only.
+- Q: (Reconciliation) FR-003 said stable wheels are also "baked into the image", but the Dockerfile builds its own wheels and FR-028 keeps the image unchanged. → A: FR-028 wins; FR-003 amended to cover the GitHub release ~~and PyPI~~ only.
+
+### Session 2026-11-27 (owner decision, after review)
+
+- Q: Does remo keep *any* PyPI upload — the "secondary" stable remo-cli upload of FR-005a included? → A: No. The repo owner decided that remo is no longer uploaded to PyPI at all: stable, RCs and plugins, with no exceptions. GitHub Releases (wheels + `manifest.json` + attestations, installed by `install.sh`) is the only package channel, alongside the GHCR `remo-web` image. `release.yml`'s `publish` (PyPI) job is removed and a test forbids any workflow from using `pypa/gh-action-pypi-publish` or a `pypi` environment. Constitution Principle IX is redefined accordingly ("Releases Ship Only Through GitHub Releases — Never PyPI", v2.1.0 → 3.0.0, MAJOR). The last versions already on PyPI stay there, frozen. Because PyPI will never get a newer version, the passive update notice of a PyPI-origin install looks up the newest **GitHub stable** release (not PyPI) and shows the switch-to-installer one-liner; source and unknown origins also look up GitHub stable. `InstallOrigin.PYPI` stays: it still describes existing installs.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -90,7 +94,7 @@ latest stable manifest for a default run.
 **Acceptance Scenarios**:
 
 1. **Given** a stable release is published, **When** its GitHub release is inspected, **Then** it carries the remo-cli wheel, every first-party plugin wheel, a manifest describing them, and provenance attestations for the wheels.
-2. **Given** the stable release also uploads remo-cli to PyPI, **When** the attached wheel and the uploaded wheel are compared, **Then** they are byte-identical.
+2. ~~**Given** the stable release also uploads remo-cli to PyPI, **When** the attached wheel and the uploaded wheel are compared, **Then** they are byte-identical.~~ **Superseded 2026-11-27** (no PyPI upload): **Given** a stable release is published, **When** its workflows are inspected, **Then** no job uploads anything to PyPI or TestPyPI (no `pypa/gh-action-pypi-publish`, no `pypi` environment), and the GHCR image waits for the GitHub release.
 3. **Given** a default run (no `--prerelease`, no `--version`) with `--with ec2`, **When** the installer runs, **Then** it installs the latest stable remo-cli and ec2 plugin wheels from the GitHub release, never from PyPI.
 4. **Given** `--version 5.0.0`, **When** the installer runs, **Then** it reads that release's manifest; an unknown version fails with a clear message.
 
@@ -141,7 +145,7 @@ installer stubbed; assert the action taken or the guidance printed.
 4. **Given** `--check`, **When** self-update runs, **Then** it reports current vs. newest and changes nothing.
 5. **Given** no install record (PyPI tool install or source checkout), **When** self-update runs, **Then** it prints the right command for that origin — for a PyPI install, the one-time switch to the installer one-liner — and changes nothing.
 6. **Given** the release lookup fails (offline, rate-limited), **When** self-update runs, **Then** it reports the failure with a non-zero exit and changes nothing.
-7. **Given** a passive update notice is due, **When** an install record exists, **Then** the notice names `remo self-update`; otherwise it names the switch-over one-liner for a PyPI install and today's text elsewhere.
+7. **Given** a passive update notice is due, **When** an install record exists, **Then** the notice names `remo self-update`; otherwise it names the switch-over one-liner for a PyPI install ~~and today's text elsewhere~~ (**amended 2026-11-27**: stating that PyPI no longer receives remo releases), `git pull && uv sync` for a source checkout, and the installer one-liner for an unknown origin. Without a record, the newer version is looked up as the newest GitHub stable release, never on PyPI.
 
 ---
 
@@ -149,8 +153,9 @@ installer stubbed; assert the action taken or the guidance printed.
 
 The README, the install docs, the release skill and the project guidance all
 lead with the installer one-liner, for RC and stable alike, with every URL in
-full, and say plainly that RCs never reach PyPI and plugins are distributed
-only through GitHub Releases.
+full, and say plainly that ~~RCs never reach PyPI and plugins are distributed
+only through GitHub Releases~~ (**amended 2026-11-27**) no remo release, plugin
+or RC is ever published to PyPI: GitHub Releases is the only channel.
 
 **Why this priority**: Required for the change to be the default in practice,
 but carries no runtime behavior.
@@ -162,7 +167,7 @@ instruction.
 **Acceptance Scenarios**:
 
 1. **Given** the README install section, **When** read, **Then** it leads with the one-liner and shows `--with` and `--prerelease`.
-2. **Given** the release skill's stable lane, **When** followed, **Then** it treats the GitHub release's assets and manifest as the release and any PyPI upload as secondary.
+2. **Given** the release skill's stable lane, **When** followed, **Then** it treats the GitHub release's assets and manifest as the release ~~and any PyPI upload as secondary~~ and offers no PyPI upload at all (**amended 2026-11-27**).
 
 ### Edge Cases
 
@@ -183,11 +188,11 @@ instruction.
 
 - **FR-001**: Every release — stable and RC — MUST attach to its GitHub release the remo-cli wheel, every first-party plugin wheel, and a manifest.
 - **FR-002**: The manifest MUST record the release version and channel (stable or prerelease) and, per component (`remo-cli`, `ec2`, `hetzner`), its install name, distribution name, version, wheel file name, download URL and SHA-256 checksum.
-- **FR-003**: Stable release assets MUST be the identical wheel files uploaded to PyPI (one build job feeds both; no rebuild between them). The Docker image keeps building its own wheels from source (FR-028 governs; amended 2026-11-27, see Clarifications).
+- **FR-003**: Stable release assets MUST come from one build job with no rebuild between build and release ~~and be the identical wheel files uploaded to PyPI (one build job feeds both)~~ (**amended 2026-11-27**: there is no PyPI upload). The Docker image keeps building its own wheels from source (FR-028 governs; amended 2026-11-27, see Clarifications).
 - **FR-004**: Release workflows MUST generate provenance attestations for the attached wheels.
 - **FR-005**: CI MUST verify, for both a stable-shaped and an RC-shaped release, that the full artifact set is present and that the manifest matches the built wheels (names, versions, checksums), failing the build otherwise.
-- **FR-005a**: The stable PyPI upload of remo-cli continues unchanged as a secondary convenience, uploading the same wheel file attached to the GitHub release; plugins are never uploaded to PyPI.
-- **FR-006**: No RC path may create a `v*` tag or upload to PyPI (Constitution IX); RC tags remain `rc-<version>`.
+- **FR-005a**: ~~The stable PyPI upload of remo-cli continues unchanged as a secondary convenience, uploading the same wheel file attached to the GitHub release; plugins are never uploaded to PyPI.~~ **Superseded 2026-11-27 (owner decision)**: No build of remo-cli or any plugin — stable or RC — MAY be uploaded to PyPI or TestPyPI. `release.yml` has no PyPI job, and CI MUST fail if any workflow uses `pypa/gh-action-pypi-publish` or a `pypi` environment (Constitution IX v3.0.0).
+- **FR-006**: No RC path may create a `v*` tag ~~or upload to PyPI~~ (Constitution IX; since 2026-11-27 no path at all uploads to PyPI, FR-005a); RC tags remain `rc-<version>`.
 
 **Installer**
 
@@ -213,7 +218,7 @@ instruction.
 - **FR-020**: `remo self-update --check` MUST report the installed and newest versions and change nothing.
 - **FR-021**: With no install record, `remo self-update` MUST print the correct guidance for the origin detected from the running distribution's install metadata (PyPI tool install → the one-time switch to the installer one-liner; source/editable checkout → update the checkout; undeterminable → both) and change nothing.
 - **FR-022**: Self-update failures (lookup failure, installer failure, missing tools) MUST surface as typed errors with actionable messages and a non-zero exit.
-- **FR-023**: The passive update notice MUST name `remo self-update` when an install record exists; for a PyPI install it MUST name the switch-over one-liner; otherwise it keeps today's text.
+- **FR-023**: The passive update notice MUST name `remo self-update` when an install record exists; for a PyPI install it MUST name the switch-over one-liner ~~; otherwise it keeps today's text~~. **Amended 2026-11-27**: the PyPI notice MUST say that PyPI no longer receives remo releases; a source checkout's names `git pull && uv sync`, an unknown origin's the installer one-liner. Without a record, the newer version MUST be looked up as the newest GitHub stable release (`get_latest_github_release`), never on PyPI, which will never receive one.
 
 **Compatibility, docs and process**
 
@@ -239,13 +244,14 @@ instruction.
 - **SC-004**: Adding a plugin to an existing install never removes a previously installed plugin or extra (0 losses across the additive test matrix).
 - **SC-005**: Every downloaded wheel is checksum-verified before install; a tampered wheel is refused in 100% of tested cases.
 - **SC-006**: `remo self-update` moves a recorded install to the newest release on its channel with the same set, in one command.
-- **SC-007**: The 5.0.0 stable release no longer depends on publishing plugins to PyPI.
+- **SC-007**: The 5.0.0 stable release no longer depends on publishing plugins to PyPI (**amended 2026-11-27**: nor on publishing anything to PyPI; remo is never uploaded there).
 
 ## Assumptions
 
 - GitHub Releases' `releases/latest` resolves to the newest stable (non-pre-release) release, so stable manifest resolution needs no API call; "newest pre-release" uses the existing GitHub API lookup in `install.sh`.
 - The machine has `curl` and either `sha256sum` or `shasum` (macOS); the installer does not need `jq` — manifest reading uses tools the installer already relies on, or the Python that uv/pipx bring.
-- Third-party `--with-pkg` additions still resolve from an index (PyPI) — only first-party components are GitHub-only.
+- Third-party `--with-pkg` additions still resolve from an index (PyPI) — only first-party components are GitHub-only. (remo itself is never on an index: **amended 2026-11-27**.)
+- (**Added 2026-11-27**) The versions of `remo-cli` already on PyPI stay there, frozen; they are never yanked, updated or added to. Existing PyPI installs switch by running the installer one-liner once.
 - The first release to carry a manifest is the next one after this lands (5.0.0 or its RCs); older releases are not backfilled.
 - Attestations use GitHub's built-in artifact attestation; verifying them is documented but not enforced by the installer.
 - Hola parity: flag spellings and environment variable naming keep following try-hola/hola's `cli-install.sh` conventions where it has an equivalent.

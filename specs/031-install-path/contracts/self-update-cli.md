@@ -8,7 +8,7 @@ remo self-update [--check] [--yes]
 |---|---|---|
 | recorded, newer exists | prints `remo <cur> → <new> (<channel>)`, exit 0 | shows the exact command, asks to proceed (skip with `--yes`), fetches `https://raw.githubusercontent.com/<repo>/<tag>/install.sh`, runs `bash <tmp> --version <new>` or `--prerelease <new>` + recorded `--with`/`--with-pkg`/`--with-url`; exit = installer's (0 or 1) |
 | recorded, up to date | `remo <cur> is the newest <channel> release`, exit 0 | same, nothing run |
-| pypi | prints the one-time switch one-liner, exit 0 | same guidance, nothing run, exit 0 |
+| pypi | prints `This remo was installed from PyPI. PyPI no longer receives remo releases; they ship only through GitHub Releases. Switch to the installer once:` and the switch one-liner, exit 0 (wording amended 2026-11-27) | same guidance, nothing run, exit 0 |
 | source | `Running from a source checkout: update it with git pull && uv sync`, exit 0 | same |
 | unknown / invalid record | prints the reason and both commands, exit 1 (`PreconditionError`) | same |
 
@@ -27,6 +27,8 @@ curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | b
 ## Passive notice (`core/version.check_for_updates_passive`)
 
 - recorded: `Update available: v<cur> → v<new>. Run 'remo self-update' to upgrade.` — lookup via GitHub on the record's channel.
-- pypi: `Update available: v<cur> → v<new>. Switch to the installer once: curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash` — lookup via PyPI (today's source).
-- source / unknown: today's text unchanged.
+- pypi: `Update available: v<cur> → v<new>. PyPI no longer receives remo releases. Switch to the installer once: curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash` — ~~lookup via PyPI (today's source)~~ lookup via GitHub: `get_latest_github_release("get2knowio/remo", "stable")` (**amended 2026-11-27**: PyPI no longer receives remo releases, so a PyPI lookup could never find a newer one).
+- source: ~~today's text unchanged~~ `Update available: v<cur> → v<new>. Update the source checkout with: git pull && uv sync` — lookup via GitHub stable (amended 2026-11-27).
+- unknown: ~~today's text unchanged~~ `Update available: v<cur> → v<new>. Reinstall with the installer: curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash` — lookup via GitHub stable (amended 2026-11-27; the old `uv tool upgrade remo-cli` text pointed at PyPI).
+- Cache: `<REMO_HOME>/latest_version_cache.<channel>` (the record's channel, else `stable`), 24 h TTL, refreshed in a background thread. The pre-031 `latest_version_cache` (PyPI values) is not read.
 - Hard-coded hints elsewhere (`cli/shell.py` "Consider: uv tool upgrade remo-cli", `core/platform.py`, `cli/web.py`, `core/provider_registry.py`) name the installer (`--with <extra>`) instead of PyPI commands.

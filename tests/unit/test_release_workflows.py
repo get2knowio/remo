@@ -1,8 +1,9 @@
 """Structure of the release workflows (specs/031-install-path, FR-001/003/005).
 
 Parsed with PyYAML (present via ansible-core). These pin the properties that
-make one build feed both the GitHub release and PyPI, and that stop plugins
-reaching PyPI; none of it can be exercised without a real tag push.
+make one build feed the GitHub release, and that keep every remo build off PyPI
+(constitution principle IX, v3.0.0: GitHub Releases is the only package
+channel); none of it can be exercised without a real tag push.
 """
 from __future__ import annotations
 
@@ -65,15 +66,18 @@ class TestReleaseYml:
         assert perms["attestations"] == "write"
         assert perms["contents"] == "write"
 
-    def test_publish_does_not_rebuild_and_only_ships_remo_cli(self) -> None:
-        job = self.jobs["publish"]
-        runs = _runs(job)
-        assert "uv build" not in runs
-        _step_with_uses(job, "actions/download-artifact")
-        assert "remo_cli-*" in runs
-        assert "remo_provider" not in runs  # no plugin wheel is copied
-        pub = _step_with_uses(job, "pypa/gh-action-pypi-publish")
-        assert pub["with"]["packages-dir"] == "pypi-dist/"
+    def test_has_no_pypi_publish_job(self) -> None:
+        assert "publish" not in self.jobs
+        assert set(self.jobs) == {"test", "build", "release", "publish-image"}
+
+    def test_image_waits_for_the_github_release(self) -> None:
+        needs = self.jobs["publish-image"]["needs"]
+        assert "release" in needs and "build" in needs
+
+    def test_notes_never_point_at_a_pypi_install(self) -> None:
+        runs = _runs(self.jobs["release"])
+        assert "remo-cli==" not in runs
+        assert "/releases/download/" in runs
 
     def test_third_party_actions_are_sha_pinned(self) -> None:
         for name, job in self.jobs.items():
@@ -119,6 +123,35 @@ class TestDevBuildYml:
 
     def test_notes_show_the_installer(self) -> None:
         assert "install.sh" in self.runs and "--with" in self.runs
+
+
+class TestNoWorkflowPublishesToPyPI:
+    """Principle IX (v3.0.0): no build of remo-cli or any plugin is ever
+    uploaded to PyPI or TestPyPI, from any workflow."""
+
+    workflows = sorted(WF.glob("*.y*ml"))
+
+    def test_there_are_workflows_to_check(self) -> None:
+        assert any(p.name == "release.yml" for p in self.workflows)
+
+    def test_no_pypi_publish_action(self) -> None:
+        for path in self.workflows:
+            text = path.read_text(encoding="utf-8")
+            assert "pypa/gh-action-pypi-publish" not in text, path.name
+            assert "twine upload" not in text, path.name
+            assert "uv publish" not in text, path.name
+
+    def test_no_pypi_environment(self) -> None:
+        for path in self.workflows:
+            wf = yaml.safe_load(path.read_text(encoding="utf-8"))
+            for name, job in (wf.get("jobs") or {}).items():
+                env = job.get("environment")
+                env_name = env.get("name") if isinstance(env, dict) else env
+                assert str(env_name or "").lower() not in {"pypi", "testpypi"}, (
+                    f"{path.name}:{name} uses environment {env_name!r}"
+                )
+            assert not re.search(r"^\s*environment:\s*(test)?pypi\b", path.read_text(encoding="utf-8"),
+                                 re.IGNORECASE | re.MULTILINE), path.name
 
 
 class TestCiYml:
