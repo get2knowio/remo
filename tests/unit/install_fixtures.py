@@ -7,6 +7,7 @@ after the fact and the manifest still describes the original bytes.
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 from pathlib import Path
 
@@ -96,12 +97,64 @@ def publish_latest(root: Path, tag: str) -> None:
     shutil.copytree(root / tag, target)
 
 
-def write_api_releases(root: Path, tags: list[str]) -> None:
-    """The newest-first /releases listing, pretty-printed the way GitHub does."""
+def write_api_releases(
+    root: Path,
+    tags: list[str],
+    *,
+    without_manifest: tuple[str, ...] = (),
+    drafts: tuple[str, ...] = (),
+    repo: str = REPO,
+    compact: bool = False,
+) -> None:
+    """The newest-first /releases listing, in GitHub's field order.
+
+    Each release carries a ``manifest.json`` asset unless its tag is in
+    ``without_manifest`` (a release still being published, #290). ``prerelease``
+    follows the tag shape. The release notes deliberately contain commas, a
+    quoted ``tag_name`` and a manifest url (escaped, as JSON requires), so the
+    installer's grep/sed/awk parsing is proven not to read keys out of them.
+    ``compact`` drops the pretty-printing.
+    """
     api = root / "api"
     api.mkdir(parents=True, exist_ok=True)
-    body = ",\n".join(f'  {{\n    "tag_name": "{t}",\n    "prerelease": true\n  }}' for t in tags)
-    (api / "releases.json").write_text(f"[\n{body}\n]\n", encoding="utf-8")
+    releases = []
+    for t in tags:
+        is_draft = t in drafts
+        url_tag = f"untagged-{len(releases)}" if is_draft else t
+        assets = [
+            {
+                "name": _wheel_name("remo-cli", release_version(t)),
+                "uploader": {"login": "github-actions[bot]"},
+                "browser_download_url": (
+                    f"https://github.com/{repo}/releases/download/{url_tag}/"
+                    f"{_wheel_name('remo-cli', release_version(t))}"
+                ),
+            }
+        ]
+        if t not in without_manifest:
+            assets.append({
+                "name": "manifest.json",
+                "uploader": {"login": "github-actions[bot]"},
+                "browser_download_url": (
+                    f"https://github.com/{repo}/releases/download/{url_tag}/manifest.json"
+                ),
+            })
+        releases.append({
+            "url": f"https://api.github.com/repos/{repo}/releases/1",
+            "author": {"login": "release-please[bot]"},
+            "tag_name": t,
+            "name": t,
+            "draft": is_draft,
+            "prerelease": t.startswith("rc-"),
+            "assets": assets,
+            "body": (
+                'Fixes, "tag_name": "v0.0.1", see '
+                f"https://github.com/{repo}/releases/download/v0.0.1/manifest.json"
+                ', "prerelease": true'
+            ),
+        })
+    text = json.dumps(releases) if compact else json.dumps(releases, indent=2)
+    (api / "releases.json").write_text(text + "\n", encoding="utf-8")
 
 
 def rate_limit_api(root: Path) -> None:

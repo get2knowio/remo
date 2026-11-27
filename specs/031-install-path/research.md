@@ -89,8 +89,7 @@ Grounded in an audit of `main` at 62b16f0 (2026-11-27). Anchors are file:line at
 ## R8 — Release lookup for self-update and the passive notice
 
 - **Decision**: `core/version.get_latest_github_release(repo, channel)`:
-  - stable reads `GET https://api.github.com/repos/<repo>/releases/latest` → `tag_name`, with `v` stripped;
-  - prerelease reads `GET …/releases?per_page=20`, takes the first `rc-` tag with `prerelease: true`, and strips `rc-`.
+  - both channels read `GET https://api.github.com/repos/<repo>/releases?per_page=20` and take the first (newest) non-draft release on the channel that carries a `manifest.json` asset: stable is a `v` tag with `prerelease: false` (`v` stripped), prerelease an `rc-` tag with `prerelease: true` (`rc-` stripped). (Originally stable read `…/releases/latest`; #290 replaced it, because release-please publishes a release before release.yml attaches its assets, so `latest` can name a version that cannot be installed.)
   - It uses `urlopen` with a 10 s timeout and raises a typed `ReleaseLookupError` on failure, which self-update maps to `OperationFailedError`. A 403 with `X-RateLimit-Remaining: 0` names the rate limit.
   - The passive check keeps its cache and thread design but consults GitHub when a record exists, using the record's channel; it keeps PyPI otherwise.
   - `_SEMVER_RE` and the markers gain the PEP 440 `a`/`b` forms.

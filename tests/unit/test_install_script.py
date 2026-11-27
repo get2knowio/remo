@@ -23,6 +23,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -31,6 +32,14 @@ from tests.unit import install_fixtures as fx
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SH = REPO_ROOT / "install.sh"
 DEV_BUILD_YML = REPO_ROOT / ".github" / "workflows" / "dev-build.yml"
+
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+")
+
+
+def _hosts(texts) -> set[str]:
+    """Hostnames of every URL in ``texts``: compare hosts exactly, never by substring."""
+    return {urlparse(u).hostname or "" for t in texts for u in _URL_RE.findall(t)}
 
 BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(BASH is None, reason="bash not available")
@@ -348,7 +357,7 @@ class TestReleaseRouting:
     def test_bare_prerelease_resolves_newest_rc_through_the_api(self, sandbox, fake_path) -> None:
         r = sandbox.run("--prerelease", "--with", "ec2", path=fake_path(uv=True))
         assert r.returncode == 0, r.stderr
-        assert any("api.github.com" in u for u in sandbox.urls())
+        assert "api.github.com" in _hosts(sandbox.urls())
         assert f"{RC_URL}/manifest.json" in sandbox.urls()
         assert _local(sandbox.installs()[0][3]) == WHL_CLI_RC
 
@@ -411,7 +420,7 @@ class TestReleaseRouting:
         fx.make_release(sandbox.root, "rc-9.9.9rc1", foreign_url=True)
         r = sandbox.run("--prerelease", "9.9.9rc1", path=fake_path(uv=True))
         assert r.returncode == 1
-        assert "evil.example.com" in r.stderr or "outside" in r.stderr
+        assert "evil.example.com" in _hosts([r.stderr]) or "outside" in r.stderr
         assert sandbox.installs() == []
 
     def test_manifest_for_another_tag_is_refused(self, sandbox, fake_path) -> None:
@@ -528,7 +537,7 @@ class TestStableRouting:
     def test_pypi_is_never_consulted(self, sandbox, fake_path) -> None:
         r = sandbox.run("--with", "ec2", path=fake_path(uv=True))
         assert r.returncode == 0, r.stderr
-        assert not any("pypi.org" in u for u in sandbox.urls())
+        assert "pypi.org" not in _hosts(sandbox.urls())
         for call in sandbox.calls("uv"):
             assert not any(re.match(r"remo-cli(==|$)", a) for a in call), call
 
@@ -1032,6 +1041,8 @@ class TestReviewFollowUps:
         api = sandbox.root / "api" / "releases.json"
         api.write_text(
             '[\n  {\n    "tag_name": "rc-9.9.9rc1",\n    "prerelease": true,\n'
+            '    "assets": [\n      {\n        "browser_download_url": '
+            f'"{RC_URL}/manifest.json"\n      }}\n    ],\n'
             '    "body": "Names the GitHub rate limit when it is hit."\n  }\n]\n',
             encoding="utf-8",
         )
@@ -1071,3 +1082,175 @@ class TestReviewFollowUps:
         r = sandbox.run("--prerelease", "9.9.9rc1", path=fake_path(uv=True), env_extra=env)
         assert r.returncode == 0, r.stderr
         assert "nothing changed" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# #290: a release exists before its assets do. release-please publishes vX.Y.Z
+# at once, release.yml attaches the wheels and manifest.json minutes later (or
+# never, if it fails), so `releases/latest/download/manifest.json` 404s.
+# ---------------------------------------------------------------------------
+
+LATEST_URL = "https://github.com/get2knowio/remo/releases/latest/download/manifest.json"
+API_URL = "https://api.github.com/repos/get2knowio/remo/releases?per_page=20"
+
+
+class TestReleaseStillBeingPublished:
+    @staticmethod
+    def _publishing(sandbox: Sandbox, **kw) -> None:
+        """v9.9.10 is out but asset-less, so `latest/download` serves nothing."""
+        shutil.rmtree(sandbox.root / "latest")
+        fx.write_api_releases(
+            sandbox.root,
+            ["v9.9.10", "rc-9.9.9rc1", "v9.9.9"],
+            without_manifest=("v9.9.10",),
+            **kw,
+        )
+
+    def test_default_falls_back_to_the_newest_release_with_a_manifest(
+        self, sandbox, fake_path
+    ) -> None:
+        self._publishing(sandbox)
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 0, r.stderr
+        urls = sandbox.urls()
+        assert urls[:3] == [
+            LATEST_URL,
+            API_URL,
+            "https://github.com/get2knowio/remo/releases/download/v9.9.9/manifest.json",
+        ]
+        assert _local(sandbox.installs()[0][3]) == "remo_cli-9.9.9-py3-none-any.whl"
+        assert "v9.9.10 is the newest release but is still being published" in r.stderr
+        assert "Installing v9.9.9 instead" in r.stderr
+        assert sandbox.record_json()["channel"] == "stable"
+
+    def test_fallback_reads_githubs_compact_layout_too(self, sandbox, fake_path) -> None:
+        self._publishing(sandbox, compact=True)
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 0, r.stderr
+        assert _local(sandbox.installs()[0][3]) == "remo_cli-9.9.9-py3-none-any.whl"
+
+    def test_fallback_dry_run_keeps_stdout_to_the_command(self, sandbox, fake_path) -> None:
+        self._publishing(sandbox)
+        r = sandbox.run(path=fake_path(uv=True), dry=True)
+        assert r.returncode == 0, r.stderr
+        assert "still being published" in r.stderr
+        assert "still being published" not in r.stdout
+        assert "releases/download/v9.9.9/remo_cli-9.9.9-py3-none-any.whl" in r.stdout
+
+    def test_drafts_and_prereleases_are_never_the_fallback(self, sandbox, fake_path) -> None:
+        shutil.rmtree(sandbox.root / "latest")
+        fx.make_release(sandbox.root, "v9.9.11")
+        fx.write_api_releases(
+            sandbox.root, ["v9.9.11", "rc-9.9.9rc1", "v9.9.9"], drafts=("v9.9.11",)
+        )
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 0, r.stderr
+        assert _local(sandbox.installs()[0][3]) == "remo_cli-9.9.9-py3-none-any.whl"
+        assert "still being published" not in r.stderr, "a draft is not a newer release"
+
+    def test_latest_404_with_the_newest_release_already_complete_needs_no_note(
+        self, sandbox, fake_path
+    ) -> None:
+        """The race in reverse: the assets landed between the two requests."""
+        shutil.rmtree(sandbox.root / "latest")
+        fx.write_api_releases(sandbox.root, ["rc-9.9.9rc1", "v9.9.9"])
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 0, r.stderr
+        assert "still being published" not in r.stderr
+        assert _local(sandbox.installs()[0][3]) == "remo_cli-9.9.9-py3-none-any.whl"
+
+    def test_a_working_latest_needs_no_api_call(self, sandbox, fake_path) -> None:
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 0, r.stderr
+        assert not any("api.github.com" in u for u in sandbox.urls())
+
+    def test_no_stable_release_with_a_manifest_fails_clearly(self, sandbox, fake_path) -> None:
+        shutil.rmtree(sandbox.root / "latest")
+        fx.write_api_releases(
+            sandbox.root, ["v9.9.10", "rc-9.9.9rc1", "v9.9.9"],
+            without_manifest=("v9.9.10", "v9.9.9"),
+        )
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 1
+        assert LATEST_URL in r.stderr
+        assert "No recent stable release carries a manifest.json yet" in r.stderr
+        assert "v9.9.10 is still being published" in r.stderr
+        assert sandbox.installs() == [] and not sandbox.record.exists()
+
+    def test_no_stable_release_at_all_fails_clearly(self, sandbox, fake_path) -> None:
+        shutil.rmtree(sandbox.root / "latest")
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 1
+        assert "No stable release with a manifest.json was found" in r.stderr
+        assert sandbox.installs() == []
+
+    def test_fallback_names_an_exhausted_rate_limit(self, sandbox, fake_path) -> None:
+        shutil.rmtree(sandbox.root / "latest")
+        fx.rate_limit_api(sandbox.root)
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 1
+        assert "rate limit" in r.stderr.lower()
+        assert "--version" in r.stderr
+        assert sandbox.installs() == []
+
+    @pytest.mark.parametrize(
+        ("args", "tag"),
+        [(["--version", "9.9.10"], "v9.9.10"), (["--prerelease", "9.9.10rc1"], "rc-9.9.10rc1")],
+    )
+    def test_a_named_version_is_never_substituted(
+        self, sandbox, fake_path, args: list[str], tag: str
+    ) -> None:
+        self._publishing(sandbox)
+        fx.write_api_releases(
+            sandbox.root, ["rc-9.9.10rc1", "v9.9.10", "rc-9.9.9rc1", "v9.9.9"],
+            without_manifest=("rc-9.9.10rc1", "v9.9.10"),
+        )
+        r = sandbox.run(*args, path=fake_path(uv=True))
+        assert r.returncode == 1
+        assert tag in r.stderr
+        assert not any("api.github.com" in u for u in sandbox.urls())
+        assert sandbox.installs() == []
+
+    def test_bare_prerelease_skips_one_still_being_published(self, sandbox, fake_path) -> None:
+        fx.write_api_releases(
+            sandbox.root, ["rc-9.9.10rc1", "v9.9.9", "rc-9.9.9rc1"],
+            without_manifest=("rc-9.9.10rc1",),
+        )
+        r = sandbox.run("--prerelease", path=fake_path(uv=True))
+        assert r.returncode == 0, r.stderr
+        assert f"{RC_URL}/manifest.json" in sandbox.urls()
+        assert _local(sandbox.installs()[0][3]) == WHL_CLI_RC
+        assert "rc-9.9.10rc1 is the newest release but is still being published" in r.stderr
+        assert sandbox.record_json()["channel"] == "prerelease"
+
+    def test_bare_prerelease_with_no_manifest_anywhere_fails_clearly(
+        self, sandbox, fake_path
+    ) -> None:
+        fx.write_api_releases(
+            sandbox.root, ["rc-9.9.10rc1", "v9.9.9"], without_manifest=("rc-9.9.10rc1",)
+        )
+        r = sandbox.run("--prerelease", path=fake_path(uv=True))
+        assert r.returncode == 1
+        assert "No recent pre-release carries a manifest.json yet" in r.stderr
+        assert "rc-9.9.10rc1 is still being published" in r.stderr
+        assert "v9.9.9" not in r.stderr, "never offers stable for a pre-release request"
+        assert sandbox.installs() == []
+
+    def test_bare_prerelease_with_no_prerelease_at_all_fails_clearly(
+        self, sandbox, fake_path
+    ) -> None:
+        fx.write_api_releases(sandbox.root, ["v9.9.9"])
+        r = sandbox.run("--prerelease", path=fake_path(uv=True))
+        assert r.returncode == 1
+        assert "Could not determine the newest pre-release" in r.stderr
+        assert sandbox.installs() == []
+
+    def test_text_in_release_notes_is_never_read_as_a_release(self, sandbox, fake_path) -> None:
+        """Every fixture release's notes contain a quoted tag_name for v0.0.1
+        and a manifest url under it; none of that may surface as a release."""
+        shutil.rmtree(sandbox.root / "latest")
+        fx.write_api_releases(sandbox.root, ["rc-9.9.9rc1"])
+        r = sandbox.run(path=fake_path(uv=True))
+        assert r.returncode == 1
+        assert "v0.0.1" not in r.stderr + r.stdout
+        assert not any("v0.0.1" in u for u in sandbox.urls())

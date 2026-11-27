@@ -12,6 +12,8 @@ remo self-update [--check] [--yes]
 | source | `Running from a source checkout: update it with git pull && uv sync`, exit 0 | same |
 | unknown / invalid record | prints the reason and both commands, exit 1 (`PreconditionError`) | same |
 
+Release lookup (`core/version.get_latest_github_release(repo, channel)`, shared by self-update and the passive notice): one call to `https://api.github.com/repos/<repo>/releases?per_page=20` for both channels (not `releases/latest`, which can name a release whose assets are not attached yet, #290). The answer is the newest release on the channel that carries a `manifest.json` asset: stable means not a draft, not a pre-release, a `v` tag; prerelease means not a draft, flagged as a pre-release, an `rc-` tag. A release without the asset is skipped. None found → `ReleaseLookupError` (naming the newest release still being published, when there is one).
+
 Failures: release lookup error (network, rate limit — named), installer download failure, installer non-zero exit → `OperationFailedError`, exit 1; declining the prompt → `UserAbortedError`, exit 3. Mapped by `@provider_command`.
 
 Switch one-liner (written in full everywhere):
