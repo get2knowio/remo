@@ -15,7 +15,11 @@ from pathlib import Path
 
 import click
 
-_INSTALL_HINT = 'Web support is not installed. Install it with: pip install "remo-cli[web]"'
+_INSTALL_HINT = (
+    "Web support is not installed. Install it with: "
+    "curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh "
+    "| bash -s -- --with web"
+)
 
 #: Seconds uvicorn waits for in-flight connections/lifespan shutdown to
 #: finish before forcing them closed (NFR-007/SC-014: bounded shutdown).

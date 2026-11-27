@@ -154,7 +154,7 @@ class TestShellVersionCheck:
         assert result.exit_code == 0
         mock_confirm.assert_not_called()
         assert "newer tools" in result.output
-        assert "uv tool upgrade remo-cli" in result.output
+        assert "remo self-update" in result.output
 
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_no_marker_prompts_update(self, runner, mocker):

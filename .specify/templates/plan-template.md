@@ -40,7 +40,7 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Source: `.specify/memory/constitution.md` (v2.1.0). Mark each row PASS / N/A /
+Source: `.specify/memory/constitution.md` (v3.0.0). Mark each row PASS / N/A /
 VIOLATION. Any VIOLATION must be justified in Complexity Tracking below.
 
 | # | Principle | Check for this feature |
@@ -53,7 +53,7 @@ VIOLATION. Any VIOLATION must be justified in Complexity Tracking below.
 | VI | Test Skip/Fail Paths | Error, skip, and abort paths are covered; refactors are pinned by characterization tests first |
 | VII | Idempotent & Re-runnable | Mutating paths converge on a second run; registry writes go through `core/registry.py` |
 | VIII | Docs Reflect Reality | Structure diagrams, README, and `docs/*.md` updated in this change |
-| IX | Pre-Release Off-Index | Packaging-surface changes are validated on a CI-built wheel (Tier 2), not just a git ref; nothing non-final reaches PyPI |
+| IX | GitHub Releases Only, Never PyPI | Nothing is uploaded to PyPI/TestPyPI; releases are GitHub releases (wheels + `manifest.json`) installed by `install.sh`; packaging-surface changes are validated on a CI-built wheel (Tier 2), not just a git ref |
 
 ## Project Structure
 

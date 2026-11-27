@@ -8,35 +8,67 @@ Spin up a fully-configured remote development environment in minutes. One comman
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 ```
 
-That is the shortest path, and it does a few things you would otherwise do by
-hand: it uses `uv` or `pipx` if you already have one, installs `uv` if you have
-neither, removes a leftover git-based install from older versions, and offers to
-set up shell completion.
+That is the one install path, for every release. It reads the release's
+`manifest.json` from GitHub Releases, downloads the wheels it lists, verifies
+each SHA-256, and installs from those verified files with `uv` or `pipx` (it
+installs `uv` if you have neither). It also removes a leftover git-based install
+from older versions and offers to set up shell completion.
 
-Nothing is installed silently — it prints what it is about to run, and
-`--dry-run` prints it without running anything.
-
-**Re-run the same command to upgrade.** It reports what changed
-(`Updated remo-cli: 4.3.6 -> 4.4.0`), or says so plainly when you are already
-current.
-
-### Or install it yourself
+Add what you want with `--with`: the `web` console and/or any provider plugin
+the release ships (`ec2`, `hetzner`):
 
 ```bash
-uv tool install remo-cli      # recommended
-pipx install remo-cli         # equivalent
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --with ec2,web
 ```
 
-Using a cloud provider? Each is a separate plugin, pulled in by an extra:
-`uv tool install "remo-cli[ec2]"` for AWS EC2 ([docs/ec2.md](docs/ec2.md)),
-`uv tool install "remo-cli[hetzner]"` for Hetzner Cloud
-([docs/hetzner.md](docs/hetzner.md)), or `"remo-cli[ec2,hetzner]"` for both.
+Nothing is installed silently: it prints what it is about to run, and
+`--dry-run` prints it without running anything. The full guide (channels,
+checksums, attestations, switching from a PyPI install) is
+[docs/install.md](docs/install.md).
 
-Plain `pip install remo-cli` works inside a virtualenv, but not against a system
-Python on distributions that mark it externally-managed (PEP 668 — Ubuntu 24.04,
-Debian 12, Fedora 38+), where it refuses outright. `uv tool` and `pipx` both
-sidestep that by giving the CLI its own environment, which is why the installer
-never falls back to bare `pip`.
+**Re-running is additive.** What a previous run installed is recorded in
+`~/.config/remo/install.json` and kept; `--with` adds to it and `--without`
+removes from it. It reports what changed (`Updated remo-cli: 4.3.6 -> 5.0.0`),
+or says so plainly when you are already current.
+
+### Keeping remo up to date
+
+```bash
+remo self-update            # move to the newest release on your channel, same set
+remo self-update --check    # only say whether one exists
+remo self-update --yes      # skip the confirmation prompt
+```
+
+`self-update` fetches the installer from the release it is moving to and re-runs
+it with what you already have installed. Remo also tells you after a command when
+a newer release exists.
+
+### Other ways
+
+- **From source** (contributors): `git clone https://github.com/get2knowio/remo.git`,
+  then `uv sync --all-extras` and `uv run remo --help`.
+- **Not PyPI.** remo is distributed only through GitHub Releases; PyPI no
+  longer receives remo releases of any kind.
+
+#### Switching from a PyPI install
+
+Earlier versions of `remo-cli` were published on PyPI. The last of them stays
+there, frozen — it will never be updated, so `uv tool upgrade remo-cli` or
+`pipx upgrade remo-cli` will never find a newer remo. Run the installer once to
+switch; from then on `remo self-update` keeps you current:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+```
+
+A PyPI install of remo tells you this itself when a newer GitHub release exists.
+[docs/install.md](docs/install.md#switching-from-a-pypi-install) has the details.
+
+Plain `pip install` is deliberately not used by the installer: on distributions
+that mark their Python externally-managed (PEP 668: Ubuntu 24.04, Debian 12,
+Fedora 38+) it refuses outright. `uv tool` and `pipx` give the CLI its own
+environment.
 
 Ansible collections required by the provider playbooks install automatically the
 first time you run a provider command (e.g. `remo incus create`); no separate
@@ -53,50 +85,57 @@ curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | b
 
 | Option | What it does |
 |--------|--------------|
-| `--version <version>` | Install an exact version. A final version (`4.3.6`) comes from PyPI; a pre-release version (`4.4.0rc3`) comes from its GitHub pre-release. |
+| `--version <version>` | Install an exact release (`5.0.0`). A pre-release version (`5.0.0rc1`) implies `--prerelease`. |
 | `--prerelease [<version>]` | Install a pre-release. With no version, the newest one. `--pre-release` also works. |
+| `--with <list>` | Also install `web` and/or plugins (`ec2`, `hetzner`); comma-separated, repeatable. |
+| `--without <list>` | Remove these from the recorded set. |
+| `--with-pkg <spec>` | Also install a third-party package from an index (repeatable). |
+| `--with-url <url>` | Also install a third-party wheel from an https URL (repeatable). |
 | `--dry-run` | Print the install command and exit, changing nothing. |
 | `--help` | Show the options. |
 
-Each has an environment twin, for CI or a dotfile: `REMO_VERSION`,
-`REMO_PRERELEASE`, and `REMO_REPO_SLUG` to install from a fork. An explicit flag
-wins over the environment.
+Each of `--version`, `--prerelease`, `--with` and `--without` has an environment
+twin, for CI or a dotfile: `REMO_VERSION`, `REMO_PRERELEASE`, `REMO_WITH`,
+`REMO_WITHOUT`; `REMO_REPO_SLUG` installs from a fork. An explicit flag wins over
+the environment.
 
 On Windows, the installer stops with a pointer to [WSL2](#windows) rather than
-installing — including under Git Bash, MSYS2 or Cygwin, where it would otherwise
+installing, including under Git Bash, MSYS2 or Cygwin, where it would otherwise
 succeed and then fail on the first command.
 
 ### Pre-release builds
 
-Release candidates are never published to PyPI. They install from the wheel
-attached to their GitHub pre-release:
+Release candidates, like every remo release, are never published to PyPI. They
+are GitHub pre-releases
+(tag `rc-<version>`) and install through the same installer, with the same
+`--with`:
 
 ```bash
 # Newest pre-release
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
   | bash -s -- --prerelease
 
-# A specific one
+# A specific one, with a plugin
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
-  | bash -s -- --prerelease 4.4.0rc3
+  | bash -s -- --prerelease 5.0.0rc1 --with ec2
 
 # See the command without running it
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
   | bash -s -- --prerelease --dry-run
 ```
 
-Return to the released build with `uv tool install remo-cli --force`.
+Return to the newest stable release by re-running the first one-liner above.
 
 If you are used to reaching for uv's `--prerelease allow`, it will not work
-here. That flag widens which versions on PyPI are acceptable; it does not change
-where uv looks. With no release candidate on PyPI to find, it resolves to the
-latest stable release and reports success.
+here. That flag widens which versions on an index are acceptable; it does not
+change where uv looks, and remo's releases are not on any index. Against PyPI it
+finds only the frozen last version published there and reports success.
 
 Each pre-release also publishes a matching container image for the web service,
 tagged by its exact version and never `latest`:
 
 ```yaml
-image: ghcr.io/get2knowio/remo-web:4.4.0rc3
+image: ghcr.io/get2knowio/remo-web:5.0.0rc1
 ```
 
 ### Prerequisites
@@ -124,7 +163,7 @@ wsl --install -d Ubuntu
 Then, in the Ubuntu shell:
 
 ```bash
-uv tool install remo-cli
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 ```
 
 Note that `~/.ssh` inside WSL2 is separate from your Windows one. Copy a key
@@ -336,6 +375,8 @@ Uses colon notation — a bare `:path` targets your default environment, or `nam
 
 Remo checks that your local CLI and remote environment are running compatible versions before connecting. If the remote is behind, you'll be prompted to update it. Use `--no-update-check` to skip.
 
+Your local CLI is checked too: after a command, remo mentions when a newer release exists. For an install made with the installer, `remo self-update` upgrades it (see [Keeping remo up to date](#keeping-remo-up-to-date)).
+
 ---
 
 ## What's Installed
@@ -386,8 +427,8 @@ they continue to incur storage costs on AWS/Hetzner).
 ## Provider plugins
 
 Incus and Proxmox are built in. AWS EC2 and Hetzner are first-party plugins,
-`remo-provider-ec2` and `remo-provider-hetzner`, installed with
-`uv tool install "remo-cli[ec2]"` / `"remo-cli[hetzner]"` (see
+`remo-provider-ec2` and `remo-provider-hetzner`, installed with the installer's
+`--with ec2` / `--with hetzner` (see [docs/install.md](docs/install.md),
 [docs/ec2.md](docs/ec2.md), [docs/hetzner.md](docs/hetzner.md)). EC2 was the
 built-in `aws` provider until 4.5.0: existing `aws` registry entries migrate to
 `ec2` automatically once the plugin is installed, and `remo aws …` still works
@@ -694,7 +735,7 @@ remo <provider> snapshot delete <instance> <snap-name> [-y]      # Remove
 # `<provider> destroy` will list existing snapshots and offer to clean them up first.
 
 # Updates
-uv tool upgrade remo-cli            # Update CLI to latest version
+remo self-update                    # Update CLI to the newest release on your channel
 remo <platform> upgrade NAME        # Update dev tools on remote
 
 # Help

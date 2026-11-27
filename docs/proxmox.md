@@ -14,6 +14,7 @@ Spin up a lightweight LXC container on your Proxmox VE node. Containers attach t
 ```bash
 # Install remo (on your workstation)
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+# (see docs/install.md for --with, pre-releases and self-update)
 
 # One-time: verify the node and download the default LXC template
 remo proxmox host bootstrap prox01 --host-user root

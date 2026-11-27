@@ -12,6 +12,7 @@ Spin up a lightweight system container on your own hardware. Containers get IPs 
 ```bash
 # Install remo (on your workstation)
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+# (see docs/install.md for --with, pre-releases and self-update)
 
 # Create and configure container
 remo incus create dev1 --host incus-host --host-user youruser

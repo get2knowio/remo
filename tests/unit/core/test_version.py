@@ -13,7 +13,6 @@ from remo_cli.core.version import (
     _parse_version,
     check_for_updates_passive,
     get_current_version,
-    get_latest_release,
     version_is_newer,
 )
 
@@ -135,54 +134,18 @@ class TestGetCurrentVersion:
         assert result == "unknown"
 
 
-class TestGetLatestRelease:
-    """Tests for get_latest_release() via PyPI API."""
-
-    def _mock_pypi_response(self, mocker, versions):
-        """Helper to mock PyPI JSON API response."""
-        data = {"releases": {v: [] for v in versions}}
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(data).encode()
-        mock_resp.__enter__ = lambda s: s
-        mock_resp.__exit__ = MagicMock(return_value=False)
-        mocker.patch("remo_cli.core.version.urllib.request.urlopen", return_value=mock_resp)
-
-    def test_returns_latest_stable(self, mocker):
-        self._mock_pypi_response(mocker, ["1.0.0", "1.1.0", "1.2.0"])
-        result = get_latest_release(include_prerelease=False)
-        assert result == "1.2.0"
-
-    def test_excludes_prerelease_by_default(self, mocker):
-        self._mock_pypi_response(mocker, ["1.0.0", "1.1.0", "1.2.0rc1"])
-        result = get_latest_release(include_prerelease=False)
-        assert result == "1.1.0"
-
-    def test_includes_prerelease_when_requested(self, mocker):
-        self._mock_pypi_response(mocker, ["1.0.0", "1.1.0", "1.2.0rc1"])
-        result = get_latest_release(include_prerelease=True)
-        assert result == "1.2.0rc1"
-
-    def test_returns_empty_on_network_error(self, mocker):
-        mocker.patch(
-            "remo_cli.core.version.urllib.request.urlopen",
-            side_effect=ConnectionError("no network"),
-        )
-        result = get_latest_release()
-        assert result == ""
-
-    def test_returns_empty_when_no_releases(self, mocker):
-        self._mock_pypi_response(mocker, [])
-        result = get_latest_release()
-        assert result == ""
-
-    def test_returns_empty_when_only_prereleases_and_stable_requested(self, mocker):
-        self._mock_pypi_response(mocker, ["1.0.0rc1", "1.0.0beta1"])
-        result = get_latest_release(include_prerelease=False)
-        assert result == ""
-
-
 class TestCheckForUpdatesPassive:
-    """Tests for check_for_updates_passive()."""
+    """Tests for check_for_updates_passive().
+
+    Pinned to a source-checkout origin with no install record, so the real
+    environment's install.json cannot steer them; origin-specific behaviour is
+    in TestNoticeByOrigin.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _source_origin(self, mocker):
+        mocker.patch("remo_cli.core.version.detect_origin", return_value=InstallOrigin.SOURCE)
+        mocker.patch("remo_cli.core.version.load_record", return_value=(None, None))
 
     def test_returns_none_when_version_unknown(self, mocker):
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
@@ -195,20 +158,20 @@ class TestCheckForUpdatesPassive:
         mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
 
         # Create a fresh cache file with a newer version
-        cache_file = tmp_path / "latest_version_cache"
+        cache_file = tmp_path / "latest_version_cache.stable"
         cache_file.write_text("v1.1.0")
 
         result = check_for_updates_passive()
         assert result is not None
         assert "1.1.0" in result
         assert "Update available" in result
-        assert "uv tool upgrade remo-cli" in result
+        assert "git pull && uv sync" in result
 
     def test_returns_none_when_up_to_date(self, mocker, tmp_path):
         mocker.patch("remo_cli.core.version.get_current_version", return_value="1.0.0")
         mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
 
-        cache_file = tmp_path / "latest_version_cache"
+        cache_file = tmp_path / "latest_version_cache.stable"
         cache_file.write_text("v1.0.0")
 
         result = check_for_updates_passive()
@@ -218,7 +181,7 @@ class TestCheckForUpdatesPassive:
         mocker.patch("remo_cli.core.version.get_current_version", return_value="1.1.0")
         mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
 
-        cache_file = tmp_path / "latest_version_cache"
+        cache_file = tmp_path / "latest_version_cache.stable"
         cache_file.write_text("v1.0.0")
 
         result = check_for_updates_passive()
@@ -227,10 +190,10 @@ class TestCheckForUpdatesPassive:
     def test_spawns_background_thread_when_cache_stale(self, mocker, tmp_path):
         mocker.patch("remo_cli.core.version.get_current_version", return_value="1.0.0")
         mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
-        mocker.patch("remo_cli.core.version.get_latest_release", return_value="1.1.0")
+        mocker.patch("remo_cli.core.version.get_latest_github_release", return_value="1.1.0")
 
         # Create a stale cache file (old mtime)
-        cache_file = tmp_path / "latest_version_cache"
+        cache_file = tmp_path / "latest_version_cache.stable"
         cache_file.write_text("1.0.0")
         stale_time = time.time() - 90000  # more than 24 hours ago
         os.utime(cache_file, (stale_time, stale_time))
@@ -273,7 +236,7 @@ class TestCheckForUpdatesPassive:
         mocker.patch("remo_cli.core.version.get_current_version", return_value="1.0.0")
         mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
 
-        cache_file = tmp_path / "latest_version_cache"
+        cache_file = tmp_path / "latest_version_cache.stable"
         cache_file.write_text("")
 
         result = check_for_updates_passive()
@@ -283,7 +246,7 @@ class TestCheckForUpdatesPassive:
         mocker.patch("remo_cli.core.version.get_current_version", return_value="1.0.0")
         mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
 
-        cache_file = tmp_path / "latest_version_cache"
+        cache_file = tmp_path / "latest_version_cache.stable"
         cache_file.write_text("v2.0.0")
 
         result = check_for_updates_passive()
@@ -291,27 +254,314 @@ class TestCheckForUpdatesPassive:
         assert "v1.0.0" in result
         assert "v2.0.0" in result
 
-    def test_prerelease_track_detected(self, mocker, tmp_path):
-        """When current version is an RC, include_prerelease should be True
-        for the background thread refresh."""
+    def test_prerelease_current_version_still_tracks_github_stable(self, mocker, tmp_path):
+        """Without an install record there is no channel to follow, so even an
+        RC build compares against the newest stable GitHub release — and PyPI
+        is never asked (constitution IX: remo is never uploaded there)."""
         mocker.patch(
             "remo_cli.core.version.get_current_version", return_value="1.0.0rc1"
         )
         mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
-        mock_get_latest = mocker.patch(
-            "remo_cli.core.version.get_latest_release", return_value="1.0.0rc2"
+        gh = mocker.patch(
+            "remo_cli.core.version.get_latest_github_release", return_value="1.0.0"
         )
 
         # No cache file -> triggers background refresh
         mock_thread_class = mocker.patch("remo_cli.core.version.threading.Thread")
-        mock_thread_instance = MagicMock()
-        mock_thread_class.return_value = mock_thread_instance
 
-        result = check_for_updates_passive()
-        assert result is None
+        assert check_for_updates_passive() is None
+        mock_thread_class.call_args[1]["target"]()
+        gh.assert_called_once_with("get2knowio/remo", "stable")
+        assert (tmp_path / "latest_version_cache.stable").read_text() == "1.0.0"
 
-        # Extract and call the refresh function to verify it passes include_prerelease
-        call_kwargs = mock_thread_class.call_args
-        refresh_fn = call_kwargs[1]["target"] if "target" in call_kwargs[1] else call_kwargs[0][0]
-        refresh_fn()
-        mock_get_latest.assert_called_once_with(True)
+
+# ---------------------------------------------------------------------------
+# Spec 031: GitHub release lookup, a/b ordering, origin-aware notice
+# ---------------------------------------------------------------------------
+
+import email.message  # noqa: E402
+import urllib.error  # noqa: E402
+
+from remo_cli.core.install_record import InstallOrigin, InstallRecord  # noqa: E402
+from remo_cli.core.version import (  # noqa: E402
+    ReleaseLookupError,
+    get_latest_github_release,
+)
+
+
+def _resp(mocker, payload):
+    r = MagicMock()
+    r.read.return_value = json.dumps(payload).encode()
+    r.__enter__ = lambda s: s
+    r.__exit__ = MagicMock(return_value=False)
+    return mocker.patch("remo_cli.core.version.urllib.request.urlopen", return_value=r)
+
+
+_MANIFEST = [{"name": "remo_cli-x.whl"}, {"name": "manifest.json"}]
+
+
+def _rel(tag, *, pre=None, draft=False, manifest=True):
+    return {
+        "tag_name": tag,
+        "draft": draft,
+        "prerelease": tag.startswith("rc-") if pre is None else pre,
+        "assets": list(_MANIFEST) if manifest else [{"name": "remo_cli-x.whl"}],
+    }
+
+
+class TestGithubLookup:
+    def test_stable_reads_the_list_and_strips_v(self, mocker):
+        m = _resp(mocker, [_rel("rc-5.1.0rc1"), _rel("v5.0.1"), _rel("v5.0.0")])
+        assert get_latest_github_release("o/r", "stable") == "5.0.1"
+        req = m.call_args[0][0]
+        assert req.full_url == "https://api.github.com/repos/o/r/releases?per_page=20"
+
+    def test_prerelease_picks_first_rc_prerelease(self, mocker):
+        m = _resp(
+            mocker,
+            [
+                _rel("v5.0.0"),
+                _rel("rc-5.1.0rc2"),
+                _rel("rc-5.1.0rc1"),
+            ],
+        )
+        assert get_latest_github_release("o/r", "prerelease") == "5.1.0rc2"
+        assert m.call_args[0][0].full_url.endswith("/releases?per_page=20")
+
+    def test_stable_skips_a_release_still_being_published(self, mocker):
+        """#290: release-please publishes vX.Y.Z before its assets exist."""
+        _resp(mocker, [_rel("v5.0.2", manifest=False), _rel("v5.0.1"), _rel("v5.0.0")])
+        assert get_latest_github_release("o/r", "stable") == "5.0.1"
+
+    def test_prerelease_skips_a_release_without_a_manifest(self, mocker):
+        _resp(mocker, [_rel("rc-5.1.0rc3", manifest=False), _rel("rc-5.1.0rc2")])
+        assert get_latest_github_release("o/r", "prerelease") == "5.1.0rc2"
+
+    def test_stable_skips_drafts_and_prereleases(self, mocker):
+        _resp(
+            mocker,
+            [
+                _rel("v5.0.3", draft=True),
+                _rel("v5.0.2", pre=True),
+                _rel("rc-5.1.0rc1"),
+                _rel("v5.0.1"),
+            ],
+        )
+        assert get_latest_github_release("o/r", "stable") == "5.0.1"
+
+    def test_prerelease_skips_drafts_and_unflagged_rc_tags(self, mocker):
+        _resp(
+            mocker,
+            [
+                _rel("rc-5.1.0rc3", draft=True),
+                _rel("rc-5.1.0rc2", pre=False),
+                _rel("rc-5.1.0rc1"),
+            ],
+        )
+        assert get_latest_github_release("o/r", "prerelease") == "5.1.0rc1"
+
+    @pytest.mark.parametrize(
+        ("channel", "tag", "what"),
+        [("stable", "v5.0.2", "stable release"), ("prerelease", "rc-5.1.0rc1", "pre-release")],
+    )
+    def test_no_release_with_a_manifest_names_the_pending_one(self, mocker, channel, tag, what):
+        _resp(mocker, [_rel(tag, manifest=False)])
+        with pytest.raises(ReleaseLookupError, match=f"no {what}.*manifest.*{tag}"):
+            get_latest_github_release("o/r", channel)
+
+    def test_assets_of_an_unexpected_shape_count_as_no_manifest(self, mocker):
+        _resp(mocker, [{"tag_name": "v5.0.2", "prerelease": False, "assets": "x"}])
+        with pytest.raises(ReleaseLookupError, match="manifest"):
+            get_latest_github_release("o/r", "stable")
+
+    def test_prerelease_none_found(self, mocker):
+        _resp(mocker, [_rel("v5.0.0")])
+        with pytest.raises(ReleaseLookupError, match="pre-release"):
+            get_latest_github_release("o/r", "prerelease")
+
+    def test_stable_none_found(self, mocker):
+        _resp(mocker, [_rel("rc-5.1.0rc1"), "junk"])
+        with pytest.raises(ReleaseLookupError, match="no stable release found"):
+            get_latest_github_release("o/r", "stable")
+
+    def test_stable_not_a_list(self, mocker):
+        _resp(mocker, {"nope": 1})
+        with pytest.raises(ReleaseLookupError):
+            get_latest_github_release("o/r", "stable")
+
+    def test_network_error(self, mocker):
+        mocker.patch(
+            "remo_cli.core.version.urllib.request.urlopen",
+            side_effect=urllib.error.URLError("down"),
+        )
+        with pytest.raises(ReleaseLookupError, match="down"):
+            get_latest_github_release("o/r", "stable")
+
+    def test_bad_json(self, mocker):
+        r = MagicMock()
+        r.read.return_value = b"<html>"
+        r.__enter__ = lambda s: s
+        r.__exit__ = MagicMock(return_value=False)
+        mocker.patch("remo_cli.core.version.urllib.request.urlopen", return_value=r)
+        with pytest.raises(ReleaseLookupError):
+            get_latest_github_release("o/r", "stable")
+
+    def test_rate_limit_named(self, mocker):
+        hdrs = email.message.Message()
+        hdrs["X-RateLimit-Remaining"] = "0"
+        mocker.patch(
+            "remo_cli.core.version.urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError("u", 403, "Forbidden", hdrs, None),
+        )
+        with pytest.raises(ReleaseLookupError, match="rate limit"):
+            get_latest_github_release("o/r", "stable")
+
+    def test_other_http_error(self, mocker):
+        mocker.patch(
+            "remo_cli.core.version.urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError("u", 404, "Not Found", email.message.Message(), None),
+        )
+        with pytest.raises(ReleaseLookupError, match="404"):
+            get_latest_github_release("o/r", "stable")
+
+
+class TestAlphaBetaOrdering:
+    def test_order(self):
+        a, b, rc, rel = (
+            _parse_version("5.0.0a1"),
+            _parse_version("5.0.0b2"),
+            _parse_version("5.0.0rc1"),
+            _parse_version("5.0.0"),
+        )
+        assert a < b < rc < rel
+
+    def test_newer(self):
+        assert version_is_newer("5.0.0b1", "5.0.0a9")
+        assert not version_is_newer("5.0.0a1", "5.0.0rc1")
+
+
+def _record(channel="stable"):
+    return InstallRecord(
+        repo="o/r", channel=channel, version="1.0.0", installer="uv",
+        extras=(), plugins=(), with_pkg=(), with_url=(), updated_at="2026-01-01T00:00:00Z",
+    )
+
+
+class TestNoticeByOrigin:
+    def _setup(self, mocker, tmp_path, origin, cached="v2.0.0", current="1.0.0", record=None):
+        mocker.patch("remo_cli.core.version.get_current_version", return_value=current)
+        mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
+        mocker.patch("remo_cli.core.version.detect_origin", return_value=origin)
+        mocker.patch(
+            "remo_cli.core.version.load_record",
+            return_value=(record, None),
+        )
+        if cached is not None:
+            name = "latest_version_cache." + (record.channel if record else "stable")
+            (tmp_path / name).write_text(cached)
+
+    def test_recorded(self, mocker, tmp_path):
+        self._setup(mocker, tmp_path, InstallOrigin.RECORDED, record=_record())
+        out = check_for_updates_passive()
+        assert out == "Update available: v1.0.0 → v2.0.0. Run 'remo self-update' to upgrade."
+
+    def test_pypi(self, mocker, tmp_path):
+        self._setup(mocker, tmp_path, InstallOrigin.PYPI)
+        out = check_for_updates_passive()
+        assert out is not None
+        assert "PyPI no longer receives remo releases" in out
+        assert "Switch to the installer once:" in out
+        assert (
+            "curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash"
+            in out
+        )
+        assert "uv tool upgrade" not in out
+
+    def test_source_points_at_the_checkout(self, mocker, tmp_path):
+        self._setup(mocker, tmp_path, InstallOrigin.SOURCE)
+        out = check_for_updates_passive()
+        assert out is not None and "git pull && uv sync" in out
+        assert "uv tool upgrade" not in out
+
+    def test_unknown_points_at_the_installer(self, mocker, tmp_path):
+        self._setup(mocker, tmp_path, InstallOrigin.UNKNOWN)
+        out = check_for_updates_passive()
+        assert out is not None
+        assert "Reinstall with the installer:" in out
+        assert "https://raw.githubusercontent.com/get2knowio/remo/main/install.sh" in out
+        assert "uv tool upgrade" not in out
+
+    @pytest.mark.parametrize(
+        "origin", [InstallOrigin.PYPI, InstallOrigin.SOURCE, InstallOrigin.UNKNOWN]
+    )
+    def test_unrecorded_refresh_uses_github_stable_not_pypi(self, mocker, tmp_path, origin):
+        """A PyPI install will never see a newer version on PyPI (constitution
+        IX), so the refresh asks GitHub for the newest stable release."""
+        self._setup(mocker, tmp_path, origin, cached=None)
+        gh = mocker.patch("remo_cli.core.version.get_latest_github_release", return_value="2.0.0")
+        urlopen = mocker.patch("remo_cli.core.version.urllib.request.urlopen")
+        thread_cls = mocker.patch("remo_cli.core.version.threading.Thread")
+        assert check_for_updates_passive() is None
+        thread_cls.call_args[1]["target"]()
+        gh.assert_called_once_with("get2knowio/remo", "stable")
+        urlopen.assert_not_called()
+        assert (tmp_path / "latest_version_cache.stable").read_text() == "2.0.0"
+
+    def test_pypi_notice_follows_a_github_lookup(self, mocker, tmp_path):
+        """End to end: the GitHub stable lookup feeds the cache, and the next
+        invocation shows the switch-to-installer notice for that version."""
+        self._setup(mocker, tmp_path, InstallOrigin.PYPI, cached=None)
+        mocker.patch("remo_cli.core.version.get_latest_github_release", return_value="3.1.0")
+        thread_cls = mocker.patch("remo_cli.core.version.threading.Thread")
+        assert check_for_updates_passive() is None
+        thread_cls.call_args[1]["target"]()
+        out = check_for_updates_passive()
+        assert out is not None
+        assert out.startswith("Update available: v1.0.0 → v3.1.0. ")
+        assert "PyPI no longer receives remo releases" in out
+
+    def test_pre_031_pypi_cache_is_ignored(self, mocker, tmp_path):
+        """The un-suffixed cache held PyPI lookups; it is no longer read."""
+        self._setup(mocker, tmp_path, InstallOrigin.PYPI, cached=None)
+        mocker.patch("remo_cli.core.version.threading.Thread")
+        (tmp_path / "latest_version_cache").write_text("9.9.9")
+        assert check_for_updates_passive() is None
+
+    def test_recorded_refresh_uses_github_on_record_channel(self, mocker, tmp_path):
+        self._setup(mocker, tmp_path, InstallOrigin.RECORDED, cached=None, record=_record("prerelease"))
+        gh = mocker.patch("remo_cli.core.version.get_latest_github_release", return_value="2.0.0rc1")
+        thread_cls = mocker.patch("remo_cli.core.version.threading.Thread")
+        assert check_for_updates_passive() is None
+        thread_cls.call_args[1]["target"]()
+        gh.assert_called_once_with("o/r", "prerelease")
+        assert (tmp_path / "latest_version_cache.prerelease").read_text() == "2.0.0rc1"
+
+    def test_recorded_refresh_lookup_error_is_swallowed(self, mocker, tmp_path):
+        self._setup(mocker, tmp_path, InstallOrigin.RECORDED, cached=None, record=_record())
+        mocker.patch(
+            "remo_cli.core.version.get_latest_github_release",
+            side_effect=ReleaseLookupError("x"),
+        )
+        thread_cls = mocker.patch("remo_cli.core.version.threading.Thread")
+        check_for_updates_passive()
+        thread_cls.call_args[1]["target"]()
+        assert not (tmp_path / "latest_version_cache.stable").exists()
+
+
+class TestReviewFollowUps:
+    def test_local_segment_does_not_read_as_alpha(self):
+        # the sha's trailing "a27" must not demote a dev build to an alpha
+        assert _parse_version("4.4.0.dev5+g3f9a27") == _parse_version("4.4.0.dev5")
+        assert _parse_version("5.0.0b1+g1a2") == _parse_version("5.0.0b1")
+
+    def test_other_channel_cache_is_not_announced(self, mocker, tmp_path):
+        """A prerelease value left by an earlier channel must not tell a stable
+        install to self-update to it."""
+        mocker.patch("remo_cli.core.version.get_current_version", return_value="1.0.0")
+        mocker.patch("remo_cli.core.version.get_remo_home", return_value=tmp_path)
+        mocker.patch("remo_cli.core.version.detect_origin", return_value=InstallOrigin.RECORDED)
+        mocker.patch("remo_cli.core.version.load_record", return_value=(_record("stable"), None))
+        mocker.patch("remo_cli.core.version.threading.Thread")
+        (tmp_path / "latest_version_cache").write_text("2.0.0")
+        (tmp_path / "latest_version_cache.prerelease").write_text("2.0.0rc1")
+        assert check_for_updates_passive() is None

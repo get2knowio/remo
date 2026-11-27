@@ -15,7 +15,8 @@ name: rc-image
 # produced here (flavor latest=false and no raw `latest` tag), so an rc can
 # never become what docker/compose.example.yml pulls by default.
 #
-# NOTHING here publishes to PyPI or creates a git tag.
+# NOTHING here publishes to PyPI (no remo build ever goes there — constitution
+# IX) or creates a git tag.
 #
 # Trigger:
 #   gh workflow run rc-image.yml -f version=4.4.0rc1                    # ref defaults to rc-4.4.0rc1

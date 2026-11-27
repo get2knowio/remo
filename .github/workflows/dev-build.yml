@@ -4,21 +4,21 @@ name: dev-build
 # difference between them is what the artifact may later become:
 #
 #  1. DEV BUILD (no `version` input) -> `X.Y.Z.dev<run>+g<sha>`.
-#     The PEP 440 *local* segment makes it un-uploadable to PyPI by
-#     construction, so it can never leak — and it can never be promoted either.
+#     The PEP 440 *local* segment (rejected by PyPI and by any public index)
+#     marks it as a throwaway — it can never be promoted to a release.
 #     Validation only. Uploaded as a run artifact (needs `gh` to fetch).
 #
 #  2. RELEASE CANDIDATE (`version=X.Y.ZrcN`) -> that version, verbatim.
 #     NO local segment, because a promotable artifact is the entire point: if
-#     the RC proves out it is published to PyPI as-is rather than rebuilt
-#     (constitution IX, "Promotion MUST publish the identical artifact").
-#     Resolvers skip pre-release versions by default, so it is still invisible
-#     to a plain `uv tool install remo-cli`.
+#     the RC proves out, the identical artifact is what gets released rather
+#     than a rebuild (constitution IX, promote-don't-rebuild).
 #     With `prerelease: true` it is also attached to a GitHub pre-release, so
 #     other machines can install it by URL with no `gh` auth at all.
 #
-# NOTHING here publishes to PyPI. The pre-release tag is `rc-*`, which
-# release.yml (`tags: v*`) deliberately does not match.
+# NOTHING here publishes to PyPI — and nothing anywhere does: remo ships only
+# through GitHub Releases (constitution IX). The pre-release tag is `rc-*`,
+# which release.yml (`tags: v*`, the stable GitHub release + GHCR image)
+# deliberately does not match.
 #
 # A `prerelease=true` run ALSO publishes the remo-web container image for the
 # same version via rc-image.yml — `ghcr.io/<owner>/remo-web:<version>`, never
@@ -38,14 +38,10 @@ name: dev-build
 #   # run artifact (needs gh auth)
 #   gh run download <run-id> -R get2knowio/remo -n remo-wheel -D ./dl
 #   uv tool install --force "remo-cli[web] @ ./dl/remo_cli-<version>-py3-none-any.whl"
-#   # GitHub pre-release (no gh auth)
-#   uv tool install --force "remo-cli[web] @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_cli-<version>-py3-none-any.whl"
-#   # ...with the Hetzner provider plugin, attached to the same pre-release
-#   uv tool install --force "remo-cli[web,hetzner] @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_cli-<version>-py3-none-any.whl" \
-#     --with "remo-provider-hetzner @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_provider_hetzner-<plugin-version>-py3-none-any.whl"
-#   # ...with the EC2 provider plugin (the former built-in `aws`), likewise
-#   uv tool install --force "remo-cli[web,ec2] @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_cli-<version>-py3-none-any.whl" \
-#     --with "remo-provider-ec2 @ https://github.com/get2knowio/remo/releases/download/rc-<version>/remo_provider_ec2-<plugin-version>-py3-none-any.whl"
+#   # GitHub pre-release (no gh auth): the installer reads the release's
+#   # manifest.json and verifies every wheel's sha256 before installing
+#   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --prerelease <version> --with web,ec2
+#   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --prerelease <version> --with hetzner
 #   # revert to the released build
 #   uv tool install remo-cli --force
 
@@ -111,12 +107,12 @@ jobs:
             VERSION="$INPUT_VERSION"
           else
             if [ "$WANT_PRERELEASE" = "true" ]; then
-              echo "::error::prerelease=true needs an explicit version. An auto dev build carries a +g<sha> local segment, which PyPI rejects — it can never be promoted, so publishing it as a release asset would be misleading."
+              echo "::error::prerelease=true needs an explicit version. An auto dev build carries a +g<sha> local segment — it can never be promoted, so publishing it as a release asset would be misleading."
               exit 1
             fi
             CORE=$(grep -m1 '^version = ' pyproject.toml \
               | sed -E 's/version = "([0-9]+\.[0-9]+\.[0-9]+).*"/\1/')
-            # Local segment: unique, and un-uploadable to PyPI by construction.
+            # Local segment: unique, and never promotable by construction.
             VERSION="${CORE}.dev${GITHUB_RUN_NUMBER}+g${SHA}"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -141,9 +137,7 @@ jobs:
         run: scripts/check_plugin_wheels.sh dist
 
       - name: Upload artifact
-        # NOTE: SHA-pin to match the repo's action-pinning convention once the
-        # v4 commit SHA is available (e.g. `@<sha> # v4`).
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: remo-wheel
           path: dist/*
@@ -159,12 +153,13 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write       # build-provenance attestation
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download the built artifact
-        # NOTE: SHA-pin alongside upload-artifact above.
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: remo-wheel
           path: dist
@@ -177,64 +172,60 @@ jobs:
           set -euo pipefail
           TAG="rc-${VERSION}"
           # Hard stop: a v-prefixed tag would trigger release.yml, which
-          # publishes to PyPI and GHCR. This workflow must never do that.
+          # publishes the stable GitHub release and the GHCR `latest` image.
+          # This workflow must never do that.
           case "$TAG" in
             v*) echo "::error::refusing to create tag '$TAG' — it would trigger release.yml"; exit 1 ;;
           esac
           ls -la dist/
-          RELEASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
-          WHEEL_URL="${RELEASE_URL}/remo_cli-${VERSION}-py3-none-any.whl"
-          HETZNER_WHEEL="$(basename "$(ls dist/remo_provider_hetzner-*.whl)")"
-          HETZNER_URL="${RELEASE_URL}/${HETZNER_WHEEL}"
-          EC2_WHEEL="$(basename "$(ls dist/remo_provider_ec2-*.whl)")"
-          EC2_URL="${RELEASE_URL}/${EC2_WHEEL}"
+          # The release carries wheels + manifest.json only (no sdists), at the
+          # built commit — self-update fetches install.sh from this tag.
+          python3 scripts/release_manifest.py generate --dist dist --tag "$TAG" \
+            --channel prerelease --repo "$GITHUB_REPOSITORY" --out dist/manifest.json
+          python3 scripts/release_manifest.py verify --dist dist \
+            --manifest dist/manifest.json --tag "$TAG"
           RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           # Quoted heredoc: the notes contain backticks, which an unquoted one
           # would run as command substitution. Placeholders are filled in after.
           cat > /tmp/notes.md <<'NOTES'
-          Pre-release build for testing. **Not published to PyPI.**
+          Pre-release build for testing. remo is never published to PyPI;
+          GitHub Releases is its only package channel.
 
-          Install on any machine (no `gh` auth needed):
-
-          ```bash
-          uv tool install --force "remo-cli[web] @ __WHEEL_URL__"
-          ```
-
-          With the Hetzner provider (a separate plugin distribution since 4.5.0):
+          Install on any machine (no `gh` auth needed). The installer verifies
+          every wheel against this release's `manifest.json` before installing:
 
           ```bash
-          uv tool install --force "remo-cli[web,hetzner] @ __WHEEL_URL__" \
-            --with "remo-provider-hetzner @ __HETZNER_URL__"
+          curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --prerelease __VERSION__ --with web
           ```
 
-          With the EC2 provider (formerly the built-in `aws`; a separate plugin
-          distribution since 4.5.0 — `remo aws …` still works, with a warning):
+          With a provider plugin (`ec2` and/or `hetzner`; `remo-provider-*` wheels
+          are attached to this release):
 
           ```bash
-          uv tool install --force "remo-cli[web,ec2] @ __WHEEL_URL__" \
-            --with "remo-provider-ec2 @ __EC2_URL__"
+          curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --prerelease __VERSION__ --with web,ec2,hetzner
           ```
 
-          Revert to the released build:
-
-          ```bash
-          uv tool install remo-cli --force
-          ```
+          Later, `remo self-update` moves to the newest pre-release with the same
+          set. Installing again without `--prerelease` returns to the stable channel.
 
           Built from `__SHA__` by [this run](__RUN_URL__).
           NOTES
           sed -i \
-            -e "s|__WHEEL_URL__|${WHEEL_URL}|" \
-            -e "s|__HETZNER_URL__|${HETZNER_URL}|" \
-            -e "s|__EC2_URL__|${EC2_URL}|" \
+            -e "s|__VERSION__|${VERSION}|g" \
             -e "s|__SHA__|${GITHUB_SHA}|" \
             -e "s|__RUN_URL__|${RUN_URL}|" \
             /tmp/notes.md
-          gh release create "$TAG" dist/* \
+          gh release create "$TAG" dist/*.whl dist/manifest.json \
+            --target "$GITHUB_SHA" \
             --title "Release candidate $VERSION" \
             --prerelease \
             --notes-file /tmp/notes.md
           echo "Created pre-release $TAG"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.whl
 
   image:
     # Publishes the container image for the same pre-release version, from the

@@ -330,7 +330,7 @@ def connect_to_host(
                 print_warning(
                     f"Instance '{host.name}' has newer tools (v{remote_version}) "
                     f"than your client (v{local_version}). "
-                    f"Consider: uv tool upgrade remo-cli"
+                    f"Consider: remo self-update"
                 )
 
             if should_update:

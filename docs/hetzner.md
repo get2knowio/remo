@@ -14,9 +14,9 @@ Hetzner support is the `remo-provider-hetzner` plugin, installed with remo's
 `hetzner` extra (remo 4.5.0+; before that it was built in):
 
 ```bash
-# Install remo with the Hetzner provider
-uv tool install "remo-cli[hetzner]"
-# (already installed? add it: uv tool install --force "remo-cli[hetzner]")
+# Install remo with the Hetzner provider (already installed? re-run it: it adds hetzner)
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --with hetzner
 
 # Set your Hetzner API token
 export HETZNER_API_TOKEN=your-hetzner-api-token

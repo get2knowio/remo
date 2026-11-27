@@ -178,6 +178,26 @@ jobs:
       - name: Verify provider-plugin discovery on the built wheels
         run: scripts/check_plugin_wheels.sh dist
 
+      # FR-005: prove, on every PR, that BOTH release shapes (a stable `v` tag
+      # from release.yml and an `rc-` tag from dev-build.yml) would attach a
+      # complete set whose manifest matches the wheels. The cli version is
+      # read from the wheel itself, so the manifest's release == cli-version
+      # rule holds for either tag shape; no relaxation flag exists.
+      - name: Release manifest generates and verifies for both release shapes
+        run: |
+          set -euo pipefail
+          WHEEL="$(basename "$(ls dist/remo_cli-*-py3-none-any.whl)")"
+          VER="${WHEEL#remo_cli-}"
+          VER="${VER%-py3-none-any.whl}"
+          python3 scripts/release_manifest.py generate --dist dist --tag "v${VER}" \
+            --channel stable --repo "$GITHUB_REPOSITORY" --out /tmp/manifest-stable.json
+          python3 scripts/release_manifest.py verify --dist dist \
+            --manifest /tmp/manifest-stable.json --tag "v${VER}"
+          python3 scripts/release_manifest.py generate --dist dist --tag "rc-${VER}" \
+            --channel prerelease --repo "$GITHUB_REPOSITORY" --out /tmp/manifest-rc.json
+          python3 scripts/release_manifest.py verify --dist dist \
+            --manifest /tmp/manifest-rc.json --tag "rc-${VER}"
+
   fish-completion:
     name: Fish completion (real shell)
     runs-on: ubuntu-latest
@@ -252,7 +272,7 @@ jobs:
         run: uv sync --all-extras
 
       - name: Ruff check
-        run: uv run ruff check src/remo_cli
+        run: uv run ruff check src/remo_cli scripts/release_manifest.py
 
       # mypy analyses against python_version = "3.11" from [tool.mypy], so the
       # result is independent of whichever interpreter uv resolves here. The

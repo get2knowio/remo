@@ -2,7 +2,8 @@
 # remo — migration stub
 #
 # If you're seeing this, your git-based remo installation has pulled
-# a version where remo is now distributed as a Python package via PyPI.
+# a version where remo is a Python package, distributed through GitHub
+# Releases and installed by install.sh (remo is never uploaded to PyPI).
 #
 # This stub replaces the old 3910-line bash script and guides you
 # through the migration.
@@ -17,6 +18,7 @@ BLUE='\033[0;34m'
 BOLD='\033[1m'
 NC='\033[0m'
 
+INSTALL_URL="https://raw.githubusercontent.com/get2knowio/remo/main/install.sh"
 OLD_INSTALL_DIR="${HOME}/.remo"
 OLD_SYMLINK="${HOME}/.local/bin/remo"
 CONFIG_DIR="${REMO_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/remo}"
@@ -29,11 +31,11 @@ print_warning() { echo -e "${YELLOW}$1${NC}"; }
 show_migration_banner() {
     echo ""
     echo -e "${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}║${NC}  ${YELLOW}remo has moved to PyPI!${NC}                                    ${BOLD}║${NC}"
+    echo -e "${BOLD}║${NC}  ${YELLOW}remo has a new installer!${NC}                                  ${BOLD}║${NC}"
     echo -e "${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  The bash-based remo CLI has been rewritten in Python and is"
-    echo "  now distributed as a package on PyPI (remo-cli)."
+    echo "  The bash-based remo CLI has been rewritten in Python (remo-cli)."
+    echo "  It is installed from GitHub Releases by a one-line installer."
     echo ""
     echo "  Your existing configuration in ${CONFIG_DIR}/"
     echo "  (known_hosts, settings) is fully compatible — nothing is lost."
@@ -43,19 +45,16 @@ show_migration_banner() {
 show_manual_instructions() {
     echo -e "${BOLD}To migrate manually:${NC}"
     echo ""
-    echo "  1. Install uv (if you don't have it):"
-    echo "     curl -LsSf https://astral.sh/uv/install.sh | sh"
-    echo ""
-    echo "  2. Remove the old symlink:"
+    echo "  1. Remove the old symlink:"
     echo "     rm -f ${OLD_SYMLINK}"
     echo ""
-    echo "  3. Install remo from PyPI:"
-    echo "     uv tool install remo-cli"
+    echo "  2. Install remo with the installer (it sets up uv if needed):"
+    echo "     curl -fsSL ${INSTALL_URL} | bash"
     echo ""
-    echo "  4. Clean up the old git-based install:"
+    echo "  3. Clean up the old git-based install:"
     echo "     rm -rf ${OLD_INSTALL_DIR}"
     echo ""
-    echo "  5. Verify:"
+    echo "  4. Verify:"
     echo "     remo --version"
     echo ""
 }
@@ -64,7 +63,7 @@ do_migrate() {
     print_info "Starting migration..."
     echo ""
 
-    # Remove old symlink so uv can place its own
+    # Remove old symlink so the installer can place its own
     if [ -L "${OLD_SYMLINK}" ]; then
         print_info "Removing old symlink ${OLD_SYMLINK}..."
         rm -f "${OLD_SYMLINK}"
@@ -73,9 +72,9 @@ do_migrate() {
         rm -f "${OLD_SYMLINK}"
     fi
 
-    # Install via uv
-    print_info "Installing remo-cli from PyPI..."
-    if uv tool install remo-cli; then
+    # Install via the release installer (GitHub Releases, sha256-verified)
+    print_info "Installing remo-cli with ${INSTALL_URL}..."
+    if curl -fsSL "${INSTALL_URL}" | bash; then
         echo ""
         print_success "=============================================="
         print_success "  Migration successful!"
@@ -91,8 +90,8 @@ do_migrate() {
         echo ""
         exit 0
     else
-        print_error "uv tool install failed."
-        echo "  Try running manually: uv tool install remo-cli"
+        print_error "The installer failed."
+        echo "  Try running manually: curl -fsSL ${INSTALL_URL} | bash"
         exit 1
     fi
 }
@@ -100,11 +99,11 @@ do_migrate() {
 main() {
     show_migration_banner
 
-    # Check if uv is available and offer auto-migration
-    if command -v uv &>/dev/null; then
-        print_info "Detected uv on your system."
+    # The installer is fetched with curl; offer auto-migration when it is here
+    if command -v curl &>/dev/null; then
+        print_info "Detected curl on your system."
         echo ""
-        read -r -p "  Migrate now with 'uv tool install remo-cli'? [Y/n] " answer
+        read -r -p "  Migrate now with the installer (curl -fsSL ${INSTALL_URL} | bash)? [Y/n] " answer
         case "${answer:-Y}" in
             [Yy]|"")
                 do_migrate
@@ -115,7 +114,7 @@ main() {
                 ;;
         esac
     else
-        print_warning "uv is not installed."
+        print_warning "curl is not installed."
         echo ""
         show_manual_instructions
     fi
