@@ -217,6 +217,23 @@ def test_add_success_shape_modes_and_default_name(host: Host, tmp_path: Path) ->
     assert list(host.index.parent.glob(".projects.tsv.*")) == []
 
 
+def test_add_expands_a_leading_tilde_host_side(host: Host) -> None:
+    code = host.home / "code" / "tilde proj"
+    code.mkdir(parents=True)
+    result = host.host("projects", "add", "--path", "~/code/tilde proj", "--json")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["path"] == str(code)
+    bare = host.host("projects", "add", "--path", "~", "--name", "homedir", "--json")
+    assert bare.returncode == 0, bare.stderr
+    assert json.loads(bare.stdout)["path"] == str(host.home)
+
+
+def test_add_does_not_expand_a_tilde_that_is_not_leading(host: Host) -> None:
+    result = host.host("projects", "add", "--path", "/nowhere/~/x", "--json")
+    assert result.returncode == 3
+    assert "no such directory: /nowhere/~/x" in result.stderr
+
+
 def test_add_with_name_and_trailing_slash(host: Host, tmp_path: Path) -> None:
     (tmp_path / "w").mkdir()
     result = host.host("projects", "add", "--path", f"{tmp_path}/w/", "--name", "wk", "--json")

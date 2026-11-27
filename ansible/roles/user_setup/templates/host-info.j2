@@ -1,0 +1,3 @@
+host_kind={{ 'local' if (remo_local_install | default(false) | bool) else 'remote' }}
+menu_command=1
+installed_by={{ remo_version | default('') }}

@@ -14,6 +14,7 @@ from remo_cli.core.known_hosts import get_known_hosts, save_known_host
 from remo_cli.core.remo_host_client import RemoHostCommandError, SshTransportError
 from remo_cli.models.host import KnownHost
 from remo_cli.providers import local
+from remo_cli.providers import projects as projects_mod
 from tests.conftest import seed_registry
 
 LOCAL = KnownHost("local", "local", "localhost", "paul", access_mode="direct")
@@ -292,7 +293,7 @@ class TestProjectVerbs:
 
     def test_add_sends_the_local_prefix_and_an_absolute_path(self, host_ready, mocker, tmp_path):
         run = mocker.patch.object(
-            local, "run_remo_host_json",
+            projects_mod, "run_remo_host_json",
             return_value={"name": "a", "path": "/x/a", "status": "ok"},
         )
         local.add_project("rel/a", "a")
@@ -304,7 +305,7 @@ class TestProjectVerbs:
 
     def test_remove_and_list(self, host_ready, mocker):
         run = mocker.patch.object(
-            local, "run_remo_host_json",
+            projects_mod, "run_remo_host_json",
             side_effect=[{"name": "a", "removed": True}, {"projects": [{"name": "a"}]}],
         )
         local.remove_project("a")
@@ -315,7 +316,7 @@ class TestProjectVerbs:
 
     def test_exit_3_becomes_a_precondition_error_with_the_hosts_message(self, host_ready, mocker):
         mocker.patch.object(
-            local, "run_remo_host_json",
+            projects_mod, "run_remo_host_json",
             side_effect=RemoHostCommandError(
                 3, "project 'a' already exists at /x/a — use --name to pick another\n",
                 verb="projects add",
@@ -325,25 +326,25 @@ class TestProjectVerbs:
             local.add_project("/x/a")
 
     def test_other_failures_are_operation_failures(self, host_ready, mocker):
-        mocker.patch.object(local, "run_remo_host_json", side_effect=SshTransportError("boom"))
+        mocker.patch.object(projects_mod, "run_remo_host_json", side_effect=SshTransportError("boom"))
         with pytest.raises(OperationFailedError):
             local.list_projects()
         mocker.patch.object(
-            local, "run_remo_host_json",
+            projects_mod, "run_remo_host_json",
             side_effect=RemoHostCommandError(1, "bad", verb="projects list"),
         )
         with pytest.raises(OperationFailedError):
             local.list_projects()
 
     def test_setup_not_completed_is_refused(self, home, tmp_config_dir, mocker):
-        run = mocker.patch.object(local, "run_remo_host_json")
+        run = mocker.patch.object(projects_mod, "run_remo_host_json")
         with pytest.raises(PreconditionError, match="remo local setup"):
             local.list_projects()
         run.assert_not_called()
 
     def test_scripts_missing_is_refused(self, home, tmp_config_dir, mocker):
         seed_registry(tmp_config_dir, [LOCAL])  # registered, scripts absent
-        run = mocker.patch.object(local, "run_remo_host_json")
+        run = mocker.patch.object(projects_mod, "run_remo_host_json")
         with pytest.raises(PreconditionError, match="remo local setup"):
             local.add_project("/x/a")
         run.assert_not_called()
@@ -511,3 +512,120 @@ def test_setup_preserves_a_hand_edited_second_local_entry(ready, tmp_config_dir)
     local.setup(name="work")
     names = sorted(h.name for h in get_known_hosts() if h.type == "local")
     assert names == ["work", "zz-extra"]
+
+
+# --- spec 030: tool PATH, old-session note, host-info signature -----------------------
+
+
+class TestToolPath:
+    def test_dirs_of_detected_tools_deduplicated_in_order(self, ready, monkeypatch):
+        found = {
+            "zellij": "/opt/homebrew/bin/zellij",
+            "fzf": "/opt/homebrew/bin/fzf",
+            "git": "/usr/bin/git",
+            "docker": "/Applications/Docker/bin/docker",
+        }
+        monkeypatch.setattr(local.shutil, "which", lambda t, *a, **k: found.get(t))
+        monkeypatch.setattr(local.os.path, "isdir", lambda d: d == "/usr/local/bin")
+        local.setup()
+        value = _play_vars(ready.call_args.args[1])["remo_local_path"]
+        assert value == (
+            "/opt/homebrew/bin:/usr/bin:/Applications/Docker/bin:/b:/usr/local/bin"
+        )
+
+    def test_nothing_detected_is_empty(self, ready, monkeypatch):
+        monkeypatch.setattr(local.shutil, "which", lambda *a, **k: None)
+        monkeypatch.setattr(local.os.path, "isdir", lambda d: False)
+        local.setup()
+        assert _play_vars(ready.call_args.args[1])["remo_local_path"] == "/b"
+
+
+class TestOldSessionNote:
+    def _setup(self, ready, monkeypatch, system, result=None, exc=None):
+        monkeypatch.setattr(local.platform, "system", lambda: system)
+        seen = {}
+
+        def fake_run(argv, **kw):
+            seen["argv"], seen["env"], seen["timeout"] = argv, kw.get("env"), kw.get("timeout")
+            if exc:
+                raise exc
+            return result
+
+        monkeypatch.setattr(local.subprocess, "run", fake_run)
+        return seen
+
+    def _res(self, rc=0, out=""):
+        import subprocess
+
+        return subprocess.CompletedProcess([], rc, out, "")
+
+    def test_sessions_found_prints_the_note_without_the_pinned_dir(self, ready, monkeypatch, capsys):
+        monkeypatch.setenv("ZELLIJ_SOCKET_DIR", "/pinned")
+        seen = self._setup(ready, monkeypatch, "Darwin", self._res(out="a\nb\n"))
+        local.setup()
+        out = capsys.readouterr().out
+        assert "2 sessions started before this upgrade are still running outside" in out
+        assert "zellij attach NAME" in out
+        assert seen["argv"] == ["zellij", "list-sessions", "--no-formatting"]
+        assert "ZELLIJ_SOCKET_DIR" not in seen["env"] and seen["timeout"] == 5
+
+    def test_singular(self, ready, monkeypatch, capsys):
+        self._setup(ready, monkeypatch, "Darwin", self._res(out="only\n"))
+        local.setup()
+        assert "1 session started before this upgrade is still running" in capsys.readouterr().out
+
+    def test_exited_sessions_are_not_counted(self, ready, monkeypatch, capsys):
+        out = (
+            "live [Created 1h ago]\n"
+            "gone [Created 2d ago] (EXITED - attach to resurrect)\n"
+        )
+        self._setup(ready, monkeypatch, "Darwin", self._res(out=out))
+        local.setup()
+        assert "1 session started before this upgrade is still running" in capsys.readouterr().out
+
+    def test_only_exited_sessions_is_silent(self, ready, monkeypatch, capsys):
+        out = "gone [Created 2d ago] (EXITED - attach to resurrect)\n"
+        self._setup(ready, monkeypatch, "Darwin", self._res(out=out))
+        local.setup()
+        assert "started before this upgrade" not in capsys.readouterr().out
+
+    def test_none_is_silent(self, ready, monkeypatch, capsys):
+        self._setup(ready, monkeypatch, "Darwin", self._res(out="\n"))
+        local.setup()
+        assert "started before this upgrade" not in capsys.readouterr().out
+
+    @pytest.mark.parametrize("exc", [FileNotFoundError("zellij"), OSError("x")])
+    def test_error_is_silent(self, ready, monkeypatch, capsys, exc):
+        self._setup(ready, monkeypatch, "Darwin", exc=exc)
+        local.setup()
+        assert "started before this upgrade" not in capsys.readouterr().out
+
+    def test_timeout_is_silent(self, ready, monkeypatch, capsys):
+        import subprocess
+
+        self._setup(ready, monkeypatch, "Darwin", exc=subprocess.TimeoutExpired("zellij", 5))
+        local.setup()
+        assert "started before this upgrade" not in capsys.readouterr().out
+
+    def test_nonzero_is_silent(self, ready, monkeypatch, capsys):
+        self._setup(ready, monkeypatch, "Darwin", self._res(rc=1, out="a\n"))
+        local.setup()
+        assert "started before this upgrade" not in capsys.readouterr().out
+
+    def test_non_darwin_never_runs_zellij(self, ready, monkeypatch):
+        seen = self._setup(ready, monkeypatch, "Linux", self._res(out="a\n"))
+        local.setup()
+        assert "argv" not in seen
+
+
+def test_a_changed_host_info_makes_setup_report_a_change(ready, home):
+    local.setup()
+
+    def rewrite_host_info(*a, **k):
+        info = home / ".local" / "state" / "remo" / "host-info"
+        info.parent.mkdir(parents=True, exist_ok=True)
+        info.write_text("host_kind=local\nmenu_command=1\ninstalled_by=NEW\n")
+        return 0
+
+    ready.side_effect = rewrite_host_info
+    assert local.setup().changed is True

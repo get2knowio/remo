@@ -51,6 +51,9 @@ REMO_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/remo-lib.sh"
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
+# One session directory on macOS and the tool PATH recorded at setup (spec 030).
+remo_pin_session_dir || exit 1
+remo_load_local_path
 
 PROJECT=""
 DETACH=false

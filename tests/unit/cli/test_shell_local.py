@@ -10,6 +10,7 @@ from click.testing import CliRunner
 
 from remo_cli.cli.shell import shell
 from remo_cli.core.errors import PreconditionError
+from remo_cli.core.ssh import PROBE_COMMAND
 from remo_cli.models.host import KnownHost
 from tests.conftest import seed_registry
 
@@ -136,7 +137,7 @@ class TestVersionCheck:
         result = runner.invoke(shell, ["local"])
         assert result.exit_code == 0, result.output
         probe = checked.call_args_list[0]
-        assert probe.args[0] == [BASH, "-c", "cat ~/.remo-version 2>/dev/null"]
+        assert probe.args[0] == [BASH, "-c", PROBE_COMMAND]
 
     def test_older_marker_offers_local_setup_and_runs_it(self, runner, checked, mocker):
         checked.side_effect = [

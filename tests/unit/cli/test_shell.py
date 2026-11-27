@@ -9,6 +9,13 @@ from remo_cli.cli.shell import shell
 from remo_cli.models.host import KnownHost
 
 
+
+def _probe(version, error=None, info=None):
+    from remo_cli.core.ssh import HostToolsProbe
+    from remo_cli.models.host_info import HostInfo
+
+    return HostToolsProbe(version, error, info or HostInfo())
+
 @pytest.fixture
 def runner():
     return CliRunner()
@@ -41,7 +48,7 @@ class TestShellVersionCheck:
     @pytest.mark.usefixtures("_patch_shell_deps")
     def test_no_update_check_skips_version_check(self, runner, mocker):
         """--no-update-check skips the remote version check entirely."""
-        mock_check = mocker.patch("remo_cli.core.ssh.check_remote_version")
+        mock_check = mocker.patch("remo_cli.core.ssh.probe_host_tools")
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
 
         result = runner.invoke(shell, ["--no-update-check"])
@@ -53,7 +60,7 @@ class TestShellVersionCheck:
     def test_equal_versions_proceeds_silently(self, runner, mocker):
         """When remote and local versions match, no prompt is shown."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm")
 
         result = runner.invoke(shell, [])
@@ -66,7 +73,7 @@ class TestShellVersionCheck:
         """When remote is behind local, user is prompted to update, naming
         the exact `remo <type> upgrade <name>` command that will run (SC-003)."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
 
         result = runner.invoke(shell, [])
@@ -82,7 +89,7 @@ class TestShellVersionCheck:
     def test_remote_behind_update_accepted(self, runner, mocker):
         """When user accepts update, provider update_entry is called."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         mocker.patch("remo_cli.core.output.confirm", return_value=True)
         mock_update_entry = mocker.patch("remo_fixture_provider.provider.update_entry")
 
@@ -97,7 +104,7 @@ class TestShellVersionCheck:
         from remo_cli.core.errors import OperationFailedError
 
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         # First confirm() = "Update?" → True; second = "Connect anyway?" → True
         mock_confirm = mocker.patch(
             "remo_cli.core.output.confirm", side_effect=[True, True]
@@ -121,7 +128,7 @@ class TestShellVersionCheck:
         from remo_cli.core.errors import OperationFailedError
 
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         # First confirm() = "Update?" → True; second = "Connect anyway?" → False
         mocker.patch("remo_cli.core.output.confirm", side_effect=[True, False])
         mocker.patch(
@@ -139,7 +146,7 @@ class TestShellVersionCheck:
     def test_remote_ahead_shows_warning(self, runner, mocker):
         """When remote is ahead of local, a warning is shown."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.9.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.9.0", None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm")
 
         result = runner.invoke(shell, [])
@@ -154,7 +161,7 @@ class TestShellVersionCheck:
         """When remote has no version marker, user is prompted to update,
         naming the exact `remo <type> upgrade <name>` command (SC-003)."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=(None, None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe(None, None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
 
         result = runner.invoke(shell, [])
@@ -175,7 +182,7 @@ class TestShellVersionCheck:
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=incus_host)
         mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", return_value=incus_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
 
         result = runner.invoke(shell, [])
@@ -200,7 +207,7 @@ class TestShellVersionCheck:
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=incus_host)
         mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", return_value=incus_host)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         mock_confirm = mocker.patch("remo_cli.core.output.confirm", return_value=False)
 
         result = runner.invoke(shell, [])
@@ -214,8 +221,8 @@ class TestShellVersionCheck:
         """When SSH itself fails, the user is warned and not prompted to update."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
         mocker.patch(
-            "remo_cli.core.ssh.check_remote_version",
-            return_value=(None, "Host key verification failed."),
+            "remo_cli.core.ssh.probe_host_tools",
+            return_value=_probe(None, "Host key verification failed."),
         )
         mock_confirm = mocker.patch("remo_cli.core.output.confirm")
         mock_shell_connect = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -229,15 +236,19 @@ class TestShellVersionCheck:
         mock_shell_connect.assert_called_once()
 
     @pytest.mark.usefixtures("_patch_shell_deps")
-    def test_unknown_local_version_skips_check(self, runner, mocker):
-        """When local version is unknown, skip the version check."""
+    def test_unknown_local_version_skips_comparison_but_still_probes(self, runner, mocker):
+        """Unknown local version: no version prompt, but the probe still runs (spec 030)."""
         mocker.patch("remo_cli.core.version.get_current_version", return_value="unknown")
-        mock_check = mocker.patch("remo_cli.core.ssh.check_remote_version")
+        mock_check = mocker.patch(
+            "remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.1.0")
+        )
+        mock_confirm = mocker.patch("remo_cli.core.output.confirm")
 
         result = runner.invoke(shell, [])
 
         assert result.exit_code == 0
-        mock_check.assert_not_called()
+        mock_check.assert_called_once()
+        mock_confirm.assert_not_called()
 
 
 class TestShellPreConnectHookFailure:
@@ -592,7 +603,7 @@ class TestShellFlowCharacterization:
 
         def _check(host):
             order.append("version-check")
-            return ("0.8.0", None)
+            return _probe("0.8.0", None)
 
         def _connect(*args, **kwargs):
             order.append("connect")
@@ -600,7 +611,7 @@ class TestShellFlowCharacterization:
         mocker.patch("remo_cli.core.ssh.resolve_remo_host", side_effect=_resolve)
         mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", side_effect=_autostart)
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.8.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", side_effect=_check)
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", side_effect=_check)
         connect = mocker.patch("remo_cli.core.ssh.shell_connect", side_effect=_connect)
         return order, connect, started_host
 
@@ -762,6 +773,7 @@ class TestTabRecordedOnlyOnAttempt:
         # CliRunner's stdin has no fileno; the tty save/restore is not under test.
         mocker.patch("remo_cli.core.ssh.sys")
         mocker.patch("remo_cli.core.ssh.termios.tcgetattr", return_value=None)
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe(None))
         run = mocker.patch("remo_cli.core.ssh.subprocess.run")
         key = derive_tab_key(
             detect_tab_identity({"KITTY_WINDOW_ID": "7"}), tab_records.get_secret()
@@ -812,7 +824,7 @@ class TestTabRecordedOnlyOnAttempt:
 
         key, run = tab
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         mocker.patch(
             "remo_cli.cli.shell._run_tools_upgrade", side_effect=OperationFailedError("boom")
         )
@@ -829,7 +841,7 @@ class TestTabRecordedOnlyOnAttempt:
 
         key, run = tab
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         mocker.patch("remo_cli.core.output.confirm", return_value=False)
         result = runner.invoke(shell, ["-p", "A"])
         assert result.exit_code == 0, result.output

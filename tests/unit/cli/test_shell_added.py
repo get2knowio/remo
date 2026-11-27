@@ -17,6 +17,13 @@ from remo_cli.cli.shell import shell
 from remo_cli.models.host import KnownHost
 
 
+
+def _probe(version, error=None, info=None):
+    from remo_cli.core.ssh import HostToolsProbe
+    from remo_cli.models.host_info import HostInfo
+
+    return HostToolsProbe(version, error, info or HostInfo())
+
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
@@ -58,7 +65,7 @@ def test_unconfigured_ssh_host_connects_without_prompting(runner, mocker) -> Non
         "remo_cli.core.version.get_current_version", return_value="2.2.0"
     )
     check = mocker.patch(
-        "remo_cli.core.ssh.check_remote_version", return_value=(None, None)
+        "remo_cli.core.ssh.probe_host_tools", return_value=_probe(None, None)
     )
     upgrade = mocker.patch("remo_cli.cli.shell._run_tools_upgrade")
     connect = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -88,7 +95,7 @@ def test_stale_configured_ssh_host_is_offered_remo_configure(runner, mocker) -> 
         "remo_cli.core.version.get_current_version", return_value="4.3.4"
     )
     mocker.patch(
-        "remo_cli.core.ssh.check_remote_version", return_value=("4.3.2", None)
+        "remo_cli.core.ssh.probe_host_tools", return_value=_probe("4.3.2", None)
     )
     upgrade = mocker.patch("remo_cli.cli.shell._run_tools_upgrade")
     connect = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -113,7 +120,7 @@ def test_ssh_host_ahead_of_client_warns_like_any_other(runner, mocker) -> None:
         "remo_cli.core.version.get_current_version", return_value="4.3.2"
     )
     mocker.patch(
-        "remo_cli.core.ssh.check_remote_version", return_value=("4.3.4", None)
+        "remo_cli.core.ssh.probe_host_tools", return_value=_probe("4.3.4", None)
     )
     upgrade = mocker.patch("remo_cli.cli.shell._run_tools_upgrade")
     connect = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -137,7 +144,7 @@ def test_managed_host_still_runs_version_check(runner, mocker) -> None:
         "remo_cli.core.version.get_current_version", return_value="2.2.0"
     )
     check = mocker.patch(
-        "remo_cli.core.ssh.check_remote_version", return_value=("2.2.0", None)
+        "remo_cli.core.ssh.probe_host_tools", return_value=_probe("2.2.0", None)
     )
     mocker.patch("remo_cli.core.version.version_is_newer", return_value=False)
     connect = mocker.patch("remo_cli.core.ssh.shell_connect")
@@ -147,3 +154,106 @@ def test_managed_host_still_runs_version_check(runner, mocker) -> None:
     assert result.exit_code == 0
     check.assert_called_once()
     connect.assert_called_once()
+
+
+# --- spec 030: probe-driven menu gate and locally managed hosts ---------------------
+
+
+def _wire(mocker, probe, version="2.2.0"):
+    mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=_ssh_host())
+    mocker.patch("remo_cli.core.ssh.run_pre_connect_hook", side_effect=lambda h: h)
+    mocker.patch("remo_cli.core.version.get_current_version", return_value=version)
+    mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=probe)
+    upgrade = mocker.patch("remo_cli.cli.shell._run_tools_upgrade")
+    confirm = mocker.patch("remo_cli.core.output.confirm", return_value=True)
+    connect = mocker.patch("remo_cli.core.ssh.shell_connect")
+    return upgrade, confirm, connect
+
+
+def _info(**kw):
+    from remo_cli.models.host_info import HostInfo
+
+    return HostInfo(**kw)
+
+
+def test_probe_reporting_menu_command_gates_the_explicit_menu(runner, mocker) -> None:
+    _, _, connect = _wire(mocker, _probe("2.2.0", info=_info(host_kind="remote", menu_command=True)))
+    assert runner.invoke(shell, ["mybox"]).exit_code == 0
+    assert connect.call_args.kwargs["menu_command"] is True
+
+
+def test_probe_without_menu_command_keeps_the_plain_login(runner, mocker) -> None:
+    _, _, connect = _wire(mocker, _probe("2.2.0"))
+    assert runner.invoke(shell, ["mybox"]).exit_code == 0
+    assert connect.call_args.kwargs["menu_command"] is False
+
+
+def test_probe_error_means_no_explicit_menu(runner, mocker) -> None:
+    from remo_cli.core.ssh import HostToolsProbe
+
+    _, _, connect = _wire(mocker, HostToolsProbe(error="SSH timed out after 15s"))
+    assert runner.invoke(shell, ["mybox"]).exit_code == 0
+    assert connect.call_args.kwargs["menu_command"] is False
+
+
+def test_no_update_check_skips_the_probe_and_the_menu_command(runner, mocker) -> None:
+    _, _, connect = _wire(mocker, _probe("2.2.0", info=_info(menu_command=True)))
+    probe = mocker.patch("remo_cli.core.ssh.probe_host_tools")
+    assert runner.invoke(shell, ["mybox", "--no-update-check"]).exit_code == 0
+    probe.assert_not_called()
+    assert connect.call_args.kwargs["menu_command"] is False
+
+
+def test_unknown_local_version_still_gets_the_menu_command(runner, mocker) -> None:
+    upgrade, confirm, connect = _wire(
+        mocker, _probe("1.0.0", info=_info(menu_command=True)), version="unknown"
+    )
+    assert runner.invoke(shell, ["mybox"]).exit_code == 0
+    assert connect.call_args.kwargs["menu_command"] is True
+    confirm.assert_not_called()
+    upgrade.assert_not_called()
+
+
+def test_locally_managed_older_host_is_not_offered_configure(runner, mocker) -> None:
+    upgrade, confirm, connect = _wire(
+        mocker, _probe("2.0.0", info=_info(host_kind="local", menu_command=True))
+    )
+    result = runner.invoke(shell, ["mybox"])
+    assert result.exit_code == 0
+    confirm.assert_not_called()
+    upgrade.assert_not_called()
+    assert "remo local setup (run it on that machine)" in result.output
+    assert "remo configure" not in result.output
+    connect.assert_called_once()
+
+
+def test_locally_managed_host_without_marker_text_is_not_offered_configure(runner, mocker) -> None:
+    # A marker-less host cannot carry host-info, so the kind comes from a probe
+    # that has a version; with a marker-less probe it is simply the plain case.
+    from remo_cli.core.ssh import HostToolsProbe
+
+    upgrade, confirm, _ = _wire(
+        mocker, HostToolsProbe(None, None, _info(host_kind="local"))
+    )
+    mocker.patch("remo_cli.core.ssh.resolve_remo_host", return_value=_ssh_host())
+    result = runner.invoke(shell, ["mybox"])
+    assert result.exit_code == 0
+    confirm.assert_not_called()
+    upgrade.assert_not_called()
+
+
+def test_remote_kind_newer_than_client_is_unaffected(runner, mocker) -> None:
+    upgrade, confirm, _ = _wire(
+        mocker, _probe("9.0.0", info=_info(host_kind="local"))
+    )
+    result = runner.invoke(shell, ["mybox"])
+    assert "newer tools" in result.output
+    upgrade.assert_not_called()
+
+
+def test_remote_managed_older_host_still_gets_the_prompt(runner, mocker) -> None:
+    upgrade, confirm, _ = _wire(mocker, _probe("2.0.0", info=_info(host_kind="remote")))
+    result = runner.invoke(shell, ["mybox"])
+    assert result.exit_code == 0
+    confirm.assert_called_once()
+    upgrade.assert_called_once()

@@ -53,6 +53,16 @@ def _reachable(mocker):
     )
 
 
+@pytest.fixture(autouse=True)
+def _probe(mocker):
+    """The spec-030 host-kind probe; default to "plain host", overridden below."""
+    from remo_cli.core.ssh import HostToolsProbe
+
+    return mocker.patch(
+        "remo_cli.providers.added.probe_host_tools", return_value=HostToolsProbe("1.0.0")
+    )
+
+
 @pytest.fixture
 def run_playbook(mocker):
     mocker.patch(
@@ -283,3 +293,37 @@ class TestIdentityEnvFallback:
         with pytest.raises(PreconditionError, match="REMO_SSH_IDENTITY_FILE"):
             providers_added.configure(name="mbp", assume_yes=True)
         run_playbook.assert_not_called()
+
+
+class TestLocallyManagedHost:
+    def test_refused_before_any_prompt_or_playbook(self, mocker, run_playbook, _probe):
+        from remo_cli.core.ssh import HostToolsProbe
+        from remo_cli.models.host_info import HostInfo
+
+        _probe.return_value = HostToolsProbe("5.0.0", None, HostInfo(host_kind="local"))
+        confirm = mocker.patch("remo_cli.providers.added.confirm")
+        _register()
+
+        with pytest.raises(PreconditionError, match="remo local setup") as exc:
+            providers_added.configure(name="mbp")
+
+        assert "Nothing was changed" in str(exc.value)
+        confirm.assert_not_called()
+        run_playbook.assert_not_called()
+
+    def test_probe_failure_continues_as_today(self, run_playbook, _probe):
+        from remo_cli.core.ssh import HostToolsProbe
+
+        _probe.return_value = HostToolsProbe(error="SSH timed out after 15s")
+        _register()
+        providers_added.configure(name="mbp", assume_yes=True)
+        run_playbook.assert_called_once()
+
+    def test_remote_kind_continues(self, run_playbook, _probe):
+        from remo_cli.core.ssh import HostToolsProbe
+        from remo_cli.models.host_info import HostInfo
+
+        _probe.return_value = HostToolsProbe("5.0.0", None, HostInfo(host_kind="remote"))
+        _register()
+        providers_added.configure(name="mbp", assume_yes=True)
+        run_playbook.assert_called_once()

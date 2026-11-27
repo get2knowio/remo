@@ -49,7 +49,8 @@ core = get_ansible_dir()
 for name in ("local_setup.yml",
              "roles/user_setup/tasks/host_scripts.yml",
              "roles/user_setup/templates/remo-lib.sh.j2",
-             "roles/user_setup/templates/remo-session-shell.sh.j2"):
+             "roles/user_setup/templates/remo-session-shell.sh.j2",
+             "roles/user_setup/templates/host-info.j2"):
     assert (core / name).is_file(), f"{name} missing from the remo-cli wheel ({core})"
 print(f"OK: local-host playbook and templates are in the wheel ({core})")
 EOF

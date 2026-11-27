@@ -203,7 +203,9 @@ All platforms give you the same dev workflow and tooling described below.
 
 **This machine**: no VM or SSH server needed — `remo local setup` turns the
 laptop you are on into a host, and `remo local add PATH` adds the checkouts
-you already have, in place. See [docs/local.md](docs/local.md).
+you already have, in place. Reach it from another workstation with `remo add`
+and manage any host's project list with `remo projects`. See
+[docs/local.md](docs/local.md).
 
 **SSM connector (any host, no inbound ports)**: for a host that isn't AWS at
 all — a Proxmox/Incus box behind home NAT, or an isolated server you'd

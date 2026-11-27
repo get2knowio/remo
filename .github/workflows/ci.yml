@@ -235,6 +235,9 @@ jobs:
           tests/unit/test_project_launch_tab_record.py
           tests/unit/test_project_launch_exec_status.py
           tests/unit/test_zellij_socket_dir.py
+          tests/unit/test_session_dir_pin.py
+          tests/unit/test_host_info.py
+          tests/unit/test_bashrc_menu_hook.py
           tests/unit/test_local_setup_playbook.py
 
   lint:

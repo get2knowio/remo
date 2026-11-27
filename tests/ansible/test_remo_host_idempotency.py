@@ -82,7 +82,7 @@ def test_main_yml_includes_host_scripts_and_no_longer_renders_them() -> None:
 def test_every_host_script_task_omits_owner_for_a_local_install() -> None:
     """No sudo, no remo user locally: owner/group vanish when remo_local_install."""
     for task in _load_tasks():
-        args = task[TEMPLATE_MODULE]
+        args = task.get(TEMPLATE_MODULE) or task["ansible.builtin.file"]
         for key in ("owner", "group"):
             assert "omit if (remo_local_install | default(false) | bool) else remo_user" in args[key]
 

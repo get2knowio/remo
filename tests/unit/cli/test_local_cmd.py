@@ -29,15 +29,24 @@ class TestSetupCommand:
         )
         assert result.exit_code == 0, result.output
         setup.assert_called_once_with(
-            name="work", projects_dir="/p", assume_yes=True, verbose=True
+            name="work", projects_dir="/p", assume_yes=True, verbose=True, ssh_resume=None
         )
 
     def test_defaults(self, runner, mocker):
         setup = mocker.patch.object(provider, "setup")
         runner.invoke(local, ["setup"])
         setup.assert_called_once_with(
-            name=None, projects_dir=None, assume_yes=False, verbose=False
+            name=None, projects_dir=None, assume_yes=False, verbose=False, ssh_resume=None
         )
+
+    @pytest.mark.parametrize(
+        "flag,expected", [("--allow-ssh-resume", True), ("--no-allow-ssh-resume", False)]
+    )
+    def test_ssh_resume_flag_is_tri_state(self, runner, mocker, flag, expected):
+        setup = mocker.patch.object(provider, "setup")
+        result = runner.invoke(local, ["setup", flag])
+        assert result.exit_code == 0, result.output
+        assert setup.call_args.kwargs["ssh_resume"] is expected
 
     def test_empty_projects_dir_clears(self, runner, mocker):
         setup = mocker.patch.object(provider, "setup")

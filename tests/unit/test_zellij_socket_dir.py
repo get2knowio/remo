@@ -51,6 +51,15 @@ ZELLIJ_SCRIPTS = [
 
 BASH = shutil.which("bash")
 
+#: A line that runs the zellij command (as a word in command position, or
+#: through `command -v`), as opposed to one that merely names a path such as
+#: remo-lib's session directory ``…/remo/zellij``.
+_ZELLIJ_CALL = re.compile(r"(?:^|[\s;&|(`])zellij(?=\s|$|\))")
+
+
+def _invokes_zellij(line: str) -> bool:
+    return not line.lstrip().startswith("#") and bool(_ZELLIJ_CALL.search(line))
+
 
 def _source(name: str) -> str:
     return (TEMPLATES / name).read_text(encoding="utf-8")
@@ -85,7 +94,7 @@ class TestEveryZellijScriptNormalises:
         calls = [
             i
             for i, ln in enumerate(lines)
-            if "zellij" in ln and not ln.lstrip().startswith("#")
+            if _invokes_zellij(ln)
         ]
         assert calls, f"{name} is listed as invoking zellij but never does"
         assert export_at < min(calls), (
@@ -99,7 +108,7 @@ class TestEveryZellijScriptNormalises:
             p.name
             for p in sorted(TEMPLATES.glob("*.j2"))
             if any(
-                "zellij" in ln and not ln.lstrip().startswith("#")
+                _invokes_zellij(ln)
                 for ln in p.read_text(encoding="utf-8").splitlines()
             )
         }

@@ -60,3 +60,21 @@
     owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
     group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
     mode: '0755'
+
+# Spec 030: the host-info record the pre-connect probe reads (host kind, whether
+# the explicit menu command is supported). State directory is remo's own, 0700.
+- name: Ensure the remo state directory exists
+  ansible.builtin.file:
+    path: "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/state/remo"
+    state: directory
+    owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    mode: '0700'
+
+- name: Install host-info record
+  ansible.builtin.template:
+    src: host-info.j2
+    dest: "{{ remo_scripts_home | default('/home/' ~ remo_user) }}/.local/state/remo/host-info"
+    owner: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    group: "{{ omit if (remo_local_install | default(false) | bool) else remo_user }}"
+    mode: '0644'

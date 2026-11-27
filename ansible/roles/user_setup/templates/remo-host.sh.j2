@@ -60,6 +60,9 @@ REMO_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/remo-lib.sh"
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
+# One session directory on macOS and the tool PATH recorded at setup (spec 030).
+remo_pin_session_dir || exit 1
+remo_load_local_path
 DEVCONTAINER_BIN="{{ devcontainer_cli_bin }}"
 
 # Runtimes whose `up` accepts --remove-existing-container, which `projects
@@ -118,7 +121,7 @@ get_host_tools_version() {
 # capabilities --json
 # ---------------------------------------------------------------------------
 cmd_capabilities() {
-    local version zellij_bool docker_bool rebuild_op
+    local version zellij_bool docker_bool rebuild_op host_kind host_kind_json
     version="$(get_host_tools_version)"
     zellij_bool="false"
     docker_bool="false"
@@ -136,13 +139,23 @@ cmd_capabilities() {
         rebuild_op=',"projects.rebuild"'
     fi
 
-    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach","sessions.lookup","host.stats","projects.clone","projects.delete"%s,"projects.add","projects.remove","projects.list","jobs.status"],"zellij":%s,"docker":%s}\n' \
+    # Additive (spec 030): the host-info record's host_kind, omitted when the
+    # record or the key is absent or holds anything but local/remote.
+    host_kind_json=""
+    host_kind="$(sed -n 's/^host_kind=//p' "$HOME/.local/state/remo/host-info" 2>/dev/null | head -n 1)"
+    host_kind="${host_kind%$'\r'}"
+    case "$host_kind" in
+        local | remote) host_kind_json=",\"host_kind\":\"$host_kind\"" ;;
+    esac
+
+    printf '{"protocol_version":%d,"host_tools_version":"%s","projects_root":"%s","operations":["capabilities","sessions.list","sessions.attach","sessions.lookup","host.stats","projects.clone","projects.delete"%s,"projects.add","projects.remove","projects.list","jobs.status"],"zellij":%s,"docker":%s%s}\n' \
         "$PROTOCOL_VERSION" \
         "$(json_escape "$version")" \
         "$(json_escape "$PROJECTS_DIR")" \
         "$rebuild_op" \
         "$zellij_bool" \
-        "$docker_bool"
+        "$docker_bool" \
+        "$host_kind_json"
 }
 
 # ---------------------------------------------------------------------------
@@ -961,6 +974,12 @@ cmd_projects_add() {
         echo "remo-host: projects add: --path PATH is required" >&2
         exit 2
     fi
+
+    # The client quotes PATH, so a leading ~ reaches us unexpanded (spec 030 R8).
+    case "$path" in
+        "~") path="$HOME" ;;
+        "~/"*) path="$HOME/${path#"~/"}" ;;
+    esac
 
     local rc=0
     remo_project_add "$path" "$name" || rc=$?

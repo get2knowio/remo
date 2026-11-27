@@ -26,6 +26,7 @@ class RemoteCapability:
     operations: list[str] = field(default_factory=list)
     zellij: bool = False
     docker: bool = False
+    host_kind: str | None = None
 
     # ------------------------------------------------------------------
     # Deserialization
@@ -52,6 +53,10 @@ class RemoteCapability:
                 f"expected a positive int, got {protocol_version!r}"
             )
 
+        host_kind = data.get("host_kind")
+        if host_kind not in ("local", "remote"):
+            host_kind = None
+
         return cls(
             protocol_version=protocol_version,
             host_tools_version=str(data.get("host_tools_version", "")),
@@ -59,4 +64,5 @@ class RemoteCapability:
             operations=list(data.get("operations", []) or []),
             zellij=bool(data.get("zellij", False)),
             docker=bool(data.get("docker", False)),
+            host_kind=host_kind,
         )

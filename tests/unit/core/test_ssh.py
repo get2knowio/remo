@@ -439,7 +439,9 @@ class TestCheckRemoteVersion:
 
         # Verify SSH command includes cat ~/.remo-version
         call_args = mock_run.call_args[0][0]
-        assert "cat ~/.remo-version 2>/dev/null" in call_args
+        from remo_cli.core.ssh import PROBE_COMMAND
+
+        assert PROBE_COMMAND in call_args
         # And uses BatchMode so it can't hang on host-key/auth prompts
         assert "BatchMode=yes" in call_args
 
