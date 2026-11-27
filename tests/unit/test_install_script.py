@@ -37,9 +37,14 @@ DEV_BUILD_YML = REPO_ROOT / ".github" / "workflows" / "dev-build.yml"
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+")
 
 
-def _hosts(texts) -> set[str]:
-    """Hostnames of every URL in ``texts``: compare hosts exactly, never by substring."""
-    return {urlparse(u).hostname or "" for t in texts for u in _URL_RE.findall(t)}
+def _uses_host(texts, host: str) -> bool:
+    """Whether any URL in ``texts`` has exactly ``host`` as its hostname.
+
+    Hosts are parsed and compared for equality, never matched by substring.
+    """
+    return any(
+        urlparse(u).hostname == host for t in texts for u in _URL_RE.findall(t)
+    )
 
 BASH = shutil.which("bash")
 pytestmark = pytest.mark.skipif(BASH is None, reason="bash not available")
@@ -357,7 +362,7 @@ class TestReleaseRouting:
     def test_bare_prerelease_resolves_newest_rc_through_the_api(self, sandbox, fake_path) -> None:
         r = sandbox.run("--prerelease", "--with", "ec2", path=fake_path(uv=True))
         assert r.returncode == 0, r.stderr
-        assert "api.github.com" in _hosts(sandbox.urls())
+        assert _uses_host(sandbox.urls(), "api.github.com")
         assert f"{RC_URL}/manifest.json" in sandbox.urls()
         assert _local(sandbox.installs()[0][3]) == WHL_CLI_RC
 
@@ -420,7 +425,7 @@ class TestReleaseRouting:
         fx.make_release(sandbox.root, "rc-9.9.9rc1", foreign_url=True)
         r = sandbox.run("--prerelease", "9.9.9rc1", path=fake_path(uv=True))
         assert r.returncode == 1
-        assert "evil.example.com" in _hosts([r.stderr]) or "outside" in r.stderr
+        assert _uses_host([r.stderr], "evil.example.com") or "outside" in r.stderr
         assert sandbox.installs() == []
 
     def test_manifest_for_another_tag_is_refused(self, sandbox, fake_path) -> None:
@@ -537,7 +542,7 @@ class TestStableRouting:
     def test_pypi_is_never_consulted(self, sandbox, fake_path) -> None:
         r = sandbox.run("--with", "ec2", path=fake_path(uv=True))
         assert r.returncode == 0, r.stderr
-        assert "pypi.org" not in _hosts(sandbox.urls())
+        assert not _uses_host(sandbox.urls(), "pypi.org")
         for call in sandbox.calls("uv"):
             assert not any(re.match(r"remo-cli(==|$)", a) for a in call), call
 
@@ -1162,7 +1167,7 @@ class TestReleaseStillBeingPublished:
     def test_a_working_latest_needs_no_api_call(self, sandbox, fake_path) -> None:
         r = sandbox.run(path=fake_path(uv=True))
         assert r.returncode == 0, r.stderr
-        assert not any("api.github.com" in u for u in sandbox.urls())
+        assert not _uses_host(sandbox.urls(), "api.github.com")
 
     def test_no_stable_release_with_a_manifest_fails_clearly(self, sandbox, fake_path) -> None:
         shutil.rmtree(sandbox.root / "latest")
@@ -1208,7 +1213,7 @@ class TestReleaseStillBeingPublished:
         r = sandbox.run(*args, path=fake_path(uv=True))
         assert r.returncode == 1
         assert tag in r.stderr
-        assert not any("api.github.com" in u for u in sandbox.urls())
+        assert not _uses_host(sandbox.urls(), "api.github.com")
         assert sandbox.installs() == []
 
     def test_bare_prerelease_skips_one_still_being_published(self, sandbox, fake_path) -> None:
