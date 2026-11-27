@@ -62,6 +62,13 @@ class TestPinSessionDir:
         assert r.stdout == str(_session_dir(tmp_path))
         assert oct(_session_dir(tmp_path).stat().st_mode & 0o777) == "0o700"
 
+    def test_darwin_creates_remo_state_dir_private(self, tmp_path):
+        """The pin can be the first thing to create ~/.local/state/remo (before
+        the project index); that directory must still come out 0700."""
+        r = _run(tmp_path, "remo_pin_session_dir", system="Darwin")
+        assert r.returncode == 0, r.stderr
+        assert oct(_session_dir(tmp_path).parent.stat().st_mode & 0o777) == "0o700"
+
     def test_darwin_second_call_is_a_no_op(self, tmp_path):
         r = _run(tmp_path, "remo_pin_session_dir; remo_pin_session_dir; echo ok", system="Darwin")
         assert r.returncode == 0 and r.stdout.strip() == "ok"

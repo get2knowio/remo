@@ -297,7 +297,7 @@ remo_pin_session_dir() {
         # Two remo scripts can get here at once on first use (the console's
         # discovery calls, a second tab): losing the mkdir race is fine, the
         # owner/mode check below still applies to whatever directory won.
-        mkdir -p "$HOME/.local/state/remo" 2>/dev/null
+        mkdir -p -m 0700 "$HOME/.local/state/remo" 2>/dev/null
         mkdir -m 0700 "$dir" 2>/dev/null || [[ -d "$dir" ]] || {
             echo "remo: cannot create the session directory $dir" >&2
             return 1
