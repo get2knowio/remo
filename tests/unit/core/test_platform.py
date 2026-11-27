@@ -43,7 +43,7 @@ class TestUnsupportedPlatformMessage:
     def test_gives_an_actionable_remedy(self) -> None:
         assert "WSL2" in UNSUPPORTED_PLATFORM_MESSAGE
         assert "wsl --install" in UNSUPPORTED_PLATFORM_MESSAGE
-        assert "uv tool install remo-cli" in UNSUPPORTED_PLATFORM_MESSAGE
+        assert "https://raw.githubusercontent.com/get2knowio/remo/main/install.sh" in UNSUPPORTED_PLATFORM_MESSAGE
         assert WSL_DOCS_URL in UNSUPPORTED_PLATFORM_MESSAGE
 
     def test_is_prefixed_like_every_other_cli_error(self) -> None:

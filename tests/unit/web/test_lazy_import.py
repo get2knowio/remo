@@ -10,7 +10,7 @@ Covers T023 from specs/010-web-session-interface/tasks.md:
   proves the boundary regardless of whether the `web` extra happens to be
   installed in the environment running the suite.
 - `remo web serve` / `remo web check`, invoked without the `web` extra
-  installed, exit non-zero with the `pip install "remo-cli[web]"` hint in
+  installed, exit non-zero with the installer `--with web` hint in
   their output and never a raw traceback.
 """
 
@@ -116,7 +116,7 @@ class TestWebCommandsWithoutExtra:
         result = CliRunner().invoke(cli, ["web", "serve"])
 
         assert result.exit_code != 0
-        assert 'pip install "remo-cli[web]"' in result.output
+        assert "install.sh | bash -s -- --with web" in result.output
         assert "Traceback" not in result.output
 
     def test_check_without_extra_prints_install_hint_not_traceback(self):
@@ -125,5 +125,5 @@ class TestWebCommandsWithoutExtra:
         result = CliRunner().invoke(cli, ["web", "check"])
 
         assert result.exit_code != 0
-        assert 'pip install "remo-cli[web]"' in result.output
+        assert "install.sh | bash -s -- --with web" in result.output
         assert "Traceback" not in result.output

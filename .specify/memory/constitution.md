@@ -1,4 +1,10 @@
 <!--
+  Amendment 2026-11-27 (spec 031, PATCH): Version 2.1.0 → 2.1.1. Principle IX
+  wording only: GitHub Releases is the artifact source for every release
+  (stable and RC, installed by install.sh from the release manifest); PyPI
+  receives only final remo-cli releases, as a secondary channel; RCs still never
+  reach PyPI. No rule is loosened.
+
   Sync Impact Report
   ===================
   Version change: 2.0.1 → 2.1.0 (MINOR)
@@ -332,7 +338,11 @@ and diagrams drift fastest.
 
 PyPI MUST receive only final, working releases. Every build that is not a
 final release MUST reach its testers through an off-index channel, and MUST be
-exercised there before any upload is considered.
+exercised there before any upload is considered. GitHub Releases is the artifact
+source for every release, stable and RC alike: each carries its wheels and a
+`manifest.json`, and `install.sh` installs from those verified files. PyPI is a
+secondary channel carrying only the final remo-cli wheel (never a plugin, never
+an RC).
 
 **Rules:**
 
@@ -450,7 +460,9 @@ the index physically refuses.
   construction. That local segment MUST NOT be removed to "make the wheel
   publishable" — republishing means cutting a real tag.
 - The PyPI publish step MUST be reachable only from a pushed `v*` tag, and MUST
-  run behind the tests it gates.
+  run behind the tests it gates. It uploads the wheel the release build already
+  produced (the same file attached to the GitHub release), never a rebuild, and
+  only `remo-cli`: plugin wheels are GitHub Release assets.
 
 ### Ansible (`ansible/`)
 
@@ -597,4 +609,4 @@ is the defect.
 (current tree, commands, recent changes). They elaborate this constitution;
 they never override it.
 
-**Version**: 2.1.0 | **Ratified**: 2026-01-06 | **Last Amended**: 2026-08-29
+**Version**: 2.1.1 | **Ratified**: 2026-01-06 | **Last Amended**: 2026-11-27

@@ -40,7 +40,7 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Source: `.specify/memory/constitution.md` (v2.1.0). Mark each row PASS / N/A /
+Source: `.specify/memory/constitution.md` (v2.1.1). Mark each row PASS / N/A /
 VIOLATION. Any VIOLATION must be justified in Complexity Tracking below.
 
 | # | Principle | Check for this feature |

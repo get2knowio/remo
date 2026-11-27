@@ -31,8 +31,11 @@ Releases run through GitHub Actions in **two lanes**:
 - **Stable releases** are automated by **release-please**. It watches
   Conventional Commits on `main` and maintains a "release PR" that bumps the
   version in `pyproject.toml` and updates `CHANGELOG.md`. **Merging that PR**
-  creates the `vX.Y.Z` tag + GitHub release, which triggers `release.yml` to
-  publish to PyPI and GHCR. You never bump the version or tag a stable release by
+  creates the `vX.Y.Z` tag + GitHub release, which triggers `release.yml`. One
+  build produces the wheels (remo-cli plus every plugin) and `manifest.json`;
+  those are attached to the GitHub release and attested. **The GitHub release
+  assets are the release.** The identical remo-cli wheel is then uploaded to PyPI
+  as a secondary channel (plugins are never on PyPI), and the image goes to GHCR. You never bump the version or tag a stable release by
   hand.
 - **Pre-releases (RC/beta)** are **manual** — release-please stays out of them,
   and by default they do **not** go to PyPI (Constitution IX). Dispatch
@@ -42,12 +45,13 @@ Releases run through GitHub Actions in **two lanes**:
   gh workflow run dev-build.yml -f version=X.Y.ZrcN -f prerelease=true
   ```
 
-  That attaches the wheel to a GitHub pre-release tagged **`rc-X.Y.ZrcN`**, which
-  installs anywhere with no `gh` auth and no index:
+  That attaches the wheels and `manifest.json` (the same artifact set a stable
+  release carries) to a GitHub pre-release tagged **`rc-X.Y.ZrcN`**, which
+  installs anywhere with no `gh` auth and no index, plugins included via `--with`:
 
   ```bash
   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
-    | bash -s -- --prerelease X.Y.ZrcN
+    | bash -s -- --prerelease X.Y.ZrcN --with ec2,web
   ```
 
   Nothing is committed and no version is reserved on PyPI. Publishing an RC *to*
@@ -121,7 +125,8 @@ gh workflow run dev-build.yml -f version=2.3.0rc1 -f prerelease=true
 # add -f image=true for ghcr.io/get2knowio/remo-web:2.3.0rc1 (never `latest`)
 ```
 
-Testers install it by version, with no `gh` auth:
+Testers install it by version, with no `gh` auth (add `--with ec2,hetzner,web` to
+exercise the plugins and the console):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
@@ -193,6 +198,8 @@ Users install the stable release with:
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 ```
 
+See [docs/install.md](docs/install.md) for `--with`, pre-releases and `remo self-update`.
+
 > **One-time setup — publish trigger:** the tag release-please creates must be
 > authored by a token that can trigger workflows, or `release.yml` (PyPI +
 > Docker) won't fire (a tag made with the default `GITHUB_TOKEN` does **not**
@@ -237,9 +244,8 @@ We use [Semantic Versioning](https://semver.org/):
 |----------|---------|---------|
 | `provision.yml` | Manual | Provision Hetzner server |
 | `teardown.yml` | Manual | Teardown Hetzner server |
-| `sync-install.yml` | Push to main | Sync install.sh to docs/ for GitHub Pages |
 | `release-please.yml` | Push to main | Maintain the stable release PR (version bump + CHANGELOG); tag on merge |
-| `release.yml` | Tag push (`v*`) | GitHub release + publish to PyPI and GHCR (stable or prerelease) |
+| `release.yml` | Tag push (`v*`) | Build once; GitHub release (wheels + `manifest.json`, attested); remo-cli to PyPI (secondary); image to GHCR |
 
 ## Updating the Installer
 
@@ -250,7 +256,10 @@ https://raw.githubusercontent.com/get2knowio/remo/main/install.sh
 ```
 
 There is no publish step and no second copy to keep in sync — a merge to
-`main` *is* the deploy. Note the URL is pinned to `main`, not to a tag: users
+`main` *is* the deploy. The installer is also served from each release tag
+(`https://raw.githubusercontent.com/get2knowio/remo/<tag>/install.sh`):
+`remo self-update` runs the installer of the release it is moving to, so the
+installer always matches that release's manifest format. Note the URL is pinned to `main`, not to a tag: users
 should always get the current installer, and pinning a *release* is what the
 script's own `--version` flag is for.
 
@@ -282,5 +291,8 @@ remo incus destroy test-container --yes --host <incus-host>
 
 ```bash
 # Test the latest pre-release
-curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --pre-release
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --prerelease --with ec2,web
 ```
+
+`uv run pytest tests/unit/test_install_script.py` drives the real script against a
+fake GitHub (fixtures built by `tests/unit/install_fixtures.py`).

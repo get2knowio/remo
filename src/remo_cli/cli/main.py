@@ -303,6 +303,7 @@ def _register_commands() -> None:
     from remo_cli.cli.web import web  # noqa: F811
     from remo_cli.cli.connector import connector  # noqa: F811
     from remo_cli.cli.plugins import providers  # noqa: F811
+    from remo_cli.cli.self_update import self_update  # noqa: F811
     from remo_cli.core.provider_registry import all_descriptors  # noqa: F811
 
     cli.add_command(shell)
@@ -322,6 +323,7 @@ def _register_commands() -> None:
     cli.add_command(web)
     cli.add_command(connector)
     cli.add_command(providers)
+    cli.add_command(self_update)
 
 
 _register_commands()

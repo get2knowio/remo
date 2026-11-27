@@ -6,9 +6,11 @@ import json
 import re
 import threading
 import time
+import urllib.error
 import urllib.request
 
 from remo_cli.core.config import get_remo_home
+from remo_cli.core.install_record import InstallOrigin, detect_origin, load_record
 
 # PyPI JSON API for version checks
 _PYPI_URL = "https://pypi.org/pypi/remo-cli/json"
@@ -17,11 +19,31 @@ _PYPI_URL = "https://pypi.org/pypi/remo-cli/json"
 # optional pre-release suffix (rc/beta/alpha/dev + number)
 _SEMVER_RE = re.compile(
     r"v?(\d+)\.(\d+)\.(\d+)"
-    r"(?:[.-]?(?:rc|beta|alpha|dev)\.?(\d+))?"
+    r"(?:[.-]?(?:rc|beta|alpha|dev|a|b)\.?(\d+))?"
 )
 
 # Pre-release indicators (PEP 440 formats used by PyPI)
 _PRERELEASE_MARKERS = ("rc", "beta", "alpha", "dev")
+
+# The short PEP 440 forms (5.0.0a1, 5.0.0b2), which a substring test for a
+# bare "a"/"b" would over-match.
+_SHORT_PRERELEASE_RE = re.compile(r"\d(?:a|b)\d")
+
+
+def _is_prerelease(version: str) -> bool:
+    return any(marker in version for marker in _PRERELEASE_MARKERS) or bool(
+        _SHORT_PRERELEASE_RE.search(version)
+    )
+
+_GITHUB_API = "https://api.github.com/repos"
+
+_SWITCH_ONE_LINER = (
+    "curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash"
+)
+
+
+class ReleaseLookupError(Exception):
+    """The newest GitHub release could not be determined (network, rate limit, shape)."""
 
 
 def _parse_version(tag: str) -> tuple[int, int, int, int]:
@@ -33,12 +55,18 @@ def _parse_version(tag: str) -> tuple[int, int, int, int]:
     m = _SEMVER_RE.match(tag.strip())
     if not m:
         return (0, 0, 0, 0)
-    return (
-        int(m.group(1)),
-        int(m.group(2)),
-        int(m.group(3)),
-        int(m.group(4)) if m.group(4) else 999999,
-    )
+    if not m.group(4):
+        pre = 999999
+    else:
+        # rc/dev keep their bare number; alpha and beta are offset below zero
+        # so a < b < rc < final without changing the tuple's shape.
+        pre = int(m.group(4))
+        # Searched in the matched release text only: a dev build's local
+        # segment (``4.4.0.dev5+g3f9a27``) would otherwise read as an alpha.
+        kind = re.search(r"(alpha|beta|a|b)(?=\.?\d+$)", m.group(0))
+        if kind:
+            pre -= 2_000_000 if kind.group(1) in ("a", "alpha") else 1_000_000
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3)), pre)
 
 
 # ------------------------------------------------------------------
@@ -83,13 +111,56 @@ def get_latest_release(include_prerelease: bool = False) -> str:
     if not include_prerelease:
         all_versions = [
             v for v in all_versions
-            if not any(marker in v for marker in _PRERELEASE_MARKERS)
+            if not _is_prerelease(v)
         ]
 
     if not all_versions:
         return ""
 
     return max(all_versions, key=_parse_version)
+
+
+def _github_json(url: str) -> object:
+    req = urllib.request.Request(
+        url,
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "remo-cli"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403 and exc.headers and exc.headers.get("X-RateLimit-Remaining") == "0":
+            raise ReleaseLookupError(
+                "GitHub rate limit exceeded (60 unauthenticated requests/hour); try again later"
+            ) from exc
+        raise ReleaseLookupError(f"GitHub returned HTTP {exc.code} for {url}") from exc
+    except (urllib.error.URLError, OSError) as exc:
+        raise ReleaseLookupError(f"could not reach GitHub: {exc}") from exc
+    except ValueError as exc:
+        raise ReleaseLookupError(f"unexpected response from GitHub: {exc}") from exc
+
+
+def get_latest_github_release(repo: str, channel: str) -> str:
+    """Newest release version on *channel* (``stable`` or ``prerelease``).
+
+    Stable tracks ``v<ver>`` releases, prerelease the newest ``rc-<ver>``
+    pre-release. Raises :class:`ReleaseLookupError` rather than returning empty,
+    so self-update can name the cause.
+    """
+    if channel == "stable":
+        data = _github_json(f"{_GITHUB_API}/{repo}/releases/latest")
+        tag = data.get("tag_name") if isinstance(data, dict) else None
+        if not isinstance(tag, str) or not tag:
+            raise ReleaseLookupError(f"no latest release found for {repo}")
+        return tag.removeprefix("v")
+
+    data = _github_json(f"{_GITHUB_API}/{repo}/releases?per_page=20")
+    if isinstance(data, list):
+        for rel in data:
+            tag = rel.get("tag_name") if isinstance(rel, dict) else None
+            if isinstance(tag, str) and tag.startswith("rc-") and rel.get("prerelease"):
+                return tag.removeprefix("rc-")
+    raise ReleaseLookupError(f"no pre-release found for {repo}")
 
 
 def version_is_newer(candidate: str, current: str) -> bool:
@@ -119,10 +190,23 @@ def check_for_updates_passive() -> str | None:
             return None
 
         # Detect pre-release track
-        include_prerelease = any(marker in current for marker in _PRERELEASE_MARKERS)
+        include_prerelease = _is_prerelease(current)
+
+        origin = detect_origin()
+        record, _ = load_record() if origin is InstallOrigin.RECORDED else (None, None)
+        if record is not None:
+            include_prerelease = record.channel == "prerelease"
 
         remo_home = get_remo_home()
-        cache_file = remo_home / "latest_version_cache"
+        # A recorded install caches per channel: a value looked up on PyPI or
+        # on the other channel would announce an update `remo self-update`
+        # then cannot find, for up to a day after a channel switch.
+        cache_name = (
+            "latest_version_cache"
+            if record is None
+            else f"latest_version_cache.{record.channel}"
+        )
+        cache_file = remo_home / cache_name
         cache_ttl = 86400  # 24 hours
 
         # Check cache freshness
@@ -142,16 +226,21 @@ def check_for_updates_passive() -> str | None:
                     return None
 
                 if cached_clean and version_is_newer(cached_clean, current):
-                    return (
-                        f"Update available: v{current} \u2192 v{cached_clean}. "
-                        f"Run 'uv tool upgrade remo-cli' to upgrade."
-                    )
+                    head = f"Update available: v{current} \u2192 v{cached_clean}. "
+                    if record is not None:
+                        return head + "Run 'remo self-update' to upgrade."
+                    if origin is InstallOrigin.PYPI:
+                        return head + f"Switch to the installer once: {_SWITCH_ONE_LINER}"
+                    return head + "Run 'uv tool upgrade remo-cli' to upgrade."
                 return None
 
         # Cache is stale or missing — refresh in background
         def _refresh_cache() -> None:
             try:
-                latest = get_latest_release(include_prerelease)
+                if record is not None:
+                    latest = get_latest_github_release(record.repo, record.channel)
+                else:
+                    latest = get_latest_release(include_prerelease)
                 if latest:
                     remo_home.mkdir(parents=True, exist_ok=True)
                     cache_file.write_text(latest)

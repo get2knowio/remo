@@ -336,8 +336,10 @@ def get_provider(type_name: str) -> ModuleType:
             # introduces that extra; descriptor.sdk_extra itself is left unchanged.
             raise MissingDependencyError(
                 f"{descriptor.display_name} support requires the '{descriptor.sdk_extra}' extra. "
-                f"Install it with: uv sync --extra {descriptor.sdk_extra} "
-                f"(or: pip install 'remo-cli[{descriptor.sdk_extra}]')"
+                "Install it with: curl -fsSL "
+                "https://raw.githubusercontent.com/get2knowio/remo/main/install.sh "
+                f"| bash -s -- --with {descriptor.sdk_extra} "
+                f"(from a source checkout: uv sync --extra {descriptor.sdk_extra})"
             ) from exc
         raise
     _MODULE_CACHE[type_name] = module

@@ -66,6 +66,10 @@ def _resolve_remo_home() -> Path:
     return Path.home() / ".config" / "remo"
 
 
+#: Public name for the pure resolver (used by core/install_record.py).
+resolve_remo_home = _resolve_remo_home
+
+
 def get_remo_home() -> Path:
     """Return the remo config directory path.
 

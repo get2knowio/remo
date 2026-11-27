@@ -16,9 +16,9 @@ provider; see [Upgrading from the built-in `aws` provider](#upgrading-from-the-b
 ## Quick Start
 
 ```bash
-# Install remo with the EC2 provider
-uv tool install "remo-cli[ec2]"
-# (already installed? add it: uv tool install --force "remo-cli[ec2]")
+# Install remo with the EC2 provider (already installed? re-run it: it adds ec2)
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --with ec2
 
 # Configure AWS credentials (choose one method)
 aws configure                  # Interactive setup (stores in ~/.aws/)
@@ -405,9 +405,8 @@ Create a default VPC in the AWS Console: VPC → Your VPCs → Actions → Creat
 Spot instances can be interrupted by AWS. Your EBS data is preserved. Run `remo ec2 create --spot` again.
 
 **boto3 not found?**
-`boto3` is installed automatically as part of the `remo-cli` package; reinstall
-or upgrade the package (e.g. `uv tool install --force remo-cli` or `pip install
---upgrade remo-cli`) to restore it.
+`boto3` is a dependency of the EC2 plugin (`remo-provider-ec2`), not of remo-cli.
+Install the plugin to get it: `curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --with ec2`.
 
 **SSM agent not coming online?**
 The SSM agent may take 2-5 minutes to register after instance launch. Ensure the IAM instance profile has the `AmazonSSMManagedInstanceCore` policy and the instance has outbound HTTPS access.
@@ -420,7 +419,7 @@ Install the AWS Session Manager Plugin. On macOS: `brew install --cask session-m
 remo 4.5.0 moved AWS out of remo-cli (it no longer installs boto3 for every
 user) and renamed the provider type `aws` → `ec2`.
 
-- **Install the plugin.** `uv tool install --force "remo-cli[ec2]"`. Without
+- **Install the plugin.** `curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --with ec2`. Without
   it, remo keeps your `aws` registry entries untouched (with a warning) but
   cannot manage or connect to them.
 - **Registry entries migrate by themselves.** With the plugin installed, an

@@ -225,8 +225,8 @@ installed, or its hosts are left out of the console (the registry keeps them).
 Hetzner and AWS EC2 ship this way: `plugins/hetzner` and `plugins/ec2` are
 the `remo-provider-hetzner` and `remo-provider-ec2` distributions, uv
 workspace members of remo's repository, each with its own version, wheel,
-entry point and test suite, installed by `remo-cli[hetzner]` /
-`remo-cli[ec2]`.
+entry point and test suite, installed by the installer's `--with hetzner` / `--with ec2` (see
+[install.md](install.md)); they ship as GitHub release assets, not on PyPI.
 It gets nothing a third-party plugin cannot: it is discovered through the same
 entry point, its type is an off-union string to the web console (the console
 keeps its colour through a hand-written map), and `REMO_DISABLE_PROVIDER_PLUGINS=1`

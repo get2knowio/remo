@@ -96,6 +96,7 @@ class TestSubcommandRegistration:
         "local",
         "projects",
         "providers",
+        "self-update",
     ]
 
     @staticmethod

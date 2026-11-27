@@ -34,21 +34,26 @@ jobs:
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} pytest --tb=short -q
 
-  release:
+  build:
+    # ONE build feeds both the GitHub release and PyPI (specs/031-install-path
+    # R1): the wheels attached to the release are the very files remo-cli's
+    # PyPI upload is taken from, and the first-party plugin wheels are built
+    # here too so the release carries the complete set the installer needs.
     needs: test
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     outputs:
-      # Consumed by publish-image to decide whether this tag may move the
-      # `latest` image tag (pre-releases must not).
+      tag: ${{ steps.tag.outputs.tag }}
+      # Consumed by release/publish-image: pre-releases must not move the
+      # `latest` image tag, and decide the manifest channel.
       is_prerelease: ${{ steps.prerelease.outputs.is_prerelease }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
       - name: Get tag name
         id: tag
@@ -81,11 +86,57 @@ jobs:
             echo "This is a stable release"
           fi
 
+      - name: Build wheels + sdists
+        run: uv build --all-packages -o dist
+
+      - name: Verify provider-plugin discovery on the built wheels
+        run: scripts/check_plugin_wheels.sh dist
+
+      - name: Generate and verify the release manifest
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          # A `v` tag is always the stable channel as far as the manifest and
+          # installer are concerned (RCs are `rc-` tags, made by dev-build.yml);
+          # the GitHub pre-release label above is independent of that.
+          python3 scripts/release_manifest.py generate --dist dist --tag "$TAG" \
+            --channel stable --repo "$GITHUB_REPOSITORY" --out dist/manifest.json
+          python3 scripts/release_manifest.py verify --dist dist \
+            --manifest dist/manifest.json --tag "$TAG"
+
+      - name: Upload the build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-dist
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  release:
+    needs: [test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write       # build-provenance attestation
+      attestations: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Download the build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
+
       - name: Get previous tag
         id: prev_tag
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
-          IS_PRE="${{ steps.prerelease.outputs.is_prerelease }}"
+          TAG="${{ needs.build.outputs.tag }}"
+          IS_PRE="${{ needs.build.outputs.is_prerelease }}"
 
           if [ "$IS_PRE" == "true" ]; then
             # Pre-release: compare against immediately previous tag
@@ -109,7 +160,7 @@ jobs:
       - name: Generate release notes
         id: notes
         run: |
-          TAG="${{ steps.tag.outputs.tag }}"
+          TAG="${{ needs.build.outputs.tag }}"
           PREV_TAG="${{ steps.prev_tag.outputs.prev_tag }}"
           VERSION="${TAG#v}"
 
@@ -118,30 +169,33 @@ jobs:
           ## Installation
 
           ```bash
-          # Run directly (no install needed)
-          uvx remo-cli
-
-          # Or install globally
-          uv tool install remo-cli
-          pip install remo-cli
+          curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
+          # with the web console and a provider plugin:
+          curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --with web,ec2
           ```
+
+          The wheels and `manifest.json` attached below are the release; the
+          installer verifies each wheel's sha256 against the manifest.
           HEADER
 
           # Add pre-release note if applicable
-          if [ "${{ steps.prerelease.outputs.is_prerelease }}" == "true" ]; then
+          if [ "${{ needs.build.outputs.is_prerelease }}" == "true" ]; then
             cat >> release_notes.md << PRERELEASE
 
           > **Note:** This is a pre-release version for testing. Install with:
           > \`\`\`bash
           > uv tool install remo-cli==${VERSION}
           > \`\`\`
+          > A \`v\`-tagged pre-release is the exceptional PyPI lane (release skill,
+          > outcome D). \`install.sh --prerelease\` reads only \`rc-\` pre-releases,
+          > so it cannot install this one.
           PRERELEASE
           fi
 
           # Add changes section
           echo "" >> release_notes.md
 
-          if [ "${{ steps.prerelease.outputs.is_prerelease }}" == "true" ] && [ -n "$PREV_TAG" ]; then
+          if [ "${{ needs.build.outputs.is_prerelease }}" == "true" ] && [ -n "$PREV_TAG" ]; then
             # Pre-release: list commits since previous tag
             echo "## Changes" >> release_notes.md
             echo "" >> release_notes.md
@@ -149,7 +203,7 @@ jobs:
             echo "" >> release_notes.md
             echo "" >> release_notes.md
             echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...$TAG" >> release_notes.md
-          elif [ "${{ steps.prerelease.outputs.is_prerelease }}" == "false" ]; then
+          elif [ "${{ needs.build.outputs.is_prerelease }}" == "false" ]; then
             # Stable release: use the curated tag annotation message
             TAG_MSG=$(git tag -l --format='%(contents)' "$TAG" | tail -n +2)
             if [ -n "$TAG_MSG" ]; then
@@ -170,35 +224,55 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
         with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          name: ${{ steps.tag.outputs.tag }}
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: ${{ needs.build.outputs.tag }}
           body_path: release_notes.md
-          prerelease: ${{ steps.prerelease.outputs.is_prerelease == 'true' }}
+          prerelease: ${{ needs.build.outputs.is_prerelease == 'true' }}
           draft: false
+          # The wheels and the manifest ARE the release; install.sh reads them.
+          files: |
+            dist/*.whl
+            dist/manifest.json
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*.whl
 
   publish:
-    needs: [test, release]
+    # PyPI is a secondary channel: remo-cli only (never the plugins), and the
+    # identical wheel the release carries — taken from the build artifact, not
+    # rebuilt.
+    needs: [test, build, release]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
     environment: pypi
 
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Download the build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-dist
+          path: dist
 
-      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-
-      - name: Build package
-        run: uv build
+      - name: Select remo-cli distributions only
+        run: |
+          set -euo pipefail
+          mkdir pypi-dist
+          cp dist/remo_cli-* pypi-dist/
+          ls -la pypi-dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+        with:
+          packages-dir: pypi-dist/
 
   publish-image:
     # Publishes the remo-web container image that docker/compose.example.yml
     # pulls by default, so home-lab users can deploy with just a Compose file
     # instead of a full source checkout.
-    needs: [test, release]
+    needs: [test, build, release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -226,4 +300,4 @@ jobs:
           tag-spec: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ needs.release.outputs.is_prerelease == 'false' }}
+            type=raw,value=latest,enable=${{ needs.build.outputs.is_prerelease == 'false' }}

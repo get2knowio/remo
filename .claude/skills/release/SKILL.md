@@ -76,14 +76,20 @@ up to date (`git rev-parse HEAD` == `git rev-parse origin/main`).
 4. **Run the validation gate (Step V) on the PR's head branch** so you build the
    exact version that will publish.
 5. **Only on explicit approval**, merge it (release-please then tags `vX.Y.Z`,
-   which triggers `release.yml` to publish to PyPI + GHCR):
+   which triggers `release.yml`: one build, the GitHub release assets, then PyPI
+   (remo-cli only) + GHCR):
    ```bash
    gh pr merge <number> --squash
    ```
    Before merging, confirm the `RELEASE_PLEASE_TOKEN` secret is set — without it
    the tag will not trigger the publish. If it's missing, warn the user and let
    them decide.
-6. Return to `main`, `git pull --ff-only`, report the new tag, and offer to watch
+6. After the release CI finishes, verify the release carries **3 wheels
+   (remo-cli, ec2, hetzner), `manifest.json` and attestations**
+   (`gh release view vX.Y.Z --json assets --jq '.assets[].name'`;
+   `gh attestation verify <wheel> -R get2knowio/remo`), and that PyPI has only the
+   `remo-cli` files. The GitHub release is the release; PyPI is secondary.
+7. Return to `main`, `git pull --ff-only`, report the new tag, and offer to watch
    the release CI. `gh run watch` needs an explicit run id outside a TTY:
    ```bash
    gh run watch "$(gh run list --workflow=release.yml --limit 1 \
@@ -164,15 +170,18 @@ RUN_ID="$(gh run list --workflow=dev-build.yml --limit 1 \
 gh run watch "$RUN_ID"
 ```
 
-Then **validate the published artifact**, which is stronger than a pre-build
-local check because it is the wheel testers will actually fetch. Use a throwaway
-venv so the operator's own install is untouched:
+Then **validate the published artifact** through the real installer, which is
+stronger than a pre-build local check because it is exactly what testers run
+(checksums verified, plugins and web included). It replaces the operator's own
+install, so say so first; or set `REMO_HOME` and `HOME` to a scratch directory:
 
 ```bash
-URL="https://github.com/get2knowio/remo/releases/download/rc-X.Y.ZrcN/remo_cli-X.Y.ZrcN-py3-none-any.whl"
-uv venv /tmp/remo-rc && uv pip install --python /tmp/remo-rc/bin/python "remo-cli @ $URL"
-/tmp/remo-rc/bin/remo --version    # MUST print X.Y.ZrcN
-/tmp/remo-rc/bin/remo --help
+curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
+  | bash -s -- --prerelease X.Y.ZrcN --with ec2,web
+remo --version     # MUST print X.Y.ZrcN
+remo providers     # MUST list ec2 (and hetzner if installed) as loaded
+remo --help
+gh release view rc-X.Y.ZrcN --json assets --jq '.assets[].name'   # 3 wheels + manifest.json
 ```
 
 Confirm with `gh release view rc-X.Y.ZrcN` that it is marked pre-release, and
@@ -180,9 +189,7 @@ report that PyPI is unchanged. Testers install it with no `gh` auth:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh \
-  | bash -s -- --prerelease X.Y.ZrcN
-# or directly:
-uv tool install --force "remo-cli @ <URL above>"
+  | bash -s -- --prerelease X.Y.ZrcN --with ec2,web
 ```
 
 A GitHub pre-release is deletable and the version re-cuttable, so this outcome is

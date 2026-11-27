@@ -35,7 +35,7 @@ Run remo inside WSL2 instead:
 
 then, in the Ubuntu shell:
 
-    uv tool install remo-cli
+    curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 
 More on WSL2: {WSL_DOCS_URL}"""
 
