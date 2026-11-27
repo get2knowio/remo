@@ -60,8 +60,11 @@ REMO_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/remo-lib.sh"
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
-# One session directory on macOS and the tool PATH recorded at setup (spec 030).
-remo_pin_session_dir || exit 1
+# The tool PATH recorded at setup (spec 030). The macOS session directory
+# (remo_pin_session_dir) is NOT pinned here: it is pinned inside each verb that
+# reaches zellij (the sessions verbs, projects delete and rebuild), so an
+# insecure session directory refuses those verbs only, while capabilities,
+# host stats and the projects index keep answering (#286).
 remo_load_local_path
 DEVCONTAINER_BIN="{{ devcontainer_cli_bin }}"
 
@@ -203,6 +206,7 @@ zellij_state_for() {
 }
 
 cmd_sessions_list() {
+    remo_pin_session_dir || exit 1
     load_zellij_states
 
     local projects_json="" first=true
@@ -324,6 +328,7 @@ cmd_sessions_attach() {
 
     validate_project_exists "$name" || exit 3
 
+    remo_pin_session_dir || exit 1
     exec "$HOME/.local/bin/project-launch" --project "$name"
 }
 
@@ -384,6 +389,9 @@ cmd_sessions_record() {
     validate_tab_key "$key" || exit 3
     validate_project_exists "$project" "sessions record" || exit 3
 
+    # Records nothing in zellij itself, but it is a sessions verb: refused with
+    # the rest of them, so a tab is never recorded for a session that could not run.
+    remo_pin_session_dir || exit 1
     mkdir -p -m 0700 "$TABS_DIR"
     local tmp
     tmp="$(mktemp "$TABS_DIR/.tmp.XXXXXX")"
@@ -419,6 +427,7 @@ cmd_sessions_lookup() {
     fi
     validate_tab_key "$key" "sessions lookup" || exit 3
 
+    remo_pin_session_dir || exit 1
     local project="" epoch="" file="$TABS_DIR/$key"
     if [[ -f "$file" ]]; then
         IFS=$'\t' read -r project epoch <"$file" || true
@@ -1095,6 +1104,7 @@ cmd_projects_delete() {
     local dir
     dir="$(remo_project_path "$name")"
 
+    remo_pin_session_dir || exit 1
     if has_zellij; then
         zellij kill-session "$name" >/dev/null 2>&1 || true
         zellij delete-session --force "$name" >/dev/null 2>&1 || true
@@ -1183,6 +1193,9 @@ cmd_projects_rebuild() {
         up_args+=(--build-no-cache)
     fi
 
+    # Exported before the job starts, so the detached worker kills the session
+    # in the same namespace the console sees.
+    remo_pin_session_dir || exit 1
     local worker='set -e
 name="$1"; shift
 if command -v zellij >/dev/null 2>&1; then
