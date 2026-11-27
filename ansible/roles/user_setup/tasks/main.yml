@@ -334,7 +334,8 @@
       #   - Session is SSH (SSH_TTY or SSH_CONNECTION is set)
       #   - Not already inside a zellij session
       #   - Not already inside a devcontainer
-      if [[ $- == *i* ]] && [[ -n "$SSH_TTY" || -n "$SSH_CONNECTION" ]] && [[ -z "$ZELLIJ" ]] && [[ -z "$REMOTE_CONTAINERS" ]]; then
+      #   - Not started by `remo shell` (REMO_MENU: the client already ran the menu)
+      if [[ $- == *i* ]] && [[ -n "$SSH_TTY" || -n "$SSH_CONNECTION" ]] && [[ -z "$ZELLIJ" ]] && [[ -z "$REMOTE_CONTAINERS" ]] && [[ -z "$REMO_MENU" ]]; then
           project-menu
           # Exit code 0 = user chose "Exit to shell", stay in shell
           # Exit code 1 = user pressed Ctrl+C or selected project, exit

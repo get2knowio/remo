@@ -523,3 +523,20 @@ class TestLocalHost:
         from remo_cli.core.known_hosts import guard_not_local_host
 
         guard_not_local_host("nothing", "incus")
+
+
+class TestLocallyManagedAdvice:
+    def test_local_kind_names_local_setup_on_that_machine(self):
+        host = _make_host(type_="ssh", name="mac", host="mac.example")
+        assert upgrade_command_for(host, host_kind="local") == (
+            "remo local setup (run it on that machine)"
+        )
+
+    def test_the_local_entry_itself_is_unchanged(self):
+        host = _make_host(type_="local", name="local", host="localhost")
+        assert upgrade_command_for(host, host_kind="local") == "remo local setup"
+
+    @pytest.mark.parametrize("kind", [None, "remote"])
+    def test_other_kinds_are_unchanged(self, kind):
+        host = _make_host(type_="ssh", name="mac", host="mac.example")
+        assert upgrade_command_for(host, host_kind=kind) == "remo configure mac"

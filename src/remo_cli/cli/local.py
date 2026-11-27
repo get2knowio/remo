@@ -26,9 +26,25 @@ def local() -> None:
     help="A folder whose subfolders are all projects; '' clears it.",
 )
 @click.option("--yes", "assume_yes", is_flag=True, default=False, help="Do not ask for confirmation.")
+@click.option(
+    "--allow-ssh-resume/--no-allow-ssh-resume",
+    "ssh_resume",
+    default=None,
+    help=(
+        "Let `remo resume` work when this machine is reached over SSH, by adding "
+        "(or, with --no-, removing) an sshd AcceptEnv drop-in. The one step that "
+        "uses sudo; default: SSH configuration is not touched."
+    ),
+)
 @click.option("--verbose", "-v", is_flag=True, default=False, help="Stream raw ansible-playbook output.")
 @provider_command
-def setup(name: str | None, projects_dir: str | None, assume_yes: bool, verbose: bool) -> None:
+def setup(
+    name: str | None,
+    projects_dir: str | None,
+    assume_yes: bool,
+    ssh_resume: bool | None,
+    verbose: bool,
+) -> None:
     """Install remo's host scripts for this machine and register it.
 
     Detects (never installs) the tools it needs, installs scripts under
@@ -40,7 +56,13 @@ def setup(name: str | None, projects_dir: str | None, assume_yes: bool, verbose:
 
     if name is not None:
         validate_name(name)
-    provider.setup(name=name, projects_dir=projects_dir, assume_yes=assume_yes, verbose=verbose)
+    provider.setup(
+        name=name,
+        projects_dir=projects_dir,
+        assume_yes=assume_yes,
+        verbose=verbose,
+        ssh_resume=ssh_resume,
+    )
 
 
 @local.command("check")

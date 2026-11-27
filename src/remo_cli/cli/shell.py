@@ -242,7 +242,7 @@ def connect_to_host(
     pre-connect check and prompt has passed (issue #248).
     """
     from remo_cli.core.config import LOCAL_HOST_TYPE  # noqa: PLC0415
-    from remo_cli.core.ssh import check_remote_version, shell_connect  # noqa: PLC0415
+    from remo_cli.core.ssh import probe_host_tools, shell_connect  # noqa: PLC0415
     from remo_cli.core.output import confirm, print_error, print_warning  # noqa: PLC0415
     from remo_cli.core.version import get_current_version, version_is_newer  # noqa: PLC0415
 
@@ -262,10 +262,20 @@ def connect_to_host(
     # What survives from FR-011 is narrower and lives in the no-marker branch
     # below: an added host that was never configured is a plain SSH box by the
     # operator's choice, and still drops straight into a login shell.
+    menu_command = False
     if not no_update_check:
         local_version = get_current_version()
+        # The probe also carries the host-info record (spec 030), so it runs
+        # even when the local version is unknown; only the comparison is skipped.
+        probe = probe_host_tools(host)
+        menu_command = probe.info.menu_command
         if local_version != "unknown":
-            remote_version, remote_err = check_remote_version(host)
+            remote_version, remote_err = probe.version, probe.error
+            # A host set up by `remo local setup` is upgraded by running that
+            # on the host itself; remo configure/upgrade would fight it.
+            locally_managed = (
+                probe.info.is_local_managed and host.type != LOCAL_HOST_TYPE
+            )
 
             should_update = False
             if remote_err is not None:
@@ -295,12 +305,18 @@ def connect_to_host(
                 # (FR-011). Once configured it has a marker and takes the
                 # ordinary comparison branches below.
                 pass
+            elif remote_version is None and locally_managed:
+                _warn_locally_managed(host, "has no version info")
             elif remote_version is None:
                 # No marker file on remote
                 should_update = confirm(
                     f"Instance '{host.name}' has no version info. "
                     f"Run `{upgrade_command_hint(host)}`?",
                     default=True,
+                )
+            elif version_is_newer(local_version, remote_version) and locally_managed:
+                _warn_locally_managed(
+                    host, f"tools are v{remote_version}, local is v{local_version}"
                 )
             elif version_is_newer(local_version, remote_version):
                 # Remote is behind local
@@ -342,10 +358,21 @@ def connect_to_host(
         exec_cmd=exec_cmd,
         tab_key=tab_key,
         on_connect=on_connect,
+        menu_command=menu_command,
     )
 
 
-def upgrade_command_hint(host) -> str:  # noqa: ANN001
+def _warn_locally_managed(host, what: str) -> None:  # noqa: ANN001
+    """Advice for a host that `remo local setup` manages (spec 030 FR-011)."""
+    from remo_cli.core.output import print_warning  # noqa: PLC0415
+
+    print_warning(
+        f"Instance '{host.name}' {what}. It is managed from its own machine: "
+        f"run `{upgrade_command_hint(host, host_kind='local')}` to update it."
+    )
+
+
+def upgrade_command_hint(host, *, host_kind: str | None = None) -> str:  # noqa: ANN001
     """Render the exact command that accepting the prompt will run (SC-003).
 
     Kept under this name because ``cli/resume.py`` imports it; the spelling
@@ -354,7 +381,7 @@ def upgrade_command_hint(host) -> str:  # noqa: ANN001
     """
     from remo_cli.core.known_hosts import upgrade_command_for  # noqa: PLC0415
 
-    return upgrade_command_for(host)
+    return upgrade_command_for(host, host_kind=host_kind)
 
 
 def _run_tools_upgrade(host) -> None:  # noqa: ANN001

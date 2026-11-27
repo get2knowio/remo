@@ -94,6 +94,7 @@ class TestSubcommandRegistration:
         "web",
         "connector",
         "local",
+        "projects",
         "providers",
     ]
 

@@ -31,6 +31,16 @@ TUNNEL_REFUSAL = (
     "port tunnels do not apply to the local host: its ports are already on this machine"
 )
 MENU_COMMAND = 'exec "$HOME/.local/bin/project-menu"'
+#: Spec 030: the explicit menu start for a bare `remo shell` over SSH, sent as the
+#: remote command (with a pty) so no ``.bashrc`` hook has to fire. Menu exit 0
+#: ("Exit to shell") yields a login shell; REMO_MENU=1 keeps the guarded hook
+#: from starting a second menu in it. Any other exit ends the connection.
+#: The user's login shell parses this, so the ``${SHELL:-…}`` fallback is left
+#: to ``/bin/sh`` inside single quotes: fish has no ``${VAR:-default}`` form.
+SSH_MENU_COMMAND = (
+    'REMO_MENU=1 "$HOME/.local/bin/project-menu" && '
+    "exec env REMO_MENU=1 /bin/sh -c 'exec \"${SHELL:-/bin/sh}\" -l'"
+)
 #: Joins the words after the script name with single spaces and runs them as
 #: one shell command — exactly what ssh does with its trailing argv words, so
 #: ``remo_host_client``'s ``REMOTE_PATH_PREFIX`` word keeps working unchanged.

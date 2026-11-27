@@ -46,7 +46,7 @@ def _is_host_scoped_type(type_name: str) -> bool:
     return is_provider_type(type_name) and get_descriptor(type_name).name_format is NameFormat.HOST_SCOPED
 
 
-def upgrade_command_for(host: KnownHost) -> str:
+def upgrade_command_for(host: KnownHost, *, host_kind: str | None = None) -> str:
     """The exact command that refreshes *host*'s remo tools (#243).
 
     One spelling shared by the ``remo shell`` stale-tools prompt, ``remo
@@ -66,10 +66,16 @@ def upgrade_command_for(host: KnownHost) -> str:
       so no provider literal appears here;
     * any other provider, or an unrecognized type -> ``remo TYPE upgrade NAME``
       (for an unknown type this still names the type that is actually wrong;
-      ``remo shell`` refuses to run it).
+      ``remo shell`` refuses to run it);
+    * any host whose own host-info record says it is managed by ``remo local
+      setup`` (*host_kind* ``"local"``, spec 030) and that is not this
+      machine's ``local`` entry -> that command, to be run on that machine.
     """
     from remo_cli.core.config import ADDED_HOST_TYPE, LOCAL_HOST_TYPE  # noqa: PLC0415
     from remo_cli.core.provider_registry import get_descriptor  # noqa: PLC0415
+
+    if host_kind == "local" and host.type != LOCAL_HOST_TYPE:
+        return "remo local setup (run it on that machine)"
 
     if host.type == ADDED_HOST_TYPE:
         return f"remo configure {host.name}"

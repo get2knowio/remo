@@ -17,9 +17,12 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -33,19 +36,15 @@ from remo_cli.core.errors import (
     PreconditionError,
 )
 from remo_cli.core.host_access import (
-    get_host_access,
     local_bin_dir,
     local_env_path,
+    local_state_dir,
 )
 from remo_cli.core.known_hosts import find_remo_host_by_name, get_known_hosts
-from remo_cli.core.output import print_info, print_success, print_warning
-from remo_cli.core.remo_host_client import (
-    RemoHostClientError,
-    RemoHostCommandError,
-    run_remo_host_json,
-)
+from remo_cli.core.output import confirm, print_info, print_success, print_warning
 from remo_cli.core.version import get_current_version
 from remo_cli.models.host import KnownHost
+from remo_cli.providers import projects
 
 Status = Literal["present", "missing", "not_running"]
 
@@ -55,6 +54,7 @@ OS_RELEASE_PATH = Path("/etc/os-release")
 
 DOCKER_INFO_TIMEOUT_S = 10
 BASH_PROBE_TIMEOUT_S = 5
+SESSION_LIST_TIMEOUT_S = 5
 MIN_BASH_MAJOR = 4
 
 ZELLIJ_URL = "https://zellij.dev/documentation/installation"
@@ -400,7 +400,11 @@ def _state_signature() -> str:
             if p.is_file()
             and (p.name.startswith("remo-") or p.name in ("project-menu", "project-launch", "devshell"))
         )
-    paths += [local_env_path(), Path.home() / ".remo-version"]
+    paths += [
+        local_env_path(),
+        local_state_dir() / "host-info",
+        Path.home() / ".remo-version",
+    ]
     for path in paths:
         digest.update(str(path).encode())
         try:
@@ -410,12 +414,69 @@ def _state_signature() -> str:
     return digest.hexdigest()
 
 
+def _tool_path_dirs(runtime: tuple[str, str] | None) -> str:
+    """Colon-joined directories the host scripts need on PATH under ``ssh host <cmd>``.
+
+    The directories of the detected zellij, fzf, git, devcontainer runtime and
+    container-engine CLI, plus the usual Homebrew prefixes when present. A
+    non-interactive ssh shell on macOS starts with a bare system PATH
+    (spec 030 FR-008a); ``remo-lib.sh`` re-adds these. De-duplicated, in order.
+    """
+    found = [shutil.which(tool) for tool in ("zellij", "fzf", "git", "docker")]
+    if runtime:
+        found.append(runtime[1])
+    dirs = [os.path.dirname(p) for p in found if p]
+    dirs += [d for d in ("/opt/homebrew/bin", "/usr/local/bin") if os.path.isdir(d)]
+    ordered: list[str] = []
+    for d in dirs:
+        if d and d not in ordered:
+            ordered.append(d)
+    return ":".join(ordered)
+
+
+def _note_sessions_outside_session_dir() -> None:
+    """macOS only: say so when zellij sessions predate the pinned directory (FR-008).
+
+    Best-effort and silent on any failure: zellij missing, erroring or slow.
+    """
+    if platform.system() != "Darwin":
+        return
+    env = {k: v for k, v in os.environ.items() if k != "ZELLIJ_SOCKET_DIR"}
+    # Not --short: that also prints EXITED (resurrectable) sessions, whose
+    # records live in zellij's cache dir whatever the socket dir is — so even a
+    # session started under the pin and since ended would be counted as
+    # "still running outside" on every run.
+    try:
+        out = subprocess.run(
+            ["zellij", "list-sessions", "--no-formatting"],
+            capture_output=True,
+            text=True,
+            timeout=SESSION_LIST_TIMEOUT_S,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if out.returncode != 0:
+        return
+    count = len([ln for ln in out.stdout.splitlines() if ln.strip() and "EXITED" not in ln])
+    if count:
+        plural = "s" if count != 1 else ""
+        print_info(
+            f"{count} session{plural} started before this upgrade "
+            f"{'are' if count != 1 else 'is'} still running outside remo's session "
+            "directory; reach "
+            f"{'them' if count != 1 else 'it'} with `zellij attach NAME` (outside remo) "
+            "until they end."
+        )
+
+
 def setup(
     *,
     name: str | None = None,
     projects_dir: str | None = None,
     assume_yes: bool = False,
     verbose: bool = False,
+    ssh_resume: bool | None = None,
 ) -> SetupResult:
     """Install the host scripts for this machine and register the local host.
 
@@ -424,7 +485,8 @@ def setup(
     :func:`persisted_projects_dir`), ``""`` clears it, any other value sets it. *assume_yes* is accepted for symmetry with the other
     upgrade paths; setup asks nothing today (it never escalates privileges).
     """
-    del assume_yes  # nothing to confirm: no sudo, no system-wide change
+    # Setup itself asks nothing and never escalates; *assume_yes* only counts as
+    # consent for the opt-in below, which is the one place sudo is ever used.
     results = check_prerequisites()
     absent = missing_required(results)
     if absent:
@@ -467,6 +529,7 @@ def setup(
         "ansible_python_interpreter": sys.executable,
         "remo_bash_path": bash[0],
         "remo_local_projects_dir": effective_projects,
+        "remo_local_path": _tool_path_dirs(runtime),
     }
     if runtime:
         play_vars["devcontainer_runtime"] = runtime[0]
@@ -496,7 +559,10 @@ def setup(
         )
 
     scripts_changed = _state_signature() != before
+    _note_sessions_outside_session_dir()
     entry_changed = _register(effective_name, effective_projects)
+    if ssh_resume is not None:
+        configure_ssh_resume(ssh_resume, assume_yes=assume_yes)
     # A rename leaves no second entry behind: _register replaces the one.
     if scripts_changed or entry_changed:
         print_success(f"Local host '{effective_name}' is set up.")
@@ -507,60 +573,205 @@ def setup(
 
 
 # ---------------------------------------------------------------------------
+# Resume over SSH: the one opt-in that needs sudo (spec 030, FR-014..018)
+# ---------------------------------------------------------------------------
+
+SSH_DROPIN_NAME = "remo-accept-env.conf"
+SSH_DROPIN_CONTENT = (
+    "# Added by remo local setup --allow-ssh-resume\n"
+    "AcceptEnv TZ REMO_TAB_KEY\n"
+)
+_SSHD_INCLUDE = re.compile(r"^\s*Include\s+.*sshd_config\.d/\*", re.IGNORECASE | re.MULTILINE)
+SSHD_BINARY = "/usr/sbin/sshd"
+#: Where sshd lives when it is neither at :data:`SSHD_BINARY` nor on ``PATH``
+#: (``sudo``'s secure_path and a user's PATH rarely include an ``sbin``).
+SSHD_FALLBACKS = ("/usr/local/sbin/sshd", "/opt/homebrew/sbin/sshd")
+
+#: ``runner(argv) -> CompletedProcess``; the default shells out. Tests inject a
+#: fake so no real sudo ever runs.
+Runner = Callable[[list[str]], "subprocess.CompletedProcess[str]"]
+
+
+def _default_runner(argv: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(argv, capture_output=True, text=True)
+
+
+def _is_executable(path: str) -> bool:
+    return os.path.isfile(path) and os.access(path, os.X_OK)
+
+
+def find_sshd(
+    *,
+    which: Callable[[str], str | None] = shutil.which,
+    is_executable: Callable[[str], bool] = _is_executable,
+) -> str | None:
+    """Return the sshd to validate with: :data:`SSHD_BINARY`, then ``PATH``,
+    then :data:`SSHD_FALLBACKS`; ``None`` when there is none (issue #285)."""
+    if is_executable(SSHD_BINARY):
+        return SSHD_BINARY
+    on_path = which("sshd")
+    if on_path:
+        return on_path
+    return next((c for c in SSHD_FALLBACKS if is_executable(c)), None)
+
+
+def _manual_ssh_resume_text(dropin: Path, enable: bool) -> str:
+    if enable:
+        return (
+            f"To enable resume over SSH by hand, make {dropin} (as root) contain:\n"
+            + "".join(f"    {line}\n" for line in SSH_DROPIN_CONTENT.splitlines())
+            + "then reload the SSH server (Linux: systemctl reload ssh; macOS: nothing to do)."
+        )
+    return f"To disable it by hand, delete {dropin} (as root) and reload the SSH server."
+
+
+def configure_ssh_resume(
+    enable: bool,
+    *,
+    assume_yes: bool = False,
+    runner: Runner | None = None,
+    etc_root: Path = Path("/etc"),
+    interactive: bool | None = None,
+    locate_sshd: Callable[[], str | None] = find_sshd,
+) -> None:
+    """Add or remove the sshd ``AcceptEnv`` drop-in that lets ``remo resume`` work
+    when this machine is reached over SSH (spec 030 R7).
+
+    The only place local setup uses ``sudo``, and only here, behind the explicit
+    ``--allow-ssh-resume`` / ``--no-allow-ssh-resume`` flag. Idempotent: a drop-in
+    that is already in the wanted state asks for no privilege at all. Never
+    raises for "cannot / will not change it" (unsupported config, no consent,
+    non-interactive): it prints the manual steps and returns. Raises
+    :class:`OperationFailedError` only when sshd rejects the new configuration,
+    after restoring the previous file.
+    """
+    run = runner or _default_runner
+    ssh_dir = etc_root / "ssh"
+    config = ssh_dir / "sshd_config"
+    dropin = ssh_dir / "sshd_config.d" / SSH_DROPIN_NAME
+
+    try:
+        config_text = config.read_text(encoding="utf-8")
+    except OSError:
+        config_text = ""
+    if not _SSHD_INCLUDE.search(config_text):
+        print_warning(
+            f"Cannot manage the SSH server configuration automatically: {config} is "
+            "unreadable or does not include sshd_config.d/*."
+        )
+        print_info(_manual_ssh_resume_text(dropin, enable))
+        return
+
+    # Without an sshd to run ``-t`` with, a change could not be validated or
+    # reverted safely, so it is not made at all.
+    sshd = locate_sshd()
+    if sshd is None:
+        print_warning(
+            "Cannot manage the SSH server configuration automatically: no sshd found at "
+            f"{SSHD_BINARY}, on PATH, or at {', '.join(SSHD_FALLBACKS)}."
+        )
+        print_info(_manual_ssh_resume_text(dropin, enable))
+        return
+
+    try:
+        current: str | None = dropin.read_text(encoding="utf-8")
+    except OSError:
+        current = None
+
+    if enable and current == SSH_DROPIN_CONTENT:
+        print_info("Resume over SSH is already enabled.")
+        return
+    if not enable and current is None:
+        print_info("Resume over SSH is already disabled.")
+        return
+
+    if interactive is None:
+        interactive = sys.stdin.isatty()
+    if not interactive and not assume_yes:
+        print_warning("Not changing the SSH server configuration: this needs your consent.")
+        print_info(_manual_ssh_resume_text(dropin, enable))
+        return
+
+    verb = "add" if enable else "remove"
+    print_info(
+        f"Resume over SSH will {verb} {dropin}"
+        + (" containing `AcceptEnv TZ REMO_TAB_KEY`" if enable else "")
+        + ". It needs sudo because the SSH server's configuration is system-wide."
+    )
+    if not assume_yes and not confirm(f"{verb.capitalize()} it now?", default=False):
+        print_info("Left SSH configuration unchanged.")
+        return
+
+    def sudo(*argv: str) -> subprocess.CompletedProcess[str]:
+        return run(["sudo", *argv])
+
+    def install(text: str) -> None:
+        with tempfile.TemporaryDirectory(prefix="remo-ssh-") as tmp:
+            staged = Path(tmp) / SSH_DROPIN_NAME
+            staged.write_text(text, encoding="utf-8")
+            done = sudo("install", "-m", "0644", str(staged), str(dropin))
+        if done.returncode != 0:
+            raise OperationFailedError(
+                f"could not write {dropin}: {(done.stderr or '').strip() or 'sudo failed'}"
+            )
+
+    def remove() -> None:
+        done = sudo("rm", "-f", str(dropin))
+        if done.returncode != 0:
+            raise OperationFailedError(
+                f"could not remove {dropin}: {(done.stderr or '').strip() or 'sudo failed'}"
+            )
+
+    def restore() -> None:
+        if current is None:
+            sudo("rm", "-f", str(dropin))
+        else:
+            install(current)
+
+    if enable:
+        install(SSH_DROPIN_CONTENT)
+    else:
+        remove()
+
+    checked = sudo(sshd, "-t")
+    if checked.returncode != 0:
+        restore()
+        raise OperationFailedError(
+            "the SSH server rejected the new configuration; it was put back as it was. "
+            f"sshd said: {(checked.stderr or checked.stdout or '').strip() or 'no message'}"
+        )
+
+    if platform.system() != "Darwin":
+        # macOS starts sshd per connection and re-reads its config; Linux needs a reload.
+        reloaded = sudo("systemctl", "reload", "ssh")
+        if reloaded.returncode != 0:
+            reloaded = sudo("systemctl", "reload", "sshd")
+        if reloaded.returncode != 0:
+            print_warning(
+                "Could not reload the SSH server; it picks the change up on its next restart."
+            )
+    print_success(f"Resume over SSH is now {'enabled' if enable else 'disabled'}.")
+
+
+# ---------------------------------------------------------------------------
 # Project index (the host scripts own the file; we just call remo-host)
 # ---------------------------------------------------------------------------
 
 
-def _run_projects(verb: str, **kwargs: str | None) -> dict:
-    host = _require_local_host()
-    prefix = get_host_access(host).command_prefix(host, batch=True)
-    try:
-        return run_remo_host_json(prefix, verb, **kwargs)  # type: ignore[arg-type]
-    except RemoHostCommandError as e:
-        if e.returncode == 3:
-            raise PreconditionError(e.stderr.strip() or str(e)) from e
-        raise OperationFailedError(str(e)) from e
-    except RemoHostClientError as e:
-        raise OperationFailedError(str(e)) from e
-
-
 def add_project(path: str, name: str | None = None) -> dict:
-    absolute = os.path.abspath(os.path.expanduser(path))
-    result = _run_projects("projects add", path=absolute, name=name)
-    print_success(f"Added '{result.get('name', name)}' → {result.get('path', absolute)}")
-    return result
+    return projects.add_project(_require_local_host(), path, name)
 
 
 def remove_project(name: str) -> dict:
-    result = _run_projects("projects remove", project=name)
-    print_success(f"Removed '{name}' (files untouched)")
-    return result
+    return projects.remove_project(_require_local_host(), name)
 
 
 def list_projects() -> list[dict]:
-    payload = _run_projects("projects list")
-    projects = payload.get("projects", [])
-    return projects if isinstance(projects, list) else []
+    return projects.list_projects(_require_local_host())
 
 
-def render_projects(projects: list[dict]) -> str:
-    rows = []
-    for p in projects:
-        source = "added" if p.get("source") == "index" else "folder"
-        status = str(p.get("status", "ok"))
-        if status == "missing":
-            status = (
-                f"missing — re-add: remo local add <new-path> --name {p.get('name', '')}"
-            )
-        rows.append((str(p.get("name", "")), str(p.get("path", "")), source, status))
-    if not rows:
-        return "No projects yet. Add one with: remo local add PATH"
-    w1 = max(len("NAME"), *(len(r[0]) for r in rows))
-    w2 = max(len("PATH"), *(len(r[1]) for r in rows))
-    w3 = max(len("SOURCE"), *(len(r[2]) for r in rows))
-    lines = [f"{'NAME':<{w1}}  {'PATH':<{w2}}  {'SOURCE':<{w3}}  STATUS"]
-    lines += [f"{a:<{w1}}  {b:<{w2}}  {c:<{w3}}  {d}" for a, b, c, d in rows]
-    return "\n".join(lines)
+def render_projects(project_rows: list[dict]) -> str:
+    return projects.render_projects(project_rows, get_local_host())
 
 
 def local_setup_state() -> str:
@@ -578,6 +789,7 @@ __all__ = [
     "SetupResult",
     "add_project",
     "check_prerequisites",
+    "configure_ssh_resume",
     "detect_devcontainer_runtime",
     "find_bash",
     "get_local_host",

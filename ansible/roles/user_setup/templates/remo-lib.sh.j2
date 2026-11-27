@@ -274,6 +274,84 @@ remo_project_remove() {
 }
 
 # ---------------------------------------------------------------------------
+# Session directory and tool PATH (spec 030)
+# ---------------------------------------------------------------------------
+
+# One session directory per user on macOS. Zellij keeps its session sockets under
+# a per-LOGIN-SESSION temp directory there, so a Terminal tab at the desk and an
+# `ssh host <command>` channel see different sessions on the same machine.
+# Pinning ZELLIJ_SOCKET_DIR to a private directory under the user's home makes
+# every entry point (desk, ssh login, ssh command, the web console) share one.
+#
+# Darwin only, and only when the user has not set the variable themselves. On
+# Linux the XDG_RUNTIME_DIR normalisation in each script already does this job,
+# so this is a no-op there. The directory must be owned by the user and closed
+# to everyone else: sessions are shell access, so a directory that is not is an
+# error, never shared. Returns 1 (after saying why) in that case.
+remo_pin_session_dir() {
+    [[ "$(uname -s 2>/dev/null)" == "Darwin" ]] || return 0
+    [[ -z "${ZELLIJ_SOCKET_DIR:-}" ]] || return 0
+
+    local dir="$HOME/.local/state/remo/zellij" owner mode
+    if [[ ! -d "$dir" ]]; then
+        # Two remo scripts can get here at once on first use (the console's
+        # discovery calls, a second tab): losing the mkdir race is fine, the
+        # owner/mode check below still applies to whatever directory won.
+        mkdir -p -m 0700 "$HOME/.local/state/remo" 2>/dev/null
+        mkdir -m 0700 "$dir" 2>/dev/null || [[ -d "$dir" ]] || {
+            echo "remo: cannot create the session directory $dir" >&2
+            return 1
+        }
+    fi
+    owner="$(stat -c %u "$dir" 2>/dev/null || stat -f %u "$dir" 2>/dev/null)"
+    mode="$(stat -c %a "$dir" 2>/dev/null || stat -f %Lp "$dir" 2>/dev/null)"
+    # Each refusal names the one command that fixes it: chmod cannot repair a
+    # directory someone else owns, so that case says to remove it instead.
+    if [[ "$owner" != "$(id -u)" ]]; then
+        echo "remo: refusing to use the session directory $dir: it is owned by uid ${owner:-unknown}, not you (sessions are shell access). Fix: remove it (as its owner or root) and re-run: rm -rf '$dir'" >&2
+        return 1
+    fi
+    if (( 8#${mode:-777} & 8#077 )); then
+        echo "remo: refusing to use the session directory $dir: it is accessible to others (mode ${mode:-unknown}; it must be 0700, since sessions are shell access). Fix: chmod 700 '$dir'" >&2
+        return 1
+    fi
+    export ZELLIJ_SOCKET_DIR="$dir"
+    return 0
+}
+
+# Put the tool directories recorded by `remo local setup` (REMO_PATH in local.env:
+# Homebrew and friends) on PATH. A non-interactive `ssh host <command>` shell on
+# macOS starts with a bare system PATH, so without this the scripts cannot find
+# zellij, fzf or the container tooling that a desk terminal finds. No local.env
+# (every remote host) or no REMO_PATH line: nothing changes. Idempotent: a
+# directory already on PATH is not added again. No rc file is read or written.
+remo_load_local_path() {
+    local env_file="${REMO_LOCAL_ENV:-$HOME/.local/state/remo/local.env}" line value dir add=""
+    [[ -f "$env_file" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == REMO_PATH=* ]]; then
+            value="${line#REMO_PATH=}"
+        fi
+    done <"$env_file"
+    [[ -n "${value:-}" ]] || return 0
+
+    local IFS=: dirs
+    # Split on ':' only: read -a never glob-expands, so a directory name with
+    # `*`, `?` or `[` is taken literally.
+    read -r -a dirs <<<"$value"
+    for dir in "${dirs[@]}"; do
+        [[ -n "$dir" ]] || continue
+        case ":$PATH:" in
+            *":$dir:"*) ;;
+            *) case ":$add:" in *":$dir:"*) ;; *) add="${add:+$add:}$dir" ;; esac ;;
+        esac
+    done
+    [[ -n "$add" ]] && PATH="$add:$PATH"
+    export PATH
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Portability helpers
 # ---------------------------------------------------------------------------
 

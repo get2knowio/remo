@@ -13,6 +13,13 @@ from remo_cli.core.tab_identity import derive_tab_key, detect_tab_identity
 from remo_cli.models.host import KnownHost
 
 
+
+def _probe(version, error=None, info=None):
+    from remo_cli.core.ssh import HostToolsProbe
+    from remo_cli.models.host_info import HostInfo
+
+    return HostToolsProbe(version, error, info or HostInfo())
+
 @pytest.fixture
 def runner():
     return CliRunner()
@@ -199,6 +206,7 @@ class TestRecordRefreshOnlyOnAttempt:
         # CliRunner's stdin has no fileno; the tty save/restore is not under test.
         mocker.patch("remo_cli.core.ssh.sys")
         mocker.patch("remo_cli.core.ssh.termios.tcgetattr", return_value=None)
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe(None))
         return mocker.patch("remo_cli.core.ssh.subprocess.run")
 
     def test_declined_connect_anyway_keeps_previous_record(self, runner, world, mocker):
@@ -207,7 +215,7 @@ class TestRecordRefreshOnlyOnAttempt:
         run = self._use_real_connect(mocker)
         tab_records.record(world.key, "H", "old")
         mocker.patch("remo_cli.core.version.get_current_version", return_value="0.9.0")
-        mocker.patch("remo_cli.core.ssh.check_remote_version", return_value=("0.8.0", None))
+        mocker.patch("remo_cli.core.ssh.probe_host_tools", return_value=_probe("0.8.0", None))
         mocker.patch(
             "remo_cli.cli.shell._run_tools_upgrade", side_effect=OperationFailedError("boom")
         )
@@ -509,3 +517,25 @@ def test_help_mentions_terminals_shell_and_upgrade(runner):
     assert "TERM_SESSION_ID" in result.output
     assert "remo shell" in result.output
     assert "upgrade" in result.output
+
+
+def test_resume_path_names_local_setup_for_a_locally_managed_host(mocker, capsys) -> None:
+    """connect_to_host is shared by `remo resume`; same wording, no upgrade offer (spec 030)."""
+    from remo_cli.cli.shell import connect_to_host
+    from remo_cli.models.host import KnownHost
+    from remo_cli.models.host_info import HostInfo
+
+    host = KnownHost("ssh", "mybox", "h", "u", access_mode="direct")
+    mocker.patch("remo_cli.core.version.get_current_version", return_value="2.2.0")
+    mocker.patch(
+        "remo_cli.core.ssh.probe_host_tools",
+        return_value=_probe("2.0.0", None, HostInfo(host_kind="local")),
+    )
+    confirm = mocker.patch("remo_cli.core.output.confirm")
+    upgrade = mocker.patch("remo_cli.cli.shell._run_tools_upgrade")
+    connect = mocker.patch("remo_cli.core.ssh.shell_connect")
+    connect_to_host(host, tunnels=[], no_open=False, no_update_check=False, auto_started=True)
+    confirm.assert_not_called()
+    upgrade.assert_not_called()
+    connect.assert_called_once()
+    assert "remo local setup (run it on that machine)" in capsys.readouterr().out

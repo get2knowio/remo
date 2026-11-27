@@ -81,6 +81,70 @@ when it has one, otherwise in your login shell in the project folder. The
 devcontainer is started by a Zellij session shell (`remo-session-shell`), not by
 a `.bashrc` block, which is why no rc file needs to change.
 
+## Reach this machine from another one
+
+The machine you set up with `remo local setup` is the same host whether you sit
+at it or reach it over SSH from another workstation.
+
+1. **Turn on Remote Login** on the machine (macOS: System Settings > General >
+   Sharing > Remote Login; Linux: your distribution's `sshd`).
+2. From the other workstation: `remo add NAME user@host`, then
+   `remo shell NAME`. A bare `remo shell` opens the same project menu you get at
+   the desk, no `remo configure` needed. (The menu start rides on the
+   pre-connect version check, so it is skipped with `--no-update-check` and you
+   get a plain login shell instead.)
+3. **Sessions are shared.** On macOS the host scripts pin Zellij to one private
+   per-user directory (`~/.local/state/remo/zellij`), so a project you started at
+   the desk is the one you reattach to over SSH, and the other way round.
+   Sessions that were started *before* upgrading to this version keep running
+   outside that directory; `remo local setup` tells you how many, and you reach
+   them with `zellij attach NAME` (outside remo) until they end. A plain
+   `zellij` you run by hand at the desk does not see remo's sessions unless you
+   `export ZELLIJ_SOCKET_DIR=~/.local/state/remo/zellij` first.
+4. **Tools just work over SSH.** `remo local setup` records the directories of
+   the tools it found (Homebrew and friends) so `ssh host <command>` shells,
+   which start with a bare system PATH on macOS, still find zellij, fzf and the
+   container tooling. No rc file is edited.
+5. **Updating the machine** is done on the machine: `remo local setup`. From
+   another workstation, `remo shell` says so instead of offering `remo
+   configure`, and `remo configure NAME` refuses ("managed by `remo local
+   setup`") before changing anything.
+
+### Resume over SSH (opt-in, needs sudo)
+
+`remo resume` forwards a per-tab key to the host, which the SSH server only
+accepts if it is told to. This is the one step that changes system-wide
+configuration, so it is explicit:
+
+```bash
+remo local setup --allow-ssh-resume      # add /etc/ssh/sshd_config.d/remo-accept-env.conf
+remo local setup --no-allow-ssh-resume   # remove it again
+```
+
+It shows what it will write, asks before using `sudo`, validates the result with
+`sshd -t` (and puts the old file back if sshd rejects it), and does nothing,
+without asking for sudo, when the file is already in the wanted state. Without
+`--yes` it refuses to change anything when run non-interactively and prints the
+manual steps instead. If your `sshd_config` has no `Include` for
+`sshd_config.d/*`, it prints the line to add by hand. Without the opt-in,
+everything else works; only `remo resume` over SSH falls back to the picker.
+
+### Projects from either side: `remo projects`
+
+```bash
+remo projects list HOST
+remo projects add HOST '~/code/app' --name app  # in place; the quoted ~/ is expanded on HOST
+remo projects remove HOST app                   # the folder is untouched
+```
+
+Quote a `~/` path (or give HOST's absolute path): an unquoted `~` is expanded
+by *this* machine's shell to *this* machine's home before remo sees it, which
+names the wrong folder when the two homes differ (`/Users/you` vs `/home/you`).
+
+`HOST` is resolved like `remo shell HOST` (the `local` host included), so you can
+add a checkout on the machine you are reaching without logging in. A host whose
+tools predate this says so and names the command to update it.
+
 ## How it differs from a remote host
 
 | | Remote host | Local host |
@@ -88,7 +152,7 @@ a `.bashrc` block, which is why no rc file needs to change.
 | Transport | SSH | none: the scripts run on your own terminal |
 | `remo cp` | works | refused: copy files directly |
 | `remo shell -L PORT` | tunnels a port | refused: the ports are already on this machine |
-| `remo configure NAME` | installs tools over SSH | refused: use `remo local setup` |
+| `remo configure NAME` | installs tools over SSH | refused: use `remo local setup` (also refused from another workstation that reaches this machine with `remo add`) |
 | `remo web push` / `remo web sync` | mirrored to the console | never sent or accepted (a deployment cannot reach your machine); a `local` entry received from a deployment is ignored with a warning |
 | Upgrading tools | `remo <type> upgrade` / `remo configure` | `remo local setup` (offered automatically when `remo shell` finds older scripts) |
 | Deregister | `remo remove NAME` | `remo remove local` — scripts, the project list and the projects folder stay; `remo local setup` registers it again |

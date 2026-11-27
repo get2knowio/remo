@@ -12,6 +12,8 @@
 #   remo_bash_path            a bash >= 4 for the scripts' shebang (default /bin/bash)
 #   remo_version              written to ~/.remo-version when non-empty
 #   remo_local_projects_dir   the projects folder ('' = none, index only)
+#   remo_local_path           colon-separated tool directories remo-lib.sh puts on PATH
+#                             for `ssh host <cmd>` shells (spec 030); '' = none
 #   devcontainer_runtime / devcontainer_runtime_effective / devcontainer_cli_bin /
 #   devcontainer_up_extra_args   as on a remote host
 #
@@ -69,6 +71,7 @@
         content: |
           REMO_BASH={{ remo_bash_path }}
           REMO_PROJECTS_DIR={{ dev_workspace_dir }}
+          REMO_PATH={{ remo_local_path | default('') }}
         mode: "0600"
 
     - name: Write remo version marker

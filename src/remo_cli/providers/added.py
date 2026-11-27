@@ -34,6 +34,7 @@ from remo_cli.core.output import (
     print_info,
     print_success,
 )
+from remo_cli.core.ssh import probe_host_tools
 from remo_cli.models.host import KnownHost
 
 
@@ -398,6 +399,16 @@ def configure(
             ) from None
 
     target = f"{entry.user}@{entry.host}:{entry.ssh_port}"
+
+    # A machine that `remo local setup` manages is upgraded by running that on
+    # the machine itself; configuring it from here would fight its host-info
+    # (spec 030 FR-012). A failed probe falls through to today's flow, which
+    # then fails at verify_reachable exactly as before.
+    if probe_host_tools(entry).info.is_local_managed:
+        raise PreconditionError(
+            f"'{name}' is managed by `remo local setup` — run that on {name} "
+            f"itself instead of `remo configure`. Nothing was changed."
+        )
 
     if not assume_yes and not confirm(
         f"Configure {target}? remo will apt-upgrade the system, install Docker, "

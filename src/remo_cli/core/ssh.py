@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import termios
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,11 +19,12 @@ from remo_cli.core.known_hosts import (
     resolve_remo_host_by_name,
 )
 from remo_cli.core.errors import PreconditionError
-from remo_cli.core.host_access import TUNNEL_REFUSAL, get_host_access
+from remo_cli.core.host_access import SSH_MENU_COMMAND, TUNNEL_REFUSAL, get_host_access
 from remo_cli.core.output import print_info
 from remo_cli.core.picker import pick_environment
 from remo_cli.core.validation import validate_port, validate_project_name
 from remo_cli.models.host import KnownHost
+from remo_cli.models.host_info import HostInfo
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -453,27 +455,51 @@ def detect_timezone() -> str:
     return ""
 
 
-def check_remote_version(host: KnownHost) -> tuple[str | None, str | None]:
-    """Read the remo version marker from the remote instance.
+#: Separator line the probe prints between the version marker and the
+#: host-info record. Everything before it is the version (older hosts have no
+#: separator and parse entirely as the version).
+HOST_INFO_SEPARATOR = "#remo-host-info"
 
-    Runs ``cat ~/.remo-version`` over SSH. Returns a ``(version, error)``
-    tuple where exactly one element is non-None:
+#: Spec 030 R1: the existing marker read, extended in the same round trip with
+#: the host-info record. A missing marker still exits non-zero (the trailing
+#: ``test -f`` fails), so "no marker" keeps meaning exactly what it did; a
+#: missing host-info alone exits 0. The remote login shell runs this, so it
+#: sticks to syntax fish parses too (no ``{ …; }`` grouping) — a Mac reached
+#: with ``remo add`` often has fish as its login shell.
+PROBE_COMMAND = (
+    "cat ~/.remo-version 2>/dev/null && "
+    "printf '\\n#remo-host-info\\n' && "
+    "cat ~/.local/state/remo/host-info 2>/dev/null || "
+    "test -f ~/.remo-version"
+)
 
-    * ``(version, None)`` — marker present and readable.
-    * ``(None, None)``    — SSH succeeded but the marker is missing/empty.
-    * ``(None, error)``   — SSH itself failed (DNS, host key, network,
-      timeout, ...); *error* is the underlying message so the caller can
-      surface it to the user.
+
+@dataclass(frozen=True)
+class HostToolsProbe:
+    version: str | None = None
+    error: str | None = None
+    info: HostInfo = field(default_factory=HostInfo)
+
+
+def probe_host_tools(host: KnownHost) -> HostToolsProbe:
+    """Read the remo version marker and host-info record from *host*.
+
+    Error semantics are those ``check_remote_version`` always had:
+
+    * ``version`` set        — marker present and readable.
+    * both ``None``          — the transport worked but the marker is missing/empty.
+    * ``error`` set          — the transport itself failed (DNS, host key,
+      network, timeout, ...); *error* is the underlying message.
     """
     access = get_host_access(host)
-    cmd = access.probe_argv(host, "cat ~/.remo-version 2>/dev/null")
+    cmd = access.probe_argv(host, PROBE_COMMAND)
 
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     except subprocess.TimeoutExpired:
-        return None, "SSH timed out after 15s"
+        return HostToolsProbe(error="SSH timed out after 15s")
     except OSError as e:
-        return None, f"SSH failed: {e}"
+        return HostToolsProbe(error=f"SSH failed: {e}")
 
     # ssh exits with 255 for its own failures (auth, host key, DNS,
     # connection refused, ...). Any other non-zero exit code comes from
@@ -481,13 +507,29 @@ def check_remote_version(host: KnownHost) -> tuple[str | None, str | None]:
     # absent — which we treat as "no marker" rather than an SSH error.
     if access.remote and result.returncode == 255:
         stderr = result.stderr.strip()
-        return None, stderr or "SSH connection failed (exit code 255)"
+        return HostToolsProbe(error=stderr or "SSH connection failed (exit code 255)")
 
-    version = result.stdout.strip()
-    if result.returncode == 0 and version:
-        return version, None
+    if result.returncode != 0:
+        return HostToolsProbe()
 
-    return None, None
+    lines = result.stdout.splitlines()
+    if HOST_INFO_SEPARATOR in (ln.strip() for ln in lines):
+        idx = [ln.strip() for ln in lines].index(HOST_INFO_SEPARATOR)
+        version_text = "\n".join(lines[:idx])
+        info_text = "\n".join(lines[idx + 1 :])
+    else:
+        version_text, info_text = result.stdout, ""
+
+    version = version_text.strip()
+    if not version:
+        return HostToolsProbe()
+    return HostToolsProbe(version=version, info=HostInfo.parse(info_text))
+
+
+def check_remote_version(host: KnownHost) -> tuple[str | None, str | None]:
+    """``(version, error)`` view of :func:`probe_host_tools` (see there)."""
+    probe = probe_host_tools(host)
+    return probe.version, probe.error
 
 
 def build_project_launch_remote_cmd(
@@ -538,6 +580,7 @@ def shell_connect(
     exec_cmd: str | None = None,
     tab_key: str | None = None,
     on_connect: Callable[[], None] | None = None,
+    menu_command: bool = False,
 ) -> int | None:
     """Open an SSH session to *host* with optional port tunnels.
 
@@ -574,6 +617,11 @@ def shell_connect(
         immediately before ssh runs. The CLI records the tab's resume record
         here, so a connection that never happened cannot overwrite a good
         record (issue #248). Never called when this function raises first.
+    menu_command:
+        The pre-connect probe saw ``menu_command=1`` in the host's host-info
+        record (spec 030). Only then — and only for a bare ``remo shell`` over
+        SSH — is the project menu started as the explicit remote command;
+        otherwise the argv is exactly what it always was.
     """
     use_project_launch = bool(project)
     access = get_host_access(host)
@@ -654,10 +702,15 @@ def shell_connect(
         # (T059) before shlex.quote(), so a malicious/malformed name is
         # rejected here with a clear SystemExit rather than reaching ssh.
         remote_cmd = build_project_launch_remote_cmd(project, detach, exec_cmd)
+    explicit_menu = (
+        remote_cmd is None and access.remote and menu_command and not use_project_launch
+    )
+    if explicit_menu:
+        remote_cmd = SSH_MENU_COMMAND
     ssh_cmd = access.interactive_argv(
         host,
         remote_cmd,
-        tty=use_project_launch and not detach,
+        tty=explicit_menu or (use_project_launch and not detach),
         extra_opts=extra_opts,
     )
     run_env = access.env(host, tab_key=tab_key)

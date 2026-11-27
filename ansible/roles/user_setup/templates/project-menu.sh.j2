@@ -27,6 +27,17 @@ REMO_LIB_PATH="$(dirname "${BASH_SOURCE[0]}")/remo-lib.sh"
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
     export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 fi
+# One session directory on macOS and the tool PATH recorded at setup (spec 030).
+remo_pin_session_dir || exit 1
+remo_load_local_path
+# A bare `remo shell` now starts this menu as the SSH command (spec 030), so the
+# .bashrc TERM fallback that ran just before the old login hook never runs. Apply
+# the same fallback here, so the picker, the sessions it starts and their
+# devcontainers get a terminal type this host knows (e.g. xterm-ghostty).
+if [ -n "${SSH_CONNECTION:-}" ] && command -v infocmp >/dev/null 2>&1 \
+    && ! infocmp "${TERM:-dumb}" >/dev/null 2>&1; then
+    export TERM=xterm-256color
+fi
 {% if remo_version %}
 REMO_VERSION="{{ remo_version }}"
 {% else %}

@@ -135,9 +135,13 @@ def test_local_setup_installs_then_second_run_changes_nothing(tmp_path: Path) ->
     assert stat.S_IMODE(state.stat().st_mode) == 0o700
     assert (state / "tabs").is_dir()
     assert (state / "local.env").read_text() == (
-        "REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR=\n"
+        "REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR=\nREMO_PATH=\n"
     )
     assert (home / ".remo-version").read_text() == "9.9.9"
+    assert (state / "host-info").read_text() == (
+        "host_kind=local\nmenu_command=1\ninstalled_by=9.9.9\n"
+    )
+    assert stat.S_IMODE((state / "host-info").stat().st_mode) == 0o644
 
     before = _snapshot(sandbox)
     second = _run(home)
@@ -180,7 +184,7 @@ def test_projects_dir_is_persisted_verbatim_and_idempotent(tmp_path: Path) -> No
     assert first.returncode == 0, first.stdout + first.stderr
     env = home / ".local" / "state" / "remo" / "local.env"
     assert env.read_text() == (
-        f"REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR={folder}\n"
+        f"REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR={folder}\nREMO_PATH=\n"
     )
     assert f'PROJECTS_DIR="{folder}"' in (home / ".local" / "bin" / "remo-host").read_text()
 
@@ -190,4 +194,46 @@ def test_projects_dir_is_persisted_verbatim_and_idempotent(tmp_path: Path) -> No
 
     cleared = _run(home, "-e", json.dumps({"remo_local_projects_dir": ""}))
     assert cleared.returncode == 0, cleared.stdout + cleared.stderr
-    assert env.read_text() == "REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR=\n"
+    assert env.read_text() == "REMO_BASH=/usr/bin/env-bash-for-test\nREMO_PROJECTS_DIR=\nREMO_PATH=\n"
+
+
+def _render_host_info(**variables: object) -> str:
+    import jinja2
+
+    path = ANSIBLE_DIR / "roles" / "user_setup" / "templates" / "host-info.j2"
+    env = jinja2.Environment(keep_trailing_newline=True)
+    env.filters["bool"] = bool  # ansible's filter; plain bool is enough for True/False
+    return env.from_string(path.read_text()).render(**variables)
+
+
+def test_host_info_template_remote_and_local() -> None:
+    assert _render_host_info(remo_version="1.2.3") == (
+        "host_kind=remote\nmenu_command=1\ninstalled_by=1.2.3\n"
+    )
+    assert _render_host_info(remo_local_install=True) == (
+        "host_kind=local\nmenu_command=1\ninstalled_by=\n"
+    )
+    assert _render_host_info(remo_local_install=False).startswith("host_kind=remote\n")
+
+
+def test_host_info_tasks_are_defensive_and_ordered() -> None:
+    tasks = yaml.safe_load(
+        (ANSIBLE_DIR / "roles/user_setup/tasks/host_scripts.yml").read_text()
+    )
+    names = [t["name"] for t in tasks]
+    assert names[-2:] == ["Ensure the remo state directory exists", "Install host-info record"]
+    text = (ANSIBLE_DIR / "roles/user_setup/tasks/host_scripts.yml").read_text()
+    assert ".local/state/remo/host-info" in text
+
+
+@pytest.mark.skipif(not ANSIBLE_PLAYBOOK.exists(), reason="ansible-playbook not installed")
+def test_tool_path_is_recorded_in_local_env_and_rerun_is_a_no_op(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    extra = ("-e", json.dumps({"remo_local_path": "/opt/homebrew/bin:/opt/my tools/bin"}))
+    first = _run(home, *extra)
+    assert first.returncode == 0, first.stdout + first.stderr
+    env = home / ".local" / "state" / "remo" / "local.env"
+    assert "REMO_PATH=/opt/homebrew/bin:/opt/my tools/bin\n" in env.read_text()
+    second = _run(home, *extra)
+    assert _recap(second.stdout)["changed"] == 0, second.stdout

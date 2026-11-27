@@ -784,16 +784,32 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y expect
 
-          # Disable project-menu auto-start so remo shell lands on a bash prompt.
-          # The menu launches Zellij TUI which can't be driven by expect.
+          # Remove the legacy project-menu .bashrc hook. remo now starts the menu
+          # itself (spec 030), so the steps below that need a bare prompt pass
+          # --no-update-check (no probe → today's plain login).
           SSH_CMD="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/id_rsa remo@$HOST"
           $SSH_CMD "sed -i '/# BEGIN ANSIBLE MANAGED BLOCK - PROJECT MENU/,/# END ANSIBLE MANAGED BLOCK - PROJECT MENU/d' ~/.bashrc"
 
-      - name: Test remo shell basic access
+      - name: Test remo shell basic access (menu starts without the .bashrc hook)
         run: |
+          # The hook was deleted above, so the menu appearing proves remo starts
+          # it explicitly (spec 030); "[Exit to shell]" must then give a prompt.
           expect <<'EXPECT'
           set timeout 30
+          # expect's pty is 0x0 by default; fzf then draws no rows at all.
+          set stty_init "rows 40 cols 120"
           spawn uv run remo shell
+          expect {
+            "Exit to shell" {}
+            timeout { puts "FAIL: project menu did not open"; exit 1 }
+          }
+          send "Exit to shell"
+          sleep 1
+          send "\r"
+          expect {
+            "Exiting to shell" {}
+            timeout { puts "FAIL: menu did not exit to shell"; exit 1 }
+          }
           expect {
             "$ " {}
             timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
@@ -819,7 +835,7 @@ jobs:
         run: |
           expect <<'EXPECT'
           set timeout 30
-          spawn uv run remo shell
+          spawn uv run remo shell --no-update-check
           expect {
             "$ " {}
             timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
@@ -852,7 +868,7 @@ jobs:
           # Background expect: open shell with tunnel, hold it open
           cat > /tmp/tunnel-test.exp <<'EXPECT'
           set timeout 30
-          spawn uv run remo shell -L 8080 --no-open
+          spawn uv run remo shell -L 8080 --no-open --no-update-check
           expect {
             "$ " {}
             timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }
@@ -893,7 +909,7 @@ jobs:
           # Background expect: open shell with both tunnels
           cat > /tmp/multi-tunnel-test.exp <<'EXPECT'
           set timeout 30
-          spawn uv run remo shell -L 9090 -L 3000 --no-open
+          spawn uv run remo shell -L 9090 -L 3000 --no-open --no-update-check
           expect {
             "$ " {}
             timeout { puts "FAIL: timed out waiting for prompt"; exit 1 }

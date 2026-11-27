@@ -1707,3 +1707,44 @@ class TestMacPortability:
         assert disks == [
             {"mount": "/", "size_bytes": 1024000, "used_bytes": 409600, "avail_bytes": 614400}
         ]
+
+
+def _write_host_info(tmp_path: Path, text: str) -> None:
+    info = tmp_path / "home" / ".local" / "state" / "remo" / "host-info"
+    info.parent.mkdir(parents=True, exist_ok=True)
+    info.write_text(text)
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
+@pytest.mark.parametrize("kind", ["local", "remote"])
+def test_remo_host_capabilities_host_kind_from_host_info(
+    rendered_script: Path, tmp_path: Path, kind: str
+) -> None:
+    _write_host_info(tmp_path, f"host_kind={kind}\nmenu_command=1\n")
+    result = _run_remo_host(rendered_script, tmp_path, "capabilities", "--json")
+    payload = json.loads(result.stdout)
+    assert payload["host_kind"] == kind
+    assert payload["protocol_version"] == 1
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
+@pytest.mark.parametrize("text", [None, "menu_command=1\n", "host_kind=weird\n", "host_kind=\n"])
+def test_remo_host_capabilities_omits_host_kind_otherwise_and_is_otherwise_identical(
+    rendered_script: Path, tmp_path: Path, text: str | None
+) -> None:
+    baseline = _run_remo_host(rendered_script, tmp_path, "capabilities", "--json").stdout
+    if text is not None:
+        _write_host_info(tmp_path, text)
+    result = _run_remo_host(rendered_script, tmp_path, "capabilities", "--json")
+    assert "host_kind" not in json.loads(result.stdout)
+    assert result.stdout == baseline
+
+
+@pytest.mark.skipif(BASH is None, reason="bash not available in this sandbox")
+def test_remo_host_capabilities_with_host_kind_differs_only_by_that_key(
+    rendered_script: Path, tmp_path: Path
+) -> None:
+    before = json.loads(_run_remo_host(rendered_script, tmp_path, "capabilities", "--json").stdout)
+    _write_host_info(tmp_path, "host_kind=local\n")
+    after = json.loads(_run_remo_host(rendered_script, tmp_path, "capabilities", "--json").stdout)
+    assert {k: v for k, v in after.items() if k != "host_kind"} == before

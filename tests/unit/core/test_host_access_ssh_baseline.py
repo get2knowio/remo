@@ -13,6 +13,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from remo_cli.core.host_access import SSH_MENU_COMMAND
+from remo_cli.core.ssh import PROBE_COMMAND
 from remo_cli.models.host import KnownHost
 
 pytestmark = pytest.mark.usefixtures("ssm_provider")
@@ -95,6 +97,47 @@ class TestShellConnectArgv:
         assert run.call_args.args[0] == ["ssh", *MUX, *opts, target]
         assert "env" not in run.call_args.kwargs
 
+    def test_menu_command_false_is_the_baseline(self, run, case):
+        _, host, opts, target = case
+        _connect(host, menu_command=False)
+        assert run.call_args.args[0] == ["ssh", *MUX, *opts, target]
+
+    def test_bare_menu_when_probe_says_menu(self, run, case):
+        _, host, opts, target = case
+        _connect(host, menu_command=True)
+        assert run.call_args.args[0] == ["ssh", *MUX, *opts, "-tt", target, SSH_MENU_COMMAND]
+        assert "env" not in run.call_args.kwargs
+
+    def test_menu_with_tab_key_when_probe_says_menu(self, run, case):
+        _, host, opts, target = case
+        _connect(host, menu_command=True, tab_key="0" * 32)
+        assert run.call_args.args[0] == [
+            "ssh", *MUX, *opts, "-o", "SendEnv=REMO_TAB_KEY", "-tt", target, SSH_MENU_COMMAND,
+        ]
+        assert run.call_args.kwargs["env"]["REMO_TAB_KEY"] == "0" * 32
+
+    def test_menu_with_tunnel_when_probe_says_menu(self, run, case):
+        _, host, opts, target = case
+        _connect(host, tunnels=["8080:80"], menu_command=True)
+        assert run.call_args.args[0] == [
+            "ssh", *MUX, *opts, "-L", "8080:localhost:80", "-tt", target, SSH_MENU_COMMAND,
+        ]
+
+    def test_menu_command_never_changes_project_paths(self, run, case):
+        _, host, opts, target = case
+        _connect(host, project="A", menu_command=True)
+        assert run.call_args.args[0] == ["ssh", *MUX, *opts, "-tt", target, PL]
+        _connect(host, project="A", exec_cmd="ls", menu_command=True)
+        assert run.call_args.args[0] == [
+            "ssh", *MUX, *opts, "-tt", target, f"{PL} --exec ls",
+        ]
+        _connect(host, project="A", detach=True, exec_cmd="ls", menu_command=True)
+        assert "-tt" not in run.call_args.args[0]
+        _connect(host, project="A", tunnels=["8080:80"], menu_command=True)
+        assert run.call_args.args[0] == [
+            "ssh", *MUX, *opts, "-L", "8080:localhost:80", "-tt", target, PL,
+        ]
+
     def test_project(self, run, case):
         _, host, opts, target = case
         _connect(host, project="A")
@@ -153,7 +196,7 @@ class TestCheckRemoteVersionArgv:
         assert check_remote_version(host) == ("1.0.0", None)
         assert run.call_args.args[0] == [
             "ssh", *opts, "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
-            target, "cat ~/.remo-version 2>/dev/null",
+            target, PROBE_COMMAND,
         ]
         assert run.call_args.kwargs == {
             "capture_output": True, "text": True, "timeout": 15,
@@ -195,3 +238,21 @@ class TestResumeArgv:
         resume.is_project_live(host, "A")
         assert lookup.call_args.args[0] == prefix
         assert listing.call_args.args[0] == prefix
+
+
+def test_local_host_ignores_menu_command(mocker, tmp_path, monkeypatch):
+    from remo_cli.core.ssh import shell_connect
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    state = tmp_path / ".local" / "state" / "remo"
+    state.mkdir(parents=True)
+    (state / "local.env").write_text("REMO_BASH=/b/bash\n")
+    (tmp_path / ".local" / "bin").mkdir(parents=True)
+    (tmp_path / ".local" / "bin" / "project-menu").write_text("#!/bin/bash\n")
+    mocker.patch("remo_cli.core.ssh.termios.tcgetattr", side_effect=termios.error)
+    mocker.patch("remo_cli.core.ssh.reset_terminal")
+    mocker.patch("remo_cli.core.ssh.sys.stdin", MagicMock(fileno=lambda: 0))
+    run = mocker.patch("remo_cli.core.ssh.subprocess.run")
+    host = KnownHost("local", "local", "localhost", "u", access_mode="direct")
+    shell_connect(host, [], True, menu_command=True)
+    assert run.call_args.args[0] == ["/b/bash", "-c", 'exec "$HOME/.local/bin/project-menu"']
