@@ -42,8 +42,8 @@ name: dev-build
 #   # manifest.json and verifies every wheel's sha256 before installing
 #   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --prerelease <version> --with web,ec2
 #   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash -s -- --prerelease <version> --with hetzner
-#   # revert to the released build
-#   uv tool install remo-cli --force
+#   # back to the newest stable release (remo is not on PyPI)
+#   curl -fsSL https://raw.githubusercontent.com/get2knowio/remo/main/install.sh | bash
 
 on:
   workflow_dispatch:

@@ -263,3 +263,32 @@ def test_unwritable_tmpdir_is_operation_failed(monkeypatch):
     with pytest.raises(OperationFailedError, match="read-only"):
         h.run(assume_yes=True)
     assert h.ran == []
+
+
+def test_output_is_flushed_before_the_installer_runs(monkeypatch):
+    """A piped stdout is block-buffered: unflushed, the "remo X → Y" line
+    surfaced after the installer's own output and read like a second report."""
+    import io
+
+    class Tracking(io.StringIO):
+        flushes = 0
+
+        def flush(self):
+            Tracking.flushes += 1
+            super().flush()
+
+    out, err = Tracking(), Tracking()
+    monkeypatch.setattr(su.sys, "stdout", out)
+    monkeypatch.setattr(su.sys, "stderr", err)
+    h = Harness(monkeypatch, InstallOrigin.RECORDED, _record())
+    seen_at_run: list[tuple[str, int]] = []
+
+    def runner(argv, **kw):
+        seen_at_run.append((out.getvalue(), Tracking.flushes))
+        return subprocess.CompletedProcess(argv, 0)
+
+    h.runner = runner
+    h.run(assume_yes=True)
+    text, flushes = seen_at_run[0]
+    assert "→ 2.0.0" in text
+    assert flushes >= 2  # stdout and stderr, before the hand-over
