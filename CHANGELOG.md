@@ -1,5 +1,33 @@
 # Changelog
 
+## [5.0.0](https://github.com/get2knowio/remo/compare/v4.4.2...v5.0.0) (2026-11-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **install:** remo-cli is no longer published to PyPI; 4.4.2 is the last PyPI version. Install and upgrade with install.sh / remo self-update.
+* `remo shell -p PROJECT --exec CMD` now exits with CMD's exit status on remote hosts too (previously always 0); an ssh connection failure during `--exec` exits 255. Plain `remo shell` sessions without `--exec` are unchanged.
+* **providers:** AWS support requires `remo-cli[ec2]`; the provider type and CLI group are `ec2` (`remo aws` remains as a deprecated alias).
+
+### Features
+
+* **cli:** `remo resume` puts each terminal tab back in its own session (spec 028) ([#249](https://github.com/get2knowio/remo/issues/249)) ([a90ea9b](https://github.com/get2knowio/remo/commit/a90ea9b2dc430c74b508ed9213620ba040bd60df))
+* **install:** one install path for every release — GitHub Releases + install.sh --with; never PyPI (spec 031) ([#291](https://github.com/get2knowio/remo/issues/291)) ([d245472](https://github.com/get2knowio/remo/commit/d245472a3955d310121543c05dd41c58ad6b30b4))
+* **local:** reach a local host over SSH too — same menu, sessions and index (spec 030) ([#284](https://github.com/get2knowio/remo/issues/284)) ([62b16f0](https://github.com/get2knowio/remo/commit/62b16f0dc534f42d73478ea2b490f217a50e4f4c)), closes [#285](https://github.com/get2knowio/remo/issues/285) [#286](https://github.com/get2knowio/remo/issues/286)
+* **local:** the machine remo runs on is a Remo host — no VM, no SSH (spec 029) ([#282](https://github.com/get2knowio/remo/issues/282)) ([ec445bb](https://github.com/get2knowio/remo/commit/ec445bbcabb4e076deea06340461d891ca54a739))
+* **providers:** ship AWS as the remo-provider-ec2 plugin, type renamed aws -&gt; ec2 ([#258](https://github.com/get2knowio/remo/issues/258)) ([#261](https://github.com/get2knowio/remo/issues/261)) ([0267c99](https://github.com/get2knowio/remo/commit/0267c992730a84dbf13e1cf9d3cceb701265eba7))
+* **providers:** ship Hetzner as the remo-provider-hetzner plugin ([#222](https://github.com/get2knowio/remo/issues/222)) ([#259](https://github.com/get2knowio/remo/issues/259)) ([ff15057](https://github.com/get2knowio/remo/commit/ff15057cb7ed74206552b307e8acec2a4ac502da))
+
+
+### Bug Fixes
+
+* **ansible:** defer a zellij upgrade while sessions are live ([#242](https://github.com/get2knowio/remo/issues/242)) ([46617a3](https://github.com/get2knowio/remo/commit/46617a368598f4efcd42efa4f73f8edaa54c338f))
+* **ci:** cleanup actually matches AWS CI resources; reap Hetzner volumes/firewalls ([#265](https://github.com/get2knowio/remo/issues/265)) ([890e6c1](https://github.com/get2knowio/remo/commit/890e6c16cd1e9937ffce8157e6989de5462f1d78))
+* **ci:** cleanup must never delete the CI's own IAM role ([#272](https://github.com/get2knowio/remo/issues/272)) ([f1e21e8](https://github.com/get2knowio/remo/commit/f1e21e8cc7fc33fab8a52539f4b67b9b666a7305))
+* **ci:** never orphan a smoke-test snapshot; reap stale CI snapshots ([#262](https://github.com/get2knowio/remo/issues/262)) ([9891cb7](https://github.com/get2knowio/remo/commit/9891cb7f7c08c7a87cf1c5ae7febf361aa46c40f))
+* issue sweep for spec 029 ([#283](https://github.com/get2knowio/remo/issues/283)) ([cb5d865](https://github.com/get2knowio/remo/commit/cb5d8657e5e4122dbcd86339ac16b4ec81d3cc92)), closes [#279](https://github.com/get2knowio/remo/issues/279) [#280](https://github.com/get2knowio/remo/issues/280) [#281](https://github.com/get2knowio/remo/issues/281)
+* **self-update:** flush before the installer runs; drop the remo-cli executable ([#294](https://github.com/get2knowio/remo/issues/294)) ([acb88d8](https://github.com/get2knowio/remo/commit/acb88d8d61bbeb902c1cd8e654caabb955e3f588))
+
 ## [4.4.2](https://github.com/get2knowio/remo/compare/v4.4.1...v4.4.2) (2026-10-04)
 
 
