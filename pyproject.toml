@@ -70,7 +70,8 @@ web = [
 ]
 
 [project.scripts]
-remo-cli = "remo_cli.cli.main:main"
+# One executable. A `remo-cli` alias existed only so `uvx remo-cli` worked from
+# PyPI; remo is no longer published there (constitution IX), so it is gone.
 remo = "remo_cli.cli.main:main"
 
 [tool.uv]

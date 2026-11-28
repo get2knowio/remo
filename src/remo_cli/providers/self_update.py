@@ -12,6 +12,7 @@ import importlib.util
 import os
 import shlex
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -145,6 +146,11 @@ def run_self_update(
         fd, path = tempfile.mkstemp(prefix="remo-install-", suffix=".sh")
         with os.fdopen(fd, "w") as fh:
             fh.write(script)
+        # Flush first: when stdout is a pipe it is block-buffered, and the
+        # "remo X → Y" line above would otherwise surface after the installer's
+        # own output, reading like a second, stale report.
+        sys.stdout.flush()
+        sys.stderr.flush()
         result = runner(["bash", path, *args], env=env, check=False)
     except OSError as exc:
         # An unwritable TMPDIR or a missing bash: a typed error, not a traceback.
